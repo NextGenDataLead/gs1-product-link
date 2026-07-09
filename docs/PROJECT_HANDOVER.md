@@ -871,11 +871,22 @@ clients:
 
     export:
       path: "./input/noviplast/products.xlsx"
-      # Optional column overrides if the client's export doesn't match the default schema:
+      # Excel column name (as it appears in the header row, case-sensitive) →
+      # canonical ProductRecord field path. See IMPLEMENTATION_SPEC.md §3.2 for
+      # the full mapping semantics (per-language paths use dot notation).
       column_map:
-        gtin: "GTIN"
-        brand: "Merk"
-        product_name_nl: "Productnaam NL"
+        "GTIN":                        gtin
+        "Merk":                        brand
+        "Productnaam NL":              product_name.nl
+        "Productnaam FR":              product_name.fr
+        "Korte omschrijving NL":       description_short.nl
+        "Korte omschrijving FR":       description_short.fr
+        "GPC brick":                   gpc_brick_code
+        "Foto URL":                    image_url
+        "Categorie":                   category
+      extras_columns:
+        - "HS-code"
+        - "Barcode type"
 
     wordpress:
       site_url: "https://www.noviplast.nl"
