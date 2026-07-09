@@ -1,0 +1,7 @@
+{
+  "name": "@gs1-orchestrator/gs1-nl-mcp",
+  "version": "0.0.1",
+  "private": true,
+  "description": "MCP server wrapping the GS1 NL Digital Link API v2 (single upsert, bulk upsert, get). Built in Phase 2.",
+  "license": "MIT"
+}

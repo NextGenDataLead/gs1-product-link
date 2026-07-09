@@ -1,0 +1,7 @@
+{
+  "name": "@gs1-orchestrator/qr-render-mcp",
+  "version": "0.0.1",
+  "private": true,
+  "description": "MCP server that renders QR symbols for GS1 Digital Link URIs on demand. Built in Phase 5.",
+  "license": "MIT"
+}

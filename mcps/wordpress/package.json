@@ -1,0 +1,7 @@
+{
+  "name": "@gs1-orchestrator/wordpress-mcp",
+  "version": "0.0.1",
+  "private": true,
+  "description": "MCP server for the WordPress REST API: per-call credentials, custom post types, Polylang/WPML aware. Adopted/forked in Phase 4.",
+  "license": "MIT"
+}
