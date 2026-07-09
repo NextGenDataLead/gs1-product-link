@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NextGenDataLead/gs1-product-link/schema/clients.schema.json",
+  "title": "clients.yml",
+  "description": "Per-client configuration for the GS1 Digital Link Orchestrator. Derived from PROJECT_HANDOVER.md §10.1 and IMPLEMENTATION_SPEC.md §2.4. Secrets are never stored here; *_env keys name environment variables that hold them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "clients"],
+  "properties": {
+    "version": {
+      "description": "Config schema version. Locked at 1 for v0.1.0.",
+      "const": 1
+    },
+    "defaults": {
+      "description": "Settings inherited by every client unless overridden per client.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gs1": { "$ref": "#/$defs/gs1Defaults" },
+        "wordpress": { "$ref": "#/$defs/wordpressDefaults" },
+        "qr": { "$ref": "#/$defs/qr" },
+        "flow": { "$ref": "#/$defs/flow" }
+      }
+    },
+    "clients": {
+      "description": "Map of client_id to that client's configuration.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9_-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/client" }
+    }
+  },
+  "$defs": {
+    "gs1Defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "environment": {
+          "description": "Which GS1 NL environment to target.",
+          "enum": ["test", "production"]
+        },
+        "api_version": {
+          "description": "Digital Link API version. Locked at v2 for v0.1.0.",
+          "const": "v2"
+        },
+        "auth_scheme": {
+          "description": "How the Authorization header is formatted.",
+          "enum": ["Bearer", "raw"]
+        },
+        "identification_key_type": {
+          "description": "GS1 identifier type. Always Gtin for v0.1.0 scope.",
+          "const": "Gtin"
+        },
+        "digital_link_url_pattern": {
+          "type": "string",
+          "description": "Template for the canonical Digital Link URI; {gtin14} is substituted."
+        },
+        "resolver_settings": { "$ref": "#/$defs/resolverSettings" },
+        "default_media_type": {
+          "type": "string",
+          "description": "mediaType applied to links that don't specify one (e.g. text/html)."
+        },
+        "batch_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Entries per request to the bulk upsert endpoint."
+        }
+      }
+    },
+    "resolverSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "use_gs1_resolver": {
+          "type": "boolean",
+          "description": "Always true for v0.1.0 scope (decision §3.1)."
+        },
+        "resolver_domain_name": {
+          "type": ["string", "null"],
+          "description": "Only meaningful when use_gs1_resolver is false."
+        }
+      }
+    },
+    "gs1Client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_number", "token_env_test", "token_env_production"],
+      "properties": {
+        "account_number": {
+          "type": "string",
+          "description": "The account the Digital Link is created under — almost certainly the client's GLN. Verify against MyGS1."
+        },
+        "token_env_test": {
+          "type": "string",
+          "description": "Name of the env var holding the test-environment API access token."
+        },
+        "token_env_production": {
+          "type": "string",
+          "description": "Name of the env var holding the production-environment API access token."
+        },
+        "environment": { "enum": ["test", "production"] },
+        "api_version": { "const": "v2" },
+        "auth_scheme": { "enum": ["Bearer", "raw"] },
+        "identification_key_type": { "const": "Gtin" },
+        "digital_link_url_pattern": { "type": "string" },
+        "resolver_settings": { "$ref": "#/$defs/resolverSettings" },
+        "default_media_type": { "type": "string" },
+        "batch_size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "wordpressDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "post_type": { "type": "string" },
+        "post_status": { "type": "string" },
+        "multilingual_plugin": { "$ref": "#/$defs/multilingualPlugin" },
+        "default_language": { "type": "string" },
+        "languages": { "$ref": "#/$defs/languages" },
+        "image_handling": { "$ref": "#/$defs/imageHandling" }
+      }
+    },
+    "wordpressClient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["site_url", "username", "app_password_env"],
+      "properties": {
+        "site_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Base URL of the client's WordPress site."
+        },
+        "username": {
+          "type": "string",
+          "description": "Automation user (Editor role) for REST calls."
+        },
+        "app_password_env": {
+          "type": "string",
+          "description": "Name of the env var holding the WordPress application password."
+        },
+        "post_type": { "type": "string" },
+        "post_status": { "type": "string" },
+        "multilingual_plugin": { "$ref": "#/$defs/multilingualPlugin" },
+        "default_language": { "type": "string" },
+        "languages": { "$ref": "#/$defs/languages" },
+        "image_handling": { "$ref": "#/$defs/imageHandling" },
+        "taxonomies": {
+          "type": "object",
+          "description": "Map of WordPress taxonomy slug to how its terms are sourced.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["map_from_column"],
+            "properties": {
+              "map_from_column": {
+                "type": "string",
+                "description": "ProductRecord field / export column that supplies the term."
+              }
+            }
+          }
+        },
+        "slug_pattern": {
+          "type": "string",
+          "description": "Slug template, e.g. 'p-{gtin}'. Immutable once printed on packaging."
+        },
+        "target_url_pattern": {
+          "type": "string",
+          "description": "Template for the page URL the resolver points at."
+        }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the client's MyGS1 Excel/CSV export."
+        },
+        "column_map": {
+          "type": "object",
+          "description": "Mapping between export columns and ProductRecord fields (a map of string to string).",
+          "additionalProperties": { "type": "string" }
+        },
+        "extras_columns": {
+          "type": "array",
+          "description": "Export columns carried through verbatim into ProductRecord.extras.",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "template": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "override_dir": {
+          "type": "string",
+          "description": "Directory holding this client's template overrides."
+        },
+        "files": {
+          "type": "object",
+          "description": "Map of language code to template filename.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "gs1Link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["link_type"],
+      "properties": {
+        "link_type": {
+          "type": "string",
+          "description": "GS1 link type, e.g. 'pip'."
+        },
+        "default": {
+          "type": "boolean",
+          "description": "Whether this is the default link type for the identifier."
+        },
+        "public": { "type": "boolean" },
+        "per_language": {
+          "type": "boolean",
+          "description": "Emit one link per configured language."
+        },
+        "title_pattern": {
+          "type": "string",
+          "description": "Template for the link title, e.g. '{product_name}'."
+        }
+      }
+    },
+    "qr": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "formats": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["svg", "png", "eps"] }
+        },
+        "size_mm": { "type": "integer", "minimum": 1 },
+        "error_correction": { "enum": ["L", "M", "Q", "H"] },
+        "dpi": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on_change": {
+          "type": "string",
+          "description": "Behaviour when a re-run detects changed rows (default: prompt)."
+        },
+        "on_missing_field": {
+          "type": "string",
+          "description": "Behaviour when a required per-language field is missing (default: prompt)."
+        },
+        "batch_size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "multilingualPlugin": { "enum": ["none", "polylang", "wpml"] },
+    "imageHandling": { "enum": ["url_in_export", "local_folder", "manual"] },
+    "languages": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "ISO 639-1 language codes."
+    },
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display_name", "gs1", "export", "wordpress"],
+      "properties": {
+        "display_name": { "type": "string" },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this client is processed. Defaults to true when omitted."
+        },
+        "gs1": { "$ref": "#/$defs/gs1Client" },
+        "export": { "$ref": "#/$defs/export" },
+        "wordpress": { "$ref": "#/$defs/wordpressClient" },
+        "template": { "$ref": "#/$defs/template" },
+        "gs1_links": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gs1Link" }
+        },
+        "qr": { "$ref": "#/$defs/qr" },
+        "flow": { "$ref": "#/$defs/flow" }
+      }
+    }
+  }
+}

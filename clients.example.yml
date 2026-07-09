@@ -1,0 +1,83 @@
+# clients.example.yml — copy to clients.yml and fill in.
+# clients.yml is gitignored. Never commit real credentials.
+# Secrets live in environment variables; this file points at them by name.
+
+version: 1
+
+defaults:
+  gs1:
+    environment: test               # test | production
+    api_version: v2                 # locked; endpoint prefix is /digitallinkv2/v2/
+    auth_scheme: "Bearer"           # "Bearer" | "raw" — how Authorization header is formatted
+    identification_key_type: "Gtin" # enum in v2; always Gtin for our scope
+    digital_link_url_pattern: "https://id.gs1.org/01/{gtin14}"
+    resolver_settings:
+      use_gs1_resolver: true        # matches decision §3.1
+      resolver_domain_name: null    # only used when use_gs1_resolver: false
+    default_media_type: "text/html" # for HTML product-page targets
+    batch_size: 50                  # for bulk endpoint
+  wordpress:
+    post_type: page
+    post_status: publish
+    multilingual_plugin: none       # none | polylang | wpml
+    default_language: nl
+    languages: [nl]
+    image_handling: url_in_export   # url_in_export | local_folder | manual
+  qr:
+    formats: [svg, png]
+    size_mm: 20
+    error_correction: M
+    dpi: 300
+  flow:
+    on_change: prompt
+    on_missing_field: prompt
+    batch_size: 50
+
+clients:
+
+  # Example — Noviplast: custom post type, Polylang, NL + FR
+  noviplast:
+    display_name: "Noviplast B.V."
+    enabled: true
+
+    gs1:
+      account_number: "8712345000003"    # Noviplast's GLN — verify against MyGS1
+      # One access token per environment (both issued via MyGS1)
+      token_env_test: NOVIPLAST_GS1_TOKEN_TEST
+      token_env_production: NOVIPLAST_GS1_TOKEN_PROD
+
+    export:
+      path: "./input/noviplast/products.xlsx"
+      # Optional column overrides if the client's export doesn't match the default schema:
+      column_map:
+        gtin: "GTIN"
+        brand: "Merk"
+        product_name_nl: "Productnaam NL"
+
+    wordpress:
+      site_url: "https://www.noviplast.nl"
+      username: "automation-bot"
+      app_password_env: NOVIPLAST_WP_APP_PASS
+      post_type: noviplast
+      multilingual_plugin: polylang
+      languages: [nl, fr]
+      default_language: nl
+      image_handling: url_in_export
+      taxonomies:
+        noviplast-categories:
+          map_from_column: "category"
+      slug_pattern: "p-{gtin}"
+      target_url_pattern: "{site_url}/{lang_segment}{post_type}/{slug}/"
+
+    template:
+      override_dir: templates/noviplast
+      files:
+        nl: product.nl.html
+        fr: product.fr.html
+
+    gs1_links:
+      - link_type: pip
+        default: true
+        public: true
+        per_language: true
+        title_pattern: "{product_name}"
