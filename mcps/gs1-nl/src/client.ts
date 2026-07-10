@@ -1,0 +1,306 @@
+/**
+ * TypeScript client for the GS1 NL Digital Link API v2.
+ *
+ * Mirrors `lib/gs1_dl_client.py` (IMPLEMENTATION_SPEC §4.3 / §5.1): identical
+ * hosts, path prefix, path-case anomalies, auth-scheme switch, and retry policy.
+ * Kept dependency-free (uses global `fetch`) so it is unit-testable without the
+ * MCP SDK.
+ */
+
+/** Path prefix shared by every endpoint except ValidateDraft (§4.2). */
+export const PATH_PREFIX = "/digitallinkv2/v2/";
+
+/** Environment-to-host mapping (§4.3). */
+export const HOSTS = {
+  test: "gs1nl-api-acc.gs1.nl",
+  production: "gs1nl-api.gs1.nl",
+} as const;
+
+const RETRY_429_MAX_ATTEMPTS = 5;
+const RETRY_429_BASE_MS = 1000;
+const RETRY_429_MAX_MS = 60000;
+const RETRY_5XX_MAX_ATTEMPTS = 3;
+const RETRY_5XX_BASE_MS = 500;
+const RETRY_5XX_MAX_MS = 30000;
+
+const HTTP_SUCCESS_MIN = 200;
+const HTTP_SUCCESS_MAX = 300;
+const HTTP_UNAUTHORIZED = 401;
+const HTTP_NOT_FOUND = 404;
+const HTTP_TOO_MANY_REQUESTS = 429;
+const HTTP_SERVER_ERROR_MIN = 500;
+const HTTP_SERVER_ERROR_MAX = 600;
+const NETWORK_ERROR_STATUS = 0;
+
+export type AuthScheme = "Bearer" | "raw";
+export type Environment = keyof typeof HOSTS;
+
+export interface ResolverSettings {
+  useGS1Resolver: boolean;
+  resolverDomainName: string | null;
+}
+
+/** Fully-resolved config for one client (secrets already resolved). */
+export interface GS1ClientConfig {
+  host: string;
+  accountNumber: string;
+  authScheme: AuthScheme;
+  token: string;
+  resolverSettings: ResolverSettings;
+  batchSize: number;
+}
+
+export interface LinkInput {
+  link_type: string;
+  language: string;
+  link_title: string;
+  target_url: string;
+  default_link_type: boolean;
+  public: boolean;
+  media_type: string;
+}
+
+export interface AppIdentifier {
+  identifier: string;
+  template_variable: string;
+}
+
+export interface UpsertEntry {
+  gtin: string;
+  item_description: string;
+  is_enabled?: boolean;
+  links: LinkInput[];
+  application_identifiers?: AppIdentifier[];
+}
+
+export interface BulkResult {
+  total: number;
+  batches: number;
+  status_codes: number[];
+}
+
+/** Error raised for a non-success GS1 API response. Never carries the token. */
+export class GS1ApiError extends Error {
+  constructor(
+    readonly statusCode: number,
+    readonly responseBody: string,
+    readonly errorResults: unknown[] | null = null,
+  ) {
+    super(`GS1 API error ${statusCode}`);
+    this.name = "GS1ApiError";
+  }
+}
+
+export interface GS1ClientOptions {
+  /** Injectable fetch (defaults to global fetch) — used by tests. */
+  fetchImpl?: typeof fetch;
+  /** Injectable sleep (defaults to setTimeout) — makes retry backoff instant in tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+function zfill14(gtin: string): string {
+  return gtin.padStart(14, "0");
+}
+
+function linkToWire(link: LinkInput): Record<string, unknown> {
+  return {
+    linkType: link.link_type,
+    language: link.language,
+    linkTitle: link.link_title,
+    targetUrl: link.target_url,
+    defaultLinkType: link.default_link_type,
+    public: link.public,
+    mediaType: link.media_type,
+  };
+}
+
+function aiToWire(ai: AppIdentifier): Record<string, unknown> {
+  return { identifier: ai.identifier, templateVariable: ai.template_variable };
+}
+
+function backoff429(attempt: number, retryAfterMs: number | null): number {
+  if (retryAfterMs !== null) {
+    return Math.min(retryAfterMs, RETRY_429_MAX_MS);
+  }
+  return Math.min(RETRY_429_BASE_MS * 2 ** (attempt - 1), RETRY_429_MAX_MS);
+}
+
+function backoff5xx(attempt: number): number {
+  return Math.min(RETRY_5XX_BASE_MS * 2 ** (attempt - 1), RETRY_5XX_MAX_MS);
+}
+
+function retryAfterMs(response: Response): number | null {
+  const value = response.headers.get("Retry-After");
+  if (value === null) {
+    return null;
+  }
+  const seconds = Number(value);
+  return Number.isFinite(seconds) ? seconds * 1000 : null;
+}
+
+/** Parse a standard v2 `ErrorResult[]` body, else null (§5.1). */
+export function parseErrorResults(body: string): unknown[] | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (
+    Array.isArray(data) &&
+    data.every(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        "identifier" in item &&
+        "errors" in item,
+    )
+  ) {
+    return data;
+  }
+  return null;
+}
+
+export class GS1Client {
+  private readonly baseUrl: string;
+  private readonly fetchImpl: typeof fetch;
+  private readonly sleep: (ms: number) => Promise<void>;
+
+  constructor(
+    private readonly config: GS1ClientConfig,
+    options: GS1ClientOptions = {},
+  ) {
+    this.baseUrl = `https://${config.host}`;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.sleep = options.sleep ?? defaultSleep;
+  }
+
+  private authHeader(scheme: AuthScheme): Record<string, string> {
+    if (scheme === "Bearer") {
+      return { Authorization: `Bearer ${this.config.token}` };
+    }
+    return { Authorization: this.config.token };
+  }
+
+  private buildRequestBody(entry: UpsertEntry): Record<string, unknown> {
+    return {
+      accountNumber: this.config.accountNumber,
+      identificationKeyType: "Gtin",
+      identificationKey: zfill14(entry.gtin),
+      isEnabled: entry.is_enabled ?? true,
+      itemDescription: entry.item_description,
+      resolverSettings: {
+        useGS1Resolver: this.config.resolverSettings.useGS1Resolver,
+        resolverDomainName: this.config.resolverSettings.resolverDomainName,
+      },
+      links: entry.links.map(linkToWire),
+      applicationIdentifiers: (entry.application_identifiers ?? []).map(aiToWire),
+    };
+  }
+
+  /** Issue one HTTP call with the retry policy in §4.3 / §5.1. */
+  private async request(
+    method: string,
+    path: string,
+    body: unknown,
+    opts: { notFoundOk?: boolean } = {},
+  ): Promise<Response> {
+    const url = this.baseUrl + path;
+    let scheme = this.config.authScheme;
+    let rawFallbackTried = false;
+    let attempts429 = 0;
+    let attempts5xx = 0;
+
+    for (;;) {
+      const init: RequestInit = {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          ...this.authHeader(scheme),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      };
+
+      let response: Response;
+      try {
+        response = await this.fetchImpl(url, init);
+      } catch (err) {
+        attempts5xx += 1;
+        if (attempts5xx >= RETRY_5XX_MAX_ATTEMPTS) {
+          throw new GS1ApiError(NETWORK_ERROR_STATUS, `network error: ${String(err)}`);
+        }
+        await this.sleep(backoff5xx(attempts5xx));
+        continue;
+      }
+
+      const status = response.status;
+
+      if (status >= HTTP_SUCCESS_MIN && status < HTTP_SUCCESS_MAX) {
+        return response;
+      }
+      if (status === HTTP_NOT_FOUND && opts.notFoundOk) {
+        return response;
+      }
+      if (status === HTTP_UNAUTHORIZED && scheme === "Bearer" && !rawFallbackTried) {
+        rawFallbackTried = true;
+        scheme = "raw";
+        continue;
+      }
+      if (status === HTTP_TOO_MANY_REQUESTS) {
+        attempts429 += 1;
+        if (attempts429 >= RETRY_429_MAX_ATTEMPTS) {
+          throw await this.toError(response);
+        }
+        await this.sleep(backoff429(attempts429, retryAfterMs(response)));
+        continue;
+      }
+      if (status >= HTTP_SERVER_ERROR_MIN && status < HTTP_SERVER_ERROR_MAX) {
+        attempts5xx += 1;
+        if (attempts5xx >= RETRY_5XX_MAX_ATTEMPTS) {
+          throw await this.toError(response);
+        }
+        await this.sleep(backoff5xx(attempts5xx));
+        continue;
+      }
+      throw await this.toError(response);
+    }
+  }
+
+  private async toError(response: Response): Promise<GS1ApiError> {
+    const text = await response.text();
+    return new GS1ApiError(response.status, text, parseErrorResults(text));
+  }
+
+  /** POST /digitallinkv2/v2/digitallink (lowercase). Idempotent (§6.3). */
+  async upsert(entry: UpsertEntry): Promise<void> {
+    await this.request("POST", `${PATH_PREFIX}digitallink`, this.buildRequestBody(entry));
+  }
+
+  /** POST /digitallinkv2/v2/digitallinks, batched into config.batchSize (§4.3). */
+  async upsertBulk(entries: UpsertEntry[]): Promise<BulkResult> {
+    const statusCodes: number[] = [];
+    for (let start = 0; start < entries.length; start += this.config.batchSize) {
+      const chunk = entries.slice(start, start + this.config.batchSize);
+      const response = await this.request(
+        "POST",
+        `${PATH_PREFIX}digitallinks`,
+        chunk.map((entry) => this.buildRequestBody(entry)),
+      );
+      statusCodes.push(response.status);
+    }
+    return { total: entries.length, batches: statusCodes.length, status_codes: statusCodes };
+  }
+
+  /** GET /digitallinkv2/v2/digitalLink/Gtin/{gtin14} (capital L). 404 → null. */
+  async get(gtin: string): Promise<Record<string, unknown> | null> {
+    const path = `${PATH_PREFIX}digitalLink/Gtin/${zfill14(gtin)}`;
+    const response = await this.request("GET", path, undefined, { notFoundOk: true });
+    if (response.status === HTTP_NOT_FOUND) {
+      return null;
+    }
+    return (await response.json()) as Record<string, unknown>;
+  }
+}
