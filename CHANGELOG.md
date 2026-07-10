@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `lib/errors.py` — typed exception hierarchy (`OrchestratorError` base plus
+  `GS1APIError`, `ConfigError`, `MissingCredentialError`, and others) per
+  `docs/IMPLEMENTATION_SPEC.md` §4.1.
+- `lib/logging_setup.py` — `scrub_response_body` and `scrub_headers` that redact
+  secrets and `meta.*` from log output (§5.2).
+- `lib/gs1_dl_client.py` — synchronous GS1 NL Digital Link API v2 client
+  (`upsert`, `upsert_bulk`, `get`, `set_enabled`, `validate_draft`) with the
+  Bearer/raw `Authorization` switch, the §5.1 retry policy, structured 400
+  `ErrorResult[]` parsing, and token-scrubbed logging. Path-case anomalies
+  (capital-L `digitalLink` for GET/PATCH; no `/v2/` in ValidateDraft) preserved.
+- `mcps/gs1-nl/` — TypeScript MCP server exposing three tools
+  (`gs1_digital_link_upsert`, `gs1_digital_link_upsert_bulk`,
+  `gs1_digital_link_get`) over stdio, resolving client config from `clients.yml`
+  (§9.1); mirrors the Python client's hosts, paths, auth, and retry policy.
+- Tests: `pytest`/`pytest-httpx` for the Python client (idempotency, retry,
+  error parsing, token scrubbing) and `vitest` for the MCP client, config, and
+  tools (including end-to-end tool calls over an in-memory transport). A skipped
+  fixture-backed test slot awaits captured GS1 responses (§13.2).
+- CI: a Node job builds and tests the `mcps/gs1-nl` workspace.
+
 ## [0.0.1] - 2026-07-09
 
 ### Added
