@@ -117,19 +117,26 @@ describe("path anomalies and body", () => {
     });
   });
 
-  it("get uses capital-L digitalLink path and zero-padded gtin", async () => {
+  it("get uses the AI-01 digitalLink path and zero-padded gtin", async () => {
     const { client, calls } = makeClient([json(200, { identificationKey: "x" })]);
 
     await client.get("8712345678905");
 
     expect(calls[0].url).toBe(
-      "https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitalLink/Gtin/08712345678905",
+      "https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitalLink/01/08712345678905",
     );
   });
 
-  it("get returns null on 404", async () => {
-    const { client } = makeClient([new Response("", { status: 404 })]);
+  it("get returns null on a 400 'No valid contract found' (missing GTIN)", async () => {
+    const { client } = makeClient([
+      new Response('"No valid contract found for Gtin with id: 00000000000000."', { status: 400 }),
+    ]);
     expect(await client.get("00000000000000")).toBeNull();
+  });
+
+  it("get rethrows a non-not-found 400", async () => {
+    const { client } = makeClient([new Response("some other error", { status: 400 })]);
+    await expect(client.get("8712345678905")).rejects.toBeInstanceOf(GS1ApiError);
   });
 
   it("upsertBulk batches into groups of batchSize", async () => {

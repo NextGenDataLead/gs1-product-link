@@ -10,6 +10,9 @@
 /** Path prefix shared by every endpoint except ValidateDraft (§4.2). */
 export const PATH_PREFIX = "/digitallinkv2/v2/";
 
+/** GS1 Application Identifier for GTIN — GET path keys on "01", not "Gtin". */
+const GTIN_AI = "01";
+
 /** Environment-to-host mapping (§4.3). */
 export const HOSTS = {
   test: "gs1nl-api-acc.gs1.nl",
@@ -25,6 +28,7 @@ const RETRY_5XX_MAX_MS = 30000;
 
 const HTTP_SUCCESS_MIN = 200;
 const HTTP_SUCCESS_MAX = 300;
+const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
 const HTTP_TOO_MANY_REQUESTS = 429;
@@ -246,12 +250,7 @@ export class GS1Client {
   }
 
   /** Issue one HTTP call with the retry policy in §4.3 / §5.1. */
-  private async request(
-    method: string,
-    path: string,
-    body: unknown,
-    opts: { notFoundOk?: boolean } = {},
-  ): Promise<Response> {
+  private async request(method: string, path: string, body: unknown): Promise<Response> {
     const url = this.baseUrl + path;
     let tokenRefreshed = false;
     let attempts429 = 0;
@@ -282,9 +281,6 @@ export class GS1Client {
       const status = response.status;
 
       if (status >= HTTP_SUCCESS_MIN && status < HTTP_SUCCESS_MAX) {
-        return response;
-      }
-      if (status === HTTP_NOT_FOUND && opts.notFoundOk) {
         return response;
       }
       if (status === HTTP_UNAUTHORIZED && !tokenRefreshed) {
@@ -338,13 +334,32 @@ export class GS1Client {
     return { total: entries.length, batches: statusCodes.length, status_codes: statusCodes };
   }
 
-  /** GET /digitallinkv2/v2/digitalLink/Gtin/{gtin14} (capital L). 404 → null. */
+  /**
+   * GET /digitallinkv2/v2/digitalLink/01/{gtin14} — the path segment is the GTIN
+   * application identifier `01` (not "Gtin"), capital-L `digitalLink`. A missing GTIN
+   * returns 400 "No valid contract found …" (mapped to null), not 404.
+   */
   async get(gtin: string): Promise<Record<string, unknown> | null> {
-    const path = `${PATH_PREFIX}digitalLink/Gtin/${zfill14(gtin)}`;
-    const response = await this.request("GET", path, undefined, { notFoundOk: true });
-    if (response.status === HTTP_NOT_FOUND) {
-      return null;
+    const path = `${PATH_PREFIX}digitalLink/${GTIN_AI}/${zfill14(gtin)}`;
+    try {
+      const response = await this.request("GET", path, undefined);
+      return (await response.json()) as Record<string, unknown>;
+    } catch (err) {
+      if (isNotFound(err)) {
+        return null;
+      }
+      throw err;
     }
-    return (await response.json()) as Record<string, unknown>;
   }
+}
+
+/** Whether an error represents a missing GTIN: 400 "No valid contract found" (or 404). */
+function isNotFound(err: unknown): boolean {
+  if (!(err instanceof GS1ApiError)) {
+    return false;
+  }
+  if (err.statusCode === HTTP_NOT_FOUND) {
+    return true;
+  }
+  return err.statusCode === HTTP_BAD_REQUEST && /no valid contract found/i.test(err.responseBody);
 }
