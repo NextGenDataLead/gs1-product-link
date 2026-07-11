@@ -33,6 +33,10 @@ _log = logging.getLogger(__name__)
 #: Path prefix shared by every endpoint except ValidateDraft (see §4.2).
 PATH_PREFIX: Final = "/digitallinkv2/v2/"
 
+#: GS1 Application Identifier for GTIN. GET/PATCH paths key on this AI code
+#: (``/digitalLink/01/{gtin}``), NOT the string ``Gtin`` — confirmed in Phase 2.
+_GTIN_AI: Final = "01"
+
 #: Environment-to-host mapping (§4.3).
 _HOSTS: Final[dict[str, str]] = {
     "test": "gs1nl-api-acc.gs1.nl",
@@ -155,6 +159,8 @@ class DigitalLinkRecord(TypedDict, total=False):
     identificationKey: str
     isEnabled: bool
     itemDescription: str
+    useGs1Elabel: bool
+    isElabelSupported: bool
     digitalLinkUrl: str
     resolverSettings: dict[str, object]
     links: list[dict[str, object]]
@@ -342,33 +348,38 @@ class GS1DigitalLinkClient:
     def get(self, gtin: str) -> DigitalLinkRecord | None:
         """Fetch the current Digital Link entry for a GTIN, or ``None`` (§4.3).
 
-        GET ``/digitallinkv2/v2/digitalLink/Gtin/{gtin14}`` — note the capital-L
-        ``digitalLink``, preserved exactly.
+        GET ``/digitallinkv2/v2/digitalLink/01/{gtin14}`` — the path segment is the
+        GTIN **application identifier ``01``**, not the string ``Gtin`` (confirmed in
+        Phase 2), and ``digitalLink`` is capital-L (differs from the lowercase POST
+        paths). Preserve exactly.
 
-        Not-found behaviour: 404 returns ``None``. The v2 docs list only 200/400/500
-        (no 404), so the empirical not-found status is confirmed against fixtures
-        (§13.2); until then 404 → ``None`` and 400/500 → :class:`GS1APIError`.
+        Not-found behaviour (confirmed in Phase 2): a missing GTIN returns ``400`` with
+        body ``"No valid contract found for Gtin with id: {gtin}"``, mapped here to
+        ``None``. Other non-2xx responses raise :class:`GS1APIError`.
 
         Raises:
-            GS1APIError: On a non-2xx, non-404 response after retries.
+            GS1APIError: On a non-2xx response other than not-found, after retries.
         """
-        path = f"{PATH_PREFIX}digitalLink/Gtin/{gtin.zfill(14)}"
-        resp = self._request("GET", path, gtin=gtin, not_found_ok=True)
-        if resp.status_code == HTTPStatus.NOT_FOUND:
-            _log.info("GS1 GET %s -> 404 not found", gtin)
-            return None
+        path = f"{PATH_PREFIX}digitalLink/{_GTIN_AI}/{gtin.zfill(14)}"
+        try:
+            resp = self._request("GET", path, gtin=gtin)
+        except GS1APIError as exc:
+            if _is_not_found(exc):
+                return None
+            raise
         return cast(DigitalLinkRecord, resp.json())
 
     def set_enabled(self, gtin: str, is_enabled: bool) -> None:
         """Toggle ``isEnabled`` without rewriting the full record (§4.3).
 
-        PATCH ``/digitallinkv2/v2/digitalLink/Gtin/{gtin14}/activationStatus``
-        (capital-L ``digitalLink``). Success is 204 No Content.
+        PATCH ``/digitallinkv2/v2/digitalLink/01/{gtin14}/activationStatus`` — keyed on
+        the GTIN application identifier ``01`` (capital-L ``digitalLink``). Success is
+        204 No Content.
 
         Raises:
             GS1APIError: On any non-2xx response after retries.
         """
-        path = f"{PATH_PREFIX}digitalLink/Gtin/{gtin.zfill(14)}/activationStatus"
+        path = f"{PATH_PREFIX}digitalLink/{_GTIN_AI}/{gtin.zfill(14)}/activationStatus"
         self._request("PATCH", path, json_body={"isEnabled": is_enabled}, gtin=gtin)
 
     def validate_draft(
@@ -426,7 +437,6 @@ class GS1DigitalLinkClient:
         *,
         json_body: object = None,
         gtin: str,
-        not_found_ok: bool = False,
     ) -> httpx.Response:
         """Issue one HTTP call with the retry policy in §4.3 / §5.1.
 
@@ -435,13 +445,13 @@ class GS1DigitalLinkClient:
             path: Path (including any leading prefix), appended to the base URL.
             json_body: JSON-serialisable request body, if any.
             gtin: GTIN (or bulk marker) used only for logging.
-            not_found_ok: When True, a 404 is returned rather than raised (GET).
 
         Returns:
-            The successful (2xx) or, when ``not_found_ok``, 404 response.
+            The successful (2xx) response.
 
         Raises:
             GS1APIError: On a terminal non-success response or exhausted retries.
+            Callers that treat some 4xx as not-found (e.g. ``get``) catch this.
         """
         url = self._base_url + path
         endpoint = f"{method} {path}"
@@ -477,9 +487,6 @@ class GS1DigitalLinkClient:
 
             if _HTTP_SUCCESS_MIN <= status < _HTTP_SUCCESS_MAX:
                 _log.info("GS1 %s (%s) -> %d in %.0fms", endpoint, gtin, status, elapsed_ms)
-                return resp
-
-            if status == HTTPStatus.NOT_FOUND and not_found_ok:
                 return resp
 
             # 401 usually means the cached token expired: re-mint once and retry.
@@ -532,23 +539,43 @@ class GS1DigitalLinkClient:
         body = resp.text
         error_results = _parse_error_results(body)
         request_id = _request_id(resp)
-        if final:
-            _log.error(
-                "GS1 %s (%s) -> %d; body=%s",
-                endpoint,
-                gtin,
-                resp.status_code,
-                scrub_response_body(body)[:_ERROR_BODY_LOG_LIMIT],
-            )
-        return GS1APIError(
+        error = GS1APIError(
             status_code=resp.status_code,
             response_body=body,
             error_results=error_results,
             request_id=request_id,
         )
+        if final:
+            # A "not found" (400 no-valid-contract) is normal for get() — log INFO,
+            # not ERROR, since the caller maps it to None.
+            if _is_not_found(error):
+                _log.info("GS1 %s (%s) -> not found (%d)", endpoint, gtin, resp.status_code)
+            else:
+                _log.error(
+                    "GS1 %s (%s) -> %d; body=%s",
+                    endpoint,
+                    gtin,
+                    resp.status_code,
+                    scrub_response_body(body)[:_ERROR_BODY_LOG_LIMIT],
+                )
+        return error
 
 
 # --- Module helpers ----------------------------------------------------------
+
+
+def _is_not_found(error: GS1APIError) -> bool:
+    """Whether a :class:`GS1APIError` represents a missing GTIN (§4.3).
+
+    A missing GTIN returns ``400`` with a ``"No valid contract found"`` body; a ``404``
+    (should the deployment change) is also treated as not-found.
+    """
+    if error.status_code == HTTPStatus.NOT_FOUND:
+        return True
+    return (
+        error.status_code == HTTPStatus.BAD_REQUEST
+        and "no valid contract found" in error.response_body.lower()
+    )
 
 
 def _require_env(name: str) -> str:

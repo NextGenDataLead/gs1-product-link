@@ -145,21 +145,35 @@ def test_upsert_bulk_batches_into_groups(httpx_mock: HTTPXMock) -> None:
     assert result["status_codes"] == [200, 200, 200]
 
 
-def test_get_uses_capital_l_path_and_zfill(httpx_mock: HTTPXMock) -> None:
+def test_get_uses_ai_01_path_and_zfill(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(method="GET", status_code=200, json={"identificationKey": "x"})
     client, _ = make_client()
 
     client.get("8712345678905")
 
     request = httpx_mock.get_requests()[0]
-    assert request.url.path == "/digitallinkv2/v2/digitalLink/Gtin/08712345678905"
+    # Path keys on the GTIN application identifier "01", not the string "Gtin".
+    assert request.url.path == "/digitallinkv2/v2/digitalLink/01/08712345678905"
 
 
 def test_get_missing_returns_none(httpx_mock: HTTPXMock) -> None:
-    httpx_mock.add_response(method="GET", status_code=404, text="")
+    # A missing GTIN is a 400 with a "No valid contract found" body (not 404).
+    httpx_mock.add_response(
+        method="GET",
+        status_code=400,
+        text='"No valid contract found for Gtin with id: 00000000000000."',
+    )
     client, _ = make_client()
 
     assert client.get("00000000000000") is None
+
+
+def test_get_other_400_still_raises(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(method="GET", status_code=400, text="Some other validation error")
+    client, _ = make_client()
+
+    with pytest.raises(GS1APIError):
+        client.get("8712345678905")
 
 
 def test_set_enabled_patches_activation_status(httpx_mock: HTTPXMock) -> None:
@@ -170,7 +184,7 @@ def test_set_enabled_patches_activation_status(httpx_mock: HTTPXMock) -> None:
 
     request = httpx_mock.get_requests()[0]
     assert request.method == "PATCH"
-    assert request.url.path == "/digitallinkv2/v2/digitalLink/Gtin/08712345678905/activationStatus"
+    assert request.url.path == "/digitallinkv2/v2/digitalLink/01/08712345678905/activationStatus"
     assert json.loads(request.content) == {"isEnabled": False}
 
 
