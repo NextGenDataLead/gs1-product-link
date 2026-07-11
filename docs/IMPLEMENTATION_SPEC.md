@@ -347,38 +347,38 @@ def upsert_bulk(self, entries: list[BulkEntry]) -> BulkResult:
     """
 
 def get(self, gtin: str) -> DigitalLinkRecord | None:
-    """GET https://{host}/digitallinkv2/v2/digitalLink/Gtin/{gtin14}
+    """GET https://{host}/digitallinkv2/v2/digitalLink/01/{gtin14}
 
-    Note: path uses "digitalLink" with capital L (differs from POST paths
-    which use lowercase "digitallink"). Preserve the case exactly.
+    Note (confirmed in Phase 2): the path segment is the GTIN **application
+    identifier "01"**, NOT the string "Gtin"; "digitalLink" is capital-L (differs
+    from the lowercase POST paths). Preserve exactly. (Using "Gtin" 404s for
+    every GTIN.)
 
     Response shape: AdvancedDigitalLinkResponse — see PROJECT_HANDOVER §4.2:
-        account_number, identification_key_type, identification_key,
-        is_enabled, item_description, digital_link_url,
-        resolver_settings (nested), links[] (LinkResponse), application_identifiers[]
+        accountNumber, identificationKeyType, identificationKey, isEnabled,
+        itemDescription, useGs1Elabel, isElabelSupported, digitalLinkUrl,
+        resolverSettings (nested; resolverDomainName populated, e.g.
+        "https://id.gs1.org"), links[] (LinkResponse, incl. linkTypeTitle and
+        isElabelLink), applicationIdentifiers[]. Returns the record even when
+        isEnabled is false.
 
-    Note that LinkResponse has extra fields vs LinkRequest:
-      - link_type_title: str (human-readable, present only on response)
-      - defaultLinkType, public: optional on response, required on request
-
-    Not-found behaviour:
-        The v2 doc lists 200 / 400 / 500 as response codes — 404 is NOT
-        documented. Empirical behaviour must be captured during Phase 2:
-        - If 404 is returned → return None
-        - If 400 or 500 with a "not found"-like error body → return None
-        - Otherwise → raise GS1APIError
-        Until confirmed, treat 404 as not-found and 400/500 as errors.
+    Not-found behaviour (confirmed in Phase 2):
+        A missing GTIN returns 400 with body
+        "No valid contract found for Gtin with id: {gtin}" → return None.
+        (A 404, should the deployment change, is also treated as not-found.)
+        Other 4xx/5xx → raise GS1APIError.
     """
 
 def set_enabled(self, gtin: str, is_enabled: bool) -> None:
-    """PATCH https://{host}/digitallinkv2/v2/digitalLink/Gtin/{gtin14}/activationStatus
+    """PATCH https://{host}/digitallinkv2/v2/digitalLink/01/{gtin14}/activationStatus
 
-    Toggle the isEnabled flag without rewriting the full record. Useful for
-    lifecycle actions like temporarily disabling a QR during a recall.
+    Toggle the isEnabled flag without rewriting the full record. Path keys on the
+    GTIN application identifier "01" (as get()). Useful for lifecycle actions like
+    temporarily disabling a QR during a recall.
 
     Body: {"isEnabled": <bool>}
-    Success: 204 No Content
-    Error: 400 with ErrorResult[] body — parsed into GS1APIError.error_results
+    Success: 204 No Content. Note: to *re-enable* a record, re-`upsert` with
+    isEnabled=true (PATCH targets an existing findable record).
 
     Not exposed as an MCP tool in v0.1.0 (client method only). Add MCP wrapper
     in v0.2 if a workflow needs it.
@@ -486,8 +486,9 @@ Types from §2.1–§2.3 plus `parse_excel_row(row, column_map, extras_columns, 
 | Layer | Status | Action | Retries | Logs |
 |---|---|---|---|---|
 | GS1 API | 200/201/204 | success | — | INFO |
-| GS1 API | 400/401/403 | raise `GS1APIError` immediately | none | ERROR |
-| GS1 API | 404 (GET) | return `None` | none | INFO |
+| GS1 API | 400 "No valid contract found" (GET) | not-found → `get()` returns `None` | none | INFO |
+| GS1 API | 400/401/403 (other) | raise `GS1APIError` immediately | none | ERROR |
+| GS1 API | 404 (GET) | not-found → return `None` (fallback; real not-found is the 400 above) | none | INFO |
 | GS1 API | 404 (POST) | raise `GS1APIError` (unexpected) | none | ERROR |
 | GS1 API | 409 | raise `GS1APIError` (conflict) | none | ERROR |
 | GS1 API | 429 | back off | up to 5 | WARN retries, ERROR final |
@@ -717,9 +718,9 @@ Input schemas mirror the v2 API `CreateOrUpdateRequest` body but hide plumbing (
     properties:
       client_id: { type: string }
       gtin: { type: string, pattern: "^[0-9]{8,14}$" }
-  # GET https://{host}/digitallinkv2/v2/digitalLink/Gtin/{gtin14}
+  # GET https://{host}/digitallinkv2/v2/digitalLink/01/{gtin14}  (AI "01", not "Gtin")
   # Response = AdvancedDigitalLinkResponse (see PROJECT_HANDOVER §4.2).
-  # Not-found path (404 vs 400 vs 500) confirmed empirically in Phase 2.
+  # Not-found (confirmed Phase 2) = 400 "No valid contract found for Gtin with id: {gtin}" -> null.
 ```
 
 ### 9.2 `wordpress-mcp` tools
@@ -1160,22 +1161,21 @@ curl -X POST -H "$AUTH_HEADER" \
   ]' \
   "https://$HOST/digitallinkv2/v2/digitallinks"
 
-# 5. GET existing GTIN (mixed-case path: digitalLink with capital L)
+# 5. GET existing GTIN — path segment is the GTIN AI "01" (NOT "Gtin"); capital-L digitalLink
 curl -H "$AUTH_HEADER" \
   -o tests/fixtures/gs1_api/get_existing.json \
   -w "%{http_code}\n" \
-  "https://$HOST/digitallinkv2/v2/digitalLink/Gtin/$TEST_GTIN"
+  "https://$HOST/digitallinkv2/v2/digitalLink/01/$TEST_GTIN"
 
-# 6. GET non-existent GTIN — capture whatever GS1 NL returns for "not found":
-# could be 404, or (based on documented 200/400/500) possibly 400 or 500.
-# The response code here determines how lib.gs1_dl_client.get() handles not-found.
+# 6. GET non-existent GTIN — confirmed not-found = 400 with body
+#    "No valid contract found for Gtin with id: {gtin}" (NOT 404).
 curl -H "$AUTH_HEADER" \
   -o tests/fixtures/gs1_api/get_missing.json \
   -w "%{http_code}\n" \
-  "https://$HOST/digitallinkv2/v2/digitalLink/Gtin/00000000000000"
+  "https://$HOST/digitallinkv2/v2/digitalLink/01/00000000000000"
 ```
 
-Commit a `README.md` in `tests/fixtures/gs1_api/` documenting what each response represents, the OAuth2 token flow used (mint → Bearer JWT), and — critical — the actual not-found status code observed (confirmed `404` empty body).
+Commit a `README.md` in `tests/fixtures/gs1_api/` documenting what each response represents, the OAuth2 token flow used (mint → Bearer JWT), and — critical — the confirmed not-found behaviour (`400` with `"No valid contract found for Gtin with id: …"`).
 
 **Output:** Six fixture files (post_success, post_400, post_401, post_bulk_success, get_existing, get_missing) plus README.
 

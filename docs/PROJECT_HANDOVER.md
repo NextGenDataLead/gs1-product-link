@@ -183,11 +183,12 @@ Portal reference: `https://gs1nl-api-acc-developer.gs1.nl/api-details#api=digita
 |---|---|---|
 | `POST` | `https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitallink` | Create or update one Digital Link |
 | `POST` | `https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitallinks` | Create or update many (body is a JSON array of the single-request shape) |
-| `GET` | `https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitalLink/{identificationKeyType}/{identificationKey}` | Read one |
-| `PATCH` | `https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitalLink/{identificationKeyType}/{identificationKey}/activationStatus` | Toggle `isEnabled` without touching links / resolverSettings. 204 on success |
+| `GET` | `https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitalLink/01/{identificationKey}` | Read one (path segment is the GTIN AI `01`, not `Gtin`) |
+| `PATCH` | `https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitalLink/01/{identificationKey}/activationStatus` | Toggle `isEnabled` without touching links / resolverSettings. 204 on success |
 | `POST` | `https://gs1nl-api-acc.gs1.nl/digitallinkv2/digitalLink/validateDraft` | Dry-run validation of a draft record. Returns `isValid` + available AIs + anchor info |
 
-**Path anomalies to be preserved exactly and verified during Phase 2:**
+**Path anomalies (confirmed in Phase 2, preserve exactly):**
+- **GET/PATCH key on the GTIN application identifier `01`, not the string `Gtin`.** The v2 OpenAPI shows `{identificationKeyType}` in the path, but the deployed API expects the AI code (`01` for GTIN) there — `/digitalLink/Gtin/{gtin}` returns `404` for every GTIN.
 - POST create/update endpoints use lowercase `digitallink`; GET, PATCH, and ValidateDraft use capital-L `digitalLink`.
 - ValidateDraft is the only endpoint without a `/v2/` segment in the path (`/digitallinkv2/digitalLink/validateDraft`, not `/digitallinkv2/v2/digitalLink/validateDraft`).
 - Both may be portal-doc quirks or genuine API behaviour. The client preserves exact case and path structure; if the API turns out to be case-insensitive or the anomalies are corrected, the client still works.
@@ -243,10 +244,12 @@ Portal reference: `https://gs1nl-api-acc-developer.gs1.nl/api-details#api=digita
   "identificationKey": "string",
   "isEnabled": true,
   "itemDescription": "string",
-  "digitalLinkUrl": "string",
+  "useGs1Elabel": false,
+  "isElabelSupported": false,
+  "digitalLinkUrl": "https://id.gs1.org/01/{gtin14}",
   "resolverSettings": {
     "useGS1Resolver": true,
-    "resolverDomainName": "string"
+    "resolverDomainName": "https://id.gs1.org"
   },
   "links": [{
     "linkType": "string",
@@ -256,7 +259,8 @@ Portal reference: `https://gs1nl-api-acc-developer.gs1.nl/api-details#api=digita
     "targetUrl": "string",
     "defaultLinkType": true,
     "public": true,
-    "mediaType": "string"
+    "mediaType": "string",
+    "isElabelLink": false
   }],
   "applicationIdentifiers": [{
     "identifier": "string",
@@ -272,7 +276,7 @@ Portal reference: `https://gs1nl-api-acc-developer.gs1.nl/api-details#api=digita
 - `digitalLinkUrl` — the computed Digital Link URI (e.g. `https://id.gs1.org/01/08712345678905`). Returned by the API; the client can use it directly for QR encoding rather than constructing locally, though the local construction is deterministic and gives the same result.
 - `linkTypeTitle` — human-readable name for `linkType` (e.g. `"pip"` → `"Product Information Page"`). Not present on request bodies; present on responses only.
 - `applicationIdentifiers[].name` — human-readable name for the AI code (e.g. `"10"` → `"Batch/Lot Number"`).
-- **Documented response codes:** 200, 400, 500. **404 confirmed in Phase 2:** a GET for a non-existent GTIN returns **`404` with an empty body**, so the client maps 404 → `None`. Business errors on writes return `400` with the standard `ErrorResult[]` body (e.g. `21011 "No valid contract found."` when the account lacks a Digital Link contract; `21001` for missing required fields).
+- **Not-found (confirmed in Phase 2):** a GET for a non-existent GTIN returns **`400`** with the plain-string body `"No valid contract found for Gtin with id: {gtin}"` (not 404), which the client maps to `None`. GET returns the full record even when `isEnabled` is false. Business errors on writes return `400` with the standard `ErrorResult[]` array body (e.g. `21011 "No valid contract found."` when the GTIN has no valid contract/product under the account; `21001` for missing required fields). The response also carries `useGs1Elabel`, `isElabelSupported`, a populated `resolverDomainName` (e.g. `https://id.gs1.org`), and `links[].isElabelLink` — beyond the fields listed above.
 
 **`UpdateDigitalLinkIsEnabledStatusInputModel` (PATCH activationStatus body):**
 
@@ -474,9 +478,9 @@ TOKEN=$(curl -s -X POST \
   "https://$H/authorization/token" \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
 curl -i -H "Authorization: Bearer $TOKEN" \
-  "https://$H/digitallinkv2/v2/digitalLink/Gtin/00000000000000"
+  "https://$H/digitallinkv2/v2/digitalLink/01/00000000000000"
 ```
-Mint `200` + `{"access_token": ...}` = credentials live; GET `404` = auth works and not-found confirmed. Mint `400 "Your ClientId or ClientSecret might be incorrect."` = wrong/inactive credentials. The account you may write to is the `accountNumber` claim inside the JWT.
+Mint `200` + `{"access_token": ...}` = credentials live; GET `400 "No valid contract found for Gtin with id: …"` = auth works and not-found confirmed (path uses the GTIN AI `01`). Mint `400 "Your ClientId or ClientSecret might be incorrect."` = wrong/inactive credentials. The account you may write to is the `accountNumber` claim inside the JWT.
 
 **6. Run the tool.**
 
@@ -505,7 +509,7 @@ WordPress (see §5.4 for details on each):
 [ ] Slug strategy confirmed with client
 
 [ ] clients.yml and .env populated
-[ ] Smoke test against test environment returns 200 or 404 (not 401)
+[ ] Smoke test against test environment: token mints (200) and a GET returns 200 or 400-not-found (not 401)
 [ ] Dry-run on 1 GTIN in test succeeds
 [ ] Production key configured
 [ ] Production dry-run succeeds
@@ -1108,7 +1112,7 @@ Source: `https://www.gs1.nl/producten-services/data-exchange/tarieven/`.
 - **Status:** Ready to build
 - **Last updated:** 2026-07-11
 - **Changes from 0.8:**
-  - **§4.1/§4.2 auth corrected to OAuth2 client-credentials** (empirically confirmed in Phase 2, replacing the assumed static token + `auth_scheme` model): `POST /authorization/token` with `client_id`/`client_secret` headers → 1h Bearer JWT; the client mints/caches/refreshes it. `accountNumber` is **per-environment**, taken from the token's `accountNumber` claim (sandbox `8720796420906`, production `8719965024137`). Not-found confirmed `404` empty body. Blocker recorded: a **Digital Link contract** must be provisioned on the account or creates return `21011 "No valid contract found."`.
+  - **§4.1/§4.2 auth corrected to OAuth2 client-credentials** (empirically confirmed in Phase 2, replacing the assumed static token + `auth_scheme` model): `POST /authorization/token` with `client_id`/`client_secret` headers → 1h Bearer JWT; the client mints/caches/refreshes it. `accountNumber` is **per-environment** (sandbox `8720796420906`, production `8719965024137`; the API also accepts the GLN). **GET/PATCH key on the GTIN AI `01`, not `Gtin`** (using `Gtin` 404s everything). Not-found confirmed as `400 "No valid contract found for Gtin with id: …"` (not 404). MyGS1-UI Digital Link activations are visible via the v2 API (same system). Production create/get/set_enabled verified end-to-end; the sandbox `21011` is a sandbox provisioning gap (no valid test GTINs/contract).
   - §5.1/§5.2 onboarding, §8.2, §9.1 R10, §10.1 `clients.example.yml`, and §10.2 `.env.example` updated to per-environment `client_id_env_*`/`client_secret_env_*` + `account_number_*`; `auth_scheme`/`token_env` retired.
 - **Changes from 0.7:**
   - §4.1 rewritten for **Digital Link API v2**: host names captured (`gs1nl-api-acc.gs1.nl` test, `gs1nl-api.gs1.nl` production), path prefix `/digitallinkv2/v2/`, auth header changed from `Ocp-Apim-Subscription-Key` to `Authorization` token (Bearer default, raw as fallback via `gs1.auth_scheme`).

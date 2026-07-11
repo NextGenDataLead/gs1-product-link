@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: a Node job builds and tests the `mcps/gs1-nl` workspace.
 
 ### Changed
+- **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
+  is the GTIN application identifier `01`, not the string `Gtin`
+  (`/digitalLink/01/{gtin14}`). Using `Gtin` returned `404` for every GTIN, so `get()`
+  and `set_enabled()` never worked before. Not-found is a `400` with body
+  `"No valid contract found for Gtin with id: …"` (not 404) → mapped to `None`.
+  `DigitalLinkRecord` gains `useGs1Elabel` / `isElabelSupported`; docs (§4.2/§4.3/§5.1/
+  §9.1/§13.2) updated. MyGS1-UI Digital Link activations are visible via the API v2.
 - **GS1 auth model corrected to OAuth2 client-credentials** (empirically confirmed
   in Phase 2, replacing the spec's assumed static token / `auth_scheme` switch).
   Both clients now mint a short-lived JWT from `client_id`/`client_secret` via
