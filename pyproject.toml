@@ -45,5 +45,9 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "PL"]
 strict = true
 python_version = "3.11"
 
+[[tool.mypy.overrides]]
+module = "openpyxl.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
