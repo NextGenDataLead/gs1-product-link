@@ -404,20 +404,30 @@ def validate_draft(
     """
 ```
 
-**Auth:** `Authorization` header, format determined by `config.auth_scheme`:
+**Auth (OAuth2 client-credentials — confirmed in Phase 2):** the client mints a short-lived JWT and sends it as a Bearer token. `GS1Config` carries `client_id_env` / `client_secret_env` (env var names) and `account_number` already resolved for the target `environment`.
 
 ```python
+def _mint_token(self) -> str:
+    # POST https://{host}/authorization/token with lowercase client_id /
+    # client_secret headers -> {"access_token", "token_type", "expires_in"}.
+    headers = {
+        "client_id": os.environ[self.config.client_id_env],       # MissingCredentialError
+        "client_secret": os.environ[self.config.client_secret_env],
+    }
+    resp = self._http.request("POST", self._base_url + "/authorization/token", headers=headers)
+    if resp.status_code != 200:
+        # 4xx -> ConfigError (bad/rotated credentials); else GS1APIError.
+        ...
+    data = resp.json()
+    self._token = data["access_token"]
+    self._token_expiry = time.monotonic() + float(data.get("expires_in", 3600))
+    return self._token
+
 def _auth_header(self) -> dict[str, str]:
-    token = os.environ[self.config.token_env]  # raises MissingCredentialError
-    if self.config.auth_scheme == "Bearer":
-        return {"Authorization": f"Bearer {token}"}
-    elif self.config.auth_scheme == "raw":
-        return {"Authorization": token}
-    else:
-        raise ConfigError(f"Unknown auth_scheme: {self.config.auth_scheme}")
+    return {"Authorization": f"Bearer {self._get_token()}"}
 ```
 
-Token fetched from env at each request (not cached; enables rotation without restart). During Phase 2, empirically verify which scheme GS1 NL v2 accepts by trying Bearer first; fall back to raw on 401 (log a WARNING and prompt the operator to fix `clients.yml`).
+`_get_token()` returns the cached token until ~60s before `expires_in` (default 3600s), then re-mints. A `401` from the Digital Link API invalidates the cache and triggers one re-mint + retry. Credentials and token are read from the env at mint time and **never logged**. (The earlier static-token / `auth_scheme` Bearer-vs-raw model is retired — see PROJECT_HANDOVER §4.1.)
 
 **Retry policy:**
 - 429: honour `Retry-After` if present, else exponential base 1s max 60s, up to 5 attempts
@@ -1026,20 +1036,26 @@ tests/
 
 ### 13.2 Capture GS1 API v2 responses (blocks Phase 2 completion)
 
-**Prerequisites:** Digital Link API test token in `.env`, at least one GTIN with Digital Link activated in MyGS1.
+**Prerequisites:** OAuth2 **client id + client secret** for the sandbox in `.env`, and — critically — a **Digital Link contract** on the account (without it, writes return `400 21011 "No valid contract found."`; a not-yet-provisioned contract is a GS1-side blocker).
 
 ```bash
-export GS1_TOKEN_TEST=<your test token from MyGS1>
-export ACCOUNT_NUMBER=<Noviplast's GLN>
-export TEST_GTIN=<a GTIN you own with Digital Link enabled, 14 digits, e.g. 08712345678905>
+export CLIENT_ID=<sandbox client id>       # from MyGS1 / developer portal
+export CLIENT_SECRET=<sandbox client secret>
 export HOST=gs1nl-api-acc.gs1.nl
 ```
 
-**Auth scheme note:** GS1 NL v2 accepts `Authorization: <token>` — whether raw or with `Bearer` prefix is empirical. Below uses `Bearer` as default (matches most Azure API Management setups). If you get 401 with Bearer, retry with raw:
+**Auth (confirmed OAuth2 client-credentials):** mint a JWT, then use it as a Bearer token. `accountNumber` comes from the token's own claim.
 ```bash
-export AUTH_HEADER="Authorization: Bearer $GS1_TOKEN_TEST"   # try first
-export AUTH_HEADER="Authorization: $GS1_TOKEN_TEST"           # fall back if 401
+# Mint the access token (lowercase client_id / client_secret headers):
+TOKEN=$(curl -s -X POST -H "client_id: $CLIENT_ID" -H "client_secret: $CLIENT_SECRET" \
+  "https://$HOST/authorization/token" | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+export AUTH_HEADER="Authorization: Bearer $TOKEN"
+# accountNumber is in the JWT payload (base64 middle segment) -> accountNumber claim.
+export ACCOUNT_NUMBER=<accountNumber claim from the token>
+export TEST_GTIN=<a GTIN under that account with a Digital Link contract, 14 digits>
 ```
+
+A ready-to-run helper (`capture_gs1_oauth.sh`) that mints the token, detects the scheme, and writes all six fixtures lived in the Phase-2 session scratchpad.
 
 Run six commands (five capture calls plus a GET when its endpoint is known):
 

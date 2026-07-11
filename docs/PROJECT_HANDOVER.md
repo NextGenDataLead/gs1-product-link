@@ -162,7 +162,14 @@ Developer portal (browses schemas, changelog, "Try it" console): `https://gs1nl-
 
 **API version:** v2. All endpoints live under the path prefix `/digitallinkv2/v2/`. The schemas below are captured from the portal's Open API 3 definition.
 
-**Authentication:** API access token in the `Authorization` header. Tokens issued via MyGS1, separate token per environment (test and production). Format documented by GS1 NL as "API access token"; whether it's used raw or with a `Bearer ` prefix is empirical and locked during Phase 2. The client library configures the exact header value via `gs1.auth_scheme` in `clients.yml` (default `"Bearer"`).
+**Authentication (confirmed in Phase 2 — OAuth2 client-credentials):** Access is **not** a static token. GS1 NL issues a **client id + client secret** per environment (via MyGS1 / the developer portal). The client mints a short-lived JWT and then calls the Digital Link API with it:
+
+1. `POST https://{host}/authorization/token` with **headers** `client_id: <id>` and `client_secret: <secret>` (lowercase header names). Returns `{"access_token": "<JWT>", "token_type": "Bearer", "expires_in": 3600}`.
+2. Call the Digital Link API with `Authorization: Bearer <JWT>`. The JWT lives **1 hour**, so the client mints, caches, and refreshes it (and re-mints on a `401`).
+
+The JWT carries an `accountNumber` claim (the entitled account) and `apiScopes: ["DigitalLinkApi"]`. `clients.yml` names the credential env vars per environment (`client_id_env_test`/`client_secret_env_test`, `…_production`); the earlier `auth_scheme` / single-token model is retired.
+
+> **Historical note:** the spec originally modeled a single static "API access token" in the `Authorization` header with a Bearer-vs-raw switch. Phase 2 empirically found the real mechanism is the OAuth2 flow above; this section is the corrected, observed behaviour.
 
 **Historical note:** an earlier version of the API (v1) used `Ocp-Apim-Subscription-Key` as the header — the Azure API Management default. v2 changed this to `Authorization`. Risk R10 in §9.1 anticipated this migration; v2 is the observed post-migration state.
 
@@ -215,7 +222,7 @@ Portal reference: `https://gs1nl-api-acc-developer.gs1.nl/api-details#api=digita
 
 **Field notes:**
 
-- `accountNumber` — the account under which the Digital Link is created. Almost certainly the client's GLN (Noviplast). To be verified against MyGS1 during onboarding.
+- `accountNumber` — the account under which the Digital Link is created. **Environment-specific** and taken from the minted token's `accountNumber` claim (Phase 2 found the sandbox account is `8720796420906`, not Noviplast's production GLN). `clients.yml` holds `account_number_test` / `account_number_production` separately.
 - `identificationKeyType` — enumerated string. `"Gtin"` for product Digital Links; other values exist for `Sscc`, `Gln`, etc., but aren't used in v0.1.0 scope.
 - `identificationKey` — the identifier value. For GTIN: the digit string, padded to 14 characters (`gtin14`).
 - `resolverSettings.useGS1Resolver` — always `true` for our scope (matches decision §3.1). `resolverDomainName` is only meaningful when `useGS1Resolver` is `false`; can be `null` otherwise.
@@ -265,7 +272,7 @@ Portal reference: `https://gs1nl-api-acc-developer.gs1.nl/api-details#api=digita
 - `digitalLinkUrl` — the computed Digital Link URI (e.g. `https://id.gs1.org/01/08712345678905`). Returned by the API; the client can use it directly for QR encoding rather than constructing locally, though the local construction is deterministic and gives the same result.
 - `linkTypeTitle` — human-readable name for `linkType` (e.g. `"pip"` → `"Product Information Page"`). Not present on request bodies; present on responses only.
 - `applicationIdentifiers[].name` — human-readable name for the AI code (e.g. `"10"` → `"Batch/Lot Number"`).
-- **Documented response codes:** 200, 400, 500. **No 404 documented** — behaviour for "GTIN not found" is unknown until empirically tested. The client should treat 400/500 with a specific error-body pattern (or an empty result) as "not found" if 404 turns out not to be returned. Verify during Phase 2.
+- **Documented response codes:** 200, 400, 500. **404 confirmed in Phase 2:** a GET for a non-existent GTIN returns **`404` with an empty body**, so the client maps 404 → `None`. Business errors on writes return `400` with the standard `ErrorResult[]` body (e.g. `21011 "No valid contract found."` when the account lacks a Digital Link contract; `21001` for missing required fields).
 
 **`UpdateDigitalLinkIsEnabledStatusInputModel` (PATCH activationStatus body):**
 

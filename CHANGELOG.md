@@ -14,10 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `lib/logging_setup.py` — `scrub_response_body` and `scrub_headers` that redact
   secrets and `meta.*` from log output (§5.2).
 - `lib/gs1_dl_client.py` — synchronous GS1 NL Digital Link API v2 client
-  (`upsert`, `upsert_bulk`, `get`, `set_enabled`, `validate_draft`) with the
-  Bearer/raw `Authorization` switch, the §5.1 retry policy, structured 400
-  `ErrorResult[]` parsing, and token-scrubbed logging. Path-case anomalies
-  (capital-L `digitalLink` for GET/PATCH; no `/v2/` in ValidateDraft) preserved.
+  (`upsert`, `upsert_bulk`, `get`, `set_enabled`, `validate_draft`) with the §5.1
+  retry policy, structured 400 `ErrorResult[]` parsing, and token-scrubbed
+  logging. Path-case anomalies (capital-L `digitalLink` for GET/PATCH; no `/v2/`
+  in ValidateDraft) preserved.
 - `mcps/gs1-nl/` — TypeScript MCP server exposing three tools
   (`gs1_digital_link_upsert`, `gs1_digital_link_upsert_bulk`,
   `gs1_digital_link_get`) over stdio, resolving client config from `clients.yml`
@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tools (including end-to-end tool calls over an in-memory transport). A skipped
   fixture-backed test slot awaits captured GS1 responses (§13.2).
 - CI: a Node job builds and tests the `mcps/gs1-nl` workspace.
+
+### Changed
+- **GS1 auth model corrected to OAuth2 client-credentials** (empirically confirmed
+  in Phase 2, replacing the spec's assumed static token / `auth_scheme` switch).
+  Both clients now mint a short-lived JWT from `client_id`/`client_secret` via
+  `POST /authorization/token`, cache it until near expiry, refresh on `401`, and
+  send it as a Bearer token. `clients.yml`, its schema, and `.env.example` now
+  carry per-environment `client_id_env_*`/`client_secret_env_*` and
+  `account_number_*` (the account differs per environment). Docs updated
+  (PROJECT_HANDOVER §4.1–4.2, IMPLEMENTATION_SPEC §4.3, §13.2).
 
 ## [0.0.1] - 2026-07-09
 
