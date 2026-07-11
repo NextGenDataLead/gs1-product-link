@@ -155,9 +155,7 @@ class GdsnSheet:
         """Whether any column resolves the given attribute."""
         return any(c.matches_attribute(attribute) for c in self.columns)
 
-    def pick_localised(
-        self, gtin: str, market: str, attribute: str, lang: str
-    ) -> str | None:
+    def pick_localised(self, gtin: str, market: str, attribute: str, lang: str) -> str | None:
         """Return the ``Value`` whose paired ``LanguageCode`` matches ``lang``."""
         row = self.rows_by_key.get((gtin, market))
         if row is None:
@@ -241,8 +239,7 @@ class GdsnSheet:
             (
                 c
                 for c in cols
-                if c.leaf_name == _LEAF_VALUE
-                and any(_FILE_TYPE_SEGMENT in seg for seg in c.path)
+                if c.leaf_name == _LEAF_VALUE and any(_FILE_TYPE_SEGMENT in seg for seg in c.path)
             ),
             None,
         )
@@ -361,8 +358,7 @@ def _validate_sources(
         if not missing:
             continue
         detail = (
-            f"field {field!r}: source sheet {src.sheet!r}/"
-            f"attribute {src.attribute!r} not found"
+            f"field {field!r}: source sheet {src.sheet!r}/attribute {src.attribute!r} not found"
         )
         (errors if field in REQUIRED_FIELDS else warnings).append(detail)
     return warnings, errors

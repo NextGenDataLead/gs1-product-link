@@ -12,15 +12,37 @@ from scripts import inspect_export
 
 def _write_gdsn_xlsx(tmp_path: Path) -> str:
     header = [
-        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
-         "TradeItemUnitDescriptorCode", "TradeItemDescriptionInformation",
-         "TradeItemDescriptionInformation", "TradeItemDescriptionInformation"],
-        [None, None, None, None, "DescriptionShort[0]", "DescriptionShort[0]",
-         "BrandNameInformation"],
+        [
+            "Gtin",
+            "TargetMarketCountryCode",
+            "InformationProviderOfTradeItem",
+            "TradeItemUnitDescriptorCode",
+            "TradeItemDescriptionInformation",
+            "TradeItemDescriptionInformation",
+            "TradeItemDescriptionInformation",
+        ],
+        [
+            None,
+            None,
+            None,
+            None,
+            "DescriptionShort[0]",
+            "DescriptionShort[0]",
+            "BrandNameInformation",
+        ],
         [None, None, None, None, "LanguageCode", "Value", "BrandName"],
-        [None] * 7, [None] * 7, [None] * 7,
-        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
-         "Short product name (3297)", "Short product name (3297)", "Brand Name (3336)"],
+        [None] * 7,
+        [None] * 7,
+        [None] * 7,
+        [
+            "GTIN (3059)",
+            "Country (3179)",
+            "Provider (3088)",
+            "Unit (3074)",
+            "Short product name (3297)",
+            "Short product name (3297)",
+            "Brand Name (3336)",
+        ],
     ]
     data = [["08713195007359", "528", "GLN", "BASE_UNIT_OR_EACH", "nl", "Rugsteun", "Noviplast"]]
     workbook = openpyxl.Workbook()

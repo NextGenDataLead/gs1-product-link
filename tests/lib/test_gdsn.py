@@ -13,20 +13,46 @@ from lib.gdsn import GdsnSource, build_records, read_workbook
 # markets (528 = nl, 056 = fr), mirroring the real export's structure.
 
 _DESC_HEADER = [
-    ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
-     "TradeItemUnitDescriptorCode", "TradeItemDescriptionInformation",
-     "TradeItemDescriptionInformation", "TradeItemDescriptionInformation",
-     "TradeItemDescriptionInformation", "TradeItemDescriptionInformation"],
-    [None, None, None, None, "DescriptionShort[0]", "DescriptionShort[0]",
-     "DescriptionShort[1]", "DescriptionShort[1]", "BrandNameInformation"],
+    [
+        "Gtin",
+        "TargetMarketCountryCode",
+        "InformationProviderOfTradeItem",
+        "TradeItemUnitDescriptorCode",
+        "TradeItemDescriptionInformation",
+        "TradeItemDescriptionInformation",
+        "TradeItemDescriptionInformation",
+        "TradeItemDescriptionInformation",
+        "TradeItemDescriptionInformation",
+    ],
+    [
+        None,
+        None,
+        None,
+        None,
+        "DescriptionShort[0]",
+        "DescriptionShort[0]",
+        "DescriptionShort[1]",
+        "DescriptionShort[1]",
+        "BrandNameInformation",
+    ],
     [None, None, None, None, "LanguageCode", "Value", "LanguageCode", "Value", "BrandName"],
     [None] * 9,
     [None] * 9,
     [None] * 9,
-    ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
-     "Short product name (3297)", "Short product name (3297)",
-     "Short product name (3297)", "Short product name (3297)", "Brand Name (3336)"],
+    [
+        "GTIN (3059)",
+        "Country (3179)",
+        "Provider (3088)",
+        "Unit (3074)",
+        "Short product name (3297)",
+        "Short product name (3297)",
+        "Short product name (3297)",
+        "Short product name (3297)",
+        "Brand Name (3336)",
+    ],
 ]
+
+
 def _drow(gtin: str, market: str, *tail: object) -> list[object]:
     """Build a data row with the shared GLN + consumer-unit key columns."""
     return [gtin, market, "GLN", "BASE_UNIT_OR_EACH", *tail]
@@ -40,15 +66,27 @@ _DESC_DATA = [
 ]
 
 _MEAS_HEADER = [
-    ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
-     "TradeItemUnitDescriptorCode", "TradeItemMeasurements", "TradeItemMeasurements"],
+    [
+        "Gtin",
+        "TargetMarketCountryCode",
+        "InformationProviderOfTradeItem",
+        "TradeItemUnitDescriptorCode",
+        "TradeItemMeasurements",
+        "TradeItemMeasurements",
+    ],
     [None, None, None, None, "NetContent[0]", "NetContent[0]"],
     [None, None, None, None, "MeasurementUnitCode", "Value"],
     [None] * 6,
     [None] * 6,
     [None] * 6,
-    ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
-     "Net Content (3510)", "Net Content (3510)"],
+    [
+        "GTIN (3059)",
+        "Country (3179)",
+        "Provider (3088)",
+        "Unit (3074)",
+        "Net Content (3510)",
+        "Net Content (3510)",
+    ],
 ]
 _MEAS_DATA = [
     _drow("08713195007359", "528", "H87", "4"),
@@ -129,8 +167,10 @@ def test_build_records_missing_default_language_is_error(tmp_path: Path) -> None
 def test_build_records_missing_required_source_errors(tmp_path: Path) -> None:
     # E17 (required): product_name mapped to a sheet that isn't present.
     sheets = read_workbook(_write_workbook(tmp_path))
-    bad_map = {"product_name": GdsnSource(sheet="Nope", attribute="3297", localised=True),
-               "brand": GdsnSource(sheet="TradeItemDescription", attribute="3336")}
+    bad_map = {
+        "product_name": GdsnSource(sheet="Nope", attribute="3297", localised=True),
+        "brand": GdsnSource(sheet="TradeItemDescription", attribute="3336"),
+    }
 
     result = build_records(sheets, bad_map, _MARKET_LANGUAGE, "nl")
 

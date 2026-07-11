@@ -141,8 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     _print_report(sheets)
-    print("\n# Suggested clients.yml export block "
-          "(map market codes to languages, then tune):")
+    print("\n# Suggested clients.yml export block (map market codes to languages, then tune):")
     print(yaml.safe_dump({"export": _suggest_map(sheets)}, sort_keys=False, allow_unicode=True))
     return 0
 

@@ -289,9 +289,7 @@ def parse_excel_row(
     gtin = scalars.get("gtin")
     product_name = localised.get("product_name")
     if not product_name or default_language not in product_name:
-        raise ExportParseError(
-            f"GTIN {gtin or '?'}: missing product_name.{default_language}"
-        )
+        raise ExportParseError(f"GTIN {gtin or '?'}: missing product_name.{default_language}")
 
     return build_product_record(
         gtin=gtin,

@@ -25,9 +25,7 @@ def _write_flat_xlsx(tmp_path: Path, header: list[str], rows: list[list[Any]]) -
     return str(path)
 
 
-def _patch_client(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export: dict[str, Any]
-) -> None:
+def _patch_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export: dict[str, Any]) -> None:
     config = {
         "version": 1,
         "clients": {
@@ -160,7 +158,9 @@ def test_gdsn_integration_writes_output(tmp_path: Path, monkeypatch: pytest.Monk
         "market_language": {"528": "nl", "056": "fr"},
         "gdsn_map": {
             "product_name": {
-                "sheet": "TradeItemDescription", "attribute": "3297", "localised": True,
+                "sheet": "TradeItemDescription",
+                "attribute": "3297",
+                "localised": True,
             },
             "brand": {"sheet": "TradeItemDescription", "attribute": "3336"},
         },
@@ -177,21 +177,41 @@ def test_gdsn_integration_writes_output(tmp_path: Path, monkeypatch: pytest.Monk
 
 def _write_gdsn_xlsx(tmp_path: Path) -> str:
     header = [
-        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
-         "TradeItemUnitDescriptorCode", "TradeItemDescriptionInformation",
-         "TradeItemDescriptionInformation", "TradeItemDescriptionInformation"],
-        [None, None, None, None, "DescriptionShort[0]", "DescriptionShort[0]",
-         "BrandNameInformation"],
+        [
+            "Gtin",
+            "TargetMarketCountryCode",
+            "InformationProviderOfTradeItem",
+            "TradeItemUnitDescriptorCode",
+            "TradeItemDescriptionInformation",
+            "TradeItemDescriptionInformation",
+            "TradeItemDescriptionInformation",
+        ],
+        [
+            None,
+            None,
+            None,
+            None,
+            "DescriptionShort[0]",
+            "DescriptionShort[0]",
+            "BrandNameInformation",
+        ],
         [None, None, None, None, "LanguageCode", "Value", "BrandName"],
-        [None] * 7, [None] * 7, [None] * 7,
-        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
-         "Short product name (3297)", "Short product name (3297)", "Brand Name (3336)"],
+        [None] * 7,
+        [None] * 7,
+        [None] * 7,
+        [
+            "GTIN (3059)",
+            "Country (3179)",
+            "Provider (3088)",
+            "Unit (3074)",
+            "Short product name (3297)",
+            "Short product name (3297)",
+            "Brand Name (3336)",
+        ],
     ]
     data = [
-        ["08713195007359", "528", "GLN", "BASE_UNIT_OR_EACH", "nl", "Rugsteun NL",
-         "Noviplast"],
-        ["08713195007359", "056", "GLN", "BASE_UNIT_OR_EACH", "fr", "Support FR",
-         "Noviplast"],
+        ["08713195007359", "528", "GLN", "BASE_UNIT_OR_EACH", "nl", "Rugsteun NL", "Noviplast"],
+        ["08713195007359", "056", "GLN", "BASE_UNIT_OR_EACH", "fr", "Support FR", "Noviplast"],
     ]
     workbook = openpyxl.Workbook()
     workbook.remove(workbook.active)
