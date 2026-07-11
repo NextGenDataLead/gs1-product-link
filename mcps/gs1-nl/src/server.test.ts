@@ -19,9 +19,9 @@ import type { ToolDeps } from "./tools.js";
 
 const CONFIG: GS1ClientConfig = {
   host: "gs1nl-api-acc.gs1.nl",
-  accountNumber: "acct",
-  authScheme: "Bearer",
-  token: "tok",
+  accountNumber: "8720796420906",
+  clientId: "client-id",
+  clientSecret: "client-secret",
   resolverSettings: { useGS1Resolver: true, resolverDomainName: null },
   batchSize: 50,
 };
