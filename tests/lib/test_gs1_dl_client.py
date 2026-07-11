@@ -1,13 +1,16 @@
-"""Tests for the GS1 Digital Link API v2 client (IMPLEMENTATION_SPEC §4.3, §5, §6.3).
+"""Tests for the GS1 Digital Link API v2 client (IMPLEMENTATION_SPEC §4.2-4.3, §5, §6.3).
 
-All HTTP is mocked with ``pytest-httpx``; retry backoff is made instant by
-injecting a no-op ``sleep``.
+Auth is OAuth2 client-credentials: the client mints a JWT from client_id/client_secret
+and sends it as a Bearer token. Digital Link tests pre-seed the token cache so they
+exercise the API surface directly; a separate group covers minting/refresh. All HTTP is
+mocked with ``pytest-httpx``; retry backoff is made instant via an injected ``sleep``.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import time
 
 import httpx
 import pytest
@@ -22,9 +25,15 @@ from lib.gs1_dl_client import (
     ResolverSettings,
 )
 
-TOKEN_ENV = "GS1_TOKEN_TEST"
-TOKEN_VALUE = "SECRET-TOKEN-XYZ"
-TEST_HOST = "https://gs1nl-api-acc.gs1.nl"
+CLIENT_ID_ENV = "GS1_CLIENT_ID"
+CLIENT_SECRET_ENV = "GS1_CLIENT_SECRET"
+CLIENT_ID_VALUE = "client-id-abc"
+CLIENT_SECRET_VALUE = "SECRET-CLIENT-XYZ"
+TOKEN_VALUE = "minted.jwt.token"
+
+HOST = "https://gs1nl-api-acc.gs1.nl"
+TOKEN_URL = f"{HOST}/authorization/token"
+UPSERT_URL = f"{HOST}/digitallinkv2/v2/digitallink"
 
 SAMPLE_LINK: LinkInput = {
     "link_type": "pip",
@@ -39,25 +48,35 @@ SAMPLE_LINK: LinkInput = {
 
 def make_config(**overrides: object) -> GS1Config:
     params: dict[str, object] = {
-        "account_number": "8712345000003",
-        "token_env": TOKEN_ENV,
+        "account_number": "8720796420906",
+        "client_id_env": CLIENT_ID_ENV,
+        "client_secret_env": CLIENT_SECRET_ENV,
     }
     params.update(overrides)
     return GS1Config(**params)  # type: ignore[arg-type]
 
 
 @pytest.fixture(autouse=True)
-def _token_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(TOKEN_ENV, TOKEN_VALUE)
+def _credentials_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(CLIENT_ID_ENV, CLIENT_ID_VALUE)
+    monkeypatch.setenv(CLIENT_SECRET_ENV, CLIENT_SECRET_VALUE)
 
 
-def make_client(config: GS1Config | None = None) -> tuple[GS1DigitalLinkClient, list[float]]:
+def _unseeded(config: GS1Config | None = None) -> tuple[GS1DigitalLinkClient, list[float]]:
     sleeps: list[float] = []
     client = GS1DigitalLinkClient(config or make_config(), sleep=sleeps.append)
     return client, sleeps
 
 
-# --- Happy paths & path anomalies --------------------------------------------
+def make_client(config: GS1Config | None = None) -> tuple[GS1DigitalLinkClient, list[float]]:
+    """A client with the token cache pre-seeded (no mint round-trip)."""
+    client, sleeps = _unseeded(config)
+    client._token = TOKEN_VALUE
+    client._token_expiry = time.monotonic() + 3600
+    return client, sleeps
+
+
+# --- Happy paths & path anomalies (token pre-seeded) -------------------------
 
 
 def test_upsert_posts_lowercase_path_and_camelcase_body(httpx_mock: HTTPXMock) -> None:
@@ -70,7 +89,7 @@ def test_upsert_posts_lowercase_path_and_camelcase_body(httpx_mock: HTTPXMock) -
     assert request.url.path == "/digitallinkv2/v2/digitallink"
     assert request.headers["Authorization"] == f"Bearer {TOKEN_VALUE}"
     body = json.loads(request.content)
-    assert body["accountNumber"] == "8712345000003"
+    assert body["accountNumber"] == "8720796420906"
     assert body["identificationKeyType"] == "Gtin"
     assert body["identificationKey"] == "08712345678905"  # zero-padded to 14
     assert body["resolverSettings"] == {"useGS1Resolver": True, "resolverDomainName": None}
@@ -137,7 +156,7 @@ def test_get_uses_capital_l_path_and_zfill(httpx_mock: HTTPXMock) -> None:
 
 
 def test_get_missing_returns_none(httpx_mock: HTTPXMock) -> None:
-    httpx_mock.add_response(method="GET", status_code=404, text="not found")
+    httpx_mock.add_response(method="GET", status_code=404, text="")
     client, _ = make_client()
 
     assert client.get("00000000000000") is None
@@ -168,7 +187,7 @@ def test_validate_draft_path_has_no_v2_segment(httpx_mock: HTTPXMock) -> None:
     assert result["validationResult"] == {"isValid": True}
 
 
-# --- Retry policy (§4.3 / §5.1) ----------------------------------------------
+# --- Retry policy (§4.3 / §5.1) — token pre-seeded ---------------------------
 
 
 def test_retry_on_429_honours_retry_after(httpx_mock: HTTPXMock) -> None:
@@ -241,7 +260,7 @@ def test_network_error_exhaustion_raises(httpx_mock: HTTPXMock) -> None:
     assert exc.value.status_code == 0  # network-error sentinel
 
 
-# --- Error parsing (§5.1) ----------------------------------------------------
+# --- Error parsing (§5.1) — token pre-seeded ---------------------------------
 
 
 def test_400_populates_error_results(httpx_mock: HTTPXMock) -> None:
@@ -273,52 +292,86 @@ def test_400_malformed_body_leaves_error_results_none(httpx_mock: HTTPXMock) -> 
     assert exc.value.response_body == "not json at all"
 
 
-# --- Auth (§4.3) -------------------------------------------------------------
+# --- OAuth2 token minting / refresh (§4.2) -----------------------------------
 
 
-def test_401_bearer_falls_back_to_raw(httpx_mock: HTTPXMock) -> None:
-    httpx_mock.add_response(method="POST", status_code=401)
-    httpx_mock.add_response(method="POST", status_code=200)
-    client, _ = make_client()
-
-    client.upsert("8712345678905", "p", [SAMPLE_LINK])
-
-    requests = httpx_mock.get_requests()
-    assert requests[0].headers["Authorization"] == f"Bearer {TOKEN_VALUE}"
-    assert requests[1].headers["Authorization"] == TOKEN_VALUE  # raw fallback
-
-
-def test_401_persisting_after_fallback_raises(httpx_mock: HTTPXMock) -> None:
-    httpx_mock.add_response(method="POST", status_code=401)
-    httpx_mock.add_response(method="POST", status_code=401)
-    client, _ = make_client()
-
-    with pytest.raises(GS1APIError) as exc:
-        client.upsert("8712345678905", "p", [SAMPLE_LINK])
-
-    assert exc.value.status_code == 401
-    assert len(httpx_mock.get_requests()) == 2
-
-
-def test_raw_scheme_sends_bare_token(httpx_mock: HTTPXMock) -> None:
-    httpx_mock.add_response(method="POST", status_code=200)
-    client, _ = make_client(make_config(auth_scheme="raw"))
+def test_mints_token_then_calls_api(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="POST", url=TOKEN_URL, json={"access_token": TOKEN_VALUE, "expires_in": 3600}
+    )
+    httpx_mock.add_response(method="POST", url=UPSERT_URL, status_code=200)
+    client, _ = _unseeded()
 
     client.upsert("8712345678905", "p", [SAMPLE_LINK])
 
-    assert httpx_mock.get_requests()[0].headers["Authorization"] == TOKEN_VALUE
+    token_req, api_req = httpx_mock.get_requests()
+    assert token_req.url == httpx.URL(TOKEN_URL)
+    assert token_req.headers["client_id"] == CLIENT_ID_VALUE
+    assert token_req.headers["client_secret"] == CLIENT_SECRET_VALUE
+    assert api_req.headers["Authorization"] == f"Bearer {TOKEN_VALUE}"
 
 
-def test_unknown_auth_scheme_raises_config_error() -> None:
-    client, _ = make_client()
+def test_token_is_cached_across_calls(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="POST", url=TOKEN_URL, json={"access_token": TOKEN_VALUE, "expires_in": 3600}
+    )
+    httpx_mock.add_response(method="POST", url=UPSERT_URL, status_code=200)
+    httpx_mock.add_response(method="POST", url=UPSERT_URL, status_code=200)
+    client, _ = _unseeded()
+
+    client.upsert("8712345678905", "p", [SAMPLE_LINK])
+    client.upsert("8712345678905", "p", [SAMPLE_LINK])
+
+    token_calls = [r for r in httpx_mock.get_requests() if str(r.url) == TOKEN_URL]
+    assert len(token_calls) == 1  # minted once, reused
+
+
+def test_expired_token_is_refreshed(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="POST", url=TOKEN_URL, json={"access_token": TOKEN_VALUE, "expires_in": 3600}
+    )
+    httpx_mock.add_response(method="POST", url=UPSERT_URL, status_code=200)
+    client, _ = _unseeded()
+    client._token = "stale"
+    client._token_expiry = time.monotonic() - 1  # already expired
+
+    client.upsert("8712345678905", "p", [SAMPLE_LINK])
+
+    api_req = next(r for r in httpx_mock.get_requests() if str(r.url) == UPSERT_URL)
+    assert api_req.headers["Authorization"] == f"Bearer {TOKEN_VALUE}"
+
+
+def test_401_refreshes_token_and_retries(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client()  # seeded with a (now-rejected) token
+    httpx_mock.add_response(method="POST", url=UPSERT_URL, status_code=401)
+    httpx_mock.add_response(
+        method="POST", url=TOKEN_URL, json={"access_token": "fresh.jwt", "expires_in": 3600}
+    )
+    httpx_mock.add_response(method="POST", url=UPSERT_URL, status_code=200)
+
+    client.upsert("8712345678905", "p", [SAMPLE_LINK])
+
+    api_calls = [r for r in httpx_mock.get_requests() if str(r.url) == UPSERT_URL]
+    assert len(api_calls) == 2
+    assert api_calls[1].headers["Authorization"] == "Bearer fresh.jwt"
+
+
+def test_mint_rejected_raises_config_error(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url=TOKEN_URL,
+        status_code=400,
+        text="Your ClientId or ClientSecret might be incorrect.",
+    )
+    client, _ = _unseeded()
 
     with pytest.raises(ConfigError):
-        client._auth_header("weird")
+        client.upsert("8712345678905", "p", [SAMPLE_LINK])
 
 
-def test_missing_token_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(TOKEN_ENV, raising=False)
-    client, _ = make_client()
+def test_missing_client_credential_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(CLIENT_ID_ENV, raising=False)
+    client, _ = _unseeded()
 
     with pytest.raises(MissingCredentialError):
         client.upsert("8712345678905", "p", [SAMPLE_LINK])
@@ -327,11 +380,11 @@ def test_missing_token_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- PII scrubbing DoD (§5.2) ------------------------------------------------
 
 
-def test_token_never_appears_in_logs(
+def test_secrets_never_appear_in_logs(
     httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
 ) -> None:
     # The 400 body carries a sensitive-looking field; the ERROR log must scrub it,
-    # and the request token must never surface in any log record.
+    # and neither the token nor the client secret may surface in any log record.
     httpx_mock.add_response(
         method="POST",
         status_code=400,
@@ -353,6 +406,7 @@ def test_token_never_appears_in_logs(
 
     log_text = caplog.text
     assert TOKEN_VALUE not in log_text
+    assert CLIENT_SECRET_VALUE not in log_text
     assert "leaked-in-body" not in log_text
     assert "[REDACTED]" in log_text
 
