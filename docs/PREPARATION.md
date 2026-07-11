@@ -115,57 +115,52 @@ Do this once, regardless of how many clients you eventually onboard.
 
 Repeat this section (Part 3) for every new client. For the initial build, complete for Noviplast.
 
-### 3.1 GS1 NL Digital Link API v2 — test token
+> **Auth is OAuth2 client-credentials** (confirmed in Phase 2). You do **not** get a
+> ready-to-use token — you get a **client id + client secret** and mint a short-lived
+> JWT from them. See [[PROJECT_HANDOVER]] §4.1.
 
-- **What:** log into MyGS1 for Noviplast, request an API access token for the Digital Link API **v2** in the **test** environment.
-- **Where:** MyGS1 → API section (see [[PROJECT_HANDOVER]] §5.2 step 1).
-- **Verify:** token received and copied.
-- **Store as:** environment variable `NOVIPLAST_GS1_TOKEN_TEST` in local `.env` (once repo exists) or `~/.zprofile` (before repo exists).
-- **Blocks:** Phase 2 (need the token to build the client), Phase 9 (need it to test).
+### 3.1 GS1 NL Digital Link API v2 — test/sandbox client credentials
 
-### 3.2 GS1 NL Digital Link API v2 — production token
+- **What:** in the acceptance developer portal (`https://gs1nl-api-acc-developer.gs1.nl/`, signed in with the MyGS1 account) obtain the **Client ID** and **Client Secret** for the Digital Link API v2, and subscribe to that API product.
+- **Verify:** both values received and copied.
+- **Store as:** `NOVIPLAST_GS1_CLIENT_SANDBOX_ID` and `NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET` in local `.env`.
+- **Blocks:** Phase 2 (need them to mint tokens), Phase 9 (testing).
 
-- **What:** same as 3.1, for the production environment.
-- **Store as:** `NOVIPLAST_GS1_TOKEN_PROD`.
+### 3.2 GS1 NL Digital Link API v2 — production client credentials
+
+- **What:** same as 3.1, for the production developer portal / environment.
+- **Store as:** `NOVIPLAST_GS1_CLIENT_ID` and `NOVIPLAST_GS1_CLIENT_SECRET`.
 - **Blocks:** Phase 11 (production cut).
 
-### 3.3 GS1 API tokens smoke-tested
+### 3.3 GS1 API credentials smoke-tested
 
-- **What:** verify both tokens are live with a minimal POST call against v2. GET is preferred for smoke tests but the GET endpoint schema isn't captured yet, so we use a safe idempotent POST instead. Same pattern as [[PROJECT_HANDOVER]] §5.2 step 5:
+- **What:** mint a token, then do a **read-only** GET (harmless — no writes):
   ```bash
-  # Try Bearer first (matches most Azure API Management setups)
-  curl -i -X POST \
-    -H "Authorization: Bearer $NOVIPLAST_GS1_TOKEN_TEST" \
-    -H "Content-Type: application/json" \
-    -d '{
-      "accountNumber": "<Noviplast GLN>",
-      "identificationKeyType": "Gtin",
-      "identificationKey": "<test GTIN, 14 digits>",
-      "isEnabled": true,
-      "itemDescription": "smoke test",
-      "resolverSettings": {"useGS1Resolver": true},
-      "links": [],
-      "applicationIdentifiers": []
-    }' \
-    "https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitallink"
+  H=gs1nl-api-acc.gs1.nl   # production: gs1nl-api.gs1.nl
+  TOKEN=$(curl -s -X POST \
+    -H "client_id: $NOVIPLAST_GS1_CLIENT_SANDBOX_ID" \
+    -H "client_secret: $NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET" \
+    "https://$H/authorization/token" \
+    | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+  # The account you may write to is in the token's accountNumber claim (base64 middle segment).
+  curl -i -H "Authorization: Bearer $TOKEN" \
+    "https://$H/digitallinkv2/v2/digitalLink/Gtin/00000000000000"   # expect 404
   ```
-  Same for production with `NOVIPLAST_GS1_TOKEN_PROD` and host `gs1nl-api.gs1.nl`.
-
-  The four full fixture-capture commands live in [[IMPLEMENTATION_SPEC]] §13.2 and are handled in item 3.5 below.
-- **Verify:** `200` = token live, Bearer scheme correct. `401` with Bearer → retry with raw (drop `Bearer ` prefix). If raw works, note `gs1.auth_scheme: "raw"` for `clients.yml`. If both fail, token not yet activated — contact GS1 NL.
+- **Verify:** mint returns `200` with `{"access_token": ...}`; the GET returns `404` (auth works, not-found confirmed). `400 "Your ClientId or ClientSecret might be incorrect."` on mint → wrong/inactive credentials, or lowercase `client_id`/`client_secret` header names not used.
 - **Blocks:** Phase 2 completion.
 
-### 3.4 Digital Link activated on a test GTIN
+### 3.4 Digital Link contract on the account (critical)
 
-- **What:** in MyGS1, pick one GTIN owned by Noviplast that's safe to modify. Edit → Web page → check "Activeer GS1 Digital Link" → save.
-- **Verify:** the GTIN is listed as Digital Link–enabled in MyGS1.
-- **Blocks:** capturing the sample API responses (3.5).
+- **What:** confirm the account has a **Digital Link contract** — the entitlement that permits creating Digital Links (separate from API access). Without it, every create returns `400 21011 "No valid contract found."` even with valid credentials. In MyGS1, also activate Digital Link on at least one GTIN under that account (Edit → Web page → check "Activeer GS1 Digital Link", after setting a default `pip` link).
+- **Verify:** a create (`POST /digitallinkv2/v2/digitallink`) for a GTIN under the account returns `200`/`201`, not `21011`.
+- **If `21011`:** contact GS1 NL to provision the Digital Link contract on the account — this is a GS1-side step, not a code issue.
+- **Blocks:** capturing successful sample responses (3.5), Phase 9.
 
 ### 3.5 GS1 API sample fixtures captured
 
-- **What:** run the six curl commands from [[IMPLEMENTATION_SPEC]] §13.2 against the test environment with the activated GTIN.
-- **Store as:** files in `tests/fixtures/gs1_api/` inside the repo (once repo exists) or a temp folder that gets moved after Phase 1.
-- **Verify:** seven files exist — six response bodies (`post_success.json`, `post_400.json`, `post_401.json`, `post_bulk_success.json`, `get_existing.json`, `get_missing.json`) plus a `README.md` documenting each response's meaning, the observed auth scheme (Bearer vs raw), and the observed HTTP status for the not-found GET (empirical — could be 404, 400, or 500 per v2 spec).
+- **What:** once 3.4 passes, mint a token and run the six calls in [[IMPLEMENTATION_SPEC]] §13.2 (single/bulk create, deliberate 400/401, GET existing, GET missing).
+- **Store as:** files in `tests/fixtures/gs1_api/`.
+- **Verify:** six response bodies + a `README.md` recording the confirmed facts — auth = OAuth2 (Bearer JWT), not-found = `404` empty body, 400 = `ErrorResult[]` shape, and the per-environment `accountNumber` from the token claim.
 - **Blocks:** Phase 2 completion (unit test fixtures).
 
 ### 3.6 MyGS1 Excel export downloaded
@@ -285,9 +280,9 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
 
 ### 3.24 Local `.env` file populated
 
-- **What:** copy `.env.example` to `.env`, fill in `NOVIPLAST_GS1_TOKEN_TEST`, `NOVIPLAST_GS1_TOKEN_PROD`, `NOVIPLAST_WP_APP_PASS`.
+- **What:** copy `.env.example` to `.env`, fill in `NOVIPLAST_GS1_CLIENT_SANDBOX_ID`, `NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET`, `NOVIPLAST_GS1_CLIENT_ID`, `NOVIPLAST_GS1_CLIENT_SECRET`, `NOVIPLAST_WP_APP_PASS`.
 - **Where:** `.env` at the repo root (gitignored).
-- **Verify:** `python -c "import os; print(bool(os.getenv('NOVIPLAST_GS1_TOKEN_TEST')))"` returns `True` in a shell that sourced `.env`.
+- **Verify:** `python -c "import os; print(bool(os.getenv('NOVIPLAST_GS1_CLIENT_SANDBOX_ID')))"` returns `True` in a shell that sourced `.env`.
 - **Blocks:** any Phase 2+ run.
 
 ### 3.25 `clients.yml` populated

@@ -657,7 +657,7 @@ Prints:
 
 ### 9.1 `gs1-nl-mcp` tools
 
-Input schemas mirror the v2 API `CreateOrUpdateRequest` body but hide plumbing (`accountNumber`, `resolverSettings`, `auth_scheme`) — the MCP wrapper resolves those from `clients.yml` by `client_id`.
+Input schemas mirror the v2 API `CreateOrUpdateRequest` body but hide plumbing (`accountNumber`, `resolverSettings`, OAuth2 credentials) — the MCP wrapper resolves those from `clients.yml` by `client_id` and mints the token itself.
 
 ```yaml
 - name: gs1_digital_link_upsert
@@ -1175,13 +1175,13 @@ curl -H "$AUTH_HEADER" \
   "https://$HOST/digitallinkv2/v2/digitalLink/Gtin/00000000000000"
 ```
 
-Commit a `README.md` in `tests/fixtures/gs1_api/` documenting what each response represents, which auth scheme worked (Bearer vs raw), and — critical — the actual not-found status code observed.
+Commit a `README.md` in `tests/fixtures/gs1_api/` documenting what each response represents, the OAuth2 token flow used (mint → Bearer JWT), and — critical — the actual not-found status code observed (confirmed `404` empty body).
 
 **Output:** Six fixture files (post_success, post_400, post_401, post_bulk_success, get_existing, get_missing) plus README.
 
 **Use in code:** Load fixtures in `pytest-httpx` mocks; parse them to derive actual response shape. If response shapes differ from v2 schemas assumed in §2 types, update the types.
 
-**Also record:** if Bearer prefix worked, set `gs1.auth_scheme: "Bearer"` in `clients.yml`; if raw worked, set `"raw"`. This is the one config value that has to be right before Phase 2 code can pass integration tests.
+**Also record:** the per-environment `accountNumber` (from the token's `accountNumber` claim) into `clients.yml` as `account_number_test` / `account_number_production` — these differ per environment and are the values that must be right before a successful create.
 
 ### 13.3 Set up staging WordPress (blocks Phase 4 completion)
 
@@ -1219,11 +1219,12 @@ Commit a `README.md` in `tests/fixtures/gs1_api/` documenting what each response
 
 ## 14. Document metadata
 
-- **Version:** 0.2
+- **Version:** 0.4
 - **Companion documents:** [[PROJECT_HANDOVER]] (context and decisions)
 - **Owners:** Same as PROJECT_HANDOVER
 
 ### Change log
+- **0.4 (2026-07-11):** **Auth model corrected to OAuth2 client-credentials** (empirically confirmed against the live acceptance host in Phase 2). §4.3 `_auth_header()`/`auth_scheme` replaced by `_mint_token()`/`_get_token()` (mint a 1h Bearer JWT from `client_id`/`client_secret` at `POST /authorization/token`, cache, refresh on 401). §9.1 wrapper mints its own token. §13.2 capture rewritten to mint-then-call; not-found confirmed `404` empty body; `accountNumber` is per-environment (from the token claim). `GS1Config`/`clients.yml` schema gained `client_id_env_*`/`client_secret_env_*` and `account_number_*`.
 - **0.3 (2026-07-04):** Rewritten for **Digital Link API v2** across §4.3, §9.1, §13.2. Key changes:
   - §4.3 `lib/gs1_dl_client.py` method signatures updated for v2 body (`accountNumber`, `identificationKeyType`, `identificationKey`, `resolverSettings`, `mediaType` in links, `applicationIdentifiers`). New `_auth_header()` builds `Authorization: Bearer <token>` (or raw) based on `config.auth_scheme`. Old `Ocp-Apim-Subscription-Key` header removed. Token-scrubbing note added.
   - §9.1 MCP tool schemas mirror v2 body: `item_description` promoted to required, `links[].media_type` added as required, `application_identifiers` array optional. Removed `digital_link_url` (replaced by structured `identificationKeyType`+`identificationKey` at the API level; MCP wrapper handles this from the GTIN input). `gs1_digital_link_get` schema flagged TBD pending portal capture.

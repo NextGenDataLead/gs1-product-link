@@ -231,7 +231,7 @@ Portal reference: `https://gs1nl-api-acc-developer.gs1.nl/api-details#api=digita
 - **Bulk endpoint** takes a JSON array `[CreateOrUpdateRequest, ...]` — same shape wrapped in `[]`. Client batch size configurable via `clients.yml`.
 
 **Cost:** Free.
-**Access:** API access token via MyGS1 (separate token per environment).
+**Access:** OAuth2 client id + secret via MyGS1 / developer portal (separate pair per environment); the client mints a 1h Bearer JWT from them (§4.1).
 **Environments:** Both test and production available and confirmed accessible.
 
 **`AdvancedDigitalLinkResponse` (GET response body):**
@@ -453,9 +453,9 @@ Free end-to-end; no extra GS1 NL contract required beyond what the client alread
 
 ### 5.2 Steps
 
-**1. Request Digital Link API key via MyGS1.** Log in, navigate to the API section, request an API key for the Digital Link API. GS1 NL provides keys for both test and production. Copy them into `.env` under `{CLIENT}_GS1_KEY_TEST` and `{CLIENT}_GS1_KEY_PROD`.
+**1. Request Digital Link API credentials via MyGS1 / developer portal.** Auth is OAuth2 client-credentials (§4.1): obtain a **Client ID + Client Secret** per environment and subscribe to the Digital Link API v2 product. Copy them into `.env` — test/sandbox under `{CLIENT}_GS1_CLIENT_SANDBOX_ID`/`_SECRET`, production under `{CLIENT}_GS1_CLIENT_ID`/`_SECRET`. Confirm the account has a **Digital Link contract** (without it, creates fail `21011 "No valid contract found."`).
 
-**2. Activate Digital Link on each GTIN.** In MyGS1, per article: Edit → Web page → check "Activeer GS1 Digital Link" → save. This can be done in bulk via the Digital Link API after the first GTIN by setting `isEnabled: true` on the upsert.
+**2. Activate Digital Link on each GTIN.** In MyGS1, per article: set a default `pip` link, then Edit → Web page → check "Activeer GS1 Digital Link" → save. This can be done in bulk via the Digital Link API after the first GTIN by setting `isEnabled: true` on the upsert.
 
 **3. Export from MyGS1 to Excel.** Save the file at `input/{client_id}/products.xlsx`.
 
@@ -465,24 +465,18 @@ Free end-to-end; no extra GS1 NL contract required beyond what the client alread
 - Confirm multilingual plugin at `/wp-json/pll/v1/languages` (Polylang) or `/wp-json/sitepress-multilingual-cms/` (WPML).
 - Populate the `wordpress` block in `clients.yml`.
 
-**5. Smoke test.** Verify the token is live by hitting the single-upsert endpoint with a minimal-but-safe body. Recommended: send an idempotent `POST` that "sets" what should already be true (a no-op) rather than mutating something meaningful:
+**5. Smoke test.** Mint a token, then do a **read-only** GET (harmless — no writes):
 ```bash
-curl -i -X POST \
-  -H "Authorization: Bearer $NOVIPLAST_GS1_TOKEN_TEST" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "accountNumber": "<adminGLN>",
-    "identificationKeyType": "Gtin",
-    "identificationKey": "<testGTIN>",
-    "isEnabled": true,
-    "itemDescription": "smoke test",
-    "resolverSettings": {"useGS1Resolver": true},
-    "links": [],
-    "applicationIdentifiers": []
-  }' \
-  "https://gs1nl-api-acc.gs1.nl/digitallinkv2/v2/digitallink"
+H=gs1nl-api-acc.gs1.nl
+TOKEN=$(curl -s -X POST \
+  -H "client_id: $NOVIPLAST_GS1_CLIENT_SANDBOX_ID" \
+  -H "client_secret: $NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET" \
+  "https://$H/authorization/token" \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+curl -i -H "Authorization: Bearer $TOKEN" \
+  "https://$H/digitallinkv2/v2/digitalLink/Gtin/00000000000000"
 ```
-`200` = credentials live. `401` = token or scheme wrong (try `Authorization: $TOKEN` without `Bearer`). `403` = token doesn't have rights for that account.
+Mint `200` + `{"access_token": ...}` = credentials live; GET `404` = auth works and not-found confirmed. Mint `400 "Your ClientId or ClientSecret might be incorrect."` = wrong/inactive credentials. The account you may write to is the `accountNumber` claim inside the JWT.
 
 **6. Run the tool.**
 
@@ -744,7 +738,7 @@ gs1-digital-link-orchestrator/
 
 **Phase 1 — Repo skeleton & config:** Initialise repo with structure in §7. Commit MIT `LICENSE`, baseline `README.md`, `CHANGELOG.md`, `.gitignore`, `clients.example.yml`, `.env.example`, `schema/clients.schema.json`, `pyproject.toml`, `package.json`. Set up GitHub Actions: lint, tests. Exit gate: `git clone` + setup + lint + tests pass on a clean machine.
 
-**Phase 2 — GS1 Digital Link client + MCP:** Build `lib/gs1_dl_client.py` (auth via `Ocp-Apim-Subscription-Key`, upsert/upsert_bulk/get, retries, JSONL logging). Build `mcps/gs1-nl/` TypeScript with MCP SDK — three tools. Integration test against test env with one real GTIN. Exit gate: a test GTIN's redirect can be set via both the Python lib and the MCP tool.
+**Phase 2 — GS1 Digital Link client + MCP:** Build `lib/gs1_dl_client.py` (OAuth2 client-credentials token minting per §4.1, upsert/upsert_bulk/get, retries, JSONL logging). Build `mcps/gs1-nl/` TypeScript with MCP SDK — three tools. Integration test against test env with one real GTIN. Exit gate: a test GTIN's redirect can be set via both the Python lib and the MCP tool.
 
 **Phase 3 — Excel parser + records schema:** Build `lib/records.py` internal `ProductRecord` schema. Build `scripts/parse_export.py`. Test with pilot client's real export. Exit gate: `output/{client_id}/data/products.json` contains full normalised catalogue.
 
@@ -792,7 +786,7 @@ Phases 2–5 can run in parallel with multiple developers; with one developer, s
 | R7 | Secret leakage via Claude chat history | Medium | High | All secrets in env vars; documented prominently in setup.md |
 | R8 | Open-source maintenance burden | Medium | Medium | Issue templates and contribution guide upfront |
 | R9 | Excel column schema varies between MyGS1 exports (over time, or between sectors) | Medium | Medium | Per-client column overrides in `clients.yml`; Phase 0 uses real pilot export to define baseline |
-| R10 | GS1 NL migrates auth model (e.g. from subscription key to OAuth2 Client Credentials) | **Materialised — v2** | Medium | v2 already replaced `Ocp-Apim-Subscription-Key` with `Authorization` token. Adapter pattern in `lib.gs1_dl_client._auth_header()` still applies for any further migration (raw vs Bearer, or full OAuth2 in a future v3) |
+| R10 | GS1 NL migrates auth model (e.g. from subscription key to OAuth2 Client Credentials) | **Materialised — v2 is OAuth2** | Low | Phase 2 confirmed v2 uses **OAuth2 client-credentials**: `POST /authorization/token` (client_id/client_secret) → 1h Bearer JWT. Implemented in `lib.gs1_dl_client` (`_mint_token`/`_get_token`) and the TS MCP; token minting/refresh is isolated, so a future change is contained |
 
 Notable removals since v0.3:
 - R1 v0.3 ("Digital Link write API may be paid") — **resolved**: confirmed free by GS1 NL
@@ -838,7 +832,7 @@ defaults:
   gs1:
     environment: test               # test | production
     api_version: v2                 # locked; endpoint prefix is /digitallinkv2/v2/
-    auth_scheme: "Bearer"           # "Bearer" | "raw" — how Authorization header is formatted
+    # Auth is OAuth2 client-credentials; the client mints a 1h JWT (Bearer) — §4.1.
     identification_key_type: "Gtin" # enum in v2; always Gtin for our scope
     digital_link_url_pattern: "https://id.gs1.org/01/{gtin14}"
     resolver_settings:
@@ -871,10 +865,15 @@ clients:
     enabled: true
 
     gs1:
-      account_number: "8712345000003"    # Noviplast's GLN — verify against MyGS1
-      # One access token per environment (both issued via MyGS1)
-      token_env_test: NOVIPLAST_GS1_TOKEN_TEST
-      token_env_production: NOVIPLAST_GS1_TOKEN_PROD
+      # accountNumber differs per environment — take each from the minted token's
+      # accountNumber claim (sandbox and production are different accounts).
+      account_number_test: "8720796420906"
+      account_number_production: "8719965024137"
+      # OAuth2 client credentials per environment (issued via MyGS1 / dev portal)
+      client_id_env_test: NOVIPLAST_GS1_CLIENT_SANDBOX_ID
+      client_secret_env_test: NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET
+      client_id_env_production: NOVIPLAST_GS1_CLIENT_ID
+      client_secret_env_production: NOVIPLAST_GS1_CLIENT_SECRET
 
     export:
       path: "./input/noviplast/products.xlsx"
@@ -929,10 +928,15 @@ clients:
 ```bash
 # Copy to .env and fill in. .env is gitignored.
 
-# Noviplast — one API access token per environment (from MyGS1),
-# plus WordPress application password
-NOVIPLAST_GS1_TOKEN_TEST=
-NOVIPLAST_GS1_TOKEN_PROD=
+# Noviplast — OAuth2 client credentials per environment (the client mints a
+# short-lived token from these); plus the WordPress application password.
+# Test / acceptance (sandbox):
+NOVIPLAST_GS1_CLIENT_SANDBOX_ID=
+NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET=
+# Production:
+NOVIPLAST_GS1_CLIENT_ID=
+NOVIPLAST_GS1_CLIENT_SECRET=
+# WordPress
 NOVIPLAST_WP_APP_PASS=
 ```
 
@@ -1100,9 +1104,12 @@ Source: `https://www.gs1.nl/producten-services/data-exchange/tarieven/`.
 
 ## 12. Document metadata
 
-- **Version:** 0.8
+- **Version:** 0.9
 - **Status:** Ready to build
-- **Last updated:** 2026-07-04
+- **Last updated:** 2026-07-11
+- **Changes from 0.8:**
+  - **§4.1/§4.2 auth corrected to OAuth2 client-credentials** (empirically confirmed in Phase 2, replacing the assumed static token + `auth_scheme` model): `POST /authorization/token` with `client_id`/`client_secret` headers → 1h Bearer JWT; the client mints/caches/refreshes it. `accountNumber` is **per-environment**, taken from the token's `accountNumber` claim (sandbox `8720796420906`, production `8719965024137`). Not-found confirmed `404` empty body. Blocker recorded: a **Digital Link contract** must be provisioned on the account or creates return `21011 "No valid contract found."`.
+  - §5.1/§5.2 onboarding, §8.2, §9.1 R10, §10.1 `clients.example.yml`, and §10.2 `.env.example` updated to per-environment `client_id_env_*`/`client_secret_env_*` + `account_number_*`; `auth_scheme`/`token_env` retired.
 - **Changes from 0.7:**
   - §4.1 rewritten for **Digital Link API v2**: host names captured (`gs1nl-api-acc.gs1.nl` test, `gs1nl-api.gs1.nl` production), path prefix `/digitallinkv2/v2/`, auth header changed from `Ocp-Apim-Subscription-Key` to `Authorization` token (Bearer default, raw as fallback via `gs1.auth_scheme`).
   - §4.2 rewritten with new endpoints (`/digitallinkv2/v2/digitallink` single, `/digitallinkv2/v2/digitallinks` bulk) and new `CreateOrUpdateRequest` body schema (`accountNumber`, `identificationKeyType`, `identificationKey`, `isEnabled`, `itemDescription`, `resolverSettings`, `links[]` with new required `mediaType`, `applicationIdentifiers[]`).
