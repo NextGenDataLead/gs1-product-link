@@ -62,6 +62,13 @@ _HTTP_SUCCESS_MAX: Final = 300
 _HTTP_SERVER_ERROR_MIN: Final = 500
 _HTTP_SERVER_ERROR_MAX: Final = 600
 
+# OAuth2 client-credentials token endpoint, on the same host as the API (§4.2).
+_TOKEN_PATH: Final = "/authorization/token"
+#: Re-mint the token this many seconds before it expires.
+_TOKEN_REFRESH_SKEW_SECONDS: Final = 60.0
+#: Fallback token lifetime if the token response omits ``expires_in``.
+_DEFAULT_TOKEN_TTL_SECONDS: Final = 3600.0
+
 
 # --- Config (minimal, Phase-2 scope) -----------------------------------------
 
@@ -78,11 +85,17 @@ class ResolverSettings(BaseModel):
 class GS1Config(BaseModel):
     """The subset of client config the Digital Link client needs (§4.3).
 
+    Auth is OAuth2 client-credentials: the client mints a short-lived JWT from the
+    ``client_id``/``client_secret`` held in the named environment variables and
+    sends it as a ``Bearer`` token. The values are environment-specific — this
+    config holds the pair already resolved for one ``environment``.
+
     Attributes:
-        account_number: The account the Digital Link is created under (GLN).
-        token_env: Name of the environment variable holding the API token.
-        environment: Which GS1 NL environment to target.
-        auth_scheme: How the ``Authorization`` header is formatted.
+        account_number: The account Digital Links are created under (differs per
+            environment; taken from the token's ``accountNumber`` claim).
+        client_id_env: Name of the env var holding the OAuth2 client id.
+        client_secret_env: Name of the env var holding the OAuth2 client secret.
+        environment: Which GS1 NL environment to target (selects the host).
         resolver_settings: Resolver configuration sent on every upsert.
         batch_size: Entries per request to the bulk endpoint.
     """
@@ -90,9 +103,9 @@ class GS1Config(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     account_number: str
-    token_env: str
+    client_id_env: str
+    client_secret_env: str
     environment: Literal["test", "production"] = "test"
-    auth_scheme: Literal["Bearer", "raw"] = "Bearer"
     resolver_settings: ResolverSettings = Field(default_factory=ResolverSettings)
     batch_size: int = 50
 
@@ -192,6 +205,8 @@ class GS1DigitalLinkClient:
         self._base_url = f"https://{self._host}"
         self._http = httpx.Client(timeout=timeout or _DEFAULT_TIMEOUT)
         self._sleep = sleep
+        self._token: str | None = None
+        self._token_expiry: float = 0.0
 
     # -- Lifecycle ------------------------------------------------------------
 
@@ -207,34 +222,61 @@ class GS1DigitalLinkClient:
 
     # -- Auth -----------------------------------------------------------------
 
-    def _auth_header(self, scheme: str | None = None) -> dict[str, str]:
-        """Build the ``Authorization`` header for the active auth scheme (§4.3).
+    def _auth_header(self) -> dict[str, str]:
+        """Return the ``Authorization`` header with a valid Bearer token (§4.2).
 
-        The token is read from the environment on every call (never cached), so
-        rotation works without a restart, and is never logged.
+        The token is minted from client credentials and cached until it nears
+        expiry. It is never logged.
+        """
+        return {"Authorization": f"Bearer {self._get_token()}"}
 
-        Args:
-            scheme: Override the configured scheme (used for the 401 fallback).
+    def _get_token(self) -> str:
+        """Return a cached access token, minting or refreshing it as needed."""
+        if (
+            self._token is not None
+            and time.monotonic() < self._token_expiry - _TOKEN_REFRESH_SKEW_SECONDS
+        ):
+            return self._token
+        return self._mint_token()
 
-        Returns:
-            A single-entry dict with the ``Authorization`` header.
+    def _mint_token(self) -> str:
+        """Mint a fresh access token from the GS1 Authorization API (§4.2).
+
+        ``POST {base}/authorization/token`` with ``client_id`` / ``client_secret``
+        headers returns ``{"access_token", "token_type", "expires_in"}``. The JWT is
+        cached until shortly before ``expires_in`` elapses.
 
         Raises:
-            MissingCredentialError: The token environment variable is unset.
-            ConfigError: The auth scheme is neither ``Bearer`` nor ``raw``.
+            MissingCredentialError: A credential environment variable is unset.
+            ConfigError: The authorization API rejected the credentials (4xx).
+            GS1APIError: The authorization API failed for another reason.
         """
-        scheme = scheme or self.config.auth_scheme
+        headers = {
+            "client_id": _require_env(self.config.client_id_env),
+            "client_secret": _require_env(self.config.client_secret_env),
+        }
         try:
-            token = os.environ[self.config.token_env]
-        except KeyError as exc:
-            raise MissingCredentialError(
-                f"Environment variable {self.config.token_env!r} is not set"
-            ) from exc
-        if scheme == "Bearer":
-            return {"Authorization": f"Bearer {token}"}
-        if scheme == "raw":
-            return {"Authorization": token}
-        raise ConfigError(f"Unknown auth_scheme: {scheme}")
+            resp = self._http.request("POST", self._base_url + _TOKEN_PATH, headers=headers)
+        except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+            raise GS1APIError(_NETWORK_ERROR_STATUS, f"token network error: {exc!r}") from exc
+
+        if resp.status_code != HTTPStatus.OK:
+            body = scrub_response_body(resp.text)[:_ERROR_BODY_LOG_LIMIT]
+            if HTTPStatus.BAD_REQUEST <= resp.status_code < _HTTP_SERVER_ERROR_MIN:
+                raise ConfigError(
+                    f"GS1 authorization rejected the credentials ({resp.status_code}): {body}"
+                )
+            raise GS1APIError(resp.status_code, resp.text)
+
+        data = resp.json()
+        token = data.get("access_token")
+        if not isinstance(token, str) or not token:
+            raise GS1APIError(resp.status_code, resp.text)
+        expires_in = float(data.get("expires_in", _DEFAULT_TOKEN_TTL_SECONDS))
+        self._token = token
+        self._token_expiry = time.monotonic() + expires_in
+        _log.info("GS1 access token minted (expires in %.0fs)", expires_in)
+        return token
 
     # -- Public API -----------------------------------------------------------
 
@@ -403,13 +445,12 @@ class GS1DigitalLinkClient:
         """
         url = self._base_url + path
         endpoint = f"{method} {path}"
-        scheme = self.config.auth_scheme
-        raw_fallback_tried = False
+        token_refreshed = False
         attempts_429 = 0
         attempts_5xx = 0
 
         while True:
-            headers = {"Content-Type": "application/json", **self._auth_header(scheme)}
+            headers = {"Content-Type": "application/json", **self._auth_header()}
             started = time.monotonic()
             try:
                 resp = self._http.request(method, url, json=json_body, headers=headers)
@@ -441,17 +482,11 @@ class GS1DigitalLinkClient:
             if status == HTTPStatus.NOT_FOUND and not_found_ok:
                 return resp
 
-            # One-time Bearer -> raw fallback on 401 (empirical auth scheme, §4.3).
-            if status == HTTPStatus.UNAUTHORIZED and scheme == "Bearer" and not raw_fallback_tried:
-                raw_fallback_tried = True
-                scheme = "raw"
-                _log.warning(
-                    "GS1 %s (%s) -> 401 with Bearer; retrying once with raw "
-                    'Authorization. If this succeeds, set gs1.auth_scheme: "raw" '
-                    "in clients.yml.",
-                    endpoint,
-                    gtin,
-                )
+            # 401 usually means the cached token expired: re-mint once and retry.
+            if status == HTTPStatus.UNAUTHORIZED and not token_refreshed:
+                token_refreshed = True
+                self._token = None
+                _log.warning("GS1 %s (%s) -> 401; refreshing token and retrying", endpoint, gtin)
                 continue
 
             if status == HTTPStatus.TOO_MANY_REQUESTS:
@@ -514,6 +549,14 @@ class GS1DigitalLinkClient:
 
 
 # --- Module helpers ----------------------------------------------------------
+
+
+def _require_env(name: str) -> str:
+    """Read an environment variable, raising a typed error if it is unset."""
+    try:
+        return os.environ[name]
+    except KeyError as exc:
+        raise MissingCredentialError(f"Environment variable {name!r} is not set") from exc
 
 
 def _link_to_wire(link: LinkInput) -> dict[str, object]:
