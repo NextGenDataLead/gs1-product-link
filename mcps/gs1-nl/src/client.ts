@@ -32,7 +32,13 @@ const HTTP_SERVER_ERROR_MIN = 500;
 const HTTP_SERVER_ERROR_MAX = 600;
 const NETWORK_ERROR_STATUS = 0;
 
-export type AuthScheme = "Bearer" | "raw";
+/** OAuth2 client-credentials token endpoint (same host as the API). */
+const TOKEN_PATH = "/authorization/token";
+/** Re-mint the token this many ms before it expires. */
+const TOKEN_REFRESH_SKEW_MS = 60_000;
+/** Fallback token lifetime (seconds) if the response omits expires_in. */
+const DEFAULT_TOKEN_TTL_S = 3600;
+
 export type Environment = keyof typeof HOSTS;
 
 export interface ResolverSettings {
@@ -40,14 +46,19 @@ export interface ResolverSettings {
   resolverDomainName: string | null;
 }
 
-/** Fully-resolved config for one client (secrets already resolved). */
+/** Fully-resolved config for one client (client credentials already resolved). */
 export interface GS1ClientConfig {
   host: string;
   accountNumber: string;
-  authScheme: AuthScheme;
-  token: string;
+  clientId: string;
+  clientSecret: string;
   resolverSettings: ResolverSettings;
   batchSize: number;
+}
+
+interface TokenResponse {
+  access_token?: string;
+  expires_in?: number;
 }
 
 export interface LinkInput {
@@ -168,6 +179,8 @@ export class GS1Client {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  private token: string | null = null;
+  private tokenExpiry = 0;
 
   constructor(
     private readonly config: GS1ClientConfig,
@@ -178,11 +191,42 @@ export class GS1Client {
     this.sleep = options.sleep ?? defaultSleep;
   }
 
-  private authHeader(scheme: AuthScheme): Record<string, string> {
-    if (scheme === "Bearer") {
-      return { Authorization: `Bearer ${this.config.token}` };
+  private async authHeader(): Promise<Record<string, string>> {
+    return { Authorization: `Bearer ${await this.getToken()}` };
+  }
+
+  /** Return a cached OAuth2 token, minting or refreshing it as needed. */
+  private async getToken(): Promise<string> {
+    if (this.token !== null && Date.now() < this.tokenExpiry - TOKEN_REFRESH_SKEW_MS) {
+      return this.token;
     }
-    return { Authorization: this.config.token };
+    return this.mintToken();
+  }
+
+  /** Mint a JWT from the GS1 Authorization API (client_id/client_secret headers). */
+  private async mintToken(): Promise<string> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(this.baseUrl + TOKEN_PATH, {
+        method: "POST",
+        headers: {
+          client_id: this.config.clientId,
+          client_secret: this.config.clientSecret,
+        },
+      });
+    } catch (err) {
+      throw new GS1ApiError(NETWORK_ERROR_STATUS, `token network error: ${String(err)}`);
+    }
+    if (!response.ok) {
+      throw new GS1ApiError(response.status, await response.text());
+    }
+    const data = (await response.json()) as TokenResponse;
+    if (!data.access_token) {
+      throw new GS1ApiError(response.status, "token response missing access_token");
+    }
+    this.token = data.access_token;
+    this.tokenExpiry = Date.now() + (data.expires_in ?? DEFAULT_TOKEN_TTL_S) * 1000;
+    return this.token;
   }
 
   private buildRequestBody(entry: UpsertEntry): Record<string, unknown> {
@@ -209,8 +253,7 @@ export class GS1Client {
     opts: { notFoundOk?: boolean } = {},
   ): Promise<Response> {
     const url = this.baseUrl + path;
-    let scheme = this.config.authScheme;
-    let rawFallbackTried = false;
+    let tokenRefreshed = false;
     let attempts429 = 0;
     let attempts5xx = 0;
 
@@ -219,7 +262,7 @@ export class GS1Client {
         method,
         headers: {
           "Content-Type": "application/json",
-          ...this.authHeader(scheme),
+          ...(await this.authHeader()),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
       };
@@ -244,9 +287,10 @@ export class GS1Client {
       if (status === HTTP_NOT_FOUND && opts.notFoundOk) {
         return response;
       }
-      if (status === HTTP_UNAUTHORIZED && scheme === "Bearer" && !rawFallbackTried) {
-        rawFallbackTried = true;
-        scheme = "raw";
+      if (status === HTTP_UNAUTHORIZED && !tokenRefreshed) {
+        // Cached token likely expired: force a re-mint and retry once.
+        tokenRefreshed = true;
+        this.token = null;
         continue;
       }
       if (status === HTTP_TOO_MANY_REQUESTS) {
