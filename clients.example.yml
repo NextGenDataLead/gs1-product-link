@@ -8,7 +8,8 @@ defaults:
   gs1:
     environment: test               # test | production
     api_version: v2                 # locked; endpoint prefix is /digitallinkv2/v2/
-    auth_scheme: "Bearer"           # "Bearer" | "raw" — how Authorization header is formatted
+    # Auth is OAuth2 client-credentials: the client mints a 1h JWT from the
+    # client_id/client_secret env vars below and sends it as a Bearer token.
     identification_key_type: "Gtin" # enum in v2; always Gtin for our scope
     digital_link_url_pattern: "https://id.gs1.org/01/{gtin14}"
     resolver_settings:
@@ -41,10 +42,15 @@ clients:
     enabled: true
 
     gs1:
-      account_number: "8712345000003"    # Noviplast's GLN — verify against MyGS1
-      # One access token per environment (both issued via MyGS1)
-      token_env_test: NOVIPLAST_GS1_TOKEN_TEST
-      token_env_production: NOVIPLAST_GS1_TOKEN_PROD
+      # accountNumber differs per environment — take the test value from the
+      # minted token's accountNumber claim; verify production against MyGS1.
+      account_number_test: "8720796420906"
+      account_number_production: "8712345000003"
+      # OAuth2 client credentials per environment (issued via MyGS1 / dev portal)
+      client_id_env_test: NOVIPLAST_GS1_CLIENT_SANDBOX_ID
+      client_secret_env_test: NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET
+      client_id_env_production: NOVIPLAST_GS1_CLIENT_ID
+      client_secret_env_production: NOVIPLAST_GS1_CLIENT_SECRET
 
     export:
       path: "./input/noviplast/products.xlsx"

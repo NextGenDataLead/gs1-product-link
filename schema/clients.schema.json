@@ -43,10 +43,6 @@
           "description": "Digital Link API version. Locked at v2 for v0.1.0.",
           "const": "v2"
         },
-        "auth_scheme": {
-          "description": "How the Authorization header is formatted.",
-          "enum": ["Bearer", "raw"]
-        },
         "identification_key_type": {
           "description": "GS1 identifier type. Always Gtin for v0.1.0 scope.",
           "const": "Gtin"
@@ -84,23 +80,34 @@
     "gs1Client": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["account_number", "token_env_test", "token_env_production"],
+      "required": ["account_number_test", "client_id_env_test", "client_secret_env_test"],
       "properties": {
-        "account_number": {
+        "account_number_test": {
           "type": "string",
-          "description": "The account the Digital Link is created under — almost certainly the client's GLN. Verify against MyGS1."
+          "description": "accountNumber for the test/sandbox environment — taken from the minted token's accountNumber claim. Differs from production."
         },
-        "token_env_test": {
+        "account_number_production": {
           "type": "string",
-          "description": "Name of the env var holding the test-environment API access token."
+          "description": "accountNumber for the production environment. Verify against MyGS1."
         },
-        "token_env_production": {
+        "client_id_env_test": {
           "type": "string",
-          "description": "Name of the env var holding the production-environment API access token."
+          "description": "Name of the env var holding the test/sandbox OAuth2 client id."
+        },
+        "client_secret_env_test": {
+          "type": "string",
+          "description": "Name of the env var holding the test/sandbox OAuth2 client secret."
+        },
+        "client_id_env_production": {
+          "type": "string",
+          "description": "Name of the env var holding the production OAuth2 client id."
+        },
+        "client_secret_env_production": {
+          "type": "string",
+          "description": "Name of the env var holding the production OAuth2 client secret."
         },
         "environment": { "enum": ["test", "production"] },
         "api_version": { "const": "v2" },
-        "auth_scheme": { "enum": ["Bearer", "raw"] },
         "identification_key_type": { "const": "Gtin" },
         "digital_link_url_pattern": { "type": "string" },
         "resolver_settings": { "$ref": "#/$defs/resolverSettings" },

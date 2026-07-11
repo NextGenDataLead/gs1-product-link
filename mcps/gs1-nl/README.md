@@ -9,19 +9,24 @@ MCP server wrapping the **GS1 NL Digital Link API v2**. Exposes three tools
 | `gs1_digital_link_upsert_bulk` | Bulk variant; batches into `batch_size` internally |
 | `gs1_digital_link_get` | Fetch the current entry for a GTIN (`null` if not found) |
 
-The tools hide plumbing (`accountNumber`, `resolverSettings`, `auth_scheme`) and
+The tools hide plumbing (`accountNumber`, `resolverSettings`, credentials) and
 resolve it from `clients.yml` by `client_id`. The HTTP client mirrors the
 authoritative Python client (`lib/gs1_dl_client.py`): identical hosts, path prefix,
-path-case anomalies (capital-L `digitalLink` for GET, lowercase for POST), the
-Bearer/raw auth-scheme switch, and the retry policy (§4.3 / §5.1).
+path-case anomalies (capital-L `digitalLink` for GET, lowercase for POST),
+OAuth2 token minting, and the retry policy (§4.3 / §5.1).
 
 ## Configuration
 
 Resolved per call from `clients.yml`:
 
 - **File location** — `clients.yml` in the working directory, or set `GS1_CLIENTS_FILE`.
-- **Token** — read from the environment variable named by `gs1.token_env_test`
-  (or `gs1.token_env_production` when `environment: production`). Never logged.
+- **Auth (OAuth2 client-credentials)** — the client mints a short-lived JWT from
+  the `client_id`/`client_secret` env vars named by `gs1.client_id_env_test` /
+  `client_secret_env_test` (or the `_production` pair when
+  `environment: production`), caches it until it nears expiry, and sends it as a
+  Bearer token. Credentials and token are never logged.
+- **Account** — `gs1.account_number_test` / `account_number_production` (differs
+  per environment).
 
 ## Develop
 
