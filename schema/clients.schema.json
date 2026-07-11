@@ -181,19 +181,65 @@
       "additionalProperties": false,
       "required": ["path"],
       "properties": {
+        "format": {
+          "description": "Export layout. 'flat' = single-sheet MyGS1 article list; 'gdsn' = multi-sheet GS1 Data Source / GDSN datapool export.",
+          "enum": ["flat", "gdsn"]
+        },
         "path": {
           "type": "string",
-          "description": "Path to the client's MyGS1 Excel/CSV export."
+          "description": "Path to the client's GS1 Data Source / MyGS1 Excel/CSV export."
         },
         "column_map": {
           "type": "object",
-          "description": "Mapping between export columns and ProductRecord fields (a map of string to string).",
+          "description": "Flat format: mapping between export columns and ProductRecord field paths (a map of string to string).",
           "additionalProperties": { "type": "string" }
         },
         "extras_columns": {
           "type": "array",
-          "description": "Export columns carried through verbatim into ProductRecord.extras.",
+          "description": "Flat format: export columns carried through verbatim into ProductRecord.extras.",
           "items": { "type": "string" }
+        },
+        "market_language": {
+          "type": "object",
+          "description": "GDSN format: mapping of TargetMarketCountryCode to the language it supplies, e.g. {\"528\": \"nl\", \"056\": \"fr\"}.",
+          "additionalProperties": { "type": "string" }
+        },
+        "gdsn_map": {
+          "type": "object",
+          "description": "GDSN format: mapping of ProductRecord field name to the GDSN attribute source.",
+          "additionalProperties": { "$ref": "#/$defs/gdsnSource" }
+        },
+        "gdsn_extras": {
+          "type": "object",
+          "description": "GDSN format: named pass-through attributes carried into ProductRecord.extras.",
+          "additionalProperties": { "$ref": "#/$defs/gdsnSource" }
+        }
+      }
+    },
+    "gdsnSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sheet"],
+      "properties": {
+        "sheet": {
+          "type": "string",
+          "description": "Worksheet (GDSN module) holding the attribute."
+        },
+        "attribute": {
+          "type": "string",
+          "description": "GDSN attribute number (e.g. '3297') or a path segment name (e.g. 'GpcCategoryCode')."
+        },
+        "localised": {
+          "type": "boolean",
+          "description": "Whether the attribute is a per-language LanguageCode/Value group."
+        },
+        "with_unit": {
+          "type": "boolean",
+          "description": "Whether to append the paired MeasurementUnitCode to the value."
+        },
+        "primary_file": {
+          "type": "boolean",
+          "description": "Whether to resolve the primary referenced-file URI (for image_url)."
         }
       }
     },
