@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixture-backed test slot awaits captured GS1 responses (§13.2).
 - CI: a Node job builds and tests the `mcps/gs1-nl` workspace.
 
+- `gs1_dl_client.safe_upsert()` + `OverwriteError` — a GET-before-write guard that
+  refuses to overwrite an existing Digital Link unless `overwrite=True` and returns
+  the prior snapshot for rollback (§5.4). Prevents silently clobbering a live
+  resolver target on production runs.
+
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
   is the GTIN application identifier `01`, not the string `Gtin`

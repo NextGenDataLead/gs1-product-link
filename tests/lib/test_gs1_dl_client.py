@@ -16,7 +16,7 @@ import httpx
 import pytest
 from pytest_httpx import HTTPXMock
 
-from lib.errors import ConfigError, GS1APIError, MissingCredentialError
+from lib.errors import ConfigError, GS1APIError, MissingCredentialError, OverwriteError
 from lib.gs1_dl_client import (
     BulkEntry,
     GS1Config,
@@ -423,6 +423,42 @@ def test_secrets_never_appear_in_logs(
     assert CLIENT_SECRET_VALUE not in log_text
     assert "leaked-in-body" not in log_text
     assert "[REDACTED]" in log_text
+
+
+_NOT_FOUND_BODY = '"No valid contract found for Gtin with id: 08712345678905."'
+
+
+def test_safe_upsert_writes_when_absent(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(method="GET", status_code=400, text=_NOT_FOUND_BODY)
+    httpx_mock.add_response(method="POST", status_code=200)
+    client, _ = make_client()
+
+    prior = client.safe_upsert("8712345678905", "p", [SAMPLE_LINK])
+
+    assert prior is None
+    assert any(r.method == "POST" for r in httpx_mock.get_requests())
+
+
+def test_safe_upsert_refuses_to_overwrite(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(method="GET", status_code=200, json={"identificationKey": "x"})
+    client, _ = make_client()
+
+    with pytest.raises(OverwriteError) as exc:
+        client.safe_upsert("8712345678905", "p", [SAMPLE_LINK])
+
+    assert exc.value.gtin == "8712345678905"
+    assert all(r.method != "POST" for r in httpx_mock.get_requests())  # no write happened
+
+
+def test_safe_upsert_overwrites_when_allowed_and_returns_prior(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(method="GET", status_code=200, json={"identificationKey": "x"})
+    httpx_mock.add_response(method="POST", status_code=200)
+    client, _ = make_client()
+
+    prior = client.safe_upsert("8712345678905", "p", [SAMPLE_LINK], overwrite=True)
+
+    assert prior == {"identificationKey": "x"}
+    assert any(r.method == "POST" for r in httpx_mock.get_requests())
 
 
 def test_resolver_settings_override_flows_into_body(httpx_mock: HTTPXMock) -> None:

@@ -71,6 +71,27 @@ class WordPressAPIError(OrchestratorError):
         super().__init__(f"WordPress API error {status_code}")
 
 
+class OverwriteError(OrchestratorError):
+    """A write would replace an existing Digital Link and overwrite was not allowed.
+
+    Raised by ``gs1_dl_client.safe_upsert`` when the GTIN already has an entry and the
+    caller did not pass ``overwrite=True`` — the GET-before-write guard that prevents
+    silently clobbering a live resolver target.
+
+    Attributes:
+        gtin: The GTIN whose existing entry would be overwritten.
+        existing: The current server state (snapshot) that would be replaced.
+    """
+
+    def __init__(self, gtin: str, existing: object) -> None:
+        self.gtin = gtin
+        self.existing = existing
+        super().__init__(
+            f"Digital Link already exists for GTIN {gtin}; refusing to overwrite "
+            "(pass overwrite=True to replace)"
+        )
+
+
 class TemplateError(OrchestratorError):
     """A template could not be resolved or rendered."""
 

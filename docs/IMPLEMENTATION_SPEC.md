@@ -522,6 +522,8 @@ Tool implements **Level A + B** for v0.1.0. Level C documented for future.
 
 **Level B — Dry-run and preview.** `run_plan.py` produces `plan.json` describing intended changes. Orchestrator skill shows plan in chat before `run_execute.py`. `--dry-run` on `run_execute.py` walks plan but replaces mutating HTTP calls with logging. Primary rollback mechanism: **prevent bad states rather than recover from them.**
 
+**GET-before-write guard (Phase 2, implemented).** `gs1_dl_client.safe_upsert()` reads the current state first (`get()` is the snapshot primitive), **refuses to overwrite an existing Digital Link** unless `overwrite=True` (raises `OverwriteError`), and returns the prior snapshot for rollback. This is the client-level guard against silently clobbering a live resolver target — mandatory for any production run; `run_execute.py` snapshots the returned prior state before applying a change.
+
 **Level C — Snapshot and automated rollback (deferred).** Design sketch: before `run_execute.py`, snapshot server state per GTIN (`snapshots/{ts}/wp/{gtin}.{lang}.json`, `snapshots/{ts}/gs1/{gtin}.json`). New `run_rollback.py {client_id} {snapshot_ts}` replays snapshot via same clients. Trade-offs: snapshot storage retention policy needed; deleting WP page vs. reverting to revision (revert safer, needs revisions enabled); snapshots contain product data (sensitive, same handling as `.env`).
 
 **Not implemented as stopgap:** state.json has `content_hash` and `gs1_link_set_hash` per (GTIN, language) — enough for change detection but not previous-value preservation. That's the gap Level C fills.

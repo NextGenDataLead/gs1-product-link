@@ -23,7 +23,7 @@ from typing import Final, Literal, NotRequired, TypedDict, cast
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from lib.errors import ConfigError, GS1APIError, MissingCredentialError
+from lib.errors import ConfigError, GS1APIError, MissingCredentialError, OverwriteError
 from lib.logging_setup import scrub_response_body
 
 _log = logging.getLogger(__name__)
@@ -306,6 +306,34 @@ class GS1DigitalLinkClient:
             gtin, item_description, links, is_enabled, application_identifiers
         )
         self._request("POST", f"{PATH_PREFIX}digitallink", json_body=body, gtin=gtin)
+
+    def safe_upsert(  # noqa: PLR0913 — mirrors upsert() plus the overwrite guard
+        self,
+        gtin: str,
+        item_description: str,
+        links: list[LinkInput],
+        is_enabled: bool = True,
+        application_identifiers: list[AppIdentifier] | None = None,
+        *,
+        overwrite: bool = False,
+    ) -> DigitalLinkRecord | None:
+        """GET-before-write ``upsert`` that never silently clobbers an entry (§5.4).
+
+        Reads the current server state first. If the GTIN already has a Digital Link
+        and ``overwrite`` is ``False``, raises :class:`OverwriteError` **without
+        writing** — the guard against overwriting a live resolver target. Returns the
+        prior snapshot (``None`` when the GTIN was new) so the caller can persist it for
+        rollback before the change is applied.
+
+        Raises:
+            OverwriteError: An entry exists and ``overwrite`` was not set.
+            GS1APIError: On any non-2xx response after retries.
+        """
+        prior = self.get(gtin)
+        if prior is not None and not overwrite:
+            raise OverwriteError(gtin, prior)
+        self.upsert(gtin, item_description, links, is_enabled, application_identifiers)
+        return prior
 
     def upsert_bulk(self, entries: list[BulkEntry]) -> BulkResult:
         """Create or update many GTINs, batching into ``config.batch_size`` (§4.3).
