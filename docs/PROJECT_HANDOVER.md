@@ -342,6 +342,13 @@ The client parses this into `ErrorResult[]` and exposes it on `GS1APIError.error
 
 **Source:** MyGS1 (`https://mijn-v2.gs1.nl`) → article list → export.
 
+> **Phase 3 update — the pilot uses the richer GDSN export.** Noviplast's real export is
+> the full **GS1 Data Source / GDSN datapool** export (24 module worksheets, 7 header rows,
+> `Gtin` + `TargetMarketCountryCode` composite key, `LanguageCode`/`Value` pairs), not the
+> flat article-list export the table below assumes. The parser handles both via
+> `export.format` (`gdsn` | `flat`); the GDSN mapping model is documented in
+> `IMPLEMENTATION_SPEC.md` §3.6. The generic column names below describe the flat format.
+
 **Format:** Excel (.xlsx) preferred; CSV supported as fallback.
 
 **Column schema** (documented in `docs/data-source-export-schema.md`):
@@ -556,6 +563,13 @@ Before Phase 4 (or before onboarding any new client to an already-built tool), w
 This section records the concrete findings from inspecting Noviplast (`https://www.noviplast.nl` and its French locale `https://www.noviplast.nl/fr/`) during project planning. Kept because the assumptions that drive `clients.yml` for Noviplast originate here, and because the same discovery pattern applies to future MDP clients.
 
 **How the findings were gathered:** direct inspection of the public site and its HTML source during May 2026 project planning. Not verified against WP admin or an internal export — those verifications happen during onboarding (§5.4).
+
+> **Phase 3 (July 2026) — export confirmed as GDSN.** The real Noviplast export
+> (`input/noviplast/products.xlsx`) is a GS1 Data Source / GDSN datapool export: 24 module
+> worksheets, **127 distinct GTINs** across markets 056 (BE), 276 (DE), 442 (LU), 528 (NL),
+> languages nl/fr/de. Phase 3 sources `nl` from market 528 and `fr` from 056, producing 127
+> `ProductRecord`s with zero warnings. The `clients.yml` `export` block uses `format: gdsn`
+> with a `gdsn_map` (see `IMPLEMENTATION_SPEC.md` §3.6).
 
 **Findings:**
 

@@ -33,6 +33,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the prior snapshot for rollback (§5.4). Prevents silently clobbering a live
   resolver target on production runs.
 
+- **Phase 3 — Excel parser + records schema.**
+  - `lib/records.py` — canonical `ProductRecord`/`LocalisedText` plus `Plan`,
+    `PlanRow`, `ConfirmedPlan`, `RunOutcome`, `StateEntry`, `State` (§2), and the
+    flat-export `parse_excel_row` (§4.9).
+  - `lib/gdsn.py` — reader for GS1 Data Source / GDSN datapool exports (multi-sheet,
+    7 header rows, `Gtin` + `TargetMarketCountryCode` composite key, `LanguageCode`/
+    `Value` pairs). Joins sheets by GTIN into `ProductRecord`s via a per-client
+    attribute map. A spec extension over §2/§3's flat single-sheet assumption.
+  - `lib/config.py` — `clients.yml` loader (`load_clients`/`get_client`) with
+    jsonschema validation, `defaults` inheritance, lazy secrets, and the
+    `GS1Config.resolve()` bridge to the Phase-2 client shape (§2.4, §4.2). Extended
+    `ExportConfig` with `format`, `market_language`, `gdsn_map`, `gdsn_extras`.
+  - `scripts/parse_export.py` — GDSN- and flat-aware CLI producing
+    `output/{client_id}/data/products.json` (§8.1).
+  - `scripts/inspect_export.py` — onboarding utility that lists worksheet attributes
+    and suggests a `gdsn_map` (§8.5).
+  - `schema/clients.schema.json` — `export` block extended for the GDSN format.
+  - Pilot: Noviplast's real GDSN export parses to 127 products (nl + fr) with zero
+    warnings.
+
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
   is the GTIN application identifier `01`, not the string `Gtin`

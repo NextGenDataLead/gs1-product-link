@@ -292,6 +292,37 @@ Templates at `templates/{client_id}/product.{lang}.html`, falling back to `templ
 5. Iterate until warnings clear
 6. Write WordPress template referencing the populated fields
 
+### 3.6 GDSN datapool exports (`export.format: gdsn`) — spec extension
+
+§3.1–§3.5 describe a **flat** single-sheet export (`export.format: flat`, the default).
+The pilot client's real export from **GS1 Data Source / Netherlands** is a **GDSN datapool**
+export, which is structurally different, so Phase 3 also supports `export.format: gdsn`:
+
+- **Multi-sheet**: one worksheet per GDSN module (`TradeItemDescription`,
+  `MarketingInformation`, `TradeItemMeasurements`, `ReferencedFileDetailInformation`, …).
+- **7 header rows** per sheet; data starts on the 8th. Each column's identity is a nested
+  attribute *path* plus a label carrying the stable GDSN attribute number, e.g.
+  `TradeItemDescriptionInformation > DescriptionShort[0] > Value` / `"Short product name (3297)"`.
+- **Composite key**: every sheet is keyed on `Gtin` + `TargetMarketCountryCode` +
+  `TradeItemUnitDescriptorCode`; the same GTIN recurs once per target market.
+- **Localised text** is stored as adjacent `LanguageCode`/`Value` column pairs; measurements
+  as `MeasurementUnitCode`/`Value` pairs.
+
+Instead of `column_map`/`extras_columns`, a GDSN client declares:
+
+- `market_language` — `{market_code: language}`, i.e. which market supplies each language
+  (e.g. `{"528": "nl", "056": "fr"}`).
+- `gdsn_map` — `{ProductRecord field: {sheet, attribute, localised?, with_unit?, primary_file?}}`.
+  `attribute` is the GDSN attribute number (`"3297"`) or a path-segment name
+  (`GpcCategoryCode`).
+- `gdsn_extras` — the same shape, carried into `ProductRecord.extras`.
+
+`lib/gdsn.py` reads the workbook (`read_workbook`) and joins the sheets by GTIN into
+`ProductRecord`s (`build_records`), selecting each language's value from its configured
+market's `LanguageCode`/`Value` pair. `scripts/inspect_export.py` lists every sheet's
+attributes and emits a suggested `gdsn_map`. The onboarding workflow (§3.5) is otherwise
+unchanged: inspect → draft `gdsn_map` → `--dry-run` → iterate to zero warnings.
+
 ---
 
 ## 4. Module contracts
@@ -589,9 +620,12 @@ Exit codes:
 Behaviour:
 1. Load client config
 2. Open Excel at `export.path`
-3. Read header row; validate every required target maps to some column
-4. Iterate rows, call `parse_excel_row` per row
-5. Write `output/{client_id}/data/products.json`
+3. Dispatch on `export.format`:
+   - `flat` — read the header row; validate required targets; call `parse_excel_row` per row.
+   - `gdsn` — `lib.gdsn.read_workbook` + `build_records` (join sheets by GTIN, §3.6). Multiple
+     market rows for a GTIN are **aggregated** into one record, not treated as duplicates.
+4. On any parse error, write nothing and exit 1.
+5. Write `output/{client_id}/data/products.json` (bare JSON array) unless `--dry-run`
 6. Print summary: `Parsed N products (M warnings)` to stderr
 
 ### 8.2 `scripts/run_plan.py`
@@ -648,10 +682,11 @@ Utility for onboarding.
 ```
 Usage: python -m scripts.inspect_export EXCEL_PATH
 
-Prints:
-  - list of columns with type inference
-  - first 3 non-empty values per column
-  - suggested column_map entries (heuristics: gtin, GTIN, Ean, etc. → gtin)
+Prints (GDSN exports, §3.6):
+  - each worksheet's attributes: label, GDSN attribute id, per-language flag,
+    languages present, first 3 sample values
+  - a suggested `export` block with a `gdsn_map` for the recognised product-page
+    attributes (3297 → product_name, 3336 → brand, 2485 → image_url, …)
 ```
 
 ---
@@ -967,9 +1002,14 @@ tests/
 
 ### Phase 3 — Excel parser + records schema
 - [ ] All §2 types defined + validation tests
-- [ ] Every edge case §7 (E1–E7, E16–E17) has a unit test
-- [ ] `inspect_export.py` runs against pilot export, produces suggested `column_map`
+- [ ] Every edge case §7 (E1–E6, E16–E17) has a unit test. E7 (image 404) is handled in
+      `wp_client.upload_media`'s caller and is **deferred to Phase 4** (per §7 routing).
+- [ ] `inspect_export.py` runs against pilot export, produces a suggested mapping
+      (`gdsn_map` for GDSN exports, `column_map` for flat)
+- [ ] `parse_export.py {client}` produces `output/{client}/data/products.json` with zero
+      warnings (pilot: 127 Noviplast products, nl + fr)
 - [ ] Round-trip: `ProductRecord → JSON → ProductRecord` preserves all fields
+- [ ] Spec/schema/`clients.yml` document the GDSN format (§3.6); `lib/config.py` present
 
 ### Phase 4 — WordPress client + MCP
 - [ ] §6.1 and §6.2 idempotency tested against staging WP

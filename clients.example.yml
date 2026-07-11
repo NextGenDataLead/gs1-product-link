@@ -53,23 +53,29 @@ clients:
       client_secret_env_production: NOVIPLAST_GS1_CLIENT_SECRET
 
     export:
+      # 'gdsn' = multi-sheet GS1 Data Source / GDSN datapool export (one worksheet
+      # per module, keyed on Gtin + TargetMarketCountryCode). 'flat' = single-sheet
+      # MyGS1 article list (see column_map/extras_columns). See IMPLEMENTATION_SPEC §3.
+      format: gdsn
       path: "./input/noviplast/products.xlsx"
-      # Excel column name (as it appears in the header row, case-sensitive) →
-      # canonical ProductRecord field path. See IMPLEMENTATION_SPEC.md §3.2 for
-      # the full mapping semantics (per-language paths use dot notation).
-      column_map:
-        "GTIN":                        gtin
-        "Merk":                        brand
-        "Productnaam NL":              product_name.nl
-        "Productnaam FR":              product_name.fr
-        "Korte omschrijving NL":       description_short.nl
-        "Korte omschrijving FR":       description_short.fr
-        "GPC brick":                   gpc_brick_code
-        "Foto URL":                    image_url
-        "Categorie":                   category
-      extras_columns:
-        - "HS-code"
-        - "Barcode type"
+      # Map each GDSN TargetMarketCountryCode to the language it supplies.
+      market_language:
+        "528": nl          # Netherlands → Dutch
+        "056": fr          # Belgium → French
+      # ProductRecord field → GDSN attribute source. `attribute` is the GDSN attribute
+      # number (e.g. "3297") or a path segment name (e.g. GpcCategoryCode). Discover
+      # these by running: python -m scripts.inspect_export input/noviplast/products.xlsx
+      gdsn_map:
+        product_name:      { sheet: TradeItemDescription,            attribute: "3297", localised: true }
+        description_long:  { sheet: TradeItemDescription,            attribute: "3318", localised: true }
+        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true }
+        brand:             { sheet: TradeItemDescription,            attribute: "3336" }
+        net_content:       { sheet: TradeItemMeasurements,           attribute: "3510", with_unit: true }
+        gpc_brick_code:    { sheet: BrickGPCCommercialData,          attribute: GpcCategoryCode }
+        image_url:         { sheet: ReferencedFileDetailInformation, attribute: "2485", primary_file: true }
+      # Named pass-through attributes carried verbatim into ProductRecord.extras.
+      gdsn_extras:
+        functional_name:   { sheet: TradeItemDescription, attribute: "3301", localised: true }
 
     wordpress:
       site_url: "https://www.noviplast.nl"
