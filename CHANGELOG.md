@@ -53,6 +53,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pilot: Noviplast's real GDSN export parses to 127 products (nl + fr) with zero
     warnings.
 
+- **Phase 4 — WordPress client + MCP.**
+  - `lib/wp_client.py` — synchronous WordPress REST API v2 client (§4.4): HTTP Basic
+    auth with a lazily-resolved application password, the §5.1 retry policy (429/5xx
+    with independent budgets; a `401` is terminal), idempotent `upsert_page`
+    (3-step lookup id → slug → `meta.gtin`, §6.1), SHA-256-deduped `upload_media`
+    (§6.2), `find_by_slug`, `verify_url`, `download_image`, `detect_multilingual_plugin`,
+    and token-scrubbed logging. Edge cases E7 (image 404 → featured media skipped),
+    E8 (mismatched `meta.gtin` → `GtinMismatchError`, skip row), E11 (non-GTIN slug
+    collision → `WordPressAPIError`, human intervention).
+  - `lib/multilingual.py` — `MultilingualAdapter` strategy with `PolylangAdapter`
+    (translation linking via `/wp-json/pll/v1/`), `NoOpAdapter`, and a `WPMLAdapter`
+    stub that raises `NotImplementedError` (WPML lands in v0.2) (§4.5).
+  - `lib/errors.py` — added `GtinMismatchError` (the WordPress sibling of
+    `OverwriteError`) so E8 is distinguishable from E11.
+  - `mcps/wordpress/` — TypeScript MCP server exposing five tools (`wp_upsert_page`,
+    `wp_upload_media`, `wp_find_by_slug`, `wp_verify_url`, `wp_detect_multilingual`)
+    over stdio, resolving client config from `clients.yml` (§9.2); mirrors the Python
+    client's auth, retry, idempotency, and E8/E11 semantics. README documents the
+    adopt-vs-fork survey (§8.2): no off-the-shelf WordPress MCP provides per-client
+    credentials, GTIN-keyed idempotency, or Polylang linking, so the client forks the
+    in-repo `gs1-nl` pattern.
+  - Tests: `pytest`/`pytest-httpx` for the Python client and adapters (detection,
+    §6.1/§6.2 idempotency, E7/E8/E11, retry, secret scrubbing) and `vitest` for the
+    MCP client, config, and tool wiring. A `staging`-marked
+    `tests/integration/test_wp_staging.py` holds the three live-staging DoD checks
+    (Polylang detection, §6.1/§6.2 idempotency, published-page exit gate), skipped
+    unless the staging env is configured.
+  - CI: a Node job builds and tests the `mcps/wordpress` workspace.
+
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
   is the GTIN application identifier `01`, not the string `Gtin`
