@@ -1,0 +1,46 @@
+<article class="noviplast-product" lang="fr">
+  <header class="noviplast-product__header">
+    <p class="noviplast-product__brand">{{brand}}</p>
+    <h1 class="noviplast-product__name">{{product_name}}</h1>
+    {{#extras.functional_name}}
+    <p class="noviplast-product__functional">{{extras.functional_name}}</p>
+    {{/extras.functional_name}}
+  </header>
+
+  {{#image_url}}
+  <figure class="noviplast-product__figure">
+    <img class="noviplast-product__image" src="{{image_url}}" alt="{{product_name}}" loading="lazy">
+  </figure>
+  {{/image_url}}
+
+  {{#description_short}}
+  <p class="noviplast-product__summary">{{description_short}}</p>
+  {{/description_short}}
+
+  {{#description_long}}
+  <div class="noviplast-product__description">{{description_long}}</div>
+  {{/description_long}}
+
+  <dl class="noviplast-product__facts">
+    {{#net_content}}
+    <div class="noviplast-product__fact">
+      <dt>Contenu net</dt>
+      <dd>{{net_content}}</dd>
+    </div>
+    {{/net_content}}
+    {{#category}}
+    <div class="noviplast-product__fact">
+      <dt>Catégorie</dt>
+      <dd>{{category}}</dd>
+    </div>
+    {{/category}}
+    <div class="noviplast-product__fact">
+      <dt>GTIN</dt>
+      <dd>{{gtin14}}</dd>
+    </div>
+  </dl>
+
+  <footer class="noviplast-product__footer">
+    <p class="noviplast-product__source">{{client.display_name}}</p>
+  </footer>
+</article>
