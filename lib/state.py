@@ -12,8 +12,12 @@ persistence/logic layer over them.
 directory and ``os.replace``s it into place, so a crash mid-write leaves the
 previous ``state.json`` intact rather than a truncated file (§12 Phase 6 DoD).
 
-``diff_against_state`` (also named in §4.8) is intentionally deferred to Phase 7,
-where ``run_plan.py`` supplies the slug/title inputs a ``PlanRow`` needs.
+``diff_against_state`` (§4.8) classifies each ``(GTIN, language)`` against prior
+state — NEW / UNCHANGED / CHANGED by content hash — and builds the ``PlanRow`` list
+that ``scripts/run_plan.py`` writes to ``plan.json``. Its signature takes the whole
+:class:`~lib.config.WordPressConfig` rather than §4.8's bare ``target_url_pattern``,
+because building a ``PlanRow`` needs the slug pattern, site URL, post type, and
+default language too — all of which live on that config.
 """
 
 from __future__ import annotations
@@ -23,10 +27,13 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
-from lib.errors import StateError
-from lib.records import ProductRecord, State
+from lib.errors import ConfigError, StateError
+from lib.records import PlanClassification, PlanRow, ProductRecord, State, StateEntry
+
+if TYPE_CHECKING:
+    from lib.config import WordPressConfig
 
 _log = logging.getLogger(__name__)
 
@@ -124,3 +131,99 @@ def compute_content_hash(product: ProductRecord, language: str, target_url: str)
         ensure_ascii=False,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _lang_segment(language: str, default_language: str) -> str:
+    """Return the URL path segment for a language ("" for the default, else ``{lang}/``)."""
+    return "" if language == default_language else f"{language}/"
+
+
+def _classify(
+    prior: StateEntry | None, content_hash: str, target_url: str
+) -> tuple[PlanClassification, dict[str, tuple[str, str]] | None]:
+    """Classify one row against its prior state entry, with a best-effort diff.
+
+    The diff can only carry values recoverable from :class:`~lib.records.StateEntry`,
+    which stores no prior product fields — so a CHANGED row surfaces ``target_url``
+    (old ``wp_url`` → new) when it differs, and ``None`` otherwise. A title before/after
+    is not derivable and is never fabricated.
+    """
+    if prior is None:
+        return PlanClassification.NEW, None
+    if prior.content_hash == content_hash:
+        return PlanClassification.UNCHANGED, None
+    diff = {"target_url": (prior.wp_url, target_url)} if prior.wp_url != target_url else None
+    return PlanClassification.CHANGED, diff
+
+
+def diff_against_state(
+    products: list[ProductRecord],
+    state: State,
+    languages: list[str],
+    wordpress: WordPressConfig,
+) -> list[PlanRow]:
+    """Classify each ``(GTIN, language)`` against prior state, building plan rows (§4.8, §8.2).
+
+    For every product × language, computes the slug, resolver target URL, title, and
+    content hash, then compares the hash to the persisted
+    :class:`~lib.records.StateEntry`: no entry → NEW, equal hash → UNCHANGED, else
+    CHANGED (with a ``target_url`` diff when it moved). A language with no
+    ``product_name`` for a product is omitted with a warning (edge E18) rather than
+    emitting a row with a missing title.
+
+    Args:
+        products: The products to plan.
+        state: The client's persisted state (the classification baseline).
+        languages: The languages to plan per product (``wordpress.languages``).
+        wordpress: The client's WordPress config; supplies the slug/target-URL
+            patterns, site URL, post type, and default language.
+
+    Returns:
+        One :class:`~lib.records.PlanRow` per planned ``(GTIN, language)``, in input
+        order.
+
+    Raises:
+        ConfigError: If ``wordpress.slug_pattern`` or ``wordpress.target_url_pattern``
+            is unset — both are required to build a plan.
+    """
+    slug_pattern = wordpress.slug_pattern
+    target_url_pattern = wordpress.target_url_pattern
+    if slug_pattern is None or target_url_pattern is None:
+        raise ConfigError(
+            "wordpress.slug_pattern and wordpress.target_url_pattern are required to build a plan"
+        )
+
+    rows: list[PlanRow] = []
+    for product in products:
+        for language in languages:
+            if language not in product.product_name.values:  # E18
+                _log.warning(
+                    "SKIPPED %s (%s): missing product_name.%s", product.gtin, language, language
+                )
+                continue
+            slug = slug_pattern.format(gtin=product.gtin, gtin14=product.gtin14)
+            target_url = target_url_pattern.format(
+                site_url=wordpress.site_url.rstrip("/"),
+                lang_segment=_lang_segment(language, wordpress.default_language),
+                post_type=wordpress.post_type,
+                slug=slug,
+                gtin=product.gtin,
+                gtin14=product.gtin14,
+            )
+            content_hash = compute_content_hash(product, language, target_url)
+            prior = state.entries.get(product.gtin, {}).get(language)
+            classification, diff = _classify(prior, content_hash, target_url)
+            rows.append(
+                PlanRow(
+                    gtin=product.gtin,
+                    language=language,
+                    classification=classification,
+                    title=product.product_name.values[language],
+                    slug=slug,
+                    content_hash=content_hash,
+                    target_url=target_url,
+                    diff=diff,
+                    product=product,
+                )
+            )
+    return rows
