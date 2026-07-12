@@ -133,7 +133,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - DoD note: the live end-to-end exit gate and live §6.5 check run via the staging test and
     are gated on WordPress staging being provisioned; the GS1 sandbox account has no Digital
     Link contract, so the run targets GS1 production (a disposable/pilot GTIN, protected by the
-    `safe_upsert` guard and `--dry-run`).
+    `safe_upsert` guard and `--dry-run`). **Deferred this session:** production WordPress
+    (`www.noviplast.nl`, a live WooCommerce store) has Application Passwords disabled by
+    Wordfence, and no staging site exists yet — so the one live-run DoD item (`run_execute`
+    end-to-end for 1 GTIN) is pending WP access. The other two Phase 6 DoD items (§6.5
+    idempotency, state-file kill-mid-write atomicity) are met and covered by passing tests.
 
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
