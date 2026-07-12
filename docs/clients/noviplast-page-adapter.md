@@ -26,8 +26,18 @@ This adapter replaces the HTML-into-body approach *for Noviplast*.
   `clients.yml` says `multilingual_plugin: polylang` — **wrong, must become `wpml`.**
 - **Page model:** Oxygen template renders from ACF; `post_content` empty on every published page.
 - **URL pattern confirmed correct:** `…/noviplast/{slug}/` (default lang) and `…/fr/noviplast/{slug}/`.
-- **Images:** 124/127 products carry a GDSN image URL (GS1 blob storage, publicly downloadable);
-  the referenced-files sheet has room for **multiple** files per product.
+- **Images (`ReferencedFileDetailInformation`):** up to **12 files per product**
+  (`ReferencedFileHeader[0..11]`), each documented with URL (2485), MimeType (2602),
+  `ReferencedFileTypeCode` (2469), `IsPrimaryFile` (4277), `FileName` (2481),
+  `FileSequenceNumber` (4591), plus pixel dimensions, aspect ratio and file size. Measured over
+  the pilot export — **375 files across 124 of 127 products**:
+  - **All 375 are `PRODUCT_IMAGE`** → **no videos in the feed** (confirmed).
+  - **92% are `image/tiff`** (345); only 16 PNG + 14 JPEG. **322 files exceed 10 MB** (up to 45 MB,
+    3200×3200 print masters). WordPress will not accept TIFF, so files **must be converted +
+    resized** before upload.
+  - **Only 48 of 124 products have `IsPrimaryFile = TRUE`**; view codes are mostly the C-series
+    (`C1L1`, `C1R1`, `C1R0`, `C1C0`…) with only 14 `A1N0` front shots. **76 products have neither a
+    primary flag nor an A1N0** → the hero image must be chosen by a deterministic fallback.
 - **Control file** (`input/noviplast/website_status.xlsx`): Strict OOXML, header on row 4, data on
   sheet "Blad1", 13-digit barcodes. Its `Categorie` column is a **temporary personal action tracker**
   (`webpage + QR`, `GS1 + webpage + QR`, `QR only`, `moet niet`, `mag weg`) — **not** a product
@@ -56,8 +66,8 @@ The Oxygen template is a **single fixed group** across categories (verified on *
 | Product name (heading) | WP **post title** | `TradeItemDescription` (nl/fr) | **strip leading `"Noviplast "`** |
 | Tagline | ACF `product_title` + `product_header_video_text` | **open** (§6) | — |
 | Eigenschappen + Technische details | ACF `product_description` (HTML, per language) | `TradeItemFeatureBenefit` (repeatable, nl/fr) | **LLM classifies each item** into the two buckets; render as HTML |
-| Main image | featured media + `product_header_image` + `product_regular_image` | GDSN primary referenced image | download → WP media upload |
-| Gallery images | ACF `product_gallery` | additional GDSN referenced images | download → upload → repeater rows |
+| Main image | featured media + `product_header_image` + `product_regular_image` | GDSN referenced files — hero selected by `IsPrimaryFile` → view code → sequence | download → **convert/resize (TIFF→web)** → upload |
+| Gallery images | ACF `product_gallery` | remaining GDSN referenced images | download → **convert/resize** → upload → repeater rows |
 | Video | ACF `product_header_video_file` | **media folder**, file named `{gtin}*` | match by GTIN prefix → upload |
 | Category | `noviplast-categories` term | **GPC brick code** → category map | lookup table (§5) |
 | GTIN | post meta `gtin` | GTIN | direct |
@@ -80,9 +90,24 @@ The Oxygen template is a **single fixed group** across categories (verified on *
    - **Human review:** the proposed split is shown for approval in the flow-orchestrator confirmation
      step before publishing (pilot requirement).
    - Render each bucket as the bulleted HTML that `product_description` expects.
-5. **Images (GDSN, multiple):** extend the GDSN parser to extract **all** referenced image files, not
-   just the primary. Primary → featured/header/regular; the rest → `product_gallery`. Download each
-   and upload to WP media (dedupe by GTIN so re-runs don't duplicate).
+5. **Images — a real pipeline, not a copy.** The GDSN files are **print masters** (92% TIFF, many
+   10–45 MB), so "download → upload" is not viable. Required steps:
+   1. **Extract** all referenced files per GTIN from `ReferencedFileDetailInformation` (the parser
+      currently takes only one — extend it to all 12 slots, keeping URL / mime / `IsPrimaryFile` /
+      `FileName` / `FileSequenceNumber`).
+   2. **Select the hero** by a deterministic rule, since only 48/124 carry a primary flag:
+      `IsPrimaryFile = TRUE` → else preferred GS1 view code (`A1N0` → `C1N0` → `C1C0` → …) → else
+      lowest `FileSequenceNumber`. Remaining images → `product_gallery` (ordered by sequence,
+      capped at a sensible max).
+   3. **Convert + resize** with **Pillow** (already a dependency via `qrcode[pil]`; v12.3 reads
+      TIFF): TIFF/PNG → web JPEG or WebP, max ~1600 px, quality ~85 — a 45 MB 3200×3200 master
+      becomes a ~200 KB web image.
+   4. **Upload** to WP media and assign: hero → `featured_media` + `product_header_image` +
+      `product_regular_image`; rest → `product_gallery`. **Dedupe by GTIN + view code** so re-runs
+      don't create duplicate attachments.
+   - **Caveat:** for the 76 products with no primary flag and no front shot, the chosen hero is a
+     best guess from an angled C-series image. Draft-first publishing covers this — the marketer
+     can swap the hero before publishing. 3 of 127 products have no images at all.
 6. **Video (folder):** a single flat folder, e.g. `input/noviplast/media/`, with files named
    `{gtin}*.mp4`; the tool matches by GTIN prefix, uploads, and sets `product_header_video_file`.
    Products without a matching file simply get no video.
