@@ -51,3 +51,6 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "staging: integration tests that hit a live staging WordPress; skipped unless the staging env vars are set (run with `pytest -m staging`).",
+]
