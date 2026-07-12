@@ -46,7 +46,7 @@ strict = true
 python_version = "3.11"
 
 [[tool.mypy.overrides]]
-module = ["openpyxl.*", "yaml.*", "jsonschema.*", "pystache.*"]
+module = ["openpyxl.*", "yaml.*", "jsonschema.*", "pystache.*", "qrcode.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
