@@ -63,3 +63,26 @@ jobs:
 
       - name: Tests
         run: npm -w mcps/gs1-nl test
+
+  wordpress-mcp:
+    name: Build and test wordpress MCP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm -w mcps/wordpress run build
+
+      - name: Tests
+        run: npm -w mcps/wordpress test
