@@ -82,6 +82,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     unless the staging env is configured.
   - CI: a Node job builds and tests the `mcps/wordpress` workspace.
 
+- **Phase 5 — QR + templates.**
+  - `lib/templates.py` — `TemplateEngine(client_id, template_config)` rendering a
+    `ProductRecord` into a localised HTML fragment via Mustache/`pystache` (§4.6, §3.4).
+    Client-override-first, `_default`-fallback resolution (missing template →
+    `TemplateError`); the §3.4 variable vocabulary with per-language text resolution;
+    edge E12 (unknown `{{extras.*}}` key → empty render + one WARNING) and E13 (data
+    containing `{{`/`}}` or HTML is escaped and never re-parsed).
+  - `templates/_default/product.{nl,en,fr}.html` — default product templates; and
+    `templates/noviplast/product.{nl,fr}.html` — the pilot's first templates, surfacing
+    the Noviplast `functional_name` extra (§6.5, §5.5).
+  - `lib/qr.py` — `render_qr(uri, output_dir, gtin, formats, size_mm, ecc, dpi=300)`
+    writing SVG/PNG/EPS Digital Link QR files (§4.7). Applies the uppercase-domain
+    optimisation (scheme + host uppercased, path preserved) for alphanumeric-mode symbols;
+    the SVG is emitted from the QR module matrix for exact millimetre sizing and
+    byte-identical determinism (§6.4); PNG/EPS via Pillow.
+  - `mcps/qr-render/` — self-contained TypeScript MCP exposing one tool (`qr_render`)
+    over stdio (§9.3). Uses npm `qrcode` for PNG and emits SVG/EPS from the module matrix
+    (npm `qrcode` has no EPS writer), mirroring `lib/qr.py`'s uppercase-domain transform
+    and output shape.
+  - Tests: `pytest` for the template engine (resolution order, variables, E12/E13,
+    `TemplateError`) and QR renderer (§6.4 byte-determinism, formats/ordering, uppercase
+    transform, ECC mapping, physical sizing); `vitest` for the MCP renderer and
+    end-to-end tool wiring.
+  - CI: a Node job builds and tests the `mcps/qr-render` workspace.
+
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
   is the GTIN application identifier `01`, not the string `Gtin`
