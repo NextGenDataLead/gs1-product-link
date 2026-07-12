@@ -7,20 +7,25 @@ production** environment (the GS1 sandbox account has no Digital Link contract, 
 production is the only environment that resolves — a project decision). It is marked
 ``staging`` and skipped unless both targets are configured, so CI stays green on mocks.
 
-Run once WordPress staging is provisioned and GS1 production credentials are available::
+Nothing auto-loads ``.env`` here, so export the variables (or ``set -a; source .env;
+set +a``) into the shell before running. The secret values reuse the project's canonical
+env-var names from ``.env.example`` (``NOVIPLAST_WP_APP_PASS``, ``NOVIPLAST_GS1_CLIENT_ID``,
+``NOVIPLAST_GS1_CLIENT_SECRET``); the rest are non-secret test-runner config::
 
     WP_STAGING_URL=https://staging.noviplast.nl \\
     WP_STAGING_USER=automation-bot \\
     NOVIPLAST_WP_APP_PASS='xxxx xxxx xxxx xxxx' \\
     GS1_PROD_ACCOUNT=87207XXXXXXXX \\
-    GS1_PROD_CLIENT_ID='...' GS1_PROD_CLIENT_SECRET='...' \\
+    NOVIPLAST_GS1_CLIENT_ID='...' NOVIPLAST_GS1_CLIENT_SECRET='...' \\
     STAGING_GTIN=08712345678905 \\
     pytest -m staging
 
 WARNING: this writes a **live** GS1 production resolver entry for ``STAGING_GTIN`` and
 publishes a WordPress page. Use a disposable/pilot GTIN dedicated to smoke testing — the
 run upserts with ``overwrite=True``. Optional overrides: ``WP_STAGING_POST_TYPE``
-(default ``noviplast``), ``WP_STAGING_APP_PASS_ENV`` (default ``NOVIPLAST_WP_APP_PASS``).
+(default ``noviplast``), ``WP_STAGING_APP_PASS_ENV`` (default ``NOVIPLAST_WP_APP_PASS``),
+``GS1_PROD_CLIENT_ID_ENV`` / ``GS1_PROD_CLIENT_SECRET_ENV`` (the env-var *names* holding
+the GS1 production secrets; default ``NOVIPLAST_GS1_CLIENT_ID`` / ``NOVIPLAST_GS1_CLIENT_SECRET``).
 """
 
 from __future__ import annotations
@@ -50,8 +55,9 @@ _WP_APP_PASS_ENV = os.environ.get("WP_STAGING_APP_PASS_ENV", "NOVIPLAST_WP_APP_P
 _WP_POST_TYPE = os.environ.get("WP_STAGING_POST_TYPE", "noviplast")
 
 _GS1_ACCOUNT = os.environ.get("GS1_PROD_ACCOUNT")
-_GS1_CLIENT_ID_ENV = "GS1_PROD_CLIENT_ID"
-_GS1_CLIENT_SECRET_ENV = "GS1_PROD_CLIENT_SECRET"
+# Reuse the canonical secret env-var names from .env.example (overridable).
+_GS1_CLIENT_ID_ENV = os.environ.get("GS1_PROD_CLIENT_ID_ENV", "NOVIPLAST_GS1_CLIENT_ID")
+_GS1_CLIENT_SECRET_ENV = os.environ.get("GS1_PROD_CLIENT_SECRET_ENV", "NOVIPLAST_GS1_CLIENT_SECRET")
 
 _GTIN = os.environ.get("STAGING_GTIN", "08712345678905")
 
@@ -69,8 +75,8 @@ pytestmark = [
     pytest.mark.skipif(
         not _STAGING_READY,
         reason="staging WP + GS1 production not configured (set WP_STAGING_URL, "
-        "WP_STAGING_USER, the WP app-password env, GS1_PROD_ACCOUNT, GS1_PROD_CLIENT_ID, "
-        "and GS1_PROD_CLIENT_SECRET)",
+        "WP_STAGING_USER, NOVIPLAST_WP_APP_PASS, GS1_PROD_ACCOUNT, NOVIPLAST_GS1_CLIENT_ID, "
+        "and NOVIPLAST_GS1_CLIENT_SECRET)",
     ),
 ]
 
