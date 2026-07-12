@@ -109,6 +109,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Manual print+scan gate (§8.2 exit gate): 20 mm QR scanned successfully on
     Android (2026-07-12). iOS scan still pending before the gate is fully met.
 
+- **Phase 6 — lib, scripts, state.**
+  - `lib/state.py` — per-client run state over the `State`/`StateEntry` models (§4.8):
+    `load_state` (empty when absent), `save_state` (atomic write-to-temp-then-`os.replace`,
+    so a crash mid-write leaves the prior `state.json` intact, never a partial one), and
+    `compute_content_hash` (deterministic SHA-256 over canonical JSON of product +
+    language + target URL). `diff_against_state` is deferred to Phase 7, where `run_plan`
+    supplies the slug/title inputs a `PlanRow` needs.
+  - `scripts/run_execute.py` — deterministic, resumable execution of a confirmed plan
+    (§8.3): per `(GTIN, language)` row it renders the template → upserts the WordPress page
+    → verifies the URL returns 200 → sets the GS1 resolver target via `safe_upsert`
+    (GET-before-write, `overwrite=True`; §5.4) → renders the QR. One `RunOutcome` per row is
+    appended to `output/{client_id}/runs/{ts}.jsonl` regardless of success; successful rows
+    update `output/{client_id}/state.json`. Exit codes `0`/`1`/`2`. `--dry-run` (§5.4 Level
+    B) previews intended mutations without performing them (no HTTP writes, no QR, no state).
+  - Tests: `pytest` for `lib/state.py` (round-trip, content-hash determinism, `StateError`,
+    and the §12 kill-mid-write atomicity check — including a SIGKILL-during-write subprocess
+    test) and `scripts/run_execute.py` (happy path, §6.5 double-run idempotency, verify-failure
+    error path, `--dry-run` no-mutation, `--confirmed` subset, config-error exit code) with
+    the WP/GS1 clients faked. A `staging`-marked integration test drives `run_execute`
+    end-to-end for one GTIN against real WordPress staging + the GS1 **production**
+    environment, then re-runs to assert §6.5; skipped until that infrastructure is configured.
+  - DoD note: the live end-to-end exit gate and live §6.5 check run via the staging test and
+    are gated on WordPress staging being provisioned; the GS1 sandbox account has no Digital
+    Link contract, so the run targets GS1 production (a disposable/pilot GTIN, protected by the
+    `safe_upsert` guard and `--dry-run`).
+
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
   is the GTIN application identifier `01`, not the string `Gtin`
