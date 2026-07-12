@@ -106,6 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     transform, ECC mapping, physical sizing); `vitest` for the MCP renderer and
     end-to-end tool wiring.
   - CI: a Node job builds and tests the `mcps/qr-render` workspace.
+  - Manual print+scan gate (§8.2 exit gate): 20 mm QR scanned successfully on
+    Android (2026-07-12). iOS scan still pending before the gate is fully met.
 
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
