@@ -70,6 +70,30 @@ def test_flat_happy_path_writes_output(tmp_path: Path, monkeypatch: pytest.Monke
     assert {p["gtin"] for p in payload} == {"08713195007359", "05031694050403"}
 
 
+def test_duplicate_gtin_first_wins_with_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # E3: a repeated GTIN keeps the first occurrence; the rest warn and are skipped.
+    xlsx = _write_flat_xlsx(
+        tmp_path,
+        ["GTIN", "Merk", "Productnaam NL"],
+        [
+            ["08713195007359", "Noviplast", "Rugsteun"],
+            ["08713195007359", "Noviplast", "Duplicaat"],
+        ],
+    )
+    _patch_client(monkeypatch, tmp_path, {"path": xlsx, "column_map": _FLAT_MAP})
+    out = tmp_path / "products.json"
+
+    code = parse_export.main(["acme", "--output", str(out)])
+
+    assert code == 0
+    assert "(1 warnings)" in capsys.readouterr().err
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert len(payload) == 1
+    assert payload[0]["product_name"]["values"]["nl"] == "Rugsteun"
+
+
 def test_empty_rows_skipped_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # E4: a blank row is skipped without a warning.
     xlsx = _write_flat_xlsx(
