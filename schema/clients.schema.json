@@ -311,6 +311,19 @@
         "batch_size": { "type": "integer", "minimum": 1 }
       }
     },
+    "websiteStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "description": "Operator-maintained control file gating page/QR creation (create-only).",
+      "properties": {
+        "path": { "type": "string" },
+        "gtin_column": { "type": "string" },
+        "on_website_column": { "type": "string" },
+        "in_gs1_column": { "type": "string" },
+        "site_link_column": { "type": "string" }
+      }
+    },
     "multilingualPlugin": { "enum": ["none", "polylang", "wpml"] },
     "imageHandling": { "enum": ["url_in_export", "local_folder", "manual"] },
     "languages": {
@@ -338,7 +351,8 @@
           "items": { "$ref": "#/$defs/gs1Link" }
         },
         "qr": { "$ref": "#/$defs/qr" },
-        "flow": { "$ref": "#/$defs/flow" }
+        "flow": { "$ref": "#/$defs/flow" },
+        "website_status": { "$ref": "#/$defs/websiteStatus" }
       }
     }
   }

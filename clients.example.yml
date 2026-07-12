@@ -104,3 +104,13 @@ clients:
         public: true
         per_language: true
         title_pattern: "{product_name}"
+
+    # Create-only gate (not in the datasource export): a product is a candidate for
+    # page/QR creation only when it is already in GS1 and not yet on the website.
+    # Column names are relabelable; these defaults match the Noviplast control file.
+    website_status:
+      path: "./input/noviplast/website_status.xlsx"
+      gtin_column: "Barcode"
+      on_website_column: "Momenteel op Website"
+      in_gs1_column: "Al in Gs1"
+      site_link_column: "Link naar site"
