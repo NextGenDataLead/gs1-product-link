@@ -92,6 +92,32 @@ class OverwriteError(OrchestratorError):
         )
 
 
+class GtinMismatchError(OrchestratorError):
+    """A WordPress page exists at the target slug but belongs to a different GTIN.
+
+    Raised by ``wp_client.upsert_page`` when the page found by slug (or id) carries a
+    ``meta.gtin`` that does not match the row being written (edge E8). The WordPress
+    sibling of :class:`OverwriteError`: a GET-before-write guard that refuses to
+    overwrite an unrelated page. Distinct from :class:`WordPressAPIError` (E11, a slug
+    collision the server reports as 409) so callers can *log and skip the row* rather
+    than treat it as a transport failure needing human intervention.
+
+    Attributes:
+        gtin: The GTIN of the row being written.
+        existing_gtin: The GTIN recorded on the page already at that slug/id.
+        wp_page_id: The id of the conflicting WordPress page.
+    """
+
+    def __init__(self, gtin: str, existing_gtin: str, wp_page_id: int) -> None:
+        self.gtin = gtin
+        self.existing_gtin = existing_gtin
+        self.wp_page_id = wp_page_id
+        super().__init__(
+            f"WordPress page {wp_page_id} has meta.gtin {existing_gtin!r}, "
+            f"which does not match row GTIN {gtin!r}; skipping to avoid overwriting"
+        )
+
+
 class TemplateError(OrchestratorError):
     """A template could not be resolved or rendered."""
 
