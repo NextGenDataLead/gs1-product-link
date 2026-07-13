@@ -1034,7 +1034,9 @@ tests/
 
 ### Phase 7.5 — GPC brick → category mapping
 Derive the product-category assignment from the **GS1 DIY sector datamodel**, since GPC bricks do
-not map 1:1 onto a client's marketing categories. See `docs/clients/noviplast-page-adapter.md` §5.7.
+not map 1:1 onto a client's marketing categories. **The operator supplies the DIY datamodel** at the
+start of the phase (like the export and control file). See `docs/clients/noviplast-page-adapter.md` §5.7.
+- [ ] DIY datamodel supplied by the operator and parsed
 - [ ] Every GPC brick present in the client export maps to a category term
 - [ ] Bricks that span categories are resolved by a per-GTIN override list
 - [ ] `brick_category_map` + overrides live in `clients.yml`, reviewed and signed off by the client

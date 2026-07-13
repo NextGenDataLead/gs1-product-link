@@ -81,13 +81,16 @@ The Oxygen template is a **single fixed group** across categories (verified on *
    action column is **not** used.
 2. **Draft-first:** the tool creates each page as a **draft**. A marketer completes the tagline and
    any media the feed can't supply, then publishes. The tool never auto-publishes marketing pages.
-3. **Title — fix the attribute binding.** The page title is `TradeItemDescription` (**attr 3318**,
-   "Product description"), per language, minus a leading `"Noviplast "` (the brand is already a
-   separate field, `BrandName` 3336). **The parser is currently bound to the wrong attribute:**
-   `product_name` maps to `DescriptionShort` (3297) — a logistics string
-   (*"Schroefverwijderaar metaal grs"*) — where the real title is *"Noviplast Screw Remove Tool"*
-   → **"Screw Remove Tool"**. Verified against the live page. `gdsn_map.product_name` must point at
-   **3318**.
+3. **Title — `TradeItemDescription` (attr 3318).** Per language, minus a leading `"Noviplast "` (brand
+   is a separate field, `BrandName` 3336). **Fixed in `clients.yml`** — `product_name` was bound to
+   `DescriptionShort` (3297), an internal logistics string (*"Schroefverwijderaar metaal grs"*); 3297
+   is now carried in `extras.logistics_name` instead.
+   - **Data-quality caveat:** attr 3318 can differ per `TargetMarketCountryCode`. For **121 of 124**
+     products the nl value is identical across BE (056) and NL (528), but **3 diverge** — e.g.
+     `08713195000473`: BE-nl = *"Noviplast Screw Remove Tool"* (the name on the live page) vs NL-nl =
+     *"Noviplast Schroefverwijderaar metaal grijs"*. `market_language` maps `528 → nl`, so the tool
+     takes the NL row. These 3 are **Noviplast datapool corrections**, not a tool rule — the tool
+     follows the feed.
 4. **Tagline.** `TradeItemMarketingMessage` (**attr 1083**), per language. Verified exactly against the
    live page (`08713195000473` nl → *"Verwijder makkelijk beschadigde schroeven"*, the page's tagline).
    Coverage: **113/127 nl, 112/127 fr**. Products without one leave the tagline empty for the marketer.
