@@ -63,9 +63,9 @@ The Oxygen template is a **single fixed group** across categories (verified on *
 
 | Page element | Stored in | GDSN / other source | Transform |
 |---|---|---|---|
-| Product name (heading) | WP **post title** | `TradeItemDescription` (nl/fr) | **strip leading `"Noviplast "`** |
-| Tagline | ACF `product_title` + `product_header_video_text` | **open** (§6) | — |
-| Eigenschappen + Technische details | ACF `product_description` (HTML, per language) | `TradeItemFeatureBenefit` (repeatable, nl/fr) | **LLM classifies each item** into the two buckets; render as HTML |
+| Product name (heading) | WP **post title** | `TradeItemDescription` — **attr 3318**, nl/fr | **strip leading `"Noviplast "`** |
+| Tagline | ACF `product_title` + `product_header_video_text` | `TradeItemMarketingMessage` — **attr 1083**, nl/fr (113/127 nl, 112/127 fr) | use as-is |
+| Eigenschappen + Technische details | ACF `product_description` (HTML, per language) | **LLM-generated** from the marketing message + net content / dimensions / material — `TradeItemFeatureBenefit` covers only **6/127** products | generate → **human-approve** → render as HTML |
 | Main image | featured media + `product_header_image` + `product_regular_image` | GDSN referenced files — hero selected by `IsPrimaryFile` → view code → sequence | download → **convert/resize (TIFF→web)** → upload |
 | Gallery images | ACF `product_gallery` | remaining GDSN referenced images | download → **convert/resize** → upload → repeater rows |
 | Video | ACF `product_header_video_file` | **media folder**, file named `{gtin}*` | match by GTIN prefix → upload |
@@ -81,15 +81,27 @@ The Oxygen template is a **single fixed group** across categories (verified on *
    action column is **not** used.
 2. **Draft-first:** the tool creates each page as a **draft**. A marketer completes the tagline and
    any media the feed can't supply, then publishes. The tool never auto-publishes marketing pages.
-3. **Title:** from `TradeItemDescription` per language; strip a leading `"Noviplast "`.
-4. **Feature/benefit split (LLM):**
-   - Classify **per `TradeItemFeatureBenefit` item** (each item has an nl+fr pair) so nl and fr land in
-     the **same bucket** — Eigenschappen (benefit/feature) vs Technische details (spec).
-   - **Idempotency:** classify **once** and **cache** the result keyed by the item text, so re-runs
+3. **Title — fix the attribute binding.** The page title is `TradeItemDescription` (**attr 3318**,
+   "Product description"), per language, minus a leading `"Noviplast "` (the brand is already a
+   separate field, `BrandName` 3336). **The parser is currently bound to the wrong attribute:**
+   `product_name` maps to `DescriptionShort` (3297) — a logistics string
+   (*"Schroefverwijderaar metaal grs"*) — where the real title is *"Noviplast Screw Remove Tool"*
+   → **"Screw Remove Tool"**. Verified against the live page. `gdsn_map.product_name` must point at
+   **3318**.
+4. **Tagline.** `TradeItemMarketingMessage` (**attr 1083**), per language. Verified exactly against the
+   live page (`08713195000473` nl → *"Verwijder makkelijk beschadigde schroeven"*, the page's tagline).
+   Coverage: **113/127 nl, 112/127 fr**. Products without one leave the tagline empty for the marketer.
+5. **Eigenschappen / Technische details — LLM *generation*, not classification.**
+   `TradeItemFeatureBenefit` (attr 1067) is populated for only **6 of 127** products, so it cannot be
+   the source. Instead:
+   - **Generate** both bullet lists with an LLM from the **marketing message + net content +
+     dimensions + material** (and `TradeItemFeatureBenefit` when it happens to exist), per language —
+     Eigenschappen (benefits) and Technische details (specs).
+   - **Human-approve** every generated block before publishing — it is marketing copy on a live site.
+     This slots into the flow-orchestrator confirmation step; draft-first publishing backstops it.
+   - **Idempotency:** generate **once** and **cache** the result keyed by the source inputs, so re-runs
      don't drift and flip the content hash.
-   - **Human review:** the proposed split is shown for approval in the flow-orchestrator confirmation
-     step before publishing (pilot requirement).
-   - Render each bucket as the bulleted HTML that `product_description` expects.
+   - Render each bucket as the bulleted HTML `product_description` expects.
 5. **Images — a real pipeline, not a copy.** The GDSN files are **print masters** (92% TIFF, many
    10–45 MB), so "download → upload" is not viable. Required steps:
    1. **Extract** all referenced files per GTIN from `ReferencedFileDetailInformation` (the parser
@@ -111,9 +123,17 @@ The Oxygen template is a **single fixed group** across categories (verified on *
 6. **Video (folder):** a single flat folder, e.g. `input/noviplast/media/`, with files named
    `{gtin}*.mp4`; the tool matches by GTIN prefix, uploads, and sets `product_header_video_file`.
    Products without a matching file simply get no video.
-7. **Category:** a **GPC brick → `noviplast-categories`** lookup in `clients.yml`. The parser already
-   captures `gpc_brick_code`; the map resolves it to a taxonomy term. Missing/unmapped bricks → leave
-   category unset on the draft and warn.
+7. **Category → deferred to its own phase (Phase 7.5).** Derived from the GPC brick via the **GS1 DIY
+   sector datamodel**. It is not a simple lookup, which is why it gets a phase of its own:
+   - **~70 distinct bricks** across the 127-product pilot export (many singletons).
+   - **Bricks span categories** — e.g. `10003865` holds garden tools *and* a nutcracker (keuken). A
+     pure brick map will misclassify, so a **per-GTIN override list** is required.
+   - **The client's categorisation is not purely semantic** — *Power Splash* is a shower head, filed
+     under **keuken** on the live site. No inferred map reproduces that; it needs client sign-off.
+   - **Lighting (~20 products, 6 bricks)** has no category of its own and falls into `specials`.
+   - Output: `brick_category_map` + per-GTIN overrides in `clients.yml`. Unmapped bricks **warn and
+     leave the category unset** — never guess. Terms: `keuken`, `doe_het_zelf`, `schoonmaak`, `tuin`,
+     `dier`, `specials`.
 8. **Bilingual (WPML):** create the nl and fr drafts, set each page's language, and link them as
    translations. WPML has **no clean REST endpoint** for language assignment / translation linking
    (its REST API is translation-*workflow* oriented), so this needs a **small server-side helper**
@@ -121,18 +141,21 @@ The Oxygen template is a **single fixed group** across categories (verified on *
 
 ## 6. Open decisions
 
-- **Tagline source.** Not in GDSN. Options: (a) a column in the control file, (b) LLM-suggested from
-  the name/description and human-approved, (c) left blank for the marketer on the draft. **Undecided.**
-- **GPC → category mapping table.** Needs to be populated (which bricks map to keuken / tuin /
-  doe-het-zelf / dier / schoonmaak / specials).
+- ~~Tagline source~~ — **resolved:** `TradeItemMarketingMessage` (attr 1083), verified against the live page.
+- ~~Feature/benefit source~~ — **resolved:** LLM-**generated** from the marketing message + net content /
+  dimensions / material, human-approved (the feed covers only 6/127).
+- **GPC brick → category mapping** — **deferred to Phase 7.5** (GS1 DIY sector datamodel; see §5.7).
 - **Auto-create missing category terms**, or require them to pre-exist? (Recommend: require pre-exist,
-  warn on miss.)
+  warn on miss.) — settle in Phase 7.5.
+- **LLM provider/prompt + cache location** for the bullet generation — settle when that phase is planned.
 
 ## 7. WordPress-side enablers (onboarding tasks)
 
 - **CPT + gtin meta in REST** — mu-plugin/Code-Snippet. **Done** (this session).
 - **ACF field group → Show in REST** (or a write helper) so `product_title`, `product_description`,
   `product_gallery`, image/video fields can be written via REST. **Todo.**
+- **`noviplast-categories` taxonomy → `show_in_rest`.** Currently 404s on the REST API, so the tool
+  cannot read or assign category terms. Add to the same enabler snippet. **Todo.**
 - **WPML helper endpoint** — a custom REST route (mu-plugin) that: sets a post's language, and links a
   set of post ids as one translation group, via WPML's PHP API. **Todo.**
 - **GPC → category** map populated; category terms exist. **Todo.**
@@ -146,9 +169,13 @@ The Oxygen template is a **single fixed group** across categories (verified on *
   `NotImplementedError` stub).
 - `lib/wp_client.py`: ACF-field writes; media upload **from a URL** and **from a local file**; set
   language + link translations via the WPML helper.
-- `lib/gdsn.py` / parser: extract **multiple** referenced images; expose `TradeItemFeatureBenefit` as a
-  repeatable nl/fr list.
-- New **feature-benefit classifier** (LLM) with a deterministic cache.
+- `lib/gdsn.py` / parser + `clients.yml` `gdsn_map`:
+  - **fix `product_name` → `TradeItemDescription` attr 3318** (currently `DescriptionShort` 3297 — wrong);
+  - add `marketing_message` → attr **1083** (the tagline), localised;
+  - extract **multiple** referenced images (all 12 slots, with mime / `IsPrimaryFile` / `FileName`);
+  - expose `TradeItemFeatureBenefit` (1067) as a repeatable nl/fr list (sparse, but use it when present).
+- New **feature/benefit generator** (LLM) with a deterministic cache + human-approval gate.
+- New **image pipeline**: download → convert/resize (Pillow) → upload → dedupe.
 - A **Noviplast page-build step** that assembles the above into the ACF payload — replacing the
   Phase 5 HTML-template render for this client.
 

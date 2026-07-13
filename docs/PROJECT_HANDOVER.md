@@ -744,6 +744,7 @@ gs1-digital-link-orchestrator/
 | 5 | QR rendering + templates | 0.5 | 1 d | Printed QR scans and resolves |
 | 6 | `lib/`, scripts, and state | 2 | 3–4 d | `run_execute.py` completes for 1 GTIN |
 | 7 | Re-run & change detection | 1 | 2 d | Re-run with change triggers chat prompt |
+| 7.5 | GPC brick → category mapping | 1 | 1–2 d | Every export brick maps to a category; overrides signed off |
 | 8 | Skills & flow orchestrator | 1 | 2 d | End-to-end via Cowork chat works |
 | 9 | Pilot client end-to-end | 2 | 1 wk | 10+ real products, no manual fixes |
 | 10 | Docs | 1.5 | 2 d | Fresh user can onboard from docs alone |
@@ -767,6 +768,8 @@ gs1-digital-link-orchestrator/
 **Phase 6 — lib, scripts, state:** `lib/state.py`, `lib/config.py`. `scripts/run_execute.py` per §10.5 skeleton. Unit tests for `lib/` with mocked HTTP. Exit gate: `python scripts/run_execute.py {client} plan.json` completes for 1 GTIN.
 
 **Phase 7 — Re-run & change detection:** `scripts/run_plan.py` — hash per (GTIN, language); classify new/unchanged/changed. `flow-orchestrator` skill — format diff for chat, collect decisions, emit `plan.confirmed.json`, invoke execute. Test: change one product name, re-run, confirm prompt appears. Exit gate: full re-run flow works in Cowork chat.
+
+**Phase 7.5 — GPC brick → category mapping:** Derive each product's site category from its GPC brick, using the **GS1 DIY sector datamodel** as the classification source. A straight brick→category map is not sufficient: bricks span marketing categories (e.g. brick `10003865` holds both garden tools and a nutcracker) and the client's own categorisation is not purely semantic (a shower head filed under *keuken*). So the phase produces a `brick_category_map` **plus a per-GTIN override list** in `clients.yml`, reviewed and signed off by the client. ~70 distinct bricks across the 127-product pilot export. Exit gate: every brick in the export maps to a category, overrides cover the exceptions, and `run_plan` assigns the category for every planned product (unmapped bricks warn, never guess). Detail in `docs/clients/noviplast-page-adapter.md` §5.7.
 
 **Phase 8 — Skills & flow orchestrator polish:** Finalise SKILL.md files. Test in fresh Cowork session: user uploads export, says "run for {client} in test". Exit gate: end-to-end flow works from a single chat instruction.
 

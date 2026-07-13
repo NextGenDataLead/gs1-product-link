@@ -1032,6 +1032,15 @@ tests/
 - [ ] Chat-format diff readable and unambiguous, matches §10.6
 - [ ] Full re-run flow tested in fresh Cowork session
 
+### Phase 7.5 — GPC brick → category mapping
+Derive the product-category assignment from the **GS1 DIY sector datamodel**, since GPC bricks do
+not map 1:1 onto a client's marketing categories. See `docs/clients/noviplast-page-adapter.md` §5.7.
+- [ ] Every GPC brick present in the client export maps to a category term
+- [ ] Bricks that span categories are resolved by a per-GTIN override list
+- [ ] `brick_category_map` + overrides live in `clients.yml`, reviewed and signed off by the client
+- [ ] `run_plan` assigns the correct category for every planned product; unmapped bricks warn rather
+      than guess
+
 ### Phase 8 — Skills
 - [ ] Each SKILL.md finalised per §10
 - [ ] Full flow via chat instruction works end-to-end
