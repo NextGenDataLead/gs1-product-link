@@ -178,6 +178,22 @@ def test_gate_excludes_non_candidates(
     assert "1 not in control file" in err
 
 
+def test_gate_joins_13_digit_barcode_to_14_digit_gtin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Control file carries the 13-digit barcode; the product GTIN is 14-digit.
+    status_path = _write_status(tmp_path, [[GTIN_A.lstrip("0"), None, "*", None]])
+    cfg = _make_config(website_status=WebsiteStatusConfig(path=status_path))
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    plan = _read_plan()
+    assert [r.gtin for r in plan.rows] == [GTIN_A]
+
+
 def test_missing_control_file_exit_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

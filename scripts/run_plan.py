@@ -68,7 +68,9 @@ def _gate(
     eligible: list[ProductRecord] = []
     excluded = {"on_website": 0, "not_in_gs1": 0, "unknown": 0}
     for product in products:
-        status = statuses.get(product.gtin)
+        # Statuses are keyed by GTIN-14 so a 13-digit control-file barcode joins to a
+        # 14-digit product GTIN regardless of a leading zero.
+        status = statuses.get(product.gtin14)
         if status is None:
             excluded["unknown"] += 1
         elif status.on_website:
