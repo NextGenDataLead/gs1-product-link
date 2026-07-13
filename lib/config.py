@@ -192,6 +192,27 @@ class FlowConfig(BaseModel):
     batch_size: int = 50
 
 
+class WebsiteStatusConfig(BaseModel):
+    """Operator-maintained website-status control file (create-only gate).
+
+    Not part of the datasource export and not in the original spec: a deliberate,
+    per-client extension. The file lists, per product, whether it is already on the
+    website and already registered in GS1. ``scripts/run_plan.py`` uses it to gate
+    which products are candidates for page/QR creation — eligible when the GTIN is
+    already in GS1 (its resolver record exists) and not yet on the website. Columns
+    are named here so a client can relabel them without code changes; defaults match
+    the Noviplast file.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+    gtin_column: str = "Barcode"
+    on_website_column: str = "Momenteel op Website"
+    in_gs1_column: str = "Al in Gs1"
+    site_link_column: str | None = "Link naar site"
+
+
 class ClientConfig(BaseModel):
     """The full resolved configuration for one client (§2.4)."""
 
@@ -207,6 +228,7 @@ class ClientConfig(BaseModel):
     gs1_links: list[GS1LinkConfig] = Field(default_factory=list)
     qr: QRConfig | None = None
     flow: FlowConfig | None = None
+    website_status: WebsiteStatusConfig | None = None
 
 
 # --- Loading (§4.2) ----------------------------------------------------------

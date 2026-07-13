@@ -17,9 +17,16 @@ from pathlib import Path
 
 import pytest
 
-from lib.errors import StateError
-from lib.records import LocalisedText, ProductRecord, State, StateEntry
-from lib.state import compute_content_hash, load_state, save_state, state_path
+from lib.config import WordPressConfig
+from lib.errors import ConfigError, StateError
+from lib.records import LocalisedText, PlanClassification, ProductRecord, State, StateEntry
+from lib.state import (
+    compute_content_hash,
+    diff_against_state,
+    load_state,
+    save_state,
+    state_path,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _HASH_LEN = 64
@@ -157,3 +164,139 @@ def test_content_hash_sensitive_to_each_input(
 ) -> None:
     baseline = compute_content_hash(_product(), "nl", "https://noviplast.test/p/1")
     assert compute_content_hash(product, language, target_url) != baseline
+
+
+# --- diff_against_state (§4.8, §8.2, Phase 7) --------------------------------
+
+
+def _wp(**overrides: object) -> WordPressConfig:
+    base: dict[str, object] = {
+        "site_url": "https://noviplast.test",
+        "username": "bot",
+        "app_password_env": "NOVIPLAST_WP_APP_PASS",
+        "post_type": "noviplast",
+        "languages": ["nl", "fr"],
+        "default_language": "nl",
+        "slug_pattern": "p-{gtin}",
+        "target_url_pattern": "{site_url}/{lang_segment}{post_type}/{slug}/",
+    }
+    base.update(overrides)
+    return WordPressConfig(**base)
+
+
+def _row_for(rows: list[object], language: str) -> object:
+    return next(r for r in rows if getattr(r, "language") == language)  # noqa: B009
+
+
+def _state_with(gtin: str, language: str, *, content_hash: str, wp_url: str) -> State:
+    entry = StateEntry(
+        wp_page_id=1,
+        wp_url=wp_url,
+        wp_featured_media_id=None,
+        content_hash=content_hash,
+        gs1_link_set_hash="g" * _HASH_LEN,
+        last_run=datetime(2026, 7, 12, 10, 0, tzinfo=UTC),
+    )
+    return State(client_id="noviplast", entries={gtin: {language: entry}})
+
+
+def test_diff_new_when_no_state_entry() -> None:
+    rows = diff_against_state([_product()], State(client_id="noviplast", entries={}), ["nl"], _wp())
+
+    assert len(rows) == 1
+    assert rows[0].classification is PlanClassification.NEW
+    assert rows[0].diff is None
+
+
+def test_diff_slug_and_target_url_built_from_patterns() -> None:
+    product = _product(gtin="08713195007359")
+    rows = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl", "fr"], _wp()
+    )
+
+    nl, fr = _row_for(rows, "nl"), _row_for(rows, "fr")
+    assert nl.slug == "p-08713195007359"
+    # Default language has no language path segment; a non-default one does.
+    assert nl.target_url == "https://noviplast.test/noviplast/p-08713195007359/"
+    assert fr.target_url == "https://noviplast.test/fr/noviplast/p-08713195007359/"
+    assert nl.title == "Rugsteun"
+    assert fr.title == "Support arrière"
+
+
+def test_diff_unchanged_when_hash_matches() -> None:
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _state_with(
+        product.gtin, "nl", content_hash=baseline.content_hash, wp_url=baseline.target_url
+    )
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.UNCHANGED
+    assert rows[0].diff is None
+
+
+def test_diff_changed_with_no_url_move_has_no_diff() -> None:
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    # Same URL, stale content hash -> CHANGED but no field-level diff (GTIN slug is stable).
+    state = _state_with(product.gtin, "nl", content_hash="stale", wp_url=baseline.target_url)
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.CHANGED
+    assert rows[0].diff is None
+
+
+def test_diff_changed_surfaces_target_url_when_moved() -> None:
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _state_with(product.gtin, "nl", content_hash="stale", wp_url="https://old.test/x/")
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.CHANGED
+    assert rows[0].diff == {"target_url": ("https://old.test/x/", baseline.target_url)}
+
+
+def test_diff_multilanguage_expands_rows() -> None:
+    rows = diff_against_state(
+        [_product()], State(client_id="noviplast", entries={}), ["nl", "fr"], _wp()
+    )
+
+    assert {r.language for r in rows} == {"nl", "fr"}
+
+
+def test_diff_missing_product_name_for_language_is_omitted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    product = _product(product_name=LocalisedText(values={"nl": "Rugsteun"}))  # no fr
+
+    with caplog.at_level("WARNING", logger="lib.state"):
+        rows = diff_against_state(
+            [product], State(client_id="noviplast", entries={}), ["nl", "fr"], _wp()
+        )
+
+    assert [r.language for r in rows] == ["nl"]
+    assert "missing product_name.fr" in caplog.text
+
+
+def test_diff_empty_products_yields_no_rows() -> None:
+    rows = diff_against_state([], State(client_id="noviplast", entries={}), ["nl"], _wp())
+    assert rows == []
+
+
+def test_diff_missing_patterns_raises() -> None:
+    with pytest.raises(ConfigError, match="slug_pattern"):
+        diff_against_state(
+            [_product()],
+            State(client_id="noviplast", entries={}),
+            ["nl"],
+            _wp(slug_pattern=None),
+        )

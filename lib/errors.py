@@ -124,3 +124,15 @@ class TemplateError(OrchestratorError):
 
 class StateError(OrchestratorError):
     """The state file could not be loaded, parsed, or written."""
+
+
+class WebsiteStatusError(OrchestratorError):
+    """The website-status control file is missing, unreadable, or malformed.
+
+    Raised by ``lib.website_status.load_website_status`` when the operator's
+    control file (``input/{client_id}/website_status.xlsx``) cannot be opened or
+    is missing a required column. The control file gates which products are
+    eligible for page/QR creation (already in GS1 and not yet on the website);
+    a missing or malformed one is an operator-config error, so ``run_plan.py``
+    treats it like :class:`ConfigError` (exit 2).
+    """

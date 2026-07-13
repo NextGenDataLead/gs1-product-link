@@ -139,6 +139,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     end-to-end for 1 GTIN) is pending WP access. The other two Phase 6 DoD items (§6.5
     idempotency, state-file kill-mid-write atomicity) are met and covered by passing tests.
 
+- **Phase 7 — Re-run & change detection.**
+  - `lib/state.py` `diff_against_state(products, state, languages, wordpress)` (§4.8, §8.2):
+    per `(GTIN, language)` it builds the slug, resolver target URL, and title from the
+    WordPress patterns and classifies against prior state by content hash — NEW (no entry),
+    UNCHANGED (equal hash), or CHANGED. A CHANGED row carries a best-effort `target_url`
+    diff (old `wp_url` → new) when the URL moved; `StateEntry` stores no prior product
+    fields, so a title before/after is never fabricated. A language with no `product_name`
+    for a product is omitted with a warning (edge E18). Takes the whole `WordPressConfig`
+    rather than §4.8's bare `target_url_pattern`, which alone cannot build a `PlanRow`.
+  - `scripts/run_plan.py` (§8.2): loads config/state/products, classifies with
+    `diff_against_state`, writes `output/{client_id}/plan.json`, and prints
+    `N new, M unchanged, K changed` to stderr. Exit `0`/`2` (no per-row error class).
+  - `skills/flow-orchestrator/SKILL.md` (§10.5, §10.6): presents the plan, collects
+    confirmation, writes `plan.confirmed.json`, enforces the mandatory production-env gate,
+    and invokes `run_execute` — with the §10.6 chat blocks embedded verbatim.
+  - **Website-status control-file gate (extension beyond the spec).** A deliberate,
+    user-approved addition for the pilot's *create-only* workflow: an operator-maintained
+    file (`input/{client_id}/website_status.xlsx`), separate from the datasource export,
+    gates which products are candidates — eligible only when already registered in GS1 and
+    not yet on the website. `lib/website_status.py` loads it; `WebsiteStatusConfig` +
+    `WebsiteStatusError` + a `websiteStatus` schema block wire it into `clients.yml`;
+    `run_plan.py` applies the gate and reports exclusions. Consequence: in the pilot every
+    planned row is NEW, so the change-detection/diff path is exercised only by tests, dormant
+    at runtime until product updates occur.
+  - Tests: `diff_against_state` edge cases (NEW/UNCHANGED/CHANGED, target_url diff, E18,
+    multi-language, missing patterns) in `tests/lib/test_state.py`; control-file parsing and
+    eligibility in `tests/lib/test_website_status.py`; `run_plan` counts, gate filtering,
+    default path, and exit-2 paths in `tests/scripts/test_run_plan.py`.
+  - DoD note: change classification and the §10.6 chat format are met and test-covered. The
+    full re-run flow in a fresh Cowork session (DoD item 3) and the true end-to-end pilot run
+    require the operator's `website_status.xlsx`; verified against a hand-built fixture in the
+    interim.
+
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
   is the GTIN application identifier `01`, not the string `Gtin`

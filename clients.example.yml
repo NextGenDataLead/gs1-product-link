@@ -66,9 +66,14 @@ clients:
       # number (e.g. "3297") or a path segment name (e.g. GpcCategoryCode). Discover
       # these by running: python -m scripts.inspect_export input/noviplast/products.xlsx
       gdsn_map:
-        product_name:      { sheet: TradeItemDescription,            attribute: "3297", localised: true }
-        description_long:  { sheet: TradeItemDescription,            attribute: "3318", localised: true }
+        # 3318 TradeItemDescription = the marketing product name shown as the page title
+        # (strip the leading brand prefix — brand is a separate field). NOT 3297, which is
+        # DescriptionShort, an internal logistics string ("Schroefverwijderaar metaal grs").
+        product_name:      { sheet: TradeItemDescription,            attribute: "3318", localised: true }
+        # 1083 TradeItemMarketingMessage = the page tagline.
         description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true }
+        # 1067 TradeItemFeatureBenefit = feature/benefit copy (sparse in the pilot export).
+        description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true }
         brand:             { sheet: TradeItemDescription,            attribute: "3336" }
         net_content:       { sheet: TradeItemMeasurements,           attribute: "3510", with_unit: true }
         gpc_brick_code:    { sheet: BrickGPCCommercialData,          attribute: GpcCategoryCode }
@@ -76,6 +81,7 @@ clients:
       # Named pass-through attributes carried verbatim into ProductRecord.extras.
       gdsn_extras:
         functional_name:   { sheet: TradeItemDescription, attribute: "3301", localised: true }
+        logistics_name:    { sheet: TradeItemDescription, attribute: "3297", localised: true }
 
     wordpress:
       site_url: "https://www.noviplast.nl"
@@ -104,3 +110,13 @@ clients:
         public: true
         per_language: true
         title_pattern: "{product_name}"
+
+    # Create-only gate (not in the datasource export): a product is a candidate for
+    # page/QR creation only when it is already in GS1 and not yet on the website.
+    # Column names are relabelable; these defaults match the Noviplast control file.
+    website_status:
+      path: "./input/noviplast/website_status.xlsx"
+      gtin_column: "Barcode"
+      on_website_column: "Momenteel op Website"
+      in_gs1_column: "Al in Gs1"
+      site_link_column: "Link naar site"
