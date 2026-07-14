@@ -1056,9 +1056,15 @@ tests/
 - [ ] State file atomicity: kill mid-write, verify no corruption
 
 ### Phase 7 — Re-run and change detection
-- [ ] Change classification correctness tested for all edge cases
-- [ ] Chat-format diff readable and unambiguous, matches §10.6
-- [ ] Full re-run flow tested in fresh Cowork session
+- [x] Change classification correctness tested for all edge cases
+- [x] Chat-format diff readable and unambiguous, matches §10.6
+
+> **Moved to Phase 8:** "Full re-run flow tested in fresh Cowork session" was a Phase 7 item, but
+> it duplicates Phase 8's own exit gate and cannot be met before it. Only `flow-orchestrator` has a
+> SKILL.md; the other four skills are empty, and step 1 of the flow delegates parsing to
+> `gs1-export-parser`. A Cowork test in Phase 7 would exercise one-fifth of the surface it is meant
+> to validate. Tracked below as Phase 8's "Full re-run flow (plan → diff → confirm → execute) in a
+> fresh Cowork session".
 
 ### Phase 7.5 — GPC brick → category mapping
 Derive the product-category assignment from the **GS1 DIY sector datamodel**, since GPC bricks do
@@ -1075,6 +1081,10 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 - [ ] Each SKILL.md finalised per §10
 - [ ] Full flow via chat instruction works end-to-end
 - [ ] Skills load when expected trigger phrases used
+- [ ] Full re-run flow (plan → diff → confirm → execute) in a fresh Cowork session *(moved from
+      Phase 7; see the note there)*. The plan half is already exercisable on real data — both
+      operator files are in `input/{client_id}/` — so this gate is about the chat surface and the
+      execute leg, not the data.
 
 ### Phase 9 — Pilot end-to-end
 - [ ] ≥10 real products live on pilot WP staging → production

@@ -130,27 +130,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the WP/GS1 clients faked. A `staging`-marked integration test drives `run_execute`
     end-to-end for one GTIN against real WordPress staging + the GS1 **production**
     environment, then re-runs to assert §6.5; skipped until that infrastructure is configured.
-  - DoD note: the live end-to-end exit gate and live §6.5 check run via the staging test and
-    are gated on WordPress staging being provisioned; the GS1 sandbox account has no Digital
-    Link contract, so the run targets GS1 production (a disposable/pilot GTIN, protected by the
-    `safe_upsert` guard and `--dry-run`). **Deferred this session:** production WordPress
-    (`www.noviplast.nl`, a live WooCommerce store) has Application Passwords disabled by
-    Wordfence, and no staging site exists yet — so the one live-run DoD item (`run_execute`
-    end-to-end for 1 GTIN) is pending WP access. The other two Phase 6 DoD items (§6.5
-    idempotency, state-file kill-mid-write atomicity) are met and covered by passing tests.
+  - DoD note: the live end-to-end exit gate and live §6.5 check run via the staging test. The
+    GS1 sandbox account has no Digital Link contract, so the run targets GS1 production (a
+    disposable/pilot GTIN, protected by the `safe_upsert` guard and `--dry-run`). The other two
+    Phase 6 DoD items (§6.5 idempotency, state-file kill-mid-write atomicity) are met and
+    covered by passing tests.
+  - **WordPress access unblocked (supersedes the earlier deferral).** This item was previously
+    recorded as blocked: Application Passwords were disabled by Wordfence on production
+    `www.noviplast.nl` and no staging site existed. That has since been fixed and verified —
+    the `automation-bot` user authenticates against the live REST API with the **editor** role
+    (`edit_posts`, `publish_posts`, `upload_files`, `edit_others_posts`, `unfiltered_html`), and
+    the `noviplast` custom post type is registered and REST-exposed (`rest_base: noviplast`).
+    The live `run_execute` end-to-end run for one GTIN is therefore **runnable, not blocked** —
+    it simply has not been run yet, and it writes to a live WooCommerce store and the GS1
+    production resolver, so it needs a deliberate go-ahead and a disposable GTIN.
 
 - **Phase 7 — Re-run & change detection.**
   - `lib/state.py` `diff_against_state(products, state, languages, wordpress)` (§4.8, §8.2):
     per `(GTIN, language)` it builds the slug, resolver target URL, and title from the
     WordPress patterns and classifies against prior state by content hash — NEW (no entry),
-    UNCHANGED (equal hash), or CHANGED. A CHANGED row carries a best-effort `target_url`
-    diff (old `wp_url` → new) when the URL moved; `StateEntry` stores no prior product
-    fields, so a title before/after is never fabricated. A language with no `product_name`
+    UNCHANGED (equal hash), or CHANGED. A CHANGED row carries a field-level diff of `title`
+    and/or `target_url` — the two fields `StateEntry` records — in the order §10.6.2 presents
+    them. Fields state does not retain are never fabricated. A language with no `product_name`
     for a product is omitted with a warning (edge E18). Takes the whole `WordPressConfig`
     rather than §4.8's bare `target_url_pattern`, which alone cannot build a `PlanRow`.
+  - **`StateEntry.title`** (§2.3, new field): the page title as last written, persisted by
+    `run_execute` on every successful row. Without it a CHANGED row had nothing to show —
+    `slug_pattern` is GTIN-derived, so renaming a product changes the content hash without
+    moving the URL, and §10.6.2's `Changes:` list rendered empty in exactly the scenario the
+    phase exit gate names (*"change one product name, re-run, confirm prompt appears"*).
+    `content_hash` proves *that* a product changed but, being a digest, can never say *what*.
+    Optional (`str | None = None`) so state files predating the field still load; `None` means
+    "not recorded" and the title row is omitted rather than guessed.
   - `scripts/run_plan.py` (§8.2): loads config/state/products, classifies with
     `diff_against_state`, writes `output/{client_id}/plan.json`, and prints
     `N new, M unchanged, K changed` to stderr. Exit `0`/`2` (no per-row error class).
+  - **E19 (corrupt state file) now recovers instead of aborting**, as §7 always specified.
+    `load_state` quarantines the bad file to `state.json.corrupt.{ts}` — preserved, never
+    deleted, since it is the only evidence of what went wrong — logs an ERROR, and returns an
+    empty state. This is safe because every write path is idempotent (§6.1–§6.5): without a
+    known page id `upsert_page` still matches the live page by slug then `meta.gtin` and
+    updates it in place, `safe_upsert` reads before it writes, and QR renders are
+    byte-deterministic. A reset costs redundant work, not corruption. An *unreadable* file
+    (permissions, I/O fault) is an environmental fault and still raises `StateError` → exit 2.
+  - **The reset is surfaced, not just logged** (an addition to §7's E19, which stopped at
+    "log ERROR"). A reset reclassifies every row as NEW, silently turning an incremental
+    re-run into a full rewrite of live pages and resolver targets — and the operator is
+    reading the chat, not stderr. So `State.reset_from_corrupt` (load-scoped,
+    `Field(exclude=True)`, never persisted) carries the fact to `run_plan`, which leads its
+    summary with a warning, and to the flow-orchestrator, which surfaces it **above** the
+    §10.6.1 counts. The existing confirmation gate is what makes the reset safe in practice;
+    it only works if the operator is told.
   - `skills/flow-orchestrator/SKILL.md` (§10.5, §10.6): presents the plan, collects
     confirmation, writes `plan.confirmed.json`, enforces the mandatory production-env gate,
     and invokes `run_execute` — with the §10.6 chat blocks embedded verbatim.
@@ -163,14 +193,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `run_plan.py` applies the gate and reports exclusions. Consequence: in the pilot every
     planned row is NEW, so the change-detection/diff path is exercised only by tests, dormant
     at runtime until product updates occur.
-  - Tests: `diff_against_state` edge cases (NEW/UNCHANGED/CHANGED, target_url diff, E18,
-    multi-language, missing patterns) in `tests/lib/test_state.py`; control-file parsing and
-    eligibility in `tests/lib/test_website_status.py`; `run_plan` counts, gate filtering,
-    default path, and exit-2 paths in `tests/scripts/test_run_plan.py`.
+  - Tests: `diff_against_state` edge cases (NEW/UNCHANGED/CHANGED; title-only, URL-only, and
+    combined diffs; body-only change with no showable diff; a pre-`title` state entry omitting
+    the title row; E18; multi-language; missing patterns) plus the legacy state-file load in
+    `tests/lib/test_state.py`; control-file parsing and eligibility in
+    `tests/lib/test_website_status.py`; E19 recovery (quarantine + reset flag, schema-violation
+    files, the raise an unreadable file still gets, and the reset flag never being persisted)
+    in `tests/lib/test_state.py`; `run_plan` counts, gate filtering, default path, exit-2
+    paths, and the corrupt-state warning reaching stderr in `tests/scripts/test_run_plan.py`;
+    title persistence in `tests/scripts/test_run_execute.py`.
   - DoD note: change classification and the §10.6 chat format are met and test-covered. The
-    full re-run flow in a fresh Cowork session (DoD item 3) and the true end-to-end pilot run
-    require the operator's `website_status.xlsx`; verified against a hand-built fixture in the
-    interim.
+    third item — the full re-run flow in a fresh Cowork session — **has moved to Phase 8**
+    (§12), whose exit gate is the same test done properly: only `flow-orchestrator` has a
+    SKILL.md today, and step 1 of the flow delegates parsing to the not-yet-written
+    `gs1-export-parser`, so a Cowork test now would exercise one-fifth of the surface it is
+    meant to validate.
+  - The plan half now runs on **real operator data**, not a fixture: both `products.xlsx` and
+    `website_status.xlsx` are in `input/noviplast/`. `parse_export` reads the 127-product GDSN
+    export with zero warnings and `run_plan` gates it to 73 rows (37 nl + 36 fr; one fr row
+    skipped by E18 for a missing `product_name.fr`), excluding 90 products — 61 already on the
+    website, 12 not yet in GS1, 17 absent from the control file.
 
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
