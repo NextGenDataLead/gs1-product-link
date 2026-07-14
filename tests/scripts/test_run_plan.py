@@ -253,6 +253,45 @@ def _entry(content_hash: str, wp_url: str) -> StateEntry:
     )
 
 
+def test_corrupt_state_warns_replans_as_new_and_exits_0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E19: a corrupt state file does not abort the plan — but the reset must be loud.
+
+    Without the warning the operator sees only "1 new" where they expected "1 unchanged",
+    with nothing to explain it, and confirming would rewrite live pages and resolver targets.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+    state_file = tmp_path / "output" / "acme" / "state.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text("{ truncated", encoding="utf-8")
+
+    code = run_plan.main(["acme", "--products", str(products)])
+
+    assert code == 0
+    assert _read_plan().counts[PlanClassification.NEW] == 1
+    err = capsys.readouterr().err
+    assert "prior state was corrupt and has been reset" in err
+    assert "rewrite live pages and resolver targets" in err
+    assert list(state_file.parent.glob("state.json.corrupt.*"))  # bad file preserved
+
+
+def test_healthy_state_does_not_warn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    assert "corrupt" not in capsys.readouterr().err
+
+
 # --- Error paths (all exit 2) ------------------------------------------------
 
 

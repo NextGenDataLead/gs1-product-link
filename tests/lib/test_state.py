@@ -1,8 +1,9 @@
 """Unit tests for lib/state.py (IMPLEMENTATION_SPEC §4.8, §12 Phase 6/7).
 
 Covers the round-trip, the atomic-write / kill-mid-write no-corruption guarantee
-(the Phase 6 DoD atomicity item), content-hash determinism, and StateError on a
-corrupt file.
+(the Phase 6 DoD atomicity item), content-hash determinism, E19 corrupt-file recovery
+(quarantine + reset, vs. the raise an unreadable file still gets), and the change
+classification `run_plan` builds its plan from.
 """
 
 from __future__ import annotations
@@ -75,14 +76,89 @@ def test_save_then_load_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert state_path("noviplast").is_file()
 
 
-def test_load_state_corrupt_file_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_state_without_title_is_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A state file written before titles were persisted still loads (title -> None)."""
+    monkeypatch.chdir(tmp_path)
+    legacy = _entry(7).model_dump(mode="json")
+    del legacy["title"]
+    path = state_path("noviplast")
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"client_id": "noviplast", "entries": {"08713195007359": {"nl": legacy}}}),
+        encoding="utf-8",
+    )
+
+    entry = load_state("noviplast").entries["08713195007359"]["nl"]
+
+    assert entry.title is None
+    assert entry.wp_page_id == 7
+
+
+def test_load_state_corrupt_file_is_quarantined_and_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """E19: a corrupt file is moved aside and the run starts fresh, rather than aborting."""
     monkeypatch.chdir(tmp_path)
     path = state_path("noviplast")
     path.parent.mkdir(parents=True)
     path.write_text("{ not valid json", encoding="utf-8")
 
-    with pytest.raises(StateError):
-        load_state("noviplast")
+    with caplog.at_level("ERROR", logger="lib.state"):
+        state = load_state("noviplast")
+
+    assert state.entries == {}
+    assert state.reset_from_corrupt is True  # the caller must surface this (§8.2 summary)
+    assert not path.exists()
+    # The bad file is preserved, never deleted — it is the only evidence of what went wrong.
+    backups = list(path.parent.glob("state.json.corrupt.*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "{ not valid json"
+    assert "starting fresh" in caplog.text
+
+
+def test_load_state_schema_violation_is_also_quarantined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Valid JSON that is not a valid State is corrupt too (e.g. an entry missing wp_url)."""
+    monkeypatch.chdir(tmp_path)
+    path = state_path("noviplast")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"client_id": "noviplast", "entries": "not-a-dict"}), "utf-8")
+
+    state = load_state("noviplast")
+
+    assert state.reset_from_corrupt is True
+    assert len(list(path.parent.glob("state.json.corrupt.*"))) == 1
+
+
+def test_load_state_unreadable_file_still_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable file is an environmental fault, not corruption — continuing would be wrong."""
+    monkeypatch.chdir(tmp_path)
+    path = state_path("noviplast")
+    path.parent.mkdir(parents=True)
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o000)
+
+    try:
+        with pytest.raises(StateError, match="cannot read state"):
+            load_state("noviplast")
+    finally:
+        path.chmod(0o600)
+
+
+def test_reset_flag_is_not_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``reset_from_corrupt`` describes a load, not the state — it must never be written."""
+    monkeypatch.chdir(tmp_path)
+    save_state(State(client_id="noviplast", entries={}, reset_from_corrupt=True))
+
+    written = json.loads(state_path("noviplast").read_text(encoding="utf-8"))
+
+    assert "reset_from_corrupt" not in written
+    assert load_state("noviplast").reset_from_corrupt is False
 
 
 # --- Atomicity / kill-mid-write (§12 Phase 6 DoD) ----------------------------

@@ -71,6 +71,17 @@ below stays dormant — it is implemented and ready for future product updates.
    filter (e.g. 'only GTIN 87123...').`
    When run_plan reported control-file exclusions, add one line beneath the counts, e.g.
    `Excluded (control file): 12 already on website, 3 not yet in GS1, 1 not in control file.`
+   When run_plan's stderr leads with the **state-reset warning** (E19 — prior state was
+   corrupt and has been reset), put it **above** the counts, not below, and say what it
+   means before offering the menu:
+   ```
+   WARNING: prior state was corrupt and has been reset (backup: output/noviplast/state.json.corrupt.20260713T031200Z).
+   Every row therefore re-plans as NEW. Re-running them is idempotent — pages are matched by
+   slug/meta.gtin and updated in place, not duplicated — but it will rewrite live pages and
+   resolver targets rather than skip them.
+   ```
+   Then present the counts as normal. Do not suppress or soften this: the counts alone read
+   as a routine first run, and `all` would rewrite the whole catalogue.
 
 5. **Build the confirmed subset.** From the plan rows and the menu choice, build
    `confirmed_gtins_by_lang`, then intersect it with the step-2 language subset:
@@ -157,6 +168,10 @@ wrappers are wired in Phase 8.
 - **run_plan exits 2** (bad client id, unreadable products/state/control file, missing
   `slug_pattern`/`target_url_pattern`): surface the stderr `config error: …` and stop —
   do not attempt to execute against a missing or malformed plan.
+- **Corrupt state is not an exit-2** (E19). run_plan moves the bad file aside, starts fresh,
+  and exits 0 with the reset warning on stderr. The plan is valid and safe to execute; what
+  changes is its *meaning* — an incremental re-run has become a full rewrite. Surface it per
+  step 4 and let the operator decide. Never re-plan silently.
 - **Nothing to execute.** If the confirmed subset is empty (e.g. everything excluded by the
   control file, or the operator picked `new-only` with zero NEW rows), report it and skip
   the execute step rather than invoking `run_execute` with an empty plan.

@@ -507,7 +507,7 @@ def _auth_header(self) -> dict[str, str]:
 
 ### 4.8 `lib/state.py`
 
-`load_state(client_id) -> State` (empty if not present), `save_state(state)` (atomic write-to-temp-then-rename), `compute_content_hash(product, language, target_url) -> str` (SHA-256 over canonicalised JSON), `diff_against_state(products, state, languages, target_url_pattern) -> list[PlanRow]`.
+`load_state(client_id) -> State` (empty if not present; a **corrupt** file is quarantined to `state.json.corrupt.{ts}` and an empty state returned with `reset_from_corrupt=True` — see E19 in §7; an **unreadable** file raises `StateError`), `save_state(state)` (atomic write-to-temp-then-rename), `compute_content_hash(product, language, target_url) -> str` (SHA-256 over canonicalised JSON), `diff_against_state(products, state, languages, target_url_pattern) -> list[PlanRow]`.
 
 ### 4.9 `lib/records.py`
 
@@ -604,8 +604,27 @@ Tool implements **Level A + B** for v0.1.0. Level C documented for future.
 | E16 | Excel has more columns than `column_map` | WARNING per unmapped column | `parse_export.py` |
 | E17 | Excel has fewer columns than `column_map` expects | `ExportParseError` if required; WARNING if optional | `parse_export.py` |
 | E18 | Language in `wordpress.languages` has no `product_name.{lang}` for a GTIN | Row for that language classified SKIPPED; noted in chat prompt | `run_plan.py` |
-| E19 | State file corrupt / invalid JSON | Backup as `state.json.corrupt.{ts}`, start fresh, log ERROR | `state.load_state` |
+| E19 | State file corrupt / invalid JSON | Backup as `state.json.corrupt.{ts}`, start fresh, log ERROR, **and surface the reset in the plan summary** (see below) | `state.load_state` + `run_plan.py` |
 | E20 | Two `run_execute.py` interleave for same client | Not supported. Document risk in troubleshooting.md. No lockfile in v0.1 | doc only |
+
+**E19 — why recovery is safe, and why it must still be loud.** State is a *cache* of what the
+tool believes it already did, derivable from the live systems, so rebuilding it is safe: every
+write path is idempotent (§6.1–§6.5). Without a known page id `wp_client.upsert_page` still
+matches the live page by slug then `meta.gtin` and updates it in place (no duplicates),
+`gs1_dl_client.safe_upsert` reads before it writes, and `qr.render_qr` is byte-deterministic.
+So a reset costs redundant work, not corruption — which is why aborting the run would be the
+wrong trade.
+
+But a reset also *reclassifies every row as NEW*, silently converting an incremental re-run
+into a full rewrite of live pages and resolver targets. An ERROR in the log is too quiet for
+that: the operator is reading the chat, not stderr. So `load_state` returns the empty state
+with `State.reset_from_corrupt` set (a load-scoped flag, excluded from serialisation),
+`run_plan.py` leads its summary with a warning, and the flow-orchestrator surfaces it **above**
+the §10.6.1 counts. The existing confirmation gate is what makes the reset safe in practice —
+it only works if the operator is told.
+
+An *unreadable* state file (permissions, I/O fault) is not this case: that is an environmental
+fault and still raises `StateError` → exit 2.
 
 ---
 

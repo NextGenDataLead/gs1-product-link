@@ -15,6 +15,10 @@ control file are excluded from the plan and reported in the summary. Without a
 
     --products:   default output/{client_id}/data/products.json
 
+A *corrupt* state file is not fatal (E19): ``load_state`` moves it aside and starts fresh,
+and the summary leads with a warning — every row then re-plans as NEW, which is idempotent
+to execute but rewrites live pages and resolver targets. An *unreadable* one still exits 2.
+
 Emits:  output/{client_id}/plan.json (a Plan as JSON)
 Exit codes:
     0  plan written
@@ -43,6 +47,14 @@ _log = logging.getLogger("scripts.run_plan")
 
 _EXIT_OK = 0
 _EXIT_CONFIG_ERROR = 2
+
+#: Leads the summary when prior state was reset from a corrupt file (E19). Every row then
+#: re-plans as NEW: re-running them is idempotent, but it rewrites live pages and resolver
+#: targets rather than skipping them, so the operator must see this before confirming.
+_STATE_RESET_WARNING = (
+    "WARNING: prior state was corrupt and has been reset (backed up alongside state.json). "
+    "All rows re-plan as NEW — executing them will rewrite live pages and resolver targets."
+)
 
 
 def _default_products_path(client_id: str) -> Path:
@@ -82,8 +94,15 @@ def _gate(
     return eligible, excluded
 
 
-def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> tuple[Plan, dict[str, int]]:
-    """Gate, classify, and assemble the :class:`Plan` (plus the gate-exclusion tally)."""
+def _build_plan(
+    cfg: ClientConfig, products: list[ProductRecord]
+) -> tuple[Plan, dict[str, int], bool]:
+    """Gate, classify, and assemble the :class:`Plan`.
+
+    Returns the plan, the gate-exclusion tally, and whether prior state was reset from a
+    corrupt file (E19) — the last of which the caller must surface, because it means every
+    row re-plans as NEW.
+    """
     if cfg.website_status is not None:
         candidates, excluded = _gate(products, load_website_status(cfg.website_status))
     else:
@@ -99,7 +118,7 @@ def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> tuple[Plan,
         counts=counts,
         rows=rows,
     )
-    return plan, excluded
+    return plan, excluded, state.reset_from_corrupt
 
 
 def _write_plan(client_id: str, plan: Plan) -> Path:
@@ -111,8 +130,13 @@ def _write_plan(client_id: str, plan: Plan) -> Path:
     return path
 
 
-def _summary(plan: Plan, excluded: dict[str, int]) -> str:
-    """Render the one-line stderr summary (§8.2), with gate exclusions when non-zero."""
+def _summary(plan: Plan, excluded: dict[str, int], state_was_reset: bool) -> str:
+    """Render the stderr summary (§8.2): gate exclusions when non-zero, E19 reset when it fired.
+
+    The reset warning leads, because it reframes every count below it — with no prior state
+    every row is NEW, and that is a full rewrite rather than the incremental run the operator
+    is expecting.
+    """
     line = (
         f"{plan.counts[PlanClassification.NEW]} new, "
         f"{plan.counts[PlanClassification.UNCHANGED]} unchanged, "
@@ -126,6 +150,8 @@ def _summary(plan: Plan, excluded: dict[str, int]) -> str:
             f"{excluded['not_in_gs1']} not yet in GS1, "
             f"{excluded['unknown']} not in control file)"
         )
+    if state_was_reset:
+        line = f"{_STATE_RESET_WARNING}\n{line}"
     return line
 
 
@@ -149,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
         products = _load_products(products_path)
-        plan, excluded = _build_plan(cfg, products)
+        plan, excluded, state_was_reset = _build_plan(cfg, products)
     except (
         ConfigError,
         StateError,
@@ -163,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
 
     path = _write_plan(cfg.client_id, plan)
     _log.info("wrote plan for %s (%d rows) to %s", cfg.client_id, plan.total, path)
-    print(_summary(plan, excluded), file=sys.stderr)
+    print(_summary(plan, excluded, state_was_reset), file=sys.stderr)
     return _EXIT_OK
 
 

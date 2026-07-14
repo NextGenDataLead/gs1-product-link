@@ -11,6 +11,8 @@ persistence/logic layer over them.
 ``save_state`` is **atomic**: it writes to a temporary file in the destination
 directory and ``os.replace``s it into place, so a crash mid-write leaves the
 previous ``state.json`` intact rather than a truncated file (§12 Phase 6 DoD).
+``load_state`` recovers from a corrupt file rather than aborting (edge E19) — see its
+docstring for why that is safe and what the caller must surface.
 
 ``diff_against_state`` (§4.8) classifies each ``(GTIN, language)`` against prior
 state — NEW / UNCHANGED / CHANGED by content hash — and builds the ``PlanRow`` list
@@ -26,6 +28,7 @@ import hashlib
 import json
 import logging
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -41,6 +44,9 @@ _log = logging.getLogger(__name__)
 #: ``output/{client_id}/...`` layout used by ``scripts/parse_export.py``).
 STATE_FILENAME: Final = "state.json"
 
+#: Timestamp suffix for a quarantined corrupt state file (matches the run-log format).
+CORRUPT_BACKUP_TS_FORMAT: Final = "%Y%m%dT%H%M%SZ"
+
 
 def state_path(client_id: str) -> Path:
     """Return the state-file path for ``client_id`` (``output/{id}/state.json``)."""
@@ -50,15 +56,31 @@ def state_path(client_id: str) -> Path:
 def load_state(client_id: str) -> State:
     """Load a client's persisted state, or an empty state if none exists (§4.8).
 
+    A **corrupt** state file is recovered from rather than fatal (edge E19): it is moved
+    aside to ``state.json.corrupt.{ts}``, an ERROR is logged, and an empty state is
+    returned with ``reset_from_corrupt`` set. State is a cache of what the tool believes
+    it already did — derivable from the live systems, and safe to rebuild, because every
+    write path is idempotent (§6.1–§6.5): ``upsert_page`` still finds the live page by
+    slug or ``meta.gtin`` without a known id, ``safe_upsert`` reads before it writes, and
+    QR renders are byte-identical. The cost of a reset is redundant work, not corruption.
+    An **unreadable** file (permissions, I/O fault) is a different animal — that is an
+    environmental fault where continuing would be wrong, so it still raises.
+
+    Callers must surface ``reset_from_corrupt``: a reset turns an incremental re-run into
+    a full rewrite (every row reclassifies as NEW), and the operator confirms the plan
+    before any of it executes — so the reset has to reach them there, not only in a log.
+
     Args:
         client_id: The client whose state to load.
 
     Returns:
-        The persisted :class:`~lib.records.State`, or an empty one
-        (``entries={}``) when no state file is present yet.
+        The persisted :class:`~lib.records.State`; an empty one (``entries={}``) when no
+        state file is present yet; or an empty one with ``reset_from_corrupt=True`` when
+        a corrupt file was moved aside.
 
     Raises:
-        StateError: If the file exists but cannot be read or parsed.
+        StateError: If the file exists but cannot be read, or a corrupt file cannot be
+            moved aside.
     """
     path = state_path(client_id)
     try:
@@ -71,7 +93,34 @@ def load_state(client_id: str) -> State:
     try:
         return State.model_validate(json.loads(raw))
     except (json.JSONDecodeError, ValueError) as exc:
-        raise StateError(f"state file for {client_id!r} at {path} is corrupt: {exc}") from exc
+        backup = _quarantine_corrupt(path, client_id, exc)
+        _log.error(
+            "state for %s at %s was corrupt (%s); moved to %s and starting fresh — every "
+            "row will re-plan as NEW",
+            client_id,
+            path,
+            exc,
+            backup,
+        )
+        return State(client_id=client_id, entries={}, reset_from_corrupt=True)
+
+
+def _quarantine_corrupt(path: Path, client_id: str, cause: Exception) -> Path:
+    """Move a corrupt state file aside to ``state.json.corrupt.{ts}`` and return its path.
+
+    The bad file is preserved, never deleted: it is the only evidence of what went wrong,
+    and the operator's instinct otherwise is to delete it.
+    """
+    ts = datetime.now(UTC).strftime(CORRUPT_BACKUP_TS_FORMAT)
+    backup = path.with_name(f"{path.name}.corrupt.{ts}")
+    try:
+        os.replace(path, backup)
+    except OSError as exc:
+        raise StateError(
+            f"state file for {client_id!r} at {path} is corrupt ({cause}) and cannot be "
+            f"moved aside to {backup}: {exc}"
+        ) from exc
+    return backup
 
 
 def save_state(state: State) -> None:

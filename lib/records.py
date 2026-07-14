@@ -207,10 +207,17 @@ class State(BaseModel):
     """The full persisted state for a client (§2.3).
 
     ``entries`` is keyed ``entries[gtin][language]``.
+
+    ``reset_from_corrupt`` is set by :func:`lib.state.load_state` when it recovered from a
+    corrupt state file (edge E19) and is excluded from serialisation — it describes *this*
+    load, not the persisted state. It exists so the reset reaches the operator in the plan
+    summary they actually read: a reset silently turns an incremental re-run into a full
+    rewrite (every row reclassifies as NEW), and an ERROR log line is too quiet for that.
     """
 
     client_id: str
     entries: dict[str, dict[str, StateEntry]]
+    reset_from_corrupt: bool = Field(default=False, exclude=True)
 
 
 # --- Flat single-sheet row parsing (§4.9) ------------------------------------
