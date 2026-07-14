@@ -194,6 +194,7 @@ def test_happy_path_one_gtin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     entry = state.entries[GTIN_A]["nl"]
     assert entry.wp_page_id == _page_id(f"p-{GTIN_A}")
     assert entry.content_hash == "hash-" + GTIN_A
+    assert entry.title == "Rugsteun"  # the next run diffs the title against this (§10.6.2)
     # QR rendered to disk.
     assert (tmp_path / "output" / "acme" / "qr" / f"{GTIN_A}.svg").is_file()
     # One ok outcome logged.

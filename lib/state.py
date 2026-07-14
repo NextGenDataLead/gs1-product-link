@@ -139,21 +139,27 @@ def _lang_segment(language: str, default_language: str) -> str:
 
 
 def _classify(
-    prior: StateEntry | None, content_hash: str, target_url: str
+    prior: StateEntry | None, content_hash: str, title: str, target_url: str
 ) -> tuple[PlanClassification, dict[str, tuple[str, str]] | None]:
-    """Classify one row against its prior state entry, with a best-effort diff.
+    """Classify one row against its prior state entry, with a field-level diff.
 
-    The diff can only carry values recoverable from :class:`~lib.records.StateEntry`,
-    which stores no prior product fields — so a CHANGED row surfaces ``target_url``
-    (old ``wp_url`` → new) when it differs, and ``None`` otherwise. A title before/after
-    is not derivable and is never fabricated.
+    The diff carries the fields whose prior value :class:`~lib.records.StateEntry`
+    actually recorded — ``title`` and ``target_url`` (old ``wp_url`` → new) — in the
+    order §10.6.2 presents them. Fields state does not keep are never fabricated, and
+    an entry written before titles were persisted (``title is None``) omits the title
+    row rather than guessing. A CHANGED row whose recorded fields all still match
+    carries no diff: the change is in the product body, which state does not retain.
     """
     if prior is None:
         return PlanClassification.NEW, None
     if prior.content_hash == content_hash:
         return PlanClassification.UNCHANGED, None
-    diff = {"target_url": (prior.wp_url, target_url)} if prior.wp_url != target_url else None
-    return PlanClassification.CHANGED, diff
+    diff: dict[str, tuple[str, str]] = {}
+    if prior.title is not None and prior.title != title:
+        diff["title"] = (prior.title, title)
+    if prior.wp_url != target_url:
+        diff["target_url"] = (prior.wp_url, target_url)
+    return PlanClassification.CHANGED, diff or None
 
 
 def diff_against_state(
@@ -167,9 +173,9 @@ def diff_against_state(
     For every product × language, computes the slug, resolver target URL, title, and
     content hash, then compares the hash to the persisted
     :class:`~lib.records.StateEntry`: no entry → NEW, equal hash → UNCHANGED, else
-    CHANGED (with a ``target_url`` diff when it moved). A language with no
-    ``product_name`` for a product is omitted with a warning (edge E18) rather than
-    emitting a row with a missing title.
+    CHANGED (carrying a ``title`` and/or ``target_url`` diff for whichever of those
+    moved). A language with no ``product_name`` for a product is omitted with a warning
+    (edge E18) rather than emitting a row with a missing title.
 
     Args:
         products: The products to plan.
@@ -210,15 +216,16 @@ def diff_against_state(
                 gtin=product.gtin,
                 gtin14=product.gtin14,
             )
+            title = product.product_name.values[language]
             content_hash = compute_content_hash(product, language, target_url)
             prior = state.entries.get(product.gtin, {}).get(language)
-            classification, diff = _classify(prior, content_hash, target_url)
+            classification, diff = _classify(prior, content_hash, title, target_url)
             rows.append(
                 PlanRow(
                     gtin=product.gtin,
                     language=language,
                     classification=classification,
-                    title=product.product_name.values[language],
+                    title=title,
                     slug=slug,
                     content_hash=content_hash,
                     target_url=target_url,

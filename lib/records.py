@@ -184,7 +184,15 @@ class RunOutcome(BaseModel):
 
 
 class StateEntry(BaseModel):
-    """Persisted state for one (GTIN, language) between runs (§2.3)."""
+    """Persisted state for one (GTIN, language) between runs (§2.3).
+
+    ``title`` is the page title as last written. It is the one product field state
+    keeps verbatim, so that a re-run can show a real before/after in a CHANGED row's
+    diff (§10.6.2) — ``content_hash`` proves *that* something changed but, being a
+    digest, can never say *what*. It is optional because state files written before
+    titles were persisted have none; ``None`` means "not recorded", and the diff omits
+    the title rather than guessing an old value.
+    """
 
     wp_page_id: int
     wp_url: str
@@ -192,6 +200,7 @@ class StateEntry(BaseModel):
     content_hash: str
     gs1_link_set_hash: str
     last_run: datetime
+    title: str | None = None
 
 
 class State(BaseModel):

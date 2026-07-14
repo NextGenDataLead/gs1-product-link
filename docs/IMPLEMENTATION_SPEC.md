@@ -211,8 +211,17 @@ class StateEntry(BaseModel):
     content_hash: str
     gs1_link_set_hash: str
     last_run: datetime
+    title: str | None = None
+```
 
+`title` is the page title as last written — the one product field state keeps verbatim, so a
+re-run can show a real before/after in a CHANGED row's diff (§10.6.2). `content_hash` proves
+*that* a product changed but, being a digest, can never say *what*; without a retained title the
+§10.6.2 block renders an empty `Changes:` list whenever a rename leaves the (GTIN-derived) slug
+in place. Optional because state files predating the field have no title: `None` means "not
+recorded", and `_classify` omits the title row rather than guessing.
 
+```python
 class State(BaseModel):
     client_id: str
     entries: dict[str, dict[str, StateEntry]]

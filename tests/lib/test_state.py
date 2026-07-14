@@ -1,4 +1,4 @@
-"""Unit tests for lib/state.py (IMPLEMENTATION_SPEC §4.8, §12 Phase 6).
+"""Unit tests for lib/state.py (IMPLEMENTATION_SPEC §4.8, §12 Phase 6/7).
 
 Covers the round-trip, the atomic-write / kill-mid-write no-corruption guarantee
 (the Phase 6 DoD atomicity item), content-hash determinism, and StateError on a
@@ -50,6 +50,7 @@ def _entry(page_id: int = 1) -> StateEntry:
         content_hash="c" * _HASH_LEN,
         gs1_link_set_hash="g" * _HASH_LEN,
         last_run=datetime(2026, 7, 12, 10, 0, tzinfo=UTC),
+        title="Rugsteun",
     )
 
 
@@ -188,7 +189,14 @@ def _row_for(rows: list[object], language: str) -> object:
     return next(r for r in rows if getattr(r, "language") == language)  # noqa: B009
 
 
-def _state_with(gtin: str, language: str, *, content_hash: str, wp_url: str) -> State:
+def _state_with(
+    gtin: str,
+    language: str,
+    *,
+    content_hash: str,
+    wp_url: str,
+    title: str | None = "Rugsteun",
+) -> State:
     entry = StateEntry(
         wp_page_id=1,
         wp_url=wp_url,
@@ -196,6 +204,7 @@ def _state_with(gtin: str, language: str, *, content_hash: str, wp_url: str) -> 
         content_hash=content_hash,
         gs1_link_set_hash="g" * _HASH_LEN,
         last_run=datetime(2026, 7, 12, 10, 0, tzinfo=UTC),
+        title=title,
     )
     return State(client_id="noviplast", entries={gtin: {language: entry}})
 
@@ -238,18 +247,37 @@ def test_diff_unchanged_when_hash_matches() -> None:
     assert rows[0].diff is None
 
 
-def test_diff_changed_with_no_url_move_has_no_diff() -> None:
+def test_diff_changed_in_body_only_has_no_diff() -> None:
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
     )[0]
-    # Same URL, stale content hash -> CHANGED but no field-level diff (GTIN slug is stable).
+    # Title and URL both unmoved, stale content hash -> the change is in the product
+    # body, which state does not retain. CHANGED, but no field-level diff to show.
     state = _state_with(product.gtin, "nl", content_hash="stale", wp_url=baseline.target_url)
 
     rows = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.CHANGED
     assert rows[0].diff is None
+
+
+def test_diff_changed_surfaces_title_when_renamed() -> None:
+    # The Phase 7 exit-gate scenario (PROJECT_HANDOVER §8.2): rename a product, re-run,
+    # and the CHANGED prompt must say what changed. The slug is GTIN-derived, so the URL
+    # does not move and the title is the only thing to show.
+    renamed = _product(product_name=LocalisedText(values={"nl": "Rugsteun Pro"}))
+    baseline = diff_against_state(
+        [renamed], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _state_with(
+        renamed.gtin, "nl", content_hash="stale", wp_url=baseline.target_url, title="Rugsteun"
+    )
+
+    rows = diff_against_state([renamed], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.CHANGED
+    assert rows[0].diff == {"title": ("Rugsteun", "Rugsteun Pro")}
 
 
 def test_diff_changed_surfaces_target_url_when_moved() -> None:
@@ -262,6 +290,41 @@ def test_diff_changed_surfaces_target_url_when_moved() -> None:
     rows = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.CHANGED
+    assert rows[0].diff == {"target_url": ("https://old.test/x/", baseline.target_url)}
+
+
+def test_diff_changed_surfaces_title_and_target_url_together() -> None:
+    renamed = _product(product_name=LocalisedText(values={"nl": "Rugsteun Pro"}))
+    baseline = diff_against_state(
+        [renamed], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _state_with(
+        renamed.gtin, "nl", content_hash="stale", wp_url="https://old.test/x/", title="Rugsteun"
+    )
+
+    rows = diff_against_state([renamed], state, ["nl"], _wp())
+
+    # §10.6.2 presents title before target_url.
+    assert list(rows[0].diff or {}) == ["title", "target_url"]
+    assert rows[0].diff == {
+        "title": ("Rugsteun", "Rugsteun Pro"),
+        "target_url": ("https://old.test/x/", baseline.target_url),
+    }
+
+
+def test_diff_state_without_recorded_title_omits_title_diff() -> None:
+    # State written before titles were persisted: the title is unknown, so it is omitted
+    # rather than fabricated. The URL diff still works.
+    renamed = _product(product_name=LocalisedText(values={"nl": "Rugsteun Pro"}))
+    baseline = diff_against_state(
+        [renamed], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _state_with(
+        renamed.gtin, "nl", content_hash="stale", wp_url="https://old.test/x/", title=None
+    )
+
+    rows = diff_against_state([renamed], state, ["nl"], _wp())
+
     assert rows[0].diff == {"target_url": ("https://old.test/x/", baseline.target_url)}
 
 

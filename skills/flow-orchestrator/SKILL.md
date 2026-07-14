@@ -89,6 +89,10 @@ below stays dormant — it is implemented and ready for future product updates.
      `show-full-diff` prints all fields, then re-prompts `[apply | skip]`. Confirm only the
      rows the operator `apply`s. Show only the fields present in the row's `diff`; never
      invent an "old" value (see Failure modes).
+     A CHANGED row's `diff` carries `title` and/or `target_url` — the fields `StateEntry`
+     records. When it is empty, the change is in the product body; say so plainly
+     (`Changes: product content (no title or URL change)`) rather than printing a bare
+     `Changes:` header.
 
 6. **Write the ConfirmedPlan.** Serialise `ConfirmedPlan{plan, confirmed_gtins_by_lang}`
    to `output/{client}/plan.confirmed.json`, with `confirmed_gtins_by_lang` as a list of
@@ -145,10 +149,11 @@ wrappers are wired in Phase 8.
 - **Create-only, so no diffs in the pilot.** Every candidate row is NEW, so the
   `changed-review` / per-row diff path (§10.6.2) does not fire. It is implemented for
   future product updates.
-- **No fabricated "old" values.** `StateEntry` stores no prior product fields, so a CHANGED
-  row's `diff` carries only `target_url` (old `wp_url` → new) when the URL moved. A title
-  before/after is not recoverable — present the current title and only the fields actually
-  in `diff`; never invent an old value.
+- **No fabricated "old" values.** `StateEntry` records the prior `title` and `wp_url`, so a
+  CHANGED row's `diff` can show a real before/after for those two — and only those two.
+  `content_hash` proves the rest of the product changed but, being a digest, cannot say how.
+  Present only the fields actually in `diff`; never invent an old value. State written before
+  titles were persisted has `title: null`, and the title row is then omitted, not guessed.
 - **run_plan exits 2** (bad client id, unreadable products/state/control file, missing
   `slug_pattern`/`target_url_pattern`): surface the stderr `config error: …` and stop —
   do not attempt to execute against a missing or malformed plan.

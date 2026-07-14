@@ -174,6 +174,7 @@ def _execute_row(  # noqa: PLR0913 — one collaborator per pipeline step; group
             content_hash=row.content_hash,
             gs1_link_set_hash=_link_set_hash(links),
             last_run=ts,
+            title=row.title,  # the next run diffs against this (§10.6.2)
         )
     except Exception as exc:  # noqa: BLE001 — one bad row must not abort the run
         outcome.status = "error"
