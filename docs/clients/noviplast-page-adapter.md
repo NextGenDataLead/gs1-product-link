@@ -119,7 +119,7 @@ POST /noviplast/v1/translations         {"translations": {...}, "source_language
 |---|---|---|---|
 | Product name (heading) | WP **post title** | `TradeItemDescription` — **attr 3318**, nl/fr | **strip leading `"Noviplast "`** |
 | Tagline | ACF `product_title` + `product_header_video_text` | `TradeItemMarketingMessage` — **attr 1083**, nl/fr (113/127 nl, 112/127 fr) | use as-is |
-| Eigenschappen + Technische details | ACF `product_description` (HTML, per language) | **LLM-generated** from the marketing message + net content / dimensions / material — `TradeItemFeatureBenefit` covers only **6/127** products | generate → **human-approve** → render as HTML |
+| Eigenschappen + Technische details | ACF `product_description` (HTML, per language) | **Mostly feed data; only the Eigenschappen bullets are generated** — see §4.1 | assemble → generate the gap → **human-approve** → render as HTML |
 | Main image | featured media + `product_header_image` + `product_regular_image` | GDSN referenced files — hero selected by `IsPrimaryFile` → view code → sequence | download → **convert/resize (TIFF→web)** → upload |
 | Gallery images | ACF `product_gallery` | remaining GDSN referenced images | download → **convert/resize** → upload → repeater rows |
 | Video | ACF `product_header_video_file` | **media folder**, file named `{gtin}*` | match by GTIN prefix → upload |
@@ -128,7 +128,34 @@ POST /noviplast/v1/translations         {"translations": {...}, "source_language
 | GS1 Digital Link + QR | GS1 resolver + QR files | GTIN + page URL | existing pipeline |
 | Page body (`post_content`) | — | — | **left empty** (Oxygen-driven) |
 
-## 5. Component decisions
+### 4.1 `product_description` is three parts, and only one is generated
+
+Read off a live page (id 1347, *Drain sticks*) the field decomposes cleanly, and the tagline is
+**not** a separate piece of content — it is the description's own opening line, repeated in two
+other fields:
+
+```html
+<p><strong>Reinigingssticks voor je afvoer</strong></p>          <!-- = product_title -->
+<p><strong>Eigenschappen</strong><br />
+• 12 sticks voor het hele jaar<br />
+• Voorkomt extra onderhoud</p>
+<p><strong>Technische details</strong><br />
+• 12 sticks</p>
+```
+
+That same tagline is `product_title` **and** `product_header_video_text` **and** this first
+paragraph — one value written to three places, not three values.
+
+| Part | Source | Coverage | Generated? |
+|---|---|---|---|
+| Opening tagline | `description_short` — attr **1083** | 113/127 nl, 112/127 fr | no — feed |
+| **Eigenschappen** bullets | `description_long` — attr **1067** | **6/127 nl, 5/127 fr** | **yes**, for the rest |
+| **Technische details** bullets | `net_content` (+ dimensions/material) | 125/127 | no — deterministic |
+
+So the generator's real scope is **the Eigenschappen bullets** (~121 products) plus **the ~14
+missing taglines** — not "write the description". Everything else is assembly from data the parser
+already extracts. This matters twice over: it is a much smaller thing to review, and every value
+that comes from the feed instead of a model is one fewer line in the upstream report (§6).
 
 1. **Eligibility (unchanged):** a product is a candidate when it is already in GS1 **and** not yet on
    the website (control-file `Al in GS1` filled + `Momenteel op Website` blank). The `Categorie`
@@ -309,10 +336,17 @@ source — the filters survive updates to whatever registers them.
   gets a French page. Keep a skip path for the case where *neither* a feed value nor a generated one
   is available.
 - `lib/gdsn.py` / parser + `clients.yml` `gdsn_map`:
-  - **fix `product_name` → `TradeItemDescription` attr 3318** (currently `DescriptionShort` 3297 — wrong);
-  - add `marketing_message` → attr **1083** (the tagline), localised;
-  - extract **multiple** referenced images (all 12 slots, with mime / `IsPrimaryFile` / `FileName`);
-  - expose `TradeItemFeatureBenefit` (1067) as a repeatable nl/fr list (sparse, but use it when present).
+  - ~~fix `product_name` → attr 3318~~ — **done** (commit `c76492b`); measured 127 nl / 124 fr.
+  - ~~add the tagline → attr 1083~~ — **done**, parsed as `description_short`; 113 nl / 112 fr.
+  - ~~expose `TradeItemFeatureBenefit` (1067)~~ — **done**, parsed as `description_long`; 6 nl / 5 fr,
+    confirming how sparse it is.
+  - **strip the leading `"Noviplast "`** from `product_name` — still todo. The feed gives
+    `"Noviplast Microvezeldoek stof"`; live pages carry the bare name (`"Drain sticks"`), and brand
+    is its own field.
+  - **decode `net_content` unit codes** — still todo. The feed gives the raw UN/ECE code
+    (`"5 H87"`); the page needs words, per language (`H87` → *stuks* / *pièces*). Deterministic —
+    a lookup table, not a generator.
+  - extract **multiple** referenced images (all 12 slots, with mime / `IsPrimaryFile` / `FileName`).
 - New **feature/benefit generator** (LLM) with a deterministic cache + human-approval gate. Scope now
   also covers **filling missing French** (§6): the feed carries French for most products but not all
   (name 36/37 planned, tagline 112/127). Prefer the feed value whenever present — it is the
