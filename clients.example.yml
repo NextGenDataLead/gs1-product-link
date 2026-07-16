@@ -88,7 +88,11 @@ clients:
       username: "automation-bot"
       app_password_env: NOVIPLAST_WP_APP_PASS
       post_type: noviplast
-      multilingual_plugin: polylang
+      multilingual_plugin: wpml
+      # WPML has no core REST route for language assignment or translation linking,
+      # so the site hosts a small helper (Code Snippet / mu-plugin). Its namespace is
+      # per-site — see docs/clients/noviplast-page-adapter.md §7 for the source.
+      wpml_helper_path: "/wp-json/noviplast/v1/translations"
       languages: [nl, fr]
       default_language: nl
       image_handling: url_in_export

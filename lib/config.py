@@ -138,6 +138,11 @@ class WordPressConfig(BaseModel):
     post_type: str = "page"
     post_status: str = "publish"
     multilingual_plugin: Literal["none", "polylang", "wpml"] = "none"
+    #: Path to the site-side WPML helper route (``multilingual_plugin: wpml`` only). WPML has
+    #: no core REST route for language assignment or translation linking, so each site hosts a
+    #: small helper; the namespace is per-site, hence config rather than a constant. See
+    #: ``lib.multilingual.WPMLAdapter`` and ``docs/clients/noviplast-page-adapter.md`` §7.
+    wpml_helper_path: str = "/wp-json/gs1dl/v1/translations"
     default_language: str = "nl"
     languages: list[str] = Field(default_factory=lambda: ["nl"])
     image_handling: Literal["url_in_export", "local_folder", "manual"] = "url_in_export"

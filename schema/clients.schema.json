@@ -122,6 +122,10 @@
         "post_type": { "type": "string" },
         "post_status": { "type": "string" },
         "multilingual_plugin": { "$ref": "#/$defs/multilingualPlugin" },
+        "wpml_helper_path": {
+          "type": "string",
+          "description": "Path to the site-side WPML helper route (multilingual_plugin: wpml only). WPML exposes no core REST route for language assignment or translation linking; the namespace is per-site."
+        },
         "default_language": { "type": "string" },
         "languages": { "$ref": "#/$defs/languages" },
         "image_handling": { "$ref": "#/$defs/imageHandling" }
@@ -148,6 +152,10 @@
         "post_type": { "type": "string" },
         "post_status": { "type": "string" },
         "multilingual_plugin": { "$ref": "#/$defs/multilingualPlugin" },
+        "wpml_helper_path": {
+          "type": "string",
+          "description": "Path to the site-side WPML helper route (multilingual_plugin: wpml only). WPML exposes no core REST route for language assignment or translation linking; the namespace is per-site."
+        },
         "default_language": { "type": "string" },
         "languages": { "$ref": "#/$defs/languages" },
         "image_handling": { "$ref": "#/$defs/imageHandling" },

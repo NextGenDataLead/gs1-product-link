@@ -49,7 +49,12 @@ _MEDIA_PATH: Final = f"{_WP_API_PREFIX}/media"
 #: Polylang detection route — a 200 means the plugin is active (§4.4).
 _PLL_LANGUAGES_PATH: Final = "/wp-json/pll/v1/languages"
 #: WPML detection route — its presence means WPML is active (§4.4).
-_WPML_PROBE_PATH: Final = "/wp-json/sitepress-multilingual-cms/v1/languages"
+#: WPML's REST namespace root. Probed rather than a concrete endpoint because WPML's routes
+#: are admin-gated and version-dependent — the namespace index is the one thing that answers
+#: 200 unauthenticated on any WPML site. (The former probe,
+#: ``/wp-json/sitepress-multilingual-cms/v1/languages``, is not a namespace WPML registers; it
+#: 404s even on a WPML site, so detection always fell through to "none".)
+_WPML_PROBE_PATH: Final = "/wp-json/wpml/v1"
 
 #: Post ``meta`` key holding the GTIN — the idempotency key for ``upsert_page`` (§6.1).
 _GTIN_META_KEY: Final = "gtin"
@@ -142,8 +147,12 @@ class WordPressClient:
         self._username = config.username
         self._http = httpx.Client(timeout=timeout or _DEFAULT_TIMEOUT)
         self._sleep = sleep
-        self.multilingual_plugin: MultilingualPlugin = self.detect_multilingual_plugin()
-        self._adapter: MultilingualAdapter = make_adapter(self.multilingual_plugin)
+        self.multilingual_plugin: MultilingualPlugin = self._resolve_plugin()
+        self._adapter: MultilingualAdapter = make_adapter(
+            self.multilingual_plugin,
+            wpml_helper_path=config.wpml_helper_path,
+            source_language=config.default_language,
+        )
 
     # -- Lifecycle ------------------------------------------------------------
 
@@ -176,28 +185,48 @@ class WordPressClient:
     # -- Public API -----------------------------------------------------------
 
     def detect_multilingual_plugin(self) -> MultilingualPlugin:
-        """Detect which multilingual plugin the site runs (§4.4).
+        """Detect which multilingual plugin the site runs, by probing (§4.4).
 
-        Probes the Polylang route first, then WPML; a present route (200) wins.
-        Returns ``"none"`` when neither responds. If the configured plugin disagrees
-        with what was detected, logs a WARNING — the config value stays authoritative
-        for adapter selection, but the mismatch is worth surfacing.
+        Probes the Polylang route first, then WPML's namespace root; a 200 wins.
 
         Returns:
-            ``"polylang"``, ``"wpml"``, or ``"none"``.
+            ``"polylang"``, ``"wpml"``, or ``"none"`` when neither answers.
         """
         if self._probe(_PLL_LANGUAGES_PATH):
-            detected: MultilingualPlugin = "polylang"
-        elif self._probe(_WPML_PROBE_PATH):
-            detected = "wpml"
-        else:
-            detected = "none"
+            return "polylang"
+        if self._probe(_WPML_PROBE_PATH):
+            return "wpml"
+        return "none"
+
+    def _resolve_plugin(self) -> MultilingualPlugin:
+        """Choose the multilingual plugin: an explicit config value wins over detection (§4.4).
+
+        Detection is a probe, and a probe can be wrong for reasons that have nothing to do
+        with the site's real setup — a renamed route, a plugin version change, an
+        admin-gated endpoint. When the operator has declared a plugin, that declaration is
+        the stronger signal and it wins; detection only supplies the value when the config
+        says ``none`` (i.e. "work it out"), and otherwise just warns on a mismatch.
+
+        This ordering matters because the failure is silent: letting a failed probe override
+        a configured ``wpml`` swaps in :class:`~lib.multilingual.NoOpAdapter`, whose
+        ``link_translations`` does nothing and raises nothing — so every page publishes,
+        reports ``ok``, and is simply never linked to its translation.
+
+        Returns:
+            The plugin to build the adapter for.
+        """
         configured = self.config.multilingual_plugin
-        if configured not in ("none", detected):
+        detected = self.detect_multilingual_plugin()
+        if configured == "none":
+            return detected
+        if configured != detected:
             _log.warning(
-                "WP multilingual plugin configured as %r but detected %r", configured, detected
+                "WP multilingual plugin configured as %r but detected %r; using the "
+                "configured value",
+                configured,
+                detected,
             )
-        return detected
+        return configured
 
     def find_by_slug(self, post_type: str, slug: str) -> WordPressPage | None:
         """Return the page with ``slug`` under ``post_type``, or ``None`` (§4.4).

@@ -52,7 +52,8 @@ def test_loads_example_config_with_defaults_applied() -> None:
     assert noviplast.display_name == "Noviplast B.V."
     assert noviplast.gs1.batch_size == 50  # inherited from defaults
     assert noviplast.wordpress.post_status == "publish"  # inherited from defaults
-    assert noviplast.wordpress.multilingual_plugin == "polylang"  # client override
+    assert noviplast.wordpress.multilingual_plugin == "wpml"  # client override
+    assert noviplast.wordpress.wpml_helper_path == "/wp-json/noviplast/v1/translations"
 
 
 def test_get_client_returns_config(tmp_path: Path) -> None:

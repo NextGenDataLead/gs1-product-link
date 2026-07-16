@@ -21,15 +21,21 @@ from pytest_httpx import HTTPXMock
 
 from lib.config import WordPressConfig
 from lib.errors import GtinMismatchError, MissingCredentialError, WordPressAPIError
-from lib.wp_client import WordPressClient
+from lib.wp_client import (
+    _PLL_LANGUAGES_PATH,
+    _WPML_PROBE_PATH,
+    WordPressClient,
+)
 
 APP_PASS_ENV = "TEST_WP_APP_PASS"
 APP_PASS_VALUE = "abcd EFGH ijkl MNOP"  # WordPress app passwords are space-grouped
 USERNAME = "automation-bot"
 
 SITE = "https://staging.example.com"
-PLL_PATH = "/wp-json/pll/v1/languages"
-WPML_PATH = "/wp-json/sitepress-multilingual-cms/v1/languages"
+# Imported, not duplicated: hardcoding these let the WPML probe path drift out of sync with
+# lib/ and go unnoticed — detection silently returned "none" on a real WPML site.
+PLL_PATH = _PLL_LANGUAGES_PATH
+WPML_PATH = _WPML_PROBE_PATH
 PLL_URL = f"{SITE}{PLL_PATH}"
 WPML_URL = f"{SITE}{WPML_PATH}"
 DETECTION_PATHS = {PLL_PATH, WPML_PATH}
@@ -102,13 +108,30 @@ def test_detect_none(httpx_mock: HTTPXMock) -> None:
     assert client.multilingual_plugin == "none"
 
 
-def test_detect_mismatch_warns(httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture) -> None:
-    # Configured polylang, but the site probes as none -> WARNING, config stays authoritative.
+def test_detect_mismatch_warns_and_config_wins(
+    httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An explicit config value beats a failed probe.
+
+    A probe can fail for reasons unrelated to the site's real setup — a renamed route, a
+    plugin version change, an admin-gated endpoint — and letting it override a configured
+    plugin swaps in NoOpAdapter, which links nothing and raises nothing. Pages then publish,
+    report ok, and are silently never linked to their translations. (This is not
+    hypothetical: the WPML probe path was wrong, so a real WPML site detected as "none".)
+    """
     config = make_config(multilingual_plugin="polylang")
     with caplog.at_level(logging.WARNING, logger="lib.wp_client"):
         client, _ = make_client(httpx_mock, plugin="none", config=config)
-    assert client.multilingual_plugin == "none"
+    assert client.multilingual_plugin == "polylang"  # configured value, not the probe's
     assert "configured as 'polylang'" in caplog.text
+    assert "using the configured value" in caplog.text
+
+
+def test_config_none_defers_to_detection(httpx_mock: HTTPXMock) -> None:
+    """`none` means "work it out" — the probe supplies the value."""
+    config = make_config(multilingual_plugin="none")
+    client, _ = make_client(httpx_mock, plugin="polylang", config=config)
+    assert client.multilingual_plugin == "polylang"
 
 
 # --- Auth (§4.4) -------------------------------------------------------------
