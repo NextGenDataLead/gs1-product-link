@@ -102,6 +102,15 @@ clients:
       taxonomies:
         noviplast-categories:
           map_from_column: "category"
+      # The Oxygen template renders from ACF, not post_content, so these fields *are* the
+      # page (docs/clients/noviplast-page-adapter.md §3). Field names are the client's;
+      # they live here rather than in lib/. The tagline feeds two fields — one value, two
+      # places, as on the live pages. product_description is not here yet: it is
+      # tagline + Eigenschappen + Technische details, and the bullets need the generator
+      # and the H87 unit decoding (§4.1, §8).
+      acf_map:
+        product_title: description_short
+        product_header_video_text: description_short
       slug_pattern: "p-{gtin}"
       target_url_pattern: "{site_url}/{lang_segment}{post_type}/{slug}/"
 

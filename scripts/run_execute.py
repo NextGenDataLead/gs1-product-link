@@ -32,6 +32,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from lib.acf import build_acf_payload
 from lib.config import ClientConfig, GS1LinkConfig, get_client
 from lib.errors import ConfigError, StateError
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
@@ -137,6 +138,10 @@ def _execute_row(  # noqa: PLR0913 — one collaborator per pipeline step; group
     outcome = RunOutcome(gtin=row.gtin, language=row.language, ts=ts, status="pending")
     try:
         html = engine.render(row.product, row.language, _client_meta(cfg))
+        # Themes that render from ACF (Oxygen) ignore post_content entirely, so for those
+        # clients the ACF payload *is* the page. The body is still written: it is inert
+        # where it is ignored, and it is what non-ACF clients render from.
+        acf = build_acf_payload(row.product, row.language, cfg.wordpress.acf_map)
         prior = state.entries.get(row.gtin, {}).get(row.language)
         page = wp.upsert_page(
             post_type=cfg.wordpress.post_type,
@@ -147,6 +152,7 @@ def _execute_row(  # noqa: PLR0913 — one collaborator per pipeline step; group
             featured_media=None,  # image pipeline deferred to the Phase 9 pilot
             meta={"gtin": row.gtin},
             existing_id=prior.wp_page_id if prior else None,
+            acf=acf,
         )
         page_url = page["link"]
         outcome.wp_page_id = page["id"]

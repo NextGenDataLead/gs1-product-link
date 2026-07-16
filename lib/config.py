@@ -147,6 +147,10 @@ class WordPressConfig(BaseModel):
     languages: list[str] = Field(default_factory=lambda: ["nl"])
     image_handling: Literal["url_in_export", "local_folder", "manual"] = "url_in_export"
     taxonomies: dict[str, TaxonomyConfig] = Field(default_factory=dict)
+    #: ``{acf_field_name: product_record_field}`` for themes that render from ACF rather than
+    #: ``post_content`` (Oxygen, and similar page builders). Empty means the client renders
+    #: from the body template, as in Phase 5. See :mod:`lib.acf`.
+    acf_map: dict[str, str] = Field(default_factory=dict)
     slug_pattern: str | None = None
     target_url_pattern: str | None = None
 
