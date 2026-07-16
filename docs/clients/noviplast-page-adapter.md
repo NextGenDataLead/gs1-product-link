@@ -85,6 +85,34 @@ written as an attachment **id**; `product_header_image` / `product_regular_image
 strings; `is_new_product` reads as `[]` rather than a boolean/null. Confirm each field's write
 shape against a scratch draft before trusting a read-back round-trip.
 
+### 3.1 The required write sequence (verified live)
+
+Three findings from scratch drafts against `www.noviplast.nl`, each of which fails **silently**:
+
+1. **Both languages request the same slug** (`slug_pattern: p-{gtin}` has no language component).
+   Created without a language, the second page collides and WordPress dedupes it to `p-{gtin}-2` —
+   so the French page lands at `/fr/noviplast/p-{gtin}-2/` while `target_url_pattern` builds
+   `/fr/noviplast/p-{gtin}/`, and **the GS1 resolver would point every French QR at a 404**.
+   Passing **`?lang={lang}` on create** fixes it: WPML scopes slug uniqueness per language, and
+   both pages keep `p-{gtin}`.
+2. **`?lang=` and `acf` in the same create request are incompatible.** The ACF values are
+   **silently dropped** — `201 Created`, fields empty, no error. Measured: create without `?lang`
+   + acf → value persists; create with `?lang=fr` + acf → empty; create with `?lang=fr` then acf in
+   a second request → value persists. Left unhandled this yields French pages with the correct URL
+   and no content, which `verify_url` passes as `ok`.
+3. **WPML does not copy ACF across the pair** (the fields behave as *Vertalen*, not *Kopiëren*):
+   re-saving the nl page's ACF leaves the fr page's values intact. No `wpml-config.xml` override is
+   needed, and there is no clobbering risk.
+
+So the per-(GTIN, language) write is **three calls**, uniform across languages (no special case for
+the default language):
+
+```
+POST /wp/v2/{post_type}?lang={lang}     title, slug, status, meta.gtin   — no acf
+POST /wp/v2/{post_type}/{id}            acf: {...}                       — second call
+POST /noviplast/v1/translations         {"translations": {...}, "source_language": "nl"}
+```
+
 ## 4. Data map: page element → storage → source → transform
 
 | Page element | Stored in | GDSN / other source | Transform |
@@ -173,6 +201,22 @@ shape against a scratch draft before trusting a read-back round-trip.
 - ~~Tagline source~~ — **resolved:** `TradeItemMarketingMessage` (attr 1083), verified against the live page.
 - ~~Feature/benefit source~~ — **resolved:** LLM-**generated** from the marketing message + net content /
   dimensions / material, human-approved (the feed covers only 6/127).
+- **Who writes the French pages — the tool, or the translator?** **Open; blocks §8.** The site runs
+  WPML Translation Management and product translations have historically been manual, handled by a
+  named translator via *Vertaaltaken*. But the French text is already in the GDSN feed as
+  Noviplast's own datapool data — **36 of 37** planned products have a French `TradeItemDescription`
+  (3318) and **112 of 127** a French `TradeItemMarketingMessage` (1083). That is not a translation
+  to author; it is parallel source data, and for regulated product info the datapool text is the
+  reference, so re-translating it would be actively wrong.
+  - **(a) Tool writes nl + fr** *(recommended)* — French pages exist immediately; product pages
+    leave the translator's queue; the LLM-generated `product_description` still passes a human
+    approval gate **in both languages** (a copy gate, not a translation gate).
+  - **(b) Tool writes nl only**, translator does fr — preserves today's workflow, but the French
+    datapool text goes unused, every product waits on manual work, and the French QR cannot resolve
+    until the translation lands. This drops the 36 `fr` rows from the plan (a `clients.yml` change)
+    and makes most of the WPML adapter unnecessary.
+
+  This changes a person's job, so it is a decision for the client, not a config edit.
 - **GPC brick → category mapping** — **deferred to Phase 7.5** (GS1 DIY sector datamodel; see §5.7).
 - **Auto-create missing category terms**, or require them to pre-exist? (Recommend: require pre-exist,
   warn on miss.) — settle in Phase 7.5.
@@ -216,9 +260,28 @@ source — the filters survive updates to whatever registers them.
   by GTIN without it, and correctly falls through to *create*). The filter is still wanted: without
   it the lookup only ever sees the first page of results, so a page whose **slug changed** would not
   be found by GTIN and would be recreated rather than updated.
-- **WPML helper endpoint** — a custom REST route (mu-plugin) that: sets a post's language, and links a
-  set of post ids as one translation group, via WPML's PHP API. **Todo — the last WP-side blocker;
-  without it every `fr` row fails.**
+- **WPML helper endpoint** — **done**, as the Code Snippet *"Noviplast GS1 – WPML translation
+  linking"*. Exposes `POST /wp-json/noviplast/v1/translations` taking
+  `{"translations": {"nl": id, "fr": id}, "source_language": "nl"}`, mirroring Polylang's
+  `/pll/v1/translations` shape so `lib/multilingual.py` stays symmetric. It assigns each post's
+  language and links the set as one translation group via WPML's PHP API
+  (`wpml_set_element_language_details` + `wpml_element_trid`), validates every id before writing
+  any (a half-linked group has no rollback), and **reads the group back** from
+  `wpml_get_element_translations` so a silent no-op fails loudly. Verified live: a scratch nl/fr
+  pair linked under `trid` 626, confirmed from WPML's own tables.
+  Prerequisite, already satisfied: WPML → *Vertaling berichttypes* → `noviplast` =
+  **Vertaalbaar – alleen vertaalde items weergeven**. That is also the right choice on the merits —
+  the fallback variant ("val terug op de standaardtaal") would serve **Dutch content at French
+  URLs** for any untranslated product, returning 200 so `verify_url` passes and the row reports
+  `ok`. It would also have made all 40 existing pages appear under `/fr/` immediately. Untranslated
+  should 404.
+- **Translation workflow** — the site runs full WPML **Translation Management** (TM + ATE +
+  translation proxy + local translators); translations have historically been manual, done by a
+  named translator through *Vertaaltaken*. **"Alles vertalen" (automatic translation) is off** —
+  it requires the Geavanceerde vertaal-editor, and no translation editor is selected; a human job
+  queue is only consistent with the manual mode. So nothing will auto-translate or race the tool's
+  French pages. **Open decision (§6):** whether the tool writes `fr` from the GDSN feed or the
+  translator continues to.
 - **GPC → category** map populated; category terms exist. **Todo.**
 - Remove the temporary `noviplast-debug/v1/fields` route once mapping is frozen. It is
   **auth-gated** (401 unauthenticated), so it is not a public data leak — keep it until the ACF
