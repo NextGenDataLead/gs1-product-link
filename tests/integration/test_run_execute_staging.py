@@ -8,9 +8,13 @@ production is the only environment that resolves — a project decision). It is 
 ``staging`` and skipped unless both targets are configured, so CI stays green on mocks.
 
 Nothing auto-loads ``.env`` here, so export the variables (or ``set -a; source .env;
-set +a``) into the shell before running. The secret values reuse the project's canonical
-env-var names from ``.env.example`` (``NOVIPLAST_WP_APP_PASS``, ``NOVIPLAST_GS1_CLIENT_ID``,
-``NOVIPLAST_GS1_CLIENT_SECRET``); the rest are non-secret test-runner config::
+set +a``) into the shell before running. **Single-quote ``NOVIPLAST_WP_APP_PASS`` in
+``.env``**: WordPress app passwords contain spaces, and an unquoted value breaks
+``source .env`` on the first space, leaving the variable empty — the run then fails with
+blank WordPress credentials rather than a clear error. The secret values reuse the
+project's canonical env-var names from ``.env.example`` (``NOVIPLAST_WP_APP_PASS``,
+``NOVIPLAST_GS1_CLIENT_ID``, ``NOVIPLAST_GS1_CLIENT_SECRET``); the rest are non-secret
+test-runner config::
 
     WP_STAGING_URL=https://staging.noviplast.nl \\
     WP_STAGING_USER=automation-bot \\
