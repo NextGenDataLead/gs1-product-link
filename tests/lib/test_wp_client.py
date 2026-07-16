@@ -247,6 +247,107 @@ def test_find_by_meta_gtin_empty_list_returns_none(httpx_mock: HTTPXMock) -> Non
     assert client._find_by_meta_gtin(POST_TYPE, "08713195000527") is None
 
 
+# --- Multilingual write path (§3.1 of the page-adapter doc) ------------------
+
+
+def _wpml_config(**overrides: object) -> WordPressConfig:
+    return make_config(multilingual_plugin="wpml", default_language="nl", **overrides)
+
+
+def test_lookups_are_scoped_to_the_language_on_a_multilingual_site(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Unscoped, a slug lookup answers for the default language only — and clobbers it.
+
+    Both languages share the GTIN-derived slug and the same meta.gtin, so an unscoped
+    lookup for the fr row returns the *nl* page, the E8 guard passes (same GTIN), and the
+    nl page is overwritten with French — no fr page created, row reports ok. Verified live:
+    ?slug=p-X returned the nl page while the fr page was invisible without &lang=fr.
+    """
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    httpx_mock.add_response(method="GET", json=[])  # slug lookup
+    httpx_mock.add_response(method="GET", json=[])  # meta.gtin lookup
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+
+    client.upsert_page(POST_TYPE, "p-1", "T", "", "fr", meta={"gtin": "1"})
+
+    gets = [r for r in _business_requests(httpx_mock) if r.method == "GET"]
+    assert len(gets) == 2
+    for request in gets:
+        assert "lang=fr" in str(request.url)
+
+
+def test_create_carries_the_lang_param_but_update_does_not(httpx_mock: HTTPXMock) -> None:
+    """?lang= on create keeps the slug; on update it is neither needed nor this call's job."""
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    # Create: nothing found.
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+    # Update: found by slug.
+    httpx_mock.add_response(method="GET", json=[{"id": 7, "slug": "p-1", "meta": {"gtin": "1"}}])
+    httpx_mock.add_response(method="POST", json={"id": 7, "slug": "p-1"})
+
+    client.upsert_page(POST_TYPE, "p-1", "T", "", "fr", meta={"gtin": "1"})
+    client.upsert_page(POST_TYPE, "p-1", "T2", "", "fr", meta={"gtin": "1"})
+
+    posts = [r for r in _business_requests(httpx_mock) if r.method == "POST"]
+    create, update = posts[0], posts[1]
+    assert create.url.path == f"/wp-json/wp/v2/{POST_TYPE}"
+    assert "lang=fr" in str(create.url)
+    assert update.url.path == f"/wp-json/wp/v2/{POST_TYPE}/7"
+    assert "lang=" not in str(update.url)
+
+
+def test_acf_is_written_in_a_second_call_never_on_create(httpx_mock: HTTPXMock) -> None:
+    """?lang= and acf in one create silently drop the acf — 201, fields empty, no error.
+
+    So the create body must not carry acf, and the values go in a follow-up call.
+    """
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+    httpx_mock.add_response(
+        method="POST", json={"id": 7, "slug": "p-1", "acf": {"product_title": "Tagline"}}
+    )
+
+    page = client.upsert_page(
+        POST_TYPE, "p-1", "T", "", "fr", meta={"gtin": "1"}, acf={"product_title": "Tagline"}
+    )
+
+    posts = [r for r in _business_requests(httpx_mock) if r.method == "POST"]
+    assert len(posts) == 2
+    assert b"acf" not in posts[0].content  # create body carries no acf
+    assert json.loads(posts[1].content) == {"acf": {"product_title": "Tagline"}}
+    assert posts[1].url.path == f"/wp-json/wp/v2/{POST_TYPE}/7"
+    # The returned page is the ACF response, so it reflects what was written.
+    assert page["acf"] == {"product_title": "Tagline"}  # type: ignore[typeddict-item]
+
+
+def test_no_acf_call_when_no_acf_given(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+
+    client.upsert_page(POST_TYPE, "p-1", "T", "body", "nl", meta={"gtin": "1"})
+
+    assert len([r for r in _business_requests(httpx_mock) if r.method == "POST"]) == 1
+
+
+def test_single_language_site_sends_no_lang_param(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock, plugin="none")
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+
+    client.upsert_page(POST_TYPE, "p-1", "T", "body", "nl", meta={"gtin": "1"})
+
+    for request in _business_requests(httpx_mock):
+        assert "lang=" not in str(request.url)
+
+
 # --- upsert_page idempotency (§6.1) ------------------------------------------
 
 

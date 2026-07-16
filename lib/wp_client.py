@@ -228,15 +228,43 @@ class WordPressClient:
             )
         return configured
 
-    def find_by_slug(self, post_type: str, slug: str) -> WordPressPage | None:
+    def _lang_params(self, language: str | None) -> dict[str, str]:
+        """Return the ``lang`` query param scoping a lookup to one language (§4.4).
+
+        On a multilingual site the same slug exists once per language — ``p-{gtin}`` is
+        GTIN-derived and carries no language component — and an unscoped collection query
+        answers with the **default language only**. Verified against a live WPML site:
+        ``?slug=p-X`` returned the nl page while the fr page was invisible.
+
+        Omitting this is not a near miss, it is data loss. Both pages share a ``meta.gtin``
+        (same product), so the E8 guard cannot catch it: upserting the fr row finds the nl
+        page by slug, the GTIN matches, and the nl page is *overwritten with French* — no fr
+        page is created and the row reports ``ok``.
+
+        Sent for Polylang as well as WPML. Only WPML is verified; for Polylang this is at
+        worst inert, since WordPress silently ignores query params it does not know.
+        """
+        if language and self.multilingual_plugin in ("wpml", "polylang"):
+            return {"lang": language}
+        return {}
+
+    def find_by_slug(
+        self, post_type: str, slug: str, language: str | None = None
+    ) -> WordPressPage | None:
         """Return the page with ``slug`` under ``post_type``, or ``None`` (§4.4).
+
+        Args:
+            post_type: The (custom) post type slug.
+            slug: The page slug to look up.
+            language: Scope the lookup to this language — **required on a multilingual
+                site**, where the same slug exists per language (see :meth:`_lang_params`).
 
         Raises:
             WordPressAPIError: On a non-2xx response other than 404, after retries.
         """
         pages = self._get_list(
             f"{_WP_API_PREFIX}/{post_type}",
-            params={"slug": slug, "context": "edit"},
+            params={"slug": slug, "context": "edit", **self._lang_params(language)},
             label=f"{post_type}?slug={slug}",
         )
         return cast(WordPressPage, pages[0]) if pages else None
@@ -252,27 +280,36 @@ class WordPressClient:
         parent: int | None = None,
         meta: dict[str, object] | None = None,
         existing_id: int | None = None,
+        acf: dict[str, object] | None = None,
     ) -> WordPressPage:
         """Create or update one product page, idempotently (§6.1).
 
-        Lookup order: (1) ``existing_id``, (2) ``slug``, (3) ``meta.gtin``. On a match
-        the page is updated in place (same id, content replaced); with no match a new
-        page is created carrying ``meta.gtin``. Callers must always set ``meta['gtin']``
-        — it is the idempotency key.
+        Lookup order: (1) ``existing_id``, (2) ``slug``, (3) ``meta.gtin`` — the last two
+        scoped to ``language`` (see :meth:`_lang_params`). On a match the page is updated in
+        place (same id, content replaced); with no match a new page is created carrying
+        ``meta.gtin``. Callers must always set ``meta['gtin']`` — it is the idempotency key.
+
+        On a multilingual site a create is issued with ``?lang=``, and ``acf`` is written in
+        a **separate** follow-up call. Both are required, and both fail silently otherwise —
+        see :meth:`_write_page` and :meth:`_write_acf`.
 
         Args:
             post_type: The (custom) post type slug.
             slug: The page slug (typically GTIN-derived).
             title: The page title.
-            content: The page HTML content.
-            language: The page's language code (set on WordPress when Polylang is active).
+            content: The page HTML content. Themes that render from ACF (e.g. Oxygen)
+                ignore this — pass ``""`` and supply ``acf`` instead.
+            language: The page's language code. Scopes the lookups and, on a multilingual
+                site, is what the page is created *as*.
             featured_media: Media id for the featured image, if any.
             parent: Parent page id, if any.
             meta: Post meta; must include ``gtin``.
             existing_id: A known page id to update directly, if available.
+            acf: ACF field values to write, if any.
 
         Returns:
-            The created or updated :class:`WordPressPage`.
+            The created or updated :class:`WordPressPage`. When ``acf`` was written, this is
+            the response to *that* call, so the returned page reflects the ACF values.
 
         Raises:
             GtinMismatchError: The matched page's ``meta.gtin`` differs from the row's
@@ -282,23 +319,23 @@ class WordPressClient:
                 other non-2xx response after retries.
         """
         gtin = _meta_gtin(meta)
-        found = self._lookup_existing(post_type, slug, gtin, existing_id)
+        found = self._lookup_existing(post_type, slug, gtin, existing_id, language)
         if found is not None:
             self._guard_gtin_match(found, gtin)
-            return self._write_page(
-                post_type,
-                title,
-                content,
-                language,
-                slug,
-                featured_media,
-                parent,
-                meta,
-                page_id=found["id"],
-            )
-        return self._write_page(
-            post_type, title, content, language, slug, featured_media, parent, meta, page_id=None
+        page = self._write_page(
+            post_type,
+            title,
+            content,
+            language,
+            slug,
+            featured_media,
+            parent,
+            meta,
+            page_id=found["id"] if found is not None else None,
         )
+        if acf:
+            page = self._write_acf(post_type, int(page["id"]), acf)
+        return page
 
     def upload_media(self, file_path: str | Path, title: str | None = None) -> int:
         """Upload a media file, idempotently by content hash + slug (§6.2).
@@ -393,19 +430,29 @@ class WordPressClient:
 
     # -- Lookup internals -----------------------------------------------------
 
-    def _lookup_existing(
-        self, post_type: str, slug: str, gtin: str | None, existing_id: int | None
+    def _lookup_existing(  # noqa: PLR0913 — one param per lookup key, plus its language scope
+        self,
+        post_type: str,
+        slug: str,
+        gtin: str | None,
+        existing_id: int | None,
+        language: str | None,
     ) -> WordPressPage | None:
-        """Resolve the existing page by id, then slug, then ``meta.gtin`` (§6.1)."""
+        """Resolve the existing page by id, then slug, then ``meta.gtin`` (§6.1).
+
+        Both collection lookups are scoped to ``language``: on a multilingual site they
+        would otherwise answer for the default language only, and adopt the wrong page
+        (see :meth:`_lang_params`). ``existing_id`` needs no scope — an id is unambiguous.
+        """
         if existing_id is not None:
             page = self._get_page(post_type, existing_id)
             if page is not None:
                 return page
-        page = self.find_by_slug(post_type, slug)
+        page = self.find_by_slug(post_type, slug, language)
         if page is not None:
             return page
         if gtin is not None:
-            return self._find_by_meta_gtin(post_type, gtin)
+            return self._find_by_meta_gtin(post_type, gtin, language)
         return None
 
     def _guard_gtin_match(self, found: WordPressPage, gtin: str | None) -> None:
@@ -454,7 +501,9 @@ class WordPressClient:
             raise
         return cast(WordPressPage, resp.json())
 
-    def _find_by_meta_gtin(self, post_type: str, gtin: str) -> WordPressPage | None:
+    def _find_by_meta_gtin(
+        self, post_type: str, gtin: str, language: str | None = None
+    ) -> WordPressPage | None:
         """GET the page whose ``meta.gtin`` equals ``gtin``, or ``None`` (§6.1).
 
         The ``meta_key``/``meta_value`` params are **not** core WordPress REST features:
@@ -470,7 +519,12 @@ class WordPressClient:
         """
         pages = self._get_list(
             f"{_WP_API_PREFIX}/{post_type}",
-            params={"meta_key": _GTIN_META_KEY, "meta_value": gtin, "context": "edit"},
+            params={
+                "meta_key": _GTIN_META_KEY,
+                "meta_value": gtin,
+                "context": "edit",
+                **self._lang_params(language),
+            },
             label=f"{post_type}?meta.gtin={gtin}",
         )
         for page in pages:
@@ -514,7 +568,18 @@ class WordPressClient:
         *,
         page_id: int | None,
     ) -> WordPressPage:
-        """POST a create (``page_id is None``) or update to the post-type endpoint."""
+        """POST a create (``page_id is None``) or update to the post-type endpoint.
+
+        A create on a multilingual site carries ``?lang=`` so the page is created **as** that
+        language. This is what keeps the slug intact: ``slug_pattern`` is GTIN-derived and
+        identical across languages, so a page created without a language collides with its
+        sibling and WordPress silently appends ``-2``. The French page would then live at
+        ``/fr/…/p-{gtin}-2/`` while ``target_url_pattern`` builds ``/fr/…/p-{gtin}/`` — and
+        the GS1 resolver would point every French QR at a 404. Verified live: with ``?lang=``
+        both pages keep ``p-{gtin}``.
+
+        Deliberately no ``acf`` here — see :meth:`_write_acf`.
+        """
         body: dict[str, object] = {
             "title": title,
             "content": content,
@@ -533,10 +598,34 @@ class WordPressClient:
         if page_id is None:
             path = f"{_WP_API_PREFIX}/{post_type}"
             label = f"create {post_type} {slug}"
+            # Only on create: an existing page already has its language, and re-asserting it
+            # here is not this method's job (translation linking owns it).
+            params = self._lang_params(language)
         else:
             path = f"{_WP_API_PREFIX}/{post_type}/{page_id}"
             label = f"update {post_type}/{page_id}"
-        resp = self._request("POST", path, json_body=body, label=label)
+            params = {}
+        resp = self._request("POST", path, params=params or None, json_body=body, label=label)
+        return cast(WordPressPage, resp.json())
+
+    def _write_acf(self, post_type: str, page_id: int, acf: dict[str, object]) -> WordPressPage:
+        """Write ACF field values in their own call, after the page exists (§3.1).
+
+        ACF cannot ride along on a create that carries ``?lang=``: the values are **silently
+        dropped** — ``201 Created``, fields empty, no error. Measured three ways against the
+        live site: create without ``?lang`` + acf persists; create with ``?lang=fr`` + acf is
+        empty; create with ``?lang=fr`` *then* acf in a second call persists. Unhandled, this
+        yields pages with a correct URL and no content, which ``verify_url`` passes as ok.
+
+        Done for updates too, not just creates: one path is easier to keep correct than two,
+        and the extra call is cheap next to publishing a blank page.
+        """
+        resp = self._request(
+            "POST",
+            f"{_WP_API_PREFIX}/{post_type}/{page_id}",
+            json_body={"acf": acf},
+            label=f"acf {post_type}/{page_id} ({', '.join(sorted(acf))})",
+        )
         return cast(WordPressPage, resp.json())
 
     def _create_media(
