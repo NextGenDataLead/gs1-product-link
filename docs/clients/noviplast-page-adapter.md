@@ -207,6 +207,15 @@ source — the filters survive updates to whatever registers them.
   exist and **403** when it exists with `show_in_rest` false. So the taxonomy was always registered
   and correctly attached to the CPT; only the REST flag was missing. The CPT's `taxonomies: []` had
   the same single cause — that list is filtered to REST-visible taxonomies.)
+- **`meta.gtin` collection filtering** — `rest_noviplast_query` filter, scoped to the `gtin` key
+  only (no arbitrary meta querying). **Todo.** `meta_key`/`meta_value` are **not** core REST
+  features: core drops unknown query params silently rather than erroring, so without this the
+  tool's §6.1 gtin lookup receives an unfiltered page of *every* post. Verified live — a query for
+  a GTIN matching nothing returned 10 rows. `lib/wp_client._find_by_meta_gtin` now verifies
+  `meta.gtin` on the way out and so is correct with or without this filter (it simply cannot find
+  by GTIN without it, and correctly falls through to *create*). The filter is still wanted: without
+  it the lookup only ever sees the first page of results, so a page whose **slug changed** would not
+  be found by GTIN and would be recreated rather than updated.
 - **WPML helper endpoint** — a custom REST route (mu-plugin) that: sets a post's language, and links a
   set of post ids as one translation group, via WPML's PHP API. **Todo — the last WP-side blocker;
   without it every `fr` row fails.**

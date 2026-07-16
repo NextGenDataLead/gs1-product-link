@@ -426,13 +426,29 @@ class WordPressClient:
         return cast(WordPressPage, resp.json())
 
     def _find_by_meta_gtin(self, post_type: str, gtin: str) -> WordPressPage | None:
-        """GET the page whose ``meta.gtin`` equals ``gtin``, or ``None`` (§6.1)."""
+        """GET the page whose ``meta.gtin`` equals ``gtin``, or ``None`` (§6.1).
+
+        The ``meta_key``/``meta_value`` params are **not** core WordPress REST features:
+        core silently drops unknown query params rather than erroring, so a site without a
+        ``rest_{post_type}_query`` enabler answers this request with an unfiltered page of
+        *every* post. Never trust the server to have filtered — verify ``meta.gtin`` on the
+        way out. Taking ``pages[0]`` on an unfiltered list returns an arbitrary unrelated
+        page, which the E8/E11 guards in :meth:`_guard_gtin_match` then reject, turning
+        every would-be create into a bogus "slug collision" error.
+
+        Returning ``None`` when nothing matches is also the right fallback on a site with no
+        enabler: the caller creates the page instead of adopting the wrong one.
+        """
         pages = self._get_list(
             f"{_WP_API_PREFIX}/{post_type}",
             params={"meta_key": _GTIN_META_KEY, "meta_value": gtin, "context": "edit"},
             label=f"{post_type}?meta.gtin={gtin}",
         )
-        return cast(WordPressPage, pages[0]) if pages else None
+        for page in pages:
+            meta = page.get("meta")
+            if isinstance(meta, dict) and _meta_gtin(meta) == gtin:
+                return cast(WordPressPage, page)
+        return None
 
     def _find_media_by_slug(self, slug: str) -> WordPressMedia | None:
         """GET the media item at ``slug``, or ``None`` (§6.2)."""

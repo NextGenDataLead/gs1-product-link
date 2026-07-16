@@ -162,6 +162,68 @@ def test_find_by_slug_404_returns_none(httpx_mock: HTTPXMock) -> None:
     assert client.find_by_slug(POST_TYPE, "p-1") is None
 
 
+# --- _find_by_meta_gtin (§6.1) -----------------------------------------------
+
+
+def test_find_by_meta_gtin_returns_the_matching_page(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        json=[
+            {"id": 1, "slug": "other", "meta": {"gtin": "08713195000001"}},
+            {"id": 2, "slug": "p-2", "meta": {"gtin": "08713195000002"}},
+        ],
+    )
+
+    page = client._find_by_meta_gtin(POST_TYPE, "08713195000002")
+
+    assert page is not None
+    assert page["id"] == 2  # the match, not merely the first row
+
+
+def test_find_by_meta_gtin_ignores_an_unfiltered_response(httpx_mock: HTTPXMock) -> None:
+    """WP core drops unknown query params, so an un-enabled site returns *every* page.
+
+    Taking ``pages[0]`` there adopts an arbitrary unrelated page: the E8/E11 guards then
+    reject it and every would-be create fails as a bogus slug collision. Verified live
+    against www.noviplast.nl — a query for a GTIN matching nothing returned 10 rows.
+    """
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        json=[
+            {"id": 1347, "slug": "drian-sticks", "meta": {"gtin": ""}},
+            {"id": 1341, "slug": "power-splash", "meta": {"gtin": ""}},
+        ],
+    )
+
+    assert client._find_by_meta_gtin(POST_TYPE, "08713195000527") is None
+
+
+def test_find_by_meta_gtin_tolerates_pages_without_meta(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        json=[
+            {"id": 1, "slug": "no-meta-key"},
+            {"id": 2, "slug": "meta-not-a-dict", "meta": None},
+            {"id": 3, "slug": "p-3", "meta": {"gtin": "08713195000003"}},
+        ],
+    )
+
+    page = client._find_by_meta_gtin(POST_TYPE, "08713195000003")
+
+    assert page is not None
+    assert page["id"] == 3
+
+
+def test_find_by_meta_gtin_empty_list_returns_none(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])
+
+    assert client._find_by_meta_gtin(POST_TYPE, "08713195000527") is None
+
+
 # --- upsert_page idempotency (§6.1) ------------------------------------------
 
 
@@ -178,6 +240,35 @@ def test_upsert_creates_when_absent(httpx_mock: HTTPXMock) -> None:
     )
 
     assert page["id"] == 10
+    posts = [r for r in _business_requests(httpx_mock) if r.method == "POST"]
+    assert len(posts) == 1
+    assert posts[0].url.path == f"/wp-json/wp/v2/{POST_TYPE}"  # create at collection
+
+
+def test_upsert_creates_when_site_does_not_filter_meta(httpx_mock: HTTPXMock) -> None:
+    """A new product must still be created on a site whose REST ignores meta filtering.
+
+    The regression this locks: WP core silently drops the meta_key/meta_value params, so
+    the gtin lookup came back holding every existing page. Adopting the first one made
+    _guard_gtin_match raise E11 ("slug collision with non-GTIN page"), so *every* new row
+    errored against a real site — pointing at an unrelated page — and none were created.
+    """
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])  # slug lookup: no such page yet
+    httpx_mock.add_response(  # meta.gtin lookup: unfiltered — real pages, none ours
+        method="GET",
+        json=[
+            {"id": 1347, "slug": "drian-sticks", "meta": {"gtin": ""}},
+            {"id": 1341, "slug": "power-splash", "meta": {"gtin": ""}},
+        ],
+    )
+    httpx_mock.add_response(
+        method="POST", status_code=201, json={"id": 99, "slug": "p-1", "meta": {"gtin": "1"}}
+    )
+
+    page = client.upsert_page(POST_TYPE, "p-1", "Title", "Body", "nl", meta={"gtin": "1"})
+
+    assert page["id"] == 99  # created, not adopted and not raised on
     posts = [r for r in _business_requests(httpx_mock) if r.method == "POST"]
     assert len(posts) == 1
     assert posts[0].url.path == f"/wp-json/wp/v2/{POST_TYPE}"  # create at collection
