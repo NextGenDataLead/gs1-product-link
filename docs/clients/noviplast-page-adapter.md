@@ -201,22 +201,27 @@ POST /noviplast/v1/translations         {"translations": {...}, "source_language
 - ~~Tagline source~~ — **resolved:** `TradeItemMarketingMessage` (attr 1083), verified against the live page.
 - ~~Feature/benefit source~~ — **resolved:** LLM-**generated** from the marketing message + net content /
   dimensions / material, human-approved (the feed covers only 6/127).
-- **Who writes the French pages — the tool, or the translator?** **Open; blocks §8.** The site runs
-  WPML Translation Management and product translations have historically been manual, handled by a
-  named translator via *Vertaaltaken*. But the French text is already in the GDSN feed as
-  Noviplast's own datapool data — **36 of 37** planned products have a French `TradeItemDescription`
-  (3318) and **112 of 127** a French `TradeItemMarketingMessage` (1083). That is not a translation
-  to author; it is parallel source data, and for regulated product info the datapool text is the
-  reference, so re-translating it would be actively wrong.
-  - **(a) Tool writes nl + fr** *(recommended)* — French pages exist immediately; product pages
-    leave the translator's queue; the LLM-generated `product_description` still passes a human
-    approval gate **in both languages** (a copy gate, not a translation gate).
-  - **(b) Tool writes nl only**, translator does fr — preserves today's workflow, but the French
-    datapool text goes unused, every product waits on manual work, and the French QR cannot resolve
-    until the translation lands. This drops the 36 `fr` rows from the plan (a `clients.yml` change)
-    and makes most of the WPML adapter unnecessary.
+- ~~Who writes the French pages — the tool, or the translator?~~ **Resolved (client decision):
+  the tool writes both languages.** French comes from the GDSN feed where present — it is
+  Noviplast's own datapool data (**36 of 37** planned products have a French `TradeItemDescription`
+  3318; **112 of 127** a French `TradeItemMarketingMessage` 1083), i.e. parallel source data rather
+  than a translation to author, and the reference text for regulated product info. Where French is
+  **missing**, the LLM generator fills it (see the feature/benefit generator below — same
+  deterministic cache and human-approval gate). The manual translator's queue is not involved.
 
-  This changes a person's job, so it is a decision for the client, not a config edit.
+  **This requires no WPML settings changes** — verified live, every dependency already holds:
+  the post type is Vertaalbaar; ACF fields are per-language (*Vertalen*, not *Kopiëren* — an nl
+  re-save left fr intact); "Alles vertalen" is off; language assignment and linking go through our
+  own REST route. The tool never opens ATE, the translation proxy, or the jobs queue, so existing
+  manual work is untouched.
+
+  **Known caveat (not a pilot issue).** WPML flags a translation as "needs update" when its
+  *source* post is edited, surfacing it in the Translation Dashboard. The pilot is create-only (the
+  `website_status` gate makes every row NEW), so this cannot fire yet. Once product **updates**
+  begin, product pages may appear in the translator's dashboard as "needs update" even though the
+  tool has just rewritten the French itself — dashboard noise, not breakage. Unverified from here:
+  the TM endpoints are admin-only and the automation user is an editor. Revisit when updates start;
+  clearing the flag via WPML's API is the likely fix.
 - **GPC brick → category mapping** — **deferred to Phase 7.5** (GS1 DIY sector datamodel; see §5.7).
 - **Auto-create missing category terms**, or require them to pre-exist? (Recommend: require pre-exist,
   warn on miss.) — settle in Phase 7.5.
@@ -293,14 +298,27 @@ source — the filters survive updates to whatever registers them.
   ACF field-name mapping (so field names live in config, not code).
 - `lib/multilingual.py`: implement `WPMLAdapter` against the helper endpoint (replaces the
   `NotImplementedError` stub).
-- `lib/wp_client.py`: ACF-field writes; media upload **from a URL** and **from a local file**; set
-  language + link translations via the WPML helper.
+- `lib/wp_client.py`: the **three-call write sequence** of §3.1 — `create ?lang=` (no acf) → write
+  acf → link translations. All three constraints behind it are live-verified and each fails
+  silently, so none may be dropped as an optimisation. Plus media upload **from a URL** and **from
+  a local file**.
+- `lib/state.py` / `run_plan`: **E18 changes meaning.** Today a missing `product_name.{lang}` omits
+  that row with a warning, on the assumption that no source text means no page. Now that the LLM
+  fills missing French (§6), the row should be **planned and flagged for generation** instead of
+  skipped — otherwise the one pilot product without a French name (`08713195007649`) silently never
+  gets a French page. Keep a skip path for the case where *neither* a feed value nor a generated one
+  is available.
 - `lib/gdsn.py` / parser + `clients.yml` `gdsn_map`:
   - **fix `product_name` → `TradeItemDescription` attr 3318** (currently `DescriptionShort` 3297 — wrong);
   - add `marketing_message` → attr **1083** (the tagline), localised;
   - extract **multiple** referenced images (all 12 slots, with mime / `IsPrimaryFile` / `FileName`);
   - expose `TradeItemFeatureBenefit` (1067) as a repeatable nl/fr list (sparse, but use it when present).
-- New **feature/benefit generator** (LLM) with a deterministic cache + human-approval gate.
+- New **feature/benefit generator** (LLM) with a deterministic cache + human-approval gate. Scope now
+  also covers **filling missing French** (§6): the feed carries French for most products but not all
+  (name 36/37 planned, tagline 112/127). Prefer the feed value whenever present — it is the
+  authoritative datapool text — and generate only into the gaps. Generated text carries the same
+  approval gate as generated descriptions, and should be distinguishable from feed text in the cache
+  so a later feed update can supersede it.
 - New **image pipeline**: download → convert/resize (Pillow) → upload → dedupe.
 - A **Noviplast page-build step** that assembles the above into the ACF payload — replacing the
   Phase 5 HTML-template render for this client.
