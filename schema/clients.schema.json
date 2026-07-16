@@ -245,6 +245,10 @@
           "type": "boolean",
           "description": "Whether to append the paired MeasurementUnitCode to the value."
         },
+        "strip_prefix": {
+          "type": "string",
+          "description": "Literal prefix removed from the resolved value when present (e.g. 'Noviplast ' where the feed repeats the brand in the product name). Matched exactly; a value that only resembles the prefix is reported as a likely source-data misspelling and left unchanged, never repaired."
+        },
         "primary_file": {
           "type": "boolean",
           "description": "Whether to resolve the primary referenced-file URI (for image_url)."

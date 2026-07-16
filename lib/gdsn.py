@@ -26,8 +26,10 @@ by GTIN and produces the canonical records.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Final, NamedTuple
 
 import openpyxl
@@ -35,6 +37,8 @@ from pydantic import BaseModel, ConfigDict
 
 from lib.errors import ExportParseError
 from lib.records import ProductRecord, _coerce_cell, build_product_record
+
+_log = logging.getLogger(__name__)
 
 # --- Constants ---------------------------------------------------------------
 
@@ -89,6 +93,11 @@ class GdsnSource(BaseModel):
         with_unit: Whether to append the paired ``MeasurementUnitCode`` to the value.
         primary_file: Whether to resolve the primary referenced-file URI instead of a
             plain attribute (used for ``image_url``).
+        strip_prefix: A literal prefix to remove from the resolved value when present
+            (e.g. ``"Noviplast "``, where the feed repeats the brand in the product name
+            but the page renders brand separately). Matched **exactly**: a value that only
+            resembles the prefix is left untouched and reported, never corrected — see
+            :func:`_strip_prefix`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -98,6 +107,7 @@ class GdsnSource(BaseModel):
     localised: bool = False
     with_unit: bool = False
     primary_file: bool = False
+    strip_prefix: str = ""
 
 
 # --- Column / sheet models ---------------------------------------------------
@@ -407,7 +417,7 @@ def build_records(
     gtins = sorted({gtin for sheet in workbook.values() for (gtin, _market) in sheet.rows_by_key})
     records: list[ProductRecord] = []
     for gtin in gtins:
-        acc = _Accumulator(scalars={"gtin": gtin}, localised={}, extras={})
+        acc = _Accumulator(scalars={"gtin": gtin}, localised={}, extras={}, warnings=[])
         for field, src in gdsn_map.items():
             if field != "gtin":
                 _resolve_field(ctx, field, src, gtin, acc)
@@ -415,6 +425,7 @@ def build_records(
             value = _resolve_extra(ctx, src, gtin)
             if value is not None:
                 acc.extras[name] = value
+        warnings.extend(acc.warnings)
 
         product_name = acc.localised.get("product_name")
         if not product_name or default_language not in product_name:
@@ -448,6 +459,52 @@ class _Accumulator:
     scalars: dict[str, str]
     localised: dict[str, dict[str, str]]
     extras: dict[str, str]
+    #: Non-fatal notes raised while resolving this GTIN's fields; merged into
+    #: :attr:`BuildResult.warnings` so ``parse_export``'s summary counts them.
+    warnings: list[str]
+
+
+#: How close a value's opening must be to ``strip_prefix`` before it is reported as a likely
+#: misspelling. Tuned against the pilot export: the real typos ("Noviplat", "Nociplast",
+#: "Novilplast" for "Noviplast ") score ~0.94, while genuinely unprefixed names ("Super Glove",
+#: "Plasma Lighter", "Garden Clipper") score below 0.4 — a wide gap, so the threshold is not
+#: delicate.
+_PREFIX_TYPO_RATIO: Final = 0.8
+
+
+def _strip_prefix(value: str, prefix: str, where: str, warnings: list[str]) -> str:
+    """Remove ``prefix`` from ``value`` when it matches exactly; report near-misses (§4.1).
+
+    Args:
+        value: The resolved field value.
+        prefix: The literal prefix to remove.
+        where: Human-readable location for the report, e.g. ``"product_name.nl for 0871…"``.
+        warnings: Collector for non-fatal notes; a near-miss is appended here.
+
+    The prefix is matched literally and never repaired. A value whose opening merely
+    *resembles* the prefix is a defect in the source datapool — a misspelled or unspaced
+    brand — and correcting it here would hide the defect while the wrong text stays
+    authoritative upstream. So it is reported and passed through unchanged, and the operator
+    fixes it at source (the same principle as the generated-content report: surface the gap,
+    do not paper over it).
+
+    The note goes to ``warnings`` as well as the log, so ``parse_export``'s summary counts
+    it — a warning the summary reports as "0 warnings" is one nobody acts on.
+
+    Genuinely unprefixed values are silent: not every product name repeats the brand.
+    """
+    if value.startswith(prefix):
+        return value[len(prefix) :].lstrip()
+    opening = value[: len(prefix)]
+    if SequenceMatcher(None, opening.casefold(), prefix.casefold()).ratio() >= _PREFIX_TYPO_RATIO:
+        note = (
+            f"{where} starts with {opening!r}, which resembles but does not match the "
+            f"configured strip_prefix {prefix!r} — likely a misspelling in the source data; "
+            f"left unchanged, fix it at the source"
+        )
+        warnings.append(note)
+        _log.warning("%s", note)
+    return value
 
 
 def _resolve_field(
@@ -463,6 +520,13 @@ def _resolve_field(
             for lang, market in ctx.lang_to_market.items()
             if (value := sheet.pick_localised(gtin, market, src.attribute, lang)) is not None
         }
+        if src.strip_prefix:
+            values = {
+                lang: _strip_prefix(
+                    value, src.strip_prefix, f"{field}.{lang} for {gtin}", acc.warnings
+                )
+                for lang, value in values.items()
+            }
         if values:
             acc.localised[field] = values
     elif src.primary_file:
@@ -472,7 +536,11 @@ def _resolve_field(
     else:
         value = sheet.pick_scalar(gtin, ctx.primary_market, src.attribute, src.with_unit)
         if value is not None:
-            acc.scalars[field] = value
+            acc.scalars[field] = (
+                _strip_prefix(value, src.strip_prefix, f"{field} for {gtin}", acc.warnings)
+                if src.strip_prefix
+                else value
+            )
 
 
 def _resolve_extra(ctx: _BuildContext, src: GdsnSource, gtin: str) -> str | None:

@@ -7,7 +7,8 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from lib.gdsn import GdsnSource, build_records, read_workbook
+from lib.gdsn import BuildResult, GdsnSource, build_records, read_workbook
+from lib.records import ProductRecord
 
 # A synthesized mini GDSN workbook: 7 header rows, LanguageCode/Value pairs, two
 # markets (528 = nl, 056 = fr), mirroring the real export's structure.
@@ -152,6 +153,98 @@ def test_build_records_joins_markets_into_one_record(tmp_path: Path) -> None:
     assert good[0].product_name.values == {"nl": "Rugsteun NL", "fr": "Support FR"}
     assert good[0].brand == "Noviplast"
     assert good[0].net_content == "4 H87"
+
+
+def _prefix_map() -> dict[str, GdsnSource]:
+    return {
+        **_GDSN_MAP,
+        "product_name": GdsnSource(
+            sheet="TradeItemDescription",
+            attribute="3297",
+            localised=True,
+            strip_prefix="Noviplast ",
+        ),
+    }
+
+
+def _build_named(tmp_path: Path, nl: str, fr: str) -> BuildResult:
+    """Build a one-GTIN workbook whose product name is ``nl``/``fr``, and parse it."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    desc = wb.create_sheet("TradeItemDescription")
+    for row in _DESC_HEADER:
+        desc.append(row)
+    desc.append(_drow("08713195007359", "528", "nl", nl, None, None, "Noviplast"))
+    desc.append(_drow("08713195007359", "056", "fr", fr, None, None, "Noviplast"))
+    path = tmp_path / "prefix.xlsx"
+    wb.save(path)
+    return build_records(read_workbook(str(path)), _prefix_map(), _MARKET_LANGUAGE, "nl")
+
+
+def _named(tmp_path: Path, nl: str, fr: str) -> ProductRecord:
+    return _build_named(tmp_path, nl, fr).records[0]
+
+
+def test_strip_prefix_removes_the_brand_from_the_name(tmp_path: Path) -> None:
+    rec = _named(tmp_path, "Noviplast Microvezeldoek stof", "Noviplast Super5 microfibre")
+
+    assert rec.product_name.values == {"nl": "Microvezeldoek stof", "fr": "Super5 microfibre"}
+    assert rec.brand == "Noviplast"  # brand is its own field, unaffected
+
+
+def test_strip_prefix_leaves_genuinely_unprefixed_names_alone(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Not every product name repeats the brand — those must pass through silently."""
+    with caplog.at_level("WARNING", logger="lib.gdsn"):
+        rec = _named(tmp_path, "Super Glove", "Garden Clipper")
+
+    assert rec.product_name.values == {"nl": "Super Glove", "fr": "Garden Clipper"}
+    assert caplog.text == ""  # no false-positive typo report
+
+
+@pytest.mark.parametrize(
+    "misspelt",
+    [
+        "Noviplat Snoeischaar metaal grijs",  # dropped 's' — real, in the pilot export
+        "Nociplast Bouteilles à marinade",  # v -> c
+        "Novilplast Détecteur de mouvement",  # inserted 'l'
+        "NoviplastSnijplanken kunststof grijs",  # missing space
+    ],
+)
+def test_strip_prefix_reports_misspellings_but_never_repairs_them(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, misspelt: str
+) -> None:
+    """A near-miss is a defect in the source datapool, not something to silently fix.
+
+    All four shapes are real values from the pilot export. Repairing them here would hide
+    the defect while the wrong text stays authoritative upstream, so the value passes
+    through unchanged and the operator is told to fix it at source.
+    """
+    with caplog.at_level("WARNING", logger="lib.gdsn"):
+        rec = _named(tmp_path, misspelt, "Noviplast Bon nom")
+
+    assert rec.product_name.values["nl"] == misspelt  # unchanged, not "corrected"
+    assert rec.product_name.values["fr"] == "Bon nom"  # the well-formed one still strips
+    assert "resembles but does not match" in caplog.text
+    assert "08713195007359" in caplog.text  # the GTIN, so it can be found in MyGS1
+
+
+def test_strip_prefix_report_reaches_the_result_warnings(tmp_path: Path) -> None:
+    """The note must land in BuildResult.warnings, not only in the log.
+
+    parse_export's summary counts result.warnings; a note that only logs makes the run
+    print four warnings and then report "0 warnings" — which is how a warning gets ignored.
+    """
+    result = _build_named(tmp_path, "Noviplat Snoeischaar", "Noviplast Bon nom")
+
+    # (The fixture omits the measurements sheet, so an unrelated "absent source" warning
+    # rides along — filter to the one under test.)
+    notes = [w for w in result.warnings if "resembles but does not match" in w]
+    assert len(notes) == 1
+    assert "08713195007359" in notes[0]
+    assert result.errors == []  # non-fatal: the record is still built
+    assert result.records
 
 
 def test_build_records_missing_default_language_is_error(tmp_path: Path) -> None:

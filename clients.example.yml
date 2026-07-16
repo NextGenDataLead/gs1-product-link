@@ -69,7 +69,10 @@ clients:
         # 3318 TradeItemDescription = the marketing product name shown as the page title
         # (strip the leading brand prefix — brand is a separate field). NOT 3297, which is
         # DescriptionShort, an internal logistics string ("Schroefverwijderaar metaal grs").
-        product_name:      { sheet: TradeItemDescription,            attribute: "3318", localised: true }
+        # strip_prefix: the feed repeats the brand in the name ("Noviplast Microvezeldoek
+        # stof") but the page renders brand separately. Matched exactly — misspelled
+        # prefixes ("Noviplat", "Nociplast") are reported, never silently repaired.
+        product_name:      { sheet: TradeItemDescription,            attribute: "3318", localised: true, strip_prefix: "Noviplast " }
         # 1083 TradeItemMarketingMessage = the page tagline.
         description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true }
         # 1067 TradeItemFeatureBenefit = feature/benefit copy (sparse in the pilot export).
