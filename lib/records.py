@@ -183,6 +183,35 @@ class RunOutcome(BaseModel):
     error: str | None = None
 
 
+class SourceIssue(BaseModel):
+    """One defect in the source datapool, for the operator to fix upstream.
+
+    The tool reports these rather than repairing them: the datapool is the authoritative
+    record, so a value silently corrected here stays wrong in MyGS1 and comes back on the
+    next export. Emitted to ``output/{client_id}/data/source_issues.json`` — a file rather
+    than a log line, because the work of fixing them happens later, elsewhere, by a person.
+
+    The eventual home for generated-content reporting too: when the LLM fills a gap the feed
+    should have carried, that is the same kind of finding — a datapool gap with a suggested
+    value. Success is this file shrinking to empty.
+
+    Attributes:
+        gtin: The product, so it can be found in MyGS1.
+        field: Dotted field path, e.g. ``product_name.nl``.
+        issue: Machine-readable kind, e.g. ``brand_prefix_mismatch``.
+        value: The current source value, verbatim.
+        detail: One human-readable sentence: what is wrong and what to do.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    gtin: str
+    field: str
+    issue: str
+    value: str
+    detail: str
+
+
 class StateEntry(BaseModel):
     """Persisted state for one (GTIN, language) between runs (§2.3).
 

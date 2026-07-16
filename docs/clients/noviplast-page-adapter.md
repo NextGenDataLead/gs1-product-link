@@ -353,16 +353,23 @@ source — the filters survive updates to whatever registers them.
   authoritative datapool text — and generate only into the gaps. Generated text carries the same
   approval gate as generated descriptions, and should be distinguishable from feed text in the cache
   so a later feed update can supersede it.
-- **Generated-content report for upstream entry (client requirement).** Every LLM-generated value
-  must be surfaced in a report the operator can act on — not merely logged in passing — because the
-  gap it fills is a gap in the **GS1 datapool itself**. The generated French belongs back in MyGS1
-  as the authoritative value; the tool filling it in at publish time is a stopgap, not the fix.
-  Each entry needs the GTIN, the field (e.g. `product_name.fr`), the source language value it was
-  derived from, and the generated text, so it can be transcribed into the datapool. Two consequences
-  worth designing for: the report is the **work queue** for completing the datapool, and once a value
-  lands upstream the next export carries it, the generator stops firing for that field, and the feed
-  value supersedes the cached generation (hence the feed-vs-generated distinction above). Success
-  looks like this report shrinking to empty.
+- **Source-data issue report — `output/{client_id}/data/source_issues.json`.** **Built.** The
+  operator's work queue for fixing the **GS1 datapool itself**: `parse_export` writes it on every
+  run (always, even when empty — a report that only appears with bad news is one whose absence you
+  cannot trust), and prints the count with the path. Each
+  :class:`~lib.records.SourceIssue` carries `gtin`, `field` (dotted, e.g. `product_name.nl`),
+  `issue` (machine-readable kind), the current `value` verbatim, and a one-sentence `detail`.
+  The tool **reports rather than repairs**: the datapool is authoritative, so a value silently
+  corrected here stays wrong in MyGS1 and returns on the next export. Success is this file
+  shrinking to empty.
+  - Currently emits `brand_prefix_mismatch` — 4 findings in the pilot export (§8).
+  - **To add: the generated-content entries (client requirement).** Every LLM-generated value
+    belongs here too: the gap it fills is a datapool gap, and the generated French belongs back in
+    MyGS1 as the authoritative value — the tool filling it at publish time is a stopgap, not the
+    fix. Those entries additionally need the source-language value they were derived from, so the
+    text can be judged before being transcribed upstream. Once a value lands upstream the next
+    export carries it, the generator stops firing for that field, and the feed value supersedes the
+    cached generation (hence the feed-vs-generated distinction above).
 - New **image pipeline**: download → convert/resize (Pillow) → upload → dedupe.
 - **Make `tests/integration/test_run_execute_staging.py` safe before it is ever run.** It currently
   **publishes and never cleans up**: no teardown, and `WordPressConfig.post_status` defaults to

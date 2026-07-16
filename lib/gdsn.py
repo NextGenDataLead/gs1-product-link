@@ -36,7 +36,7 @@ import openpyxl
 from pydantic import BaseModel, ConfigDict
 
 from lib.errors import ExportParseError
-from lib.records import ProductRecord, _coerce_cell, build_product_record
+from lib.records import ProductRecord, SourceIssue, _coerce_cell, build_product_record
 
 _log = logging.getLogger(__name__)
 
@@ -344,11 +344,19 @@ def read_workbook(path: str) -> dict[str, GdsnSheet]:
 
 
 class BuildResult(NamedTuple):
-    """Outcome of :func:`build_records`: records plus non-fatal/fatal messages."""
+    """Outcome of :func:`build_records`: records plus non-fatal/fatal messages.
+
+    ``issues`` is the structured subset of ``warnings`` that names a defect in the *source
+    datapool* rather than in the tool's config or this run — the things a person has to go
+    and fix in MyGS1. They are reported both ways on purpose: as a warning so the run's
+    summary counts them, and as a :class:`~lib.records.SourceIssue` so
+    ``scripts/parse_export.py`` can write them to a file that outlives the terminal.
+    """
 
     records: list[ProductRecord]
     warnings: list[str]
     errors: list[str]
+    issues: list[SourceIssue] = []  # noqa: RUF012 — NamedTuple default, never mutated in place
 
 
 def _validate_sources(
@@ -416,8 +424,9 @@ def build_records(
 
     gtins = sorted({gtin for sheet in workbook.values() for (gtin, _market) in sheet.rows_by_key})
     records: list[ProductRecord] = []
+    issues: list[SourceIssue] = []
     for gtin in gtins:
-        acc = _Accumulator(scalars={"gtin": gtin}, localised={}, extras={}, warnings=[])
+        acc = _Accumulator(scalars={"gtin": gtin}, localised={}, extras={}, warnings=[], issues=[])
         for field, src in gdsn_map.items():
             if field != "gtin":
                 _resolve_field(ctx, field, src, gtin, acc)
@@ -426,6 +435,7 @@ def build_records(
             if value is not None:
                 acc.extras[name] = value
         warnings.extend(acc.warnings)
+        issues.extend(acc.issues)
 
         product_name = acc.localised.get("product_name")
         if not product_name or default_language not in product_name:
@@ -439,7 +449,7 @@ def build_records(
             )
         except ExportParseError as exc:
             errors.append(str(exc))
-    return BuildResult(records=records, warnings=warnings, errors=errors)
+    return BuildResult(records=records, warnings=warnings, errors=errors, issues=issues)
 
 
 @dataclass(frozen=True)
@@ -462,6 +472,9 @@ class _Accumulator:
     #: Non-fatal notes raised while resolving this GTIN's fields; merged into
     #: :attr:`BuildResult.warnings` so ``parse_export``'s summary counts them.
     warnings: list[str]
+    #: The structured form of those notes that name a source-datapool defect; merged into
+    #: :attr:`BuildResult.issues` and written to ``data/source_issues.json``.
+    issues: list[SourceIssue]
 
 
 #: How close a value's opening must be to ``strip_prefix`` before it is reported as a likely
@@ -472,14 +485,16 @@ class _Accumulator:
 _PREFIX_TYPO_RATIO: Final = 0.8
 
 
-def _strip_prefix(value: str, prefix: str, where: str, warnings: list[str]) -> str:
+def _strip_prefix(value: str, prefix: str, field: str, gtin: str, acc: _Accumulator) -> str:
     """Remove ``prefix`` from ``value`` when it matches exactly; report near-misses (§4.1).
 
     Args:
         value: The resolved field value.
         prefix: The literal prefix to remove.
-        where: Human-readable location for the report, e.g. ``"product_name.nl for 0871…"``.
-        warnings: Collector for non-fatal notes; a near-miss is appended here.
+        field: Dotted field path for the report, e.g. ``product_name.nl``.
+        gtin: The product, so the report can be acted on in MyGS1.
+        acc: Collector for this GTIN's notes; a near-miss lands in both its ``warnings``
+            (so the run summary counts it) and its ``issues`` (so it reaches the file).
 
     The prefix is matched literally and never repaired. A value whose opening merely
     *resembles* the prefix is a defect in the source datapool — a misspelled or unspaced
@@ -497,13 +512,22 @@ def _strip_prefix(value: str, prefix: str, where: str, warnings: list[str]) -> s
         return value[len(prefix) :].lstrip()
     opening = value[: len(prefix)]
     if SequenceMatcher(None, opening.casefold(), prefix.casefold()).ratio() >= _PREFIX_TYPO_RATIO:
-        note = (
-            f"{where} starts with {opening!r}, which resembles but does not match the "
-            f"configured strip_prefix {prefix!r} — likely a misspelling in the source data; "
-            f"left unchanged, fix it at the source"
+        detail = (
+            f"starts with {opening!r}, which resembles but does not match the configured "
+            f"strip_prefix {prefix!r} — likely a misspelling in the source data; left "
+            f"unchanged, fix it at the source"
         )
-        warnings.append(note)
-        _log.warning("%s", note)
+        acc.warnings.append(f"{field} for {gtin} {detail}")
+        acc.issues.append(
+            SourceIssue(
+                gtin=gtin,
+                field=field,
+                issue="brand_prefix_mismatch",
+                value=value,
+                detail=detail,
+            )
+        )
+        _log.warning("%s for %s %s", field, gtin, detail)
     return value
 
 
@@ -522,9 +546,7 @@ def _resolve_field(
         }
         if src.strip_prefix:
             values = {
-                lang: _strip_prefix(
-                    value, src.strip_prefix, f"{field}.{lang} for {gtin}", acc.warnings
-                )
+                lang: _strip_prefix(value, src.strip_prefix, f"{field}.{lang}", gtin, acc)
                 for lang, value in values.items()
             }
         if values:
@@ -537,7 +559,7 @@ def _resolve_field(
         value = sheet.pick_scalar(gtin, ctx.primary_market, src.attribute, src.with_unit)
         if value is not None:
             acc.scalars[field] = (
-                _strip_prefix(value, src.strip_prefix, f"{field} for {gtin}", acc.warnings)
+                _strip_prefix(value, src.strip_prefix, field, gtin, acc)
                 if src.strip_prefix
                 else value
             )

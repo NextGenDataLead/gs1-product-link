@@ -176,20 +176,8 @@ def test_config_error_returns_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 def test_gdsn_integration_writes_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     xlsx = _write_gdsn_xlsx(tmp_path)
-    export = {
-        "format": "gdsn",
-        "path": xlsx,
-        "market_language": {"528": "nl", "056": "fr"},
-        "gdsn_map": {
-            "product_name": {
-                "sheet": "TradeItemDescription",
-                "attribute": "3297",
-                "localised": True,
-            },
-            "brand": {"sheet": "TradeItemDescription", "attribute": "3336"},
-        },
-    }
-    _patch_client(monkeypatch, tmp_path, export)
+    _patch_client(monkeypatch, tmp_path, _gdsn_export(xlsx))
+    monkeypatch.chdir(tmp_path)
     out = tmp_path / "products.json"
 
     code = parse_export.main(["acme", "--output", str(out)])
@@ -197,6 +185,83 @@ def test_gdsn_integration_writes_output(tmp_path: Path, monkeypatch: pytest.Monk
     assert code == 0
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload[0]["product_name"]["values"] == {"nl": "Rugsteun NL", "fr": "Support FR"}
+
+
+def _gdsn_export(xlsx: str, *, strip_prefix: str = "") -> dict[str, object]:
+    name_src: dict[str, object] = {
+        "sheet": "TradeItemDescription",
+        "attribute": "3297",
+        "localised": True,
+    }
+    if strip_prefix:
+        name_src["strip_prefix"] = strip_prefix
+    return {
+        "format": "gdsn",
+        "path": xlsx,
+        "market_language": {"528": "nl", "056": "fr"},
+        "gdsn_map": {
+            "product_name": name_src,
+            "brand": {"sheet": "TradeItemDescription", "attribute": "3336"},
+        },
+    }
+
+
+def test_source_issues_report_is_written_with_the_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Datapool defects must land in a file, not just a log line.
+
+    The operator fixes these later, in MyGS1, from a work queue — a warning that scrolled
+    past in a terminal is not one. "Rugsteun NL" against strip_prefix "Rugsteun_" is a
+    near-miss, so it reports rather than strips.
+    """
+    xlsx = _write_gdsn_xlsx(tmp_path)
+    _patch_client(monkeypatch, tmp_path, _gdsn_export(xlsx, strip_prefix="Rugsteun_"))
+    monkeypatch.chdir(tmp_path)
+
+    code = parse_export.main(["acme", "--output", str(tmp_path / "products.json")])
+
+    assert code == 0  # non-fatal: the products still parse
+    report = tmp_path / "output" / "acme" / "data" / "source_issues.json"
+    issues = json.loads(report.read_text(encoding="utf-8"))
+    assert len(issues) == 1
+    assert issues[0] == {
+        "gtin": "08713195007359",
+        "field": "product_name.nl",
+        "issue": "brand_prefix_mismatch",
+        "value": "Rugsteun NL",
+        "detail": issues[0]["detail"],  # wording asserted below
+    }
+    assert "resembles but does not match" in issues[0]["detail"]
+    # And the operator is pointed at the file, with the count.
+    err = capsys.readouterr().err
+    assert "1 source-data issue(s) need fixing at the source" in err
+    assert "source_issues.json" in err
+
+
+def test_source_issues_report_written_even_when_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An empty report means "checked, nothing found"; a missing one means "never looked"."""
+    xlsx = _write_gdsn_xlsx(tmp_path)
+    _patch_client(monkeypatch, tmp_path, _gdsn_export(xlsx))
+    monkeypatch.chdir(tmp_path)
+
+    parse_export.main(["acme", "--output", str(tmp_path / "products.json")])
+
+    report = tmp_path / "output" / "acme" / "data" / "source_issues.json"
+    assert json.loads(report.read_text(encoding="utf-8")) == []
+    assert "source-data issue" not in capsys.readouterr().err  # nothing to shout about
+
+
+def test_dry_run_writes_no_issues_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    xlsx = _write_gdsn_xlsx(tmp_path)
+    _patch_client(monkeypatch, tmp_path, _gdsn_export(xlsx, strip_prefix="Rugsteun_"))
+    monkeypatch.chdir(tmp_path)
+
+    parse_export.main(["acme", "--dry-run"])
+
+    assert not (tmp_path / "output" / "acme" / "data" / "source_issues.json").exists()
 
 
 def _write_gdsn_xlsx(tmp_path: Path) -> str:
