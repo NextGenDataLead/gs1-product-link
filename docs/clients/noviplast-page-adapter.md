@@ -319,7 +319,25 @@ source — the filters survive updates to whatever registers them.
   authoritative datapool text — and generate only into the gaps. Generated text carries the same
   approval gate as generated descriptions, and should be distinguishable from feed text in the cache
   so a later feed update can supersede it.
+- **Generated-content report for upstream entry (client requirement).** Every LLM-generated value
+  must be surfaced in a report the operator can act on — not merely logged in passing — because the
+  gap it fills is a gap in the **GS1 datapool itself**. The generated French belongs back in MyGS1
+  as the authoritative value; the tool filling it in at publish time is a stopgap, not the fix.
+  Each entry needs the GTIN, the field (e.g. `product_name.fr`), the source language value it was
+  derived from, and the generated text, so it can be transcribed into the datapool. Two consequences
+  worth designing for: the report is the **work queue** for completing the datapool, and once a value
+  lands upstream the next export carries it, the generator stops firing for that field, and the feed
+  value supersedes the cached generation (hence the feed-vs-generated distinction above). Success
+  looks like this report shrinking to empty.
 - New **image pipeline**: download → convert/resize (Pillow) → upload → dedupe.
+- **Make `tests/integration/test_run_execute_staging.py` safe before it is ever run.** It currently
+  **publishes and never cleans up**: no teardown, and `WordPressConfig.post_status` defaults to
+  `publish`, so it leaves a live customer-visible page titled *"Smoke test product"* (brand
+  `SmokeTest`, blank body — Oxygen ignores `post_content`) plus a GS1 **production** resolver entry,
+  both permanent. Harmless against a real staging site; unacceptable against production WordPress.
+  Needs `post_status: draft` and delete-in-`finally` before it points anywhere real. Related:
+  `STAGING_GTIN` should be a GTIN in Noviplast's `8713195` prefix that is **not an active product** —
+  "not yet on the website" removes the clobber risk but a real saleable product is not disposable.
 - A **Noviplast page-build step** that assembles the above into the ACF payload — replacing the
   Phase 5 HTML-template render for this client.
 
