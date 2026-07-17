@@ -29,6 +29,7 @@ from lib.config import (
     WordPressConfig,
 )
 from lib.records import LocalisedText, Plan, PlanClassification, PlanRow, ProductRecord, State
+from lib.state import load_state
 from scripts import run_execute
 
 GTIN_A = "08713195007359"
@@ -270,7 +271,7 @@ def test_sibling_language_failure_blocks_the_whole_gtin(
     assert code == 1
     assert rec.gs1 == []  # a partial link set would have destroyed the fr link
     assert rec.translations == []
-    assert run_execute.load_state("acme").entries == {}  # nl must stay retryable
+    assert load_state("acme").entries == {}  # nl must stay retryable
     logs = list((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
     outcomes = [json.loads(line) for line in logs[0].read_text().splitlines()]
     assert [o["status"] for o in outcomes] == ["error", "error"]
@@ -342,7 +343,7 @@ def test_happy_path_one_gtin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert links["nl"]["target_url"] == f"https://wp.test/product/p-{GTIN_A}/"
     assert links["nl"]["link_title"] == "Rugsteun"  # title_pattern "{product_name}" for nl
     # State persisted for the row.
-    state = run_execute.load_state("acme")
+    state = load_state("acme")
     entry = state.entries[GTIN_A]["nl"]
     assert entry.wp_page_id == _page_id(f"p-{GTIN_A}")
     assert entry.content_hash == "hash-" + GTIN_A
@@ -365,10 +366,10 @@ def test_rerun_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     plan = _write_json(tmp_path / "plan.json", _plan(_row()))
 
     assert run_execute.main(["acme", "--plan", str(plan)]) == 0
-    first = _entry_without_timestamp(run_execute.load_state("acme"))
+    first = _entry_without_timestamp(load_state("acme"))
 
     assert run_execute.main(["acme", "--plan", str(plan)]) == 0
-    second = _entry_without_timestamp(run_execute.load_state("acme"))
+    second = _entry_without_timestamp(load_state("acme"))
 
     # §6.5: same confirmed plan twice -> same final state (ids/hashes), no duplicates.
     assert first == second
@@ -400,7 +401,7 @@ def test_verify_failure_marks_error_and_skips_state(
 
     assert code == 1
     assert rec.gs1 == []  # never reached GS1 after the failed verify
-    assert run_execute.load_state("acme").entries == {}  # row not persisted
+    assert load_state("acme").entries == {}  # row not persisted
     logs = list((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
     outcomes = [json.loads(line) for line in logs[0].read_text().splitlines()]
     assert outcomes[0]["status"] == "error"
@@ -449,7 +450,7 @@ def test_confirmed_subset_executes_only_confirmed(
 
     assert code == 0
     assert [c["meta"]["gtin"] for c in rec.wp] == [GTIN_A]  # only the confirmed row
-    assert set(run_execute.load_state("acme").entries) == {GTIN_A}
+    assert set(load_state("acme").entries) == {GTIN_A}
 
 
 # --- Config / setup errors ---------------------------------------------------
