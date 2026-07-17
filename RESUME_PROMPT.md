@@ -77,14 +77,20 @@ writable; write it and read it back.
   yet (needs the generator + H87), so pages would publish with title + tagline only.
 
 ## Known bug, not yet fixed
-**The GS1 link set is written per language.** `_build_links` (`run_execute.py:103`) uses
-`row.language`, and rows are per-(GTIN, language), so a nl+fr GTIN gets two upserts each
-sending a *one-element* `links` array as the whole record. Depending on whether GS1's
-CreateOrUpdate replaces or appends, the fr write either **wipes the nl link** (and reports
-`ok`) or **duplicates**. Which one is unknown, and it cannot be hedged — sending the full
-`[nl, fr]` is right under replace and wrong under append. Also: `default: true` applies to
-both languages (should be nl only), and `per_language: true` is dead config. Hasn't fired
-yet only because `clients.yml:9` still points at the contract-less sandbox. See §8.
+**The GS1 link set is written per language, and the fr write destroys the nl link.**
+`_build_links` (`run_execute.py:103`) uses `row.language`, and rows are per-(GTIN, language),
+so a nl+fr GTIN gets two upserts each sending a *one-element* `links` array as the whole
+record. **CreateOrUpdate REPLACES that array — confirmed live 2026-07-17** by probing
+`08713195000374` (`links: []` → 0 links; disabled throughout, restored after). So this is
+data loss: the Dutch QR resolves nowhere and the row reports `ok`. The GS1 docs specify
+merge semantics nowhere — it took a probe. Also: `default: true` applies to both languages
+(should be nl only), and `per_language: true` is dead config. Hasn't fired yet only because
+`clients.yml:9` still points at the contract-less sandbox. Fix + open question in §8.
+
+**`clients.yml` accountNumber was wrong — fixed.** Was `8713195000008` (a guess from the
+GTIN prefix); the production token claims **`8719965024137`**, as does the live record. Every
+prod POST carried an account that wasn't ours, and returned 200. The accountNumber always
+comes from the token claim. `clients.yml` is gitignored, so §8 is the durable record.
 
 ## Next, once unblocked
 §8's remaining tool-side work: the LLM generator (Eigenschappen bullets ~121 products

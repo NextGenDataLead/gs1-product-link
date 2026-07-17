@@ -451,20 +451,20 @@ source — the filters survive updates to whatever registers them.
 
   `pytest` also gained `addopts = "-m 'not staging'"`: the env-var skipif was satisfied by any shell
   that had sourced `.env`, so a bare `pytest` could hit production. `pytest -m staging` still opts in.
-- **BUG: the GS1 link set is written per language, so a bilingual GTIN cannot come out right.**
+- **BUG: the GS1 link set is written per language, so the fr write destroys the nl link.**
   Found while making the staging tests safe; **not yet fixed**. `PlanRow` is *"one (GTIN, language)
   unit of work"* and `_execute_row` runs once per row, but `_build_links` (`run_execute.py:103`)
   sets `language=row.language` — it builds links for **one** language, and `safe_upsert` then sends
   that one-element array as the record's **entire** `links` set. So a nl+fr GTIN gets two upserts,
-  `links:[nl]` then `links:[fr]`. Both possible API semantics are wrong:
-  - **replace** → the fr call **wipes the nl link**; the Dutch QR resolves nowhere and the row
-    reports `ok`;
-  - **append** → duplicates accumulate on every run.
+  `links:[nl]` then `links:[fr]`.
 
-  **Which one it is, is unknown** — and it cannot be hedged: sending the full intended `[nl, fr]`
-  is correct under replace and yields `[nl, nl, fr]` under append. Settle it before designing the
-  merge. The sandbox cannot answer it (no DL contract, 21011), so it is a question for GS1 NL or a
-  live probe on a disposable GTIN.
+  **CreateOrUpdate REPLACES the links array — confirmed live, 2026-07-17.** Probed against
+  `08713195000374` (disabled throughout, restored after): sending `links: []` left the record with
+  **0 links**. The array is authoritative; a write sets the whole set. So this is **data loss, not
+  duplication**: the fr row wipes the nl link, the Dutch QR resolves nowhere, and the row reports
+  `ok`. The GS1 docs do not specify this anywhere — `CreateOrUpdateDigitalLink`, `GetDigitalLink`
+  and `UpdateDigitalLinkIsEnabledStatus` are the whole relevant surface and none mentions merge
+  semantics; it took a probe.
 
   Two further defects in the same few lines:
   - `gs1_links[0].default: true` is applied to **both** languages, so both links would claim
@@ -474,9 +474,24 @@ source — the filters survive updates to whatever registers them.
 
   This has not bitten yet only because `clients.yml:9` leaves `environment: test`, so a live run
   hits the contract-less sandbox and fails before writing. **The fix** (client requirement): group
-  rows by GTIN, `get()` the existing entry, merge links keyed by (linkType, language) so links
-  already created by hand in MyGS1 are *adjusted* rather than duplicated, set `defaultLinkType` for
-  nl only, and send **one** upsert per GTIN — never more than two links, nl and fr.
+  rows by GTIN and send **one** upsert per GTIN carrying the full `[nl, fr]` set, with
+  `defaultLinkType` on **nl only** — never more than two links. Because the array replaces, that
+  alone satisfies "adjust the existing links, don't duplicate them": a manual link at the same
+  (linkType, language) is overwritten, not appended. **Open:** whether to preserve links of *other*
+  link types that we do not manage — a wholesale replace would silently delete them.
+
+- **`accountNumber` in `clients.yml` was wrong — fixed 2026-07-17.** It read `8713195000008`,
+  commented *"Noviplast GLN — confirmed accepted (200) in prod"*: a guess derived from the
+  `8713195` prefix rather than read from the token, unlike the sandbox entry beside it. Verified
+  live: the production token's own `accountNumber` claim is **`8719965024137`**, and the live
+  record for `08713195000374` is owned by `8719965024137` — so every production POST was carrying
+  an account that is not ours. The 200 proved nothing. `clients.yml` is gitignored, so this note is
+  the only durable record; `clients.example.yml` carries a placeholder and needed no change.
+  **Rule: the accountNumber always comes from the minted token's claim, in both environments.**
+
+  Two smaller live findings, neither a bug: the API normalises `linkType` `pip` → **`gs1:pip`** and
+  derives `linkTypeTitle` server-side (it is in `LinkResponse`, not `LinkRequest`); and it
+  normalises a `mediaType` of `null` to `""`.
 - A **Noviplast page-build step** that assembles the above into the ACF payload — replacing the
   Phase 5 HTML-template render for this client.
 
