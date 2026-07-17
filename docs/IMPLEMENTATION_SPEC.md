@@ -1066,6 +1066,26 @@ tests/
 > to validate. Tracked below as Phase 8's "Full re-run flow (plan → diff → confirm → execute) in a
 > fresh Cowork session".
 
+### Page adapter (Noviplast pilot) — mapping, data quality, lifecycle
+Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered gate. Detail in
+`docs/clients/noviplast-page-adapter.md` §4/§8. Done 2026-07-17:
+- [x] Field mapping resolved *with the client* (field walk): title from **3301** (was 3318, which
+      carried material/colour noise); the 1083 "tagline" mapping unwired — it is a generator *input*,
+      never the tagline (exhaustive search: 34/36 live taglines are not in the feed). 3297/3318 kept
+      as `extras`. Slot semantics verified live (ACF `product_title` is the tagline, not the name).
+- [x] Ranked `market_priority` replaced the 1:1 `market_language` map — every market row carries
+      every language, so the map both mis-resolved and undercounted. `product_name` fr 124 → 126/127.
+- [x] Source-data report emits `value_blank` + `value_inconsistent_across_markets` (per-field
+      `report_issues` gate; scoped to published fields). Live: 6 blanks + 5 substantive conflicts.
+- [x] Unpublish lifecycle: `scripts/run_unpublish.py` (retract GS1 → draft pages → `HELD` so a run
+      never republishes; reversible via `run_execute --revive`). Pilot `08713195000527` taken down
+      and verified live (both URLs 404, resolver disabled, links intact).
+- [ ] Feature/benefit + tagline **generator** (LLM) — the report above is its spec. Not started; it
+      owns the 3332+3301 title combination, the 1083-vs-USP tagline choice, and the USP bullets.
+- [ ] `net_content` H87 → *stuks*/*pièces* decoding — blocked on the operator's DIY datamodel (§7.5).
+- [ ] Brand-typo report (the 5 typos now live in the unpublished `3318`/`extras.marketing_name`) —
+      deferred with the report's scope, to widen past published fields later.
+
 ### Phase 7.5 — GPC brick → category mapping
 Derive the product-category assignment from the **GS1 DIY sector datamodel**, since GPC bricks do
 not map 1:1 onto a client's marketing categories. **The operator supplies the DIY datamodel** at the

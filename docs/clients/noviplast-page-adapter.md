@@ -431,17 +431,25 @@ source — the filters survive updates to whatever registers them.
   gets a French page. Keep a skip path for the case where *neither* a feed value nor a generated one
   is available.
 - `lib/gdsn.py` / parser + `clients.yml` `gdsn_map`:
-  - ~~fix `product_name` → attr 3318~~ — **done** (commit `c76492b`); measured 127 nl / 124 fr.
-  - ~~add the tagline → attr 1083~~ — **done**, parsed as `description_short`; 113 nl / 112 fr.
-  - ~~expose `TradeItemFeatureBenefit` (1067)~~ — **done**, parsed as `description_long`; 6 nl / 5 fr,
-    confirming how sparse it is.
-  - **strip the leading `"Noviplast "`** from `product_name` — still todo. The feed gives
-    `"Noviplast Microvezeldoek stof"`; live pages carry the bare name (`"Drain sticks"`), and brand
-    is its own field.
-  - **decode `net_content` unit codes** — still todo. The feed gives the raw UN/ECE code
-    (`"5 H87"`); the page needs words, per language (`H87` → *stuks* / *pièces*). Deterministic —
-    a lookup table, not a generator.
+  - ~~fix `product_name` → attr 3318~~ — **superseded 2026-07-17**: the title is now **3301**
+    (Functional Name). 3318 carried material/colour noise (*"Noviplast Voegstrijker kunststof
+    oranje"*); 3301 is the clean name (*"voegstrijker"*). 3318 kept as `extras.marketing_name`.
+  - ~~add the tagline → attr 1083~~ — **superseded**: 1083 is **not** the tagline (exhaustive
+    search; 34/36 live taglines are not in the feed). Parsed as `description_short`, now a
+    **generator input only** — `acf_map` is empty, `report_issues: false`, no `max_length`.
+  - ~~expose `TradeItemFeatureBenefit` (1067)~~ — **done**, `description_long`; 6/127, a generator seed.
+  - ~~strip the leading `"Noviplast "`~~ — **moot**: 3301 has no brand prefix, so the whole
+    `strip_prefix` concern (and its `brand_prefix_mismatch` findings) retired with the 3318 title.
+  - ~~ranked market resolution~~ — **done**: `market_priority` replaced the 1:1 `market_language`
+    map; first non-blank value per field/language walking the order. `product_name` fr 124 → 126/127.
+  - **decode `net_content` unit codes** — still todo, blocked on the DIY datamodel. The feed gives
+    the raw UN/ECE code (`"5 H87"`); the page needs words per language (`H87` → *stuks* / *pièces*).
+    Deterministic — a lookup table, not a generator.
   - extract **multiple** referenced images (all 12 slots, with mime / `IsPrimaryFile` / `FileName`).
+- ~~**Unpublish lifecycle**~~ — **done 2026-07-17**. `scripts/run_unpublish.py`: retract GS1 →
+  draft pages → record `HELD` in state, so a routine run never republishes a deliberately-downed
+  product (`run_execute --revive` overrides). New `wp_client.set_page_status()`; `StateEntry` gained
+  `wp_status`/`gs1_enabled`. Pilot `08713195000527` taken down and verified live. See §3.1.
 - New **feature/benefit generator** (LLM) with a deterministic cache + human-approval gate. Scope now
   also covers **filling missing French** (§6): the feed carries French for most products but not all
   (name 36/37 planned, tagline 112/127). Prefer the feed value whenever present — it is the
@@ -457,7 +465,13 @@ source — the filters survive updates to whatever registers them.
   The tool **reports rather than repairs**: the datapool is authoritative, so a value silently
   corrected here stays wrong in MyGS1 and returns on the next export. Success is this file
   shrinking to empty.
-  - Currently emits `brand_prefix_mismatch` — 4 findings in the pilot export (§8).
+  - Emits `value_blank` and `value_inconsistent_across_markets` (per-field `report_issues` gate,
+    scoped to published fields) — **built 2026-07-17** with `market_priority`. Live: 6 blanks + 5
+    substantive conflicts (incl. `net_content` *5 vs 1 H87*, an nl slot holding *"Cosmetic Bag"*).
+    Case/whitespace-only differences are normalised away; accents are kept. `value_too_long` and
+    `brand_prefix_mismatch` retired with the tagline unwiring and the 3301 title (no `max_length`,
+    no `strip_prefix`). The 5 brand typos now sit in the unpublished `3318`/`extras.marketing_name`;
+    re-surfacing them waits on widening the report past published fields.
   - **To add: the generated-content entries (client requirement).** Every LLM-generated value
     belongs here too: the gap it fills is a datapool gap, and the generated French belongs back in
     MyGS1 as the authoritative value — the tool filling it at publish time is a stopgap, not the
