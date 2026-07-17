@@ -62,13 +62,6 @@ writable; write it and read it back.
    `net_content` currently parses as the raw UN/ECE code ("5 H87").
 3. **Four brand typos** in the datapool — fix in MyGS1; GTINs are in source_issues.json.
 
-## Known weakness in the issue report
-`SourceIssue.field` names the field in *our* vocabulary (`description_short.fr`), which
-does not exist in MyGS1 — there it is `TradeItemMarketingMessage` attr 1083 on the
-`MarketingInformation` sheet. A work queue that names fields the operator cannot find
-is not a work queue. `GdsnSource` already knows the sheet and attribute; carry them
-into the report.
-
 ## Do not
 - Run `pytest -m staging` against production: it publishes and never cleans up (no
   teardown; `post_status` defaults to `publish`). Needs draft + delete-in-`finally`

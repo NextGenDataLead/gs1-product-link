@@ -197,7 +197,12 @@ class SourceIssue(BaseModel):
 
     Attributes:
         gtin: The product, so it can be found in MyGS1.
-        field: Dotted field path, e.g. ``product_name.nl``.
+        field: Dotted path in *our* vocabulary, e.g. ``product_name.nl``. Useful for
+            debugging the tool; useless for finding the field in the source system.
+        source: The same field in the **source system's** vocabulary, e.g.
+            ``MarketingInformation attr 1083``. This is what the operator searches MyGS1
+            for — ``description_short`` exists nowhere but in this codebase, and a work
+            queue naming fields nobody can find is not a work queue.
         issue: Machine-readable kind, e.g. ``brand_prefix_mismatch``.
         value: The current source value, verbatim.
         detail: One human-readable sentence: what is wrong and what to do.
@@ -207,6 +212,7 @@ class SourceIssue(BaseModel):
 
     gtin: str
     field: str
+    source: str = ""
     issue: str
     value: str
     detail: str

@@ -262,6 +262,8 @@ def test_max_length_reports_but_keeps_the_value(tmp_path: Path) -> None:
     issues = [i for i in result.issues if i.issue == "value_too_long"]
     assert len(issues) == 1
     assert issues[0].field == "product_name.nl"
+    # Named as the source system names it — "product_name" exists only in this codebase.
+    assert issues[0].source == "TradeItemDescription attr 3297"
     assert issues[0].gtin == "08713195007359"
     assert "200 characters, longer than the 120 expected" in issues[0].detail
     assert result.errors == []  # non-fatal

@@ -228,6 +228,8 @@ def test_source_issues_report_is_written_with_the_findings(
     assert issues[0] == {
         "gtin": "08713195007359",
         "field": "product_name.nl",
+        # The operator searches MyGS1 for *this*, not for our "product_name".
+        "source": "TradeItemDescription attr 3297",
         "issue": "brand_prefix_mismatch",
         "value": "Rugsteun NL",
         "detail": issues[0]["detail"],  # wording asserted below

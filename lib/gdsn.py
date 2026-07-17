@@ -489,14 +489,21 @@ class _Accumulator:
 _PREFIX_TYPO_RATIO: Final = 0.8
 
 
-def _strip_prefix(value: str, prefix: str, field: str, gtin: str, acc: _Accumulator) -> str:
+class _Where(NamedTuple):
+    """Where a reported value came from, in both vocabularies (see :class:`SourceIssue`)."""
+
+    field: str  #: ours, e.g. product_name.nl
+    source: str  #: the source system's, e.g. TradeItemDescription attr 3318
+    gtin: str
+
+
+def _strip_prefix(value: str, prefix: str, where: _Where, acc: _Accumulator) -> str:
     """Remove ``prefix`` from ``value`` when it matches exactly; report near-misses (§4.1).
 
     Args:
         value: The resolved field value.
         prefix: The literal prefix to remove.
-        field: Dotted field path for the report, e.g. ``product_name.nl``.
-        gtin: The product, so the report can be acted on in MyGS1.
+        where: Field identity for the report, in both vocabularies.
         acc: Collector for this GTIN's notes; a near-miss lands in both its ``warnings``
             (so the run summary counts it) and its ``issues`` (so it reaches the file).
 
@@ -521,21 +528,22 @@ def _strip_prefix(value: str, prefix: str, field: str, gtin: str, acc: _Accumula
             f"strip_prefix {prefix!r} — likely a misspelling in the source data; left "
             f"unchanged, fix it at the source"
         )
-        acc.warnings.append(f"{field} for {gtin} {detail}")
+        acc.warnings.append(f"{where.field} for {where.gtin} {detail}")
         acc.issues.append(
             SourceIssue(
-                gtin=gtin,
-                field=field,
+                gtin=where.gtin,
+                field=where.field,
+                source=where.source,
                 issue="brand_prefix_mismatch",
                 value=value,
                 detail=detail,
             )
         )
-        _log.warning("%s for %s %s", field, gtin, detail)
+        _log.warning("%s for %s %s", where.field, where.gtin, detail)
     return value
 
 
-def _check_length(value: str, limit: int, field: str, gtin: str, acc: _Accumulator) -> str:
+def _check_length(value: str, limit: int, where: _Where, acc: _Accumulator) -> str:
     """Report a value longer than ``limit``; return it **unchanged** (§4.2).
 
     Kept rather than truncated, for the same reason a near-miss prefix is not repaired: the
@@ -554,21 +562,34 @@ def _check_length(value: str, limit: int, field: str, gtin: str, acc: _Accumulat
         f"is {len(value)} characters, longer than the {limit} expected for this field — "
         f"too long for its slot on the page; shorten it at the source"
     )
-    acc.warnings.append(f"{field} for {gtin} {detail}")
+    acc.warnings.append(f"{where.field} for {where.gtin} {detail}")
     acc.issues.append(
-        SourceIssue(gtin=gtin, field=field, issue="value_too_long", value=value, detail=detail)
+        SourceIssue(
+            gtin=where.gtin,
+            field=where.field,
+            source=where.source,
+            issue="value_too_long",
+            value=value,
+            detail=detail,
+        )
     )
-    _log.warning("%s for %s %s", field, gtin, detail)
+    _log.warning("%s for %s %s", where.field, where.gtin, detail)
     return value
+
+
+def _source_label(src: GdsnSource) -> str:
+    """Name a field the way the *source system* does, for the report (§SourceIssue)."""
+    return f"{src.sheet} attr {src.attribute}" if src.attribute else src.sheet
 
 
 def _apply_checks(value: str, src: GdsnSource, field: str, gtin: str, acc: _Accumulator) -> str:
     """Apply the configured source-value expectations, in order."""
+    where = _Where(field=field, source=_source_label(src), gtin=gtin)
     if src.strip_prefix:
-        value = _strip_prefix(value, src.strip_prefix, field, gtin, acc)
+        value = _strip_prefix(value, src.strip_prefix, where, acc)
     if src.max_length:
         # After stripping: the prefix is not part of what renders in the slot.
-        value = _check_length(value, src.max_length, field, gtin, acc)
+        value = _check_length(value, src.max_length, where, acc)
     return value
 
 
