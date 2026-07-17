@@ -430,14 +430,27 @@ source — the filters survive updates to whatever registers them.
     export carries it, the generator stops firing for that field, and the feed value supersedes the
     cached generation (hence the feed-vs-generated distinction above).
 - New **image pipeline**: download → convert/resize (Pillow) → upload → dedupe.
-- **Make `tests/integration/test_run_execute_staging.py` safe before it is ever run.** It currently
-  **publishes and never cleans up**: no teardown, and `WordPressConfig.post_status` defaults to
-  `publish`, so it leaves a live customer-visible page titled *"Smoke test product"* (brand
-  `SmokeTest`, blank body — Oxygen ignores `post_content`) plus a GS1 **production** resolver entry,
-  both permanent. Harmless against a real staging site; unacceptable against production WordPress.
-  Needs `post_status: draft` and delete-in-`finally` before it points anywhere real. Related:
-  `STAGING_GTIN` should be a GTIN in Noviplast's `8713195` prefix that is **not an active product** —
-  "not yet on the website" removes the clobber risk but a real saleable product is not disposable.
+- ~~**Make `tests/integration/test_run_execute_staging.py` safe before it is ever run.**~~ **Done** —
+  along with `test_wp_staging.py`, which had the same defect. Both now clean up in a `finally`, so a
+  failed assertion still tears down. Three findings reshaped the fix:
+  - **`post_status: draft` was the wrong prescription** — it breaks the run rather than securing it.
+    `verify_url` issues an **unauthenticated** HEAD, which a draft answers with 404, and
+    `_execute_row` calls it mid-pipeline. So `test_run_execute_staging.py` still **publishes**; its
+    safety is the teardown, and the page is live only between the upsert and the force-delete. The
+    three non-publishing tests in `test_wp_staging.py` did move to `draft`.
+  - **The GS1 entry cannot be deleted** — the v2 API has no DELETE. `GS1DigitalLinkClient.retract`
+    does the most that is possible (clear `links`, *then* disable via `isEnabled`), leaving a dead,
+    linkless, disabled record on the account **forever**. Its `get()`-first guard is load-bearing:
+    the clearing call is an *upsert*, so retracting an absent GTIN would **create** a production
+    record and then disable it.
+  - **The prefix rule alone is not enough.** `STAGING_GTIN` must be in the `8713195` prefix *and*
+    must not already have a page — enforced by a pre-flight that reuses `_lookup_existing`, the same
+    resolution the write performs. A real product's GTIN passes the prefix check, and the run would
+    then adopt its live page, overwrite it, and let teardown delete it **with every ownership guard
+    correctly passing**, because the GTIN genuinely matches. `STAGING_GTIN` now has no default.
+
+  `pytest` also gained `addopts = "-m 'not staging'"`: the env-var skipif was satisfied by any shell
+  that had sourced `.env`, so a bare `pytest` could hit production. `pytest -m staging` still opts in.
 - A **Noviplast page-build step** that assembles the above into the ACF payload — replacing the
   Phase 5 HTML-template render for this client.
 

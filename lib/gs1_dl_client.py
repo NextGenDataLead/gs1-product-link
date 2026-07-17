@@ -410,6 +410,42 @@ class GS1DigitalLinkClient:
         path = f"{PATH_PREFIX}digitalLink/{_GTIN_AI}/{gtin.zfill(14)}/activationStatus"
         self._request("PATCH", path, json_body={"isEnabled": is_enabled}, gtin=gtin)
 
+    def retract(self, gtin: str) -> bool:
+        """Deactivate a GTIN's entry — the closest thing to a delete there is (§4.3).
+
+        **The v2 API has no DELETE for a Digital Link.** An entry cannot be removed, only
+        switched off, and that is all this does: PATCH ``isEnabled`` to ``False``, which
+        is the API-side equivalent of clearing MyGS1's *"Activeer GS1 Digital Link"*
+        checkbox. The record and its links survive on the account, deactivated, and
+        nothing can remove them.
+
+        **The links are deliberately left in place.** Clearing them would neutralise the
+        entry a second way while destroying the configured language/link-type/title/URL
+        set, which a later reactivation would then have to re-enter by hand. Deactivating
+        already stops the entry resolving, so wiping the links buys nothing and costs the
+        configuration.
+
+        Returns ``False`` without writing when the GTIN has no entry, so this is safe to
+        call unconditionally from a teardown. Idempotent: retracting an already-retracted
+        GTIN re-sends the same end state.
+
+        Args:
+            gtin: The GTIN whose entry to deactivate.
+
+        Returns:
+            ``True`` when an entry was found and deactivated; ``False`` when the GTIN had
+            no entry and nothing was written.
+
+        Raises:
+            GS1APIError: On any non-2xx response after retries.
+        """
+        if self.get(gtin) is None:
+            _log.info("GS1 retract (%s): no entry, nothing written", gtin)
+            return False
+        self.set_enabled(gtin, is_enabled=False)
+        _log.warning("GS1 retract (%s): entry deactivated (links left intact)", gtin)
+        return True
+
     def validate_draft(
         self,
         gtin: str,

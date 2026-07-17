@@ -428,6 +428,93 @@ class WordPressClient:
         """
         self._adapter.link_translations(self, translations)
 
+    def delete_page(
+        self, post_type: str, page_id: int, *, gtin: str, force: bool = True
+    ) -> WordPressPage | None:
+        """Delete one product page, guarded by its GTIN and idempotent (§4.4, E8, E11).
+
+        Reads the page first and refuses unless its ``meta.gtin`` matches ``gtin``. That
+        guard is why this takes a GTIN at all: a page id on its own is just a number, and
+        a stale or mistyped one addresses somebody else's content every bit as validly as
+        the intended page. Deleting is strictly more destructive than the ``upsert_page``
+        overwrite the same guards already cover, so it gets the same guards.
+
+        Idempotent: an id that is already gone (404, or 410 when it was purged between
+        the read and the delete) is a no-op returning ``None``, so this is safe to call
+        unconditionally from a teardown or a retry.
+
+        Args:
+            post_type: The (custom) post type slug.
+            page_id: The page to delete.
+            gtin: The GTIN the caller believes this page carries. Required — the delete
+                is refused unless ``meta.gtin`` matches it.
+            force: ``True`` (default) bypasses the trash and deletes permanently.
+                ``False`` trashes the page, which keeps its row and appends
+                ``__trashed`` to its slug.
+
+        Returns:
+            The page as it was immediately before deletion, or ``None`` if it was
+            already gone.
+
+        Raises:
+            GtinMismatchError: The page's ``meta.gtin`` differs from ``gtin`` (E8).
+            WordPressAPIError: The page carries no ``meta.gtin`` (E11, a 409-class
+                collision with a non-GTIN page), or any other non-2xx after retries.
+        """
+        found = self._get_page(post_type, page_id)
+        if found is None:
+            _log.info("WP delete %s/%s: already gone", post_type, page_id)
+            return None
+        self._guard_gtin_match(found, gtin)
+        try:
+            resp = self._request(
+                "DELETE",
+                f"{_WP_API_PREFIX}/{post_type}/{page_id}",
+                params={"force": "true"} if force else None,
+                label=f"delete {post_type}/{page_id} (gtin={gtin})",
+            )
+        except WordPressAPIError as exc:
+            if exc.status_code in (HTTPStatus.NOT_FOUND, HTTPStatus.GONE):
+                return None
+            raise
+        _log.warning("WP deleted %s/%s (gtin=%s, force=%s)", post_type, page_id, gtin, force)
+        return _deleted_page(resp.json())
+
+    def delete_media(self, media_id: int) -> bool:
+        """Permanently delete one media attachment; idempotent (§4.4).
+
+        Always force-deletes: WordPress refuses to trash attachments
+        (``rest_trash_not_supported``, HTTP 501), so bypassing the trash is the only
+        mode there is and a ``force`` flag here could only ever be ``True``.
+
+        **Unlike :meth:`delete_page` this has no ownership guard.** Media carries
+        ``meta.content_sha256``, not a GTIN, so there is no key to check the caller's
+        intent against — an id is taken at face value. Pass only ids you got back from
+        :meth:`upload_media`.
+
+        Args:
+            media_id: The attachment to delete.
+
+        Returns:
+            ``True`` when an attachment was deleted, ``False`` when it was already gone.
+
+        Raises:
+            WordPressAPIError: On any non-2xx response after retries.
+        """
+        try:
+            self._request(
+                "DELETE",
+                f"{_MEDIA_PATH}/{media_id}",
+                params={"force": "true"},
+                label=f"delete media {media_id}",
+            )
+        except WordPressAPIError as exc:
+            if exc.status_code in (HTTPStatus.NOT_FOUND, HTTPStatus.GONE):
+                return False
+            raise
+        _log.warning("WP deleted media %s", media_id)
+        return True
+
     # -- Lookup internals -----------------------------------------------------
 
     def _lookup_existing(  # noqa: PLR0913 — one param per lookup key, plus its language scope
@@ -825,6 +912,22 @@ def _meta_gtin(meta: dict[str, object] | None) -> str | None:
         return None
     value = meta.get(_GTIN_META_KEY)
     return str(value) if value is not None and value != "" else None
+
+
+def _deleted_page(body: object) -> WordPressPage | None:
+    """Unwrap a DELETE response into the page as it was before deletion.
+
+    The shape depends on the mode: a force-delete answers
+    ``{"deleted": true, "previous": {...}}``, while a trash answers with the trashed
+    post itself. Casting the force-delete body straight to a page would yield a dict
+    with no ``id``, and :class:`WordPressPage` is ``total=False``, so nothing would
+    complain until a caller read a field that was never there.
+    """
+    if not isinstance(body, dict):
+        return None
+    if "previous" in body:
+        return cast(WordPressPage, body["previous"])
+    return cast(WordPressPage, body)
 
 
 def _media_hash(media: WordPressMedia) -> str | None:

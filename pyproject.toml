@@ -51,6 +51,11 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Staging tests write to a live WordPress site and the GS1 production resolver, so they are
+# deselected by default rather than left to their env-var skipif: a shell that has sourced
+# .env satisfies that gate, which made a bare `pytest` hit production. An explicit
+# `pytest -m staging` overrides this, because a command-line -m replaces the one here.
+addopts = "-m 'not staging'"
 markers = [
     "staging: integration tests that hit a live staging WordPress; skipped unless the staging env vars are set (run with `pytest -m staging`).",
 ]

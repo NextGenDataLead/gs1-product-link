@@ -483,6 +483,104 @@ def test_e11_slug_collision_on_create_409_raises(httpx_mock: HTTPXMock) -> None:
     assert len(posts) == 1  # not retried
 
 
+# --- delete_page / delete_media (§4.4) ---------------------------------------
+
+
+def test_delete_page_force_deletes_and_returns_previous(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {"gtin": "1"}}
+    )
+    httpx_mock.add_response(method="DELETE", json={"deleted": True, "previous": {"id": 7}})
+
+    page = client.delete_page(POST_TYPE, 7, gtin="1")
+
+    # Unwrapped from {"deleted": ..., "previous": {...}} — the raw body has no "id".
+    assert page == {"id": 7}
+    deleted = next(r for r in _business_requests(httpx_mock) if r.method == "DELETE")
+    assert deleted.url.params["force"] == "true"  # a string: params are dict[str, str]
+
+
+def test_delete_page_trashes_when_not_forced(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {"gtin": "1"}}
+    )
+    httpx_mock.add_response(method="DELETE", json={"id": 7, "status": "trash"})
+
+    page = client.delete_page(POST_TYPE, 7, gtin="1", force=False)
+
+    assert page == {"id": 7, "status": "trash"}  # trash answers with the post itself
+    deleted = next(r for r in _business_requests(httpx_mock) if r.method == "DELETE")
+    assert "force" not in deleted.url.params
+
+
+def test_delete_page_refuses_on_gtin_mismatch(httpx_mock: HTTPXMock) -> None:
+    # E8 for a delete: the page belongs to another product. No DELETE is registered, so
+    # pytest-httpx would error if one were issued.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {"gtin": "999"}}
+    )
+
+    with pytest.raises(GtinMismatchError) as exc:
+        client.delete_page(POST_TYPE, 7, gtin="1")
+
+    assert exc.value.existing_gtin == "999"
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
+
+
+def test_delete_page_refuses_on_non_gtin_page(httpx_mock: HTTPXMock) -> None:
+    # E11 for a delete: the id addresses a page that is not ours at all.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {}}
+    )
+
+    with pytest.raises(WordPressAPIError) as exc:
+        client.delete_page(POST_TYPE, 7, gtin="1")
+
+    assert exc.value.status_code == 409
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
+
+
+def test_delete_page_missing_is_noop(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", url=f"{TYPE_URL}/7?context=edit", status_code=404)
+
+    assert client.delete_page(POST_TYPE, 7, gtin="1") is None
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
+
+
+def test_delete_page_gone_during_delete_is_noop(httpx_mock: HTTPXMock) -> None:
+    # The race: purged between the read and the delete.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {"gtin": "1"}}
+    )
+    httpx_mock.add_response(method="DELETE", status_code=410)
+
+    assert client.delete_page(POST_TYPE, 7, gtin="1") is None
+
+
+def test_delete_media_forces(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="DELETE", json={"deleted": True})
+
+    assert client.delete_media(5) is True
+
+    deleted = next(r for r in _business_requests(httpx_mock) if r.method == "DELETE")
+    assert deleted.url.path == "/wp-json/wp/v2/media/5"
+    assert deleted.url.params["force"] == "true"  # WP refuses to trash attachments (501)
+
+
+def test_delete_media_missing_is_noop(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="DELETE", status_code=404)
+
+    assert client.delete_media(5) is False
+
+
 # --- upload_media idempotency (§6.2) -----------------------------------------
 
 

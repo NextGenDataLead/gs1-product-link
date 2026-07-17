@@ -63,10 +63,14 @@ writable; write it and read it back.
 3. **Four brand typos** in the datapool — fix in MyGS1; GTINs are in source_issues.json.
 
 ## Do not
-- Run `pytest -m staging` against production: it publishes and never cleans up (no
-  teardown; `post_status` defaults to `publish`). Needs draft + delete-in-`finally`
-  first, and `STAGING_GTIN` should be an *unassigned* GTIN in the 8713195 prefix, not
-  a real saleable product.
+- ~~Run `pytest -m staging` against production~~ — **fixed.** Both staging files now clean
+  up in a `finally` (page force-deleted, GS1 entry retracted), `STAGING_GTIN` has no
+  default and is guarded twice (8713195 prefix + a pre-flight that aborts if the GTIN
+  already has a page), and `addopts = "-m 'not staging'"` stops a bare `pytest` reaching
+  them. Two things to know before running it anyway: it still **publishes** (draft breaks
+  `verify_url`, which HEADs unauthenticated), and the **GS1 record cannot be deleted** —
+  retract clears + disables it, and a dead record stays on the account forever. So
+  `STAGING_GTIN` must still be a GTIN dedicated to smoke testing and nothing else.
 - Unquote `NOVIPLAST_WP_APP_PASS` in `.env` — WP app passwords contain spaces, and
   unquoted it loads *empty*, so everything 401s while looking like a permissions problem.
 - Run `run_execute` live expecting good pages: `product_description` isn't assembled
