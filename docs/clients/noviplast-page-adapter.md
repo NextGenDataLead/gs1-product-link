@@ -451,6 +451,32 @@ source — the filters survive updates to whatever registers them.
 
   `pytest` also gained `addopts = "-m 'not staging'"`: the env-var skipif was satisfied by any shell
   that had sourced `.env`, so a bare `pytest` could hit production. `pytest -m staging` still opts in.
+- **BUG: the GS1 link set is written per language, so a bilingual GTIN cannot come out right.**
+  Found while making the staging tests safe; **not yet fixed**. `PlanRow` is *"one (GTIN, language)
+  unit of work"* and `_execute_row` runs once per row, but `_build_links` (`run_execute.py:103`)
+  sets `language=row.language` — it builds links for **one** language, and `safe_upsert` then sends
+  that one-element array as the record's **entire** `links` set. So a nl+fr GTIN gets two upserts,
+  `links:[nl]` then `links:[fr]`. Both possible API semantics are wrong:
+  - **replace** → the fr call **wipes the nl link**; the Dutch QR resolves nowhere and the row
+    reports `ok`;
+  - **append** → duplicates accumulate on every run.
+
+  **Which one it is, is unknown** — and it cannot be hedged: sending the full intended `[nl, fr]`
+  is correct under replace and yields `[nl, nl, fr]` under append. Settle it before designing the
+  merge. The sandbox cannot answer it (no DL contract, 21011), so it is a question for GS1 NL or a
+  live probe on a disposable GTIN.
+
+  Two further defects in the same few lines:
+  - `gs1_links[0].default: true` is applied to **both** languages, so both links would claim
+    `defaultLinkType`. The client's rule is *standaardlink* for **nl only**, not fr.
+  - `per_language: true` in `clients.yml` is **dead config** — `GS1LinkConfig` declares it, the
+    config sets it, and nothing in `lib/` or `scripts/` ever reads it.
+
+  This has not bitten yet only because `clients.yml:9` leaves `environment: test`, so a live run
+  hits the contract-less sandbox and fails before writing. **The fix** (client requirement): group
+  rows by GTIN, `get()` the existing entry, merge links keyed by (linkType, language) so links
+  already created by hand in MyGS1 are *adjusted* rather than duplicated, set `defaultLinkType` for
+  nl only, and send **one** upsert per GTIN — never more than two links, nl and fr.
 - A **Noviplast page-build step** that assembles the above into the ACF payload — replacing the
   Phase 5 HTML-template render for this client.
 

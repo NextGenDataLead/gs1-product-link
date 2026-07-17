@@ -76,6 +76,16 @@ writable; write it and read it back.
 - Run `run_execute` live expecting good pages: `product_description` isn't assembled
   yet (needs the generator + H87), so pages would publish with title + tagline only.
 
+## Known bug, not yet fixed
+**The GS1 link set is written per language.** `_build_links` (`run_execute.py:103`) uses
+`row.language`, and rows are per-(GTIN, language), so a nl+fr GTIN gets two upserts each
+sending a *one-element* `links` array as the whole record. Depending on whether GS1's
+CreateOrUpdate replaces or appends, the fr write either **wipes the nl link** (and reports
+`ok`) or **duplicates**. Which one is unknown, and it cannot be hedged — sending the full
+`[nl, fr]` is right under replace and wrong under append. Also: `default: true` applies to
+both languages (should be nl only), and `per_language: true` is dead config. Hasn't fired
+yet only because `clients.yml:9` still points at the contract-less sandbox. See §8.
+
 ## Next, once unblocked
 §8's remaining tool-side work: the LLM generator (Eigenschappen bullets ~121 products
 + ~14 missing taglines; deterministic cache + human-approval gate; every generated
