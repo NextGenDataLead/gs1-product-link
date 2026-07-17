@@ -1,13 +1,26 @@
-"""Tests for scripts/inspect_export.py (IMPLEMENTATION_SPEC §8.5)."""
+"""Tests for scripts/inspect_export.py (IMPLEMENTATION_SPEC §8.5).
+
+The fixture carries **both** 3297 and 3318 on one sheet, because that is the pairing the
+script exists to get right and previously got wrong. 3297 is labelled *"Short product
+name"* and holds an internal logistics string; 3318 is labelled *"Trade item description"*
+and holds the marketing name the page titles. Suggesting the former as ``product_name`` is
+the bug fixed in c76492b, which this script then went on re-proposing.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import openpyxl
 import pytest
+import yaml
 
 from scripts import inspect_export
+
+# What each attribute really holds, per the tuned clients.yml.
+_LOGISTICS_3297 = "Schroefverwijderaar metaal grs"
+_MARKETING_3318 = "Noviplast Rugsteun"
 
 
 def _write_gdsn_xlsx(tmp_path: Path) -> str:
@@ -20,6 +33,8 @@ def _write_gdsn_xlsx(tmp_path: Path) -> str:
             "TradeItemDescriptionInformation",
             "TradeItemDescriptionInformation",
             "TradeItemDescriptionInformation",
+            "TradeItemDescriptionInformation",
+            "TradeItemDescriptionInformation",
         ],
         [
             None,
@@ -28,23 +43,50 @@ def _write_gdsn_xlsx(tmp_path: Path) -> str:
             None,
             "DescriptionShort[0]",
             "DescriptionShort[0]",
+            "TradeItemDescription[0]",
+            "TradeItemDescription[0]",
             "BrandNameInformation",
         ],
-        [None, None, None, None, "LanguageCode", "Value", "BrandName"],
-        [None] * 7,
-        [None] * 7,
-        [None] * 7,
+        [
+            None,
+            None,
+            None,
+            None,
+            "LanguageCode",
+            "Value",
+            "LanguageCode",
+            "Value",
+            "BrandName",
+        ],
+        [None] * 9,
+        [None] * 9,
+        [None] * 9,
         [
             "GTIN (3059)",
             "Country (3179)",
             "Provider (3088)",
             "Unit (3074)",
+            # The label that caused the bug: it reads like the page title and is not.
             "Short product name (3297)",
             "Short product name (3297)",
+            "Trade item description (3318)",
+            "Trade item description (3318)",
             "Brand Name (3336)",
         ],
     ]
-    data = [["08713195007359", "528", "GLN", "BASE_UNIT_OR_EACH", "nl", "Rugsteun", "Noviplast"]]
+    data = [
+        [
+            "08713195007359",
+            "528",
+            "GLN",
+            "BASE_UNIT_OR_EACH",
+            "nl",
+            _LOGISTICS_3297,
+            "nl",
+            _MARKETING_3318,
+            "Noviplast",
+        ]
+    ]
     workbook = openpyxl.Workbook()
     workbook.remove(workbook.active)
     sheet = workbook.create_sheet("TradeItemDescription")
@@ -53,6 +95,18 @@ def _write_gdsn_xlsx(tmp_path: Path) -> str:
     path = tmp_path / "gdsn.xlsx"
     workbook.save(path)
     return str(path)
+
+
+def _suggested_map(out: str) -> dict[str, Any]:
+    """Parse the suggested ``gdsn_map`` back out of stdout.
+
+    Parsed rather than string-matched: what matters is the mapping the operator would
+    paste into clients.yml, and a substring assertion cannot tell ``product_name: 3318``
+    from ``description_long: 3318``. Everything from the header on is valid YAML — the
+    surrounding prose is all ``#`` comments.
+    """
+    block = yaml.safe_load(out[out.index("# Suggested clients.yml export block") :])
+    return dict(block["export"]["gdsn_map"])
 
 
 def test_reports_sheets_and_suggests_map(
@@ -64,11 +118,43 @@ def test_reports_sheets_and_suggests_map(
     assert code == 0
     assert "### TradeItemDescription" in out
     assert "Short product name" in out
-    # A ready-to-paste suggestion recognising the known attributes.
     assert "gdsn_map:" in out
     assert "product_name:" in out
-    assert "3297" in out
     assert "brand:" in out
+
+
+def test_suggests_3318_as_product_name_not_3297(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The regression. 3297 is DescriptionShort; suggesting it titles every page wrong."""
+    inspect_export.main([_write_gdsn_xlsx(tmp_path)])
+
+    gdsn_map = _suggested_map(capsys.readouterr().out)
+    assert gdsn_map["product_name"]["attribute"] == "3318"
+    # 3297 belongs in gdsn_extras as a pass-through, not mapped to any page field.
+    assert "3297" not in {entry["attribute"] for entry in gdsn_map.values()}
+
+
+def test_does_not_suggest_3318_as_description_long(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """3318 is the name. The other half of the same swap."""
+    inspect_export.main([_write_gdsn_xlsx(tmp_path)])
+
+    gdsn_map = _suggested_map(capsys.readouterr().out)
+    assert "description_long" not in gdsn_map  # 1067 is absent from this fixture
+
+
+def test_names_the_tuning_it_cannot_infer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Omitting these silently is how a suggestion gets pasted in as though complete.
+    inspect_export.main([_write_gdsn_xlsx(tmp_path)])
+
+    printed = capsys.readouterr().out
+    assert "strip_prefix" in printed
+    assert "max_length" in printed
+    assert "gdsn_extras" in printed
 
 
 def test_missing_file_returns_error(capsys: pytest.CaptureFixture[str]) -> None:

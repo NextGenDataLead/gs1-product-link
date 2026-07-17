@@ -29,15 +29,38 @@ _KEY_SEGMENTS = frozenset(
 )
 
 #: Recognised GDSN attributes → (ProductRecord field, GdsnSource extra kwargs).
-_KNOWN_ATTRIBUTES: dict[str, tuple[str, dict[str, bool]]] = {
-    "3297": ("product_name", {"localised": True}),
-    "3318": ("description_long", {"localised": True}),
-    "1083": ("description_short", {"localised": True}),
+#:
+#: **Attribute ids, never labels.** 3297's label in a real export is *"Short product
+#: name"*, which reads exactly like the page title and is not: it is DescriptionShort, an
+#: internal logistics string ("Schroefverwijderaar metaal grs"). This table mapped it to
+#: ``product_name`` and 3318 to ``description_long`` — both wrong, both fixed in the tuned
+#: config at c76492b, and both still suggested here afterwards. Since ``clients.yml``
+#: points operators at this script for column discovery, it re-proposed the bug the
+#: project had already paid to find. Verify a mapping against real values before adding
+#: one; a plausible label is what caused this.
+#:
+#: 3297 is deliberately absent: it belongs in ``gdsn_extras`` as a pass-through
+#: (``logistics_name``), not in ``gdsn_map`` as a product-page field.
+_KNOWN_ATTRIBUTES: dict[str, tuple[str, dict[str, object]]] = {
+    "3318": ("product_name", {"localised": True}),  # TradeItemDescription — the page title
+    "1083": ("description_short", {"localised": True}),  # TradeItemMarketingMessage
+    "1067": ("description_long", {"localised": True}),  # TradeItemFeatureBenefit
     "3336": ("brand", {}),
     "3510": ("net_content", {"with_unit": True}),
     "GpcCategoryCode": ("gpc_brick_code", {}),
     "2485": ("image_url", {"primary_file": True}),
 }
+
+#: Per-field tuning this script cannot infer, printed alongside the suggestion. The values
+#: are client-specific (a brand prefix, a theme's slot width), so they are named rather
+#: than guessed — but naming them beats omitting them silently, which is how a suggestion
+#: gets pasted in as if it were complete.
+_TUNING_HINTS: tuple[str, ...] = (
+    "strip_prefix: <str>  — on product_name, when the feed repeats the brand in the name.",
+    "max_length: <int>    — flags values too long for their slot (reported, never truncated).",
+    "gdsn_extras:         — pass-through attributes (e.g. 3297 DescriptionShort) that are",
+    "                       not product-page fields but are worth carrying.",
+)
 
 _SAMPLE_LIMIT = 3
 _SAMPLE_ROWS = 25
@@ -143,6 +166,11 @@ def main(argv: list[str] | None = None) -> int:
     _print_report(sheets)
     print("\n# Suggested clients.yml export block (map market codes to languages, then tune):")
     print(yaml.safe_dump({"export": _suggest_map(sheets)}, sort_keys=False, allow_unicode=True))
+    print("# A starting point, not a mapping. Check each attribute against its sample values")
+    print('# above — labels lie (3297 is called "Short product name" and is not one).')
+    print("# This script cannot infer:")
+    for hint in _TUNING_HINTS:
+        print(f"#   {hint}")
     return 0
 
 
