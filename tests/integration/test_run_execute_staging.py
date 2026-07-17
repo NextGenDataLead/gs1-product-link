@@ -89,6 +89,13 @@ _GTIN = os.environ.get("STAGING_GTIN")
 #: Noviplast's GS1 company prefix. Overridable for a pilot on another prefix.
 _GTIN_PREFIX = os.environ.get("STAGING_GTIN_PREFIX", "8713195")
 
+#: The export's own product list — the authoritative answer to "is this a real product?".
+#: Written by parse_export and gitignored, so it may be absent; resolved at import because
+#: this test chdirs. See _assert_gtin_not_a_real_product for why this gate is not optional.
+_PRODUCTS_JSON = Path(
+    os.environ.get("STAGING_PRODUCTS_JSON", "output/noviplast/data/products.json")
+).resolve()
+
 _SLUG = f"p-{_GTIN}"
 
 #: The title this test gives its page. The pre-flight uses it to tell our own leftovers
@@ -143,6 +150,36 @@ def _config() -> ClientConfig:
         ),
         qr=QRConfig(formats=["svg"], size_mm=20, error_correction="M", dpi=300),
         gs1_links=[GS1LinkConfig(link_type="pip", default=True, title_pattern="{product_name}")],
+    )
+
+
+def _assert_gtin_not_a_real_product() -> None:
+    """Refuse a GTIN that the export knows as a real product.
+
+    The two other gates are jointly insufficient, and this is not theoretical — verified
+    against `08713195000374` (*Kledingroller*), which passes both: it sits in the 8713195
+    prefix, and the live pre-flight finds nothing, because its real page (id 293,
+    *"Roll off"*) uses a human slug and carries **no** ``meta.gtin``. Neither the slug
+    lookup nor the meta lookup can see it, so the run would cheerfully create a second,
+    duplicate page for a product that already has one — and point a permanent GS1
+    production entry at it. Only the product list catches that.
+
+    Resolved at import, before the test chdirs. Fails loudly when the file is missing
+    rather than skipping the check: a guard whose absence you cannot detect is not a guard.
+    """
+    if not _PRODUCTS_JSON.is_file():
+        pytest.fail(
+            f"{_PRODUCTS_JSON} not found, so STAGING_GTIN cannot be checked against the "
+            f"real product list. Run parse_export, or point STAGING_PRODUCTS_JSON at it. "
+            f"Refusing to run without it — the prefix and pre-flight gates both pass a "
+            f"real product whose page uses a human slug and has no meta.gtin."
+        )
+    records = json.loads(_PRODUCTS_JSON.read_text(encoding="utf-8"))
+    real = {str(r["gtin"]).zfill(14) for r in records}
+    assert _GTIN and _GTIN.zfill(14) not in real, (
+        f"STAGING_GTIN={_GTIN!r} is a real product in the export ({len(real)} products). "
+        f"Refusing to run: this test writes a GS1 production entry for it that can never "
+        f"be deleted. Use a GTIN that is not an active product."
     )
 
 
@@ -226,7 +263,9 @@ def _guarded_staging_target() -> Iterator[None]:
     real content we must neither write to it nor delete it, so an abort has to skip the
     teardown as well as the test.
     """
-    _assert_gtin_prefix()  # before any client exists, so a bad GTIN issues no HTTP at all
+    # Both gates before any client exists, so a bad GTIN issues no HTTP at all.
+    _assert_gtin_prefix()
+    _assert_gtin_not_a_real_product()
     cfg = _config()
     with WordPressClient(cfg.wordpress) as wp:
         _assert_no_foreign_page(wp)
