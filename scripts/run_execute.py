@@ -71,8 +71,10 @@ _EXIT_OK = 0
 _EXIT_ERRORS = 1
 _EXIT_CONFIG_ERROR = 2
 
-#: Fallback resolver link type when a client defines no ``gs1_links`` (§2.4).
-_DEFAULT_LINK_TYPE = "pip"
+#: Fallback resolver link type when a client defines no ``gs1_links`` (§2.4). A GS1 Web
+#: Vocabulary CURIE: the API stores ``linkType`` unvalidated, so a bare ``"pip"`` is
+#: accepted with a 200 and read back with a null ``linkTypeTitle`` — i.e. unrecognised.
+_DEFAULT_LINK_TYPE = "gs1:pip"
 #: Run-log timestamp format (UTC), shared with the JSONL filename.
 _TS_FORMAT = "%Y%m%dT%H%M%SZ"
 

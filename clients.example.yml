@@ -128,7 +128,7 @@ clients:
       # One link per configured language is always emitted — GS1's CreateOrUpdate replaces
       # the whole links array, so a language left out is a language deleted from the
       # resolver. `default` applies to the default language's link only.
-      - link_type: pip
+      - link_type: "gs1:pip"
         default: true
         public: true
         title_pattern: "{product_name}"

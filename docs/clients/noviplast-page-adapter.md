@@ -489,9 +489,24 @@ source — the filters survive updates to whatever registers them.
   the only durable record; `clients.example.yml` carries a placeholder and needed no change.
   **Rule: the accountNumber always comes from the minted token's claim, in both environments.**
 
-  Two smaller live findings, neither a bug: the API normalises `linkType` `pip` → **`gs1:pip`** and
-  derives `linkTypeTitle` server-side (it is in `LinkResponse`, not `LinkRequest`); and it
-  normalises a `mediaType` of `null` to `""`.
+- **BUG: `link_type: pip` was unrecognised — fixed 2026-07-17.** An earlier note here claimed
+  *"the API normalises `linkType` `pip` → `gs1:pip`"*. **It does not.** That was inferred from a
+  UI-created record without checking one of ours, and comparing the two settles it:
+
+  | record | created by | `linkType` | `linkTypeTitle` |
+  |---|---|---|---|
+  | `08713195000374` | MyGS1 **UI** | `gs1:pip` | "Product Information Page" |
+  | `08713195000527` | **our tool** | `pip` | **`null`** |
+
+  Link types are GS1 Web Vocabulary **CURIEs**, and the API stores `linkType` **unvalidated** —
+  a bare `"pip"` is accepted with a 200 and read back with a null `linkTypeTitle`, i.e. not
+  recognised. So every link the tool has ever written carried an unrecognised type, silently.
+  `clients.yml`, `clients.example.yml` and `_DEFAULT_LINK_TYPE` now use `gs1:pip`.
+
+  `linkTypeTitle` *is* server-derived (it is in `LinkResponse`, not `LinkRequest`) — but only
+  for a link type the server knows. It is the tell, not a decoration.
+
+  Still true and not a bug: the API normalises a `mediaType` of `null` to `""`.
 - A **Noviplast page-build step** that assembles the above into the ACF payload — replacing the
   Phase 5 HTML-template render for this client.
 
