@@ -185,9 +185,10 @@ class GS1LinkConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     link_type: str
+    #: Whether this link type is the resolver's default — applied to the **default
+    #: language only**, however many languages the record carries.
     default: bool = False
     public: bool = True
-    per_language: bool = False
     title_pattern: str | None = None
 
 

@@ -3,13 +3,26 @@
 Usage:
     python -m scripts.run_execute CLIENT_ID (--plan PATH | --confirmed PATH) [--dry-run]
 
-Per confirmed ``(GTIN, language)`` row, in order: render the product template →
-upsert the WordPress page → verify it serves 200 → set the GS1 resolver target
-(GET-before-write via ``safe_upsert``, §5.4) → render the QR. Each row's
-:class:`~lib.records.RunOutcome` is appended to ``output/{client_id}/runs/{ts}.jsonl``
-regardless of success, and successful rows update ``output/{client_id}/state.json``.
-The run is idempotent (§6.5) and resumable: re-running the same confirmed plan yields
-the same final state.
+Work is grouped by GTIN and runs in two phases, because some of it is per language and
+some of it is per *product*:
+
+1. **Per confirmed ``(GTIN, language)`` row:** render the product template → upsert the
+   WordPress page → verify it serves 200.
+2. **Per GTIN, once every one of its rows has survived phase 1:** link the pages as
+   translations of one another (§4.5) → set **one** GS1 resolver target carrying a link
+   for *every* language (GET-before-write via ``safe_upsert``, §5.4) → render the QR.
+
+The split is not tidiness. GS1's CreateOrUpdate **replaces** the whole ``links`` array,
+so a write per language would leave only the last language's link — silently destroying
+the others. And a translation group cannot be linked until every page in it exists. If
+any row of a GTIN fails phase 1 the GTIN gets neither: a partial link set would destroy
+the missing language's link, and persisting the survivor's state would make the next run
+classify it UNCHANGED and never retry.
+
+Each row's :class:`~lib.records.RunOutcome` is appended to
+``output/{client_id}/runs/{ts}.jsonl`` regardless of success, and successful rows update
+``output/{client_id}/state.json``. The run is idempotent (§6.5) and resumable: re-running
+the same confirmed plan yields the same final state.
 
 ``--dry-run`` (§5.4 Level B) walks the plan and logs the intended WordPress/GS1
 mutations without performing them — no HTTP writes, no QR files, no state update.
@@ -29,6 +42,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from pydantic import ValidationError
 
@@ -38,7 +52,15 @@ from lib.errors import ConfigError, StateError
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
 from lib.qr import render_qr
-from lib.records import ConfirmedPlan, Plan, PlanRow, RunOutcome, State, StateEntry
+from lib.records import (
+    ConfirmedPlan,
+    Plan,
+    PlanRow,
+    ProductRecord,
+    RunOutcome,
+    State,
+    StateEntry,
+)
 from lib.state import load_state, save_state
 from lib.templates import TemplateEngine
 from lib.wp_client import WordPressClient
@@ -84,29 +106,79 @@ def _client_meta(cfg: ClientConfig) -> dict[str, str]:
     }
 
 
-def _link_title(link: GS1LinkConfig, cfg: ClientConfig, row: PlanRow) -> str:
-    """Resolve a resolver link's title from its ``title_pattern`` (§2.4)."""
+class _Page(NamedTuple):
+    """One language's live page: what the per-GTIN phase needs to know about it."""
+
+    page_id: int
+    url: str
+    title: str
+
+
+def _known_pages(gtin: str, fresh: dict[str, _Page], state: State) -> dict[str, _Page]:
+    """Every language this GTIN has a page for — this run's, plus state's for the rest.
+
+    An operator can confirm rows individually, so a run may carry only the fr row of a
+    GTIN whose nl page already exists. The GS1 link array replaces, and WPML's translation
+    group is the full set, so building either from the confirmed rows alone would drop nl
+    — deleting its resolver link and breaking the translation pair. The state entry is the
+    only record of a page this run did not touch, so it is what the missing languages are
+    rebuilt from.
+
+    Fresh pages win: a language written this run is more current than its state entry.
+    """
+    known = dict(fresh)
+    for language, entry in state.entries.get(gtin, {}).items():
+        if language not in known:
+            known[language] = _Page(entry.wp_page_id, entry.wp_url, entry.title or "")
+    return known
+
+
+def _link_title(
+    link: GS1LinkConfig,
+    cfg: ClientConfig,
+    product: ProductRecord,
+    language: str,
+    fallback: str,
+) -> str:
+    """Resolve a resolver link's title from its ``title_pattern`` (§2.4).
+
+    Takes a product and a language rather than a :class:`PlanRow`: a link is built for
+    every language of the GTIN, including ones whose row was not confirmed this run and
+    so has no row at all (see :func:`_known_pages`).
+    """
     if not link.title_pattern:
-        return row.title
-    name = row.product.product_name.get(row.language, cfg.wordpress.default_language) or row.title
+        return fallback
+    name = product.product_name.get(language, cfg.wordpress.default_language) or fallback
     return link.title_pattern.format(
-        product_name=name, title=row.title, gtin=row.gtin, brand=row.product.brand
+        product_name=name, title=fallback, gtin=product.gtin, brand=product.brand
     )
 
 
-def _build_links(cfg: ClientConfig, row: PlanRow, target_url: str) -> list[LinkInput]:
-    """Build the resolver link set for one row, all pointing at ``target_url`` (§4.3)."""
+def _build_links(
+    cfg: ClientConfig, product: ProductRecord, pages: dict[str, _Page]
+) -> list[LinkInput]:
+    """Build the resolver link set for one GTIN, spanning every known language (§4.3).
+
+    This is the whole record's link set, not one language's: GS1's CreateOrUpdate replaces
+    the ``links`` array wholesale, so whatever is omitted here is deleted from the record.
+
+    Languages are emitted in sorted order so :func:`_link_set_hash` is stable across runs
+    regardless of plan order.
+    """
     configs = cfg.gs1_links or [GS1LinkConfig(link_type=_DEFAULT_LINK_TYPE, default=True)]
     return [
         LinkInput(
             link_type=link.link_type,
-            language=row.language,
-            link_title=_link_title(link, cfg, row),
-            target_url=target_url,
-            default_link_type=link.default,
+            language=language,
+            link_title=_link_title(link, cfg, product, language, pages[language].title),
+            target_url=pages[language].url,
+            # "standaardlink voor nl, niet voor fr": only the default language's link is
+            # the default one, however many languages the record carries.
+            default_link_type=link.default and language == cfg.wordpress.default_language,
             public=link.public,
             media_type=cfg.gs1.default_media_type,
         )
+        for language in sorted(pages)
         for link in configs
     ]
 
@@ -125,68 +197,187 @@ def _digital_link_url(cfg: ClientConfig, row: PlanRow) -> str:
 # --- Execution ---------------------------------------------------------------
 
 
-def _execute_row(  # noqa: PLR0913 — one collaborator per pipeline step; grouping them adds noise
+def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcome it annotates
     cfg: ClientConfig,
     row: PlanRow,
+    wp: WordPressClient,
+    engine: TemplateEngine,
+    state: State,
+    outcome: RunOutcome,
+) -> _Page:
+    """Phase 1 for one row: render, upsert the page, verify it serves. Raises on failure.
+
+    Deliberately writes no state and sets no final status — the row is not done until its
+    GTIN's per-product phase has run (see the module docstring).
+
+    ``outcome`` is filled in as we go rather than from the return value, so that a page
+    created and *then* failed by ``verify_url`` still reports its id and URL in the run
+    log. Without that the operator gets an error naming no page.
+    """
+    html = engine.render(row.product, row.language, _client_meta(cfg))
+    # Themes that render from ACF (Oxygen) ignore post_content entirely, so for those
+    # clients the ACF payload *is* the page. The body is still written: it is inert
+    # where it is ignored, and it is what non-ACF clients render from.
+    acf = build_acf_payload(row.product, row.language, cfg.wordpress.acf_map)
+    prior = state.entries.get(row.gtin, {}).get(row.language)
+    page = wp.upsert_page(
+        post_type=cfg.wordpress.post_type,
+        slug=row.slug,
+        title=row.title,
+        content=html,
+        language=row.language,
+        featured_media=None,  # image pipeline deferred to the Phase 9 pilot
+        meta={"gtin": row.gtin},
+        existing_id=prior.wp_page_id if prior else None,
+        acf=acf,
+    )
+    page_url = page["link"]
+    outcome.wp_page_id = page["id"]
+    outcome.wp_url = page_url
+    if not wp.verify_url(page_url):
+        raise RuntimeError(f"WordPress URL {page_url} did not return 200")
+    return _Page(page["id"], page_url, row.title)
+
+
+def _item_description(cfg: ClientConfig, rows: list[PlanRow], pages: dict[str, _Page]) -> str:
+    """The GS1 record's ``itemDescription`` — one per GTIN, so the default language's."""
+    page = pages.get(cfg.wordpress.default_language)
+    if page is not None and page.title:
+        return page.title
+    return rows[0].title
+
+
+def _block_gtin(gtin: str, rows: list[PlanRow], outcomes: dict[str, RunOutcome]) -> None:
+    """Fail every row of a GTIN whose sibling failed phase 1, writing no state.
+
+    Neither half of the per-product phase can run: a link set built from the surviving
+    languages would **replace** the array and delete the failed language's link, and a
+    translation group cannot be linked to a page that does not exist. Marking the survivor
+    ``error`` is not bookkeeping — persisting its state would have the next run classify it
+    UNCHANGED, so the GS1 write would never be retried and the failure would vanish.
+    """
+    failed = sorted(lang for lang, o in outcomes.items() if o.status == "error")
+    for row in rows:
+        outcome = outcomes[row.language]
+        if outcome.status == "error":
+            continue
+        outcome.status = "error"
+        outcome.error = (
+            f"blocked: language(s) {', '.join(failed)} of this GTIN failed, so its GS1 link "
+            f"set and translation group were not written"
+        )
+        _log.error("row %s/%s blocked by failed sibling(s) %s", gtin, row.language, failed)
+
+
+def _finish_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them only hides them
+    cfg: ClientConfig,
+    gtin: str,
+    rows: list[PlanRow],
+    fresh: dict[str, _Page],
+    wp: WordPressClient,
+    gs1: GS1DigitalLinkClient,
+    state: State,
+    ts: datetime,
+    outcomes: dict[str, RunOutcome],
+) -> None:
+    """Phase 2: the writes that belong to the product rather than to one language."""
+    pages = _known_pages(gtin, fresh, state)
+    rebuilt = sorted(set(pages) - set(fresh))
+    if rebuilt:
+        _log.warning(
+            "gtin %s: language(s) %s were not written this run; their resolver links and "
+            "translation ids come from state, not from a page verified just now",
+            gtin,
+            rebuilt,
+        )
+    wp.link_translations({lang: page.page_id for lang, page in pages.items()})
+    links = _build_links(cfg, rows[0].product, pages)
+    gs1.safe_upsert(
+        gtin=gtin,
+        item_description=_item_description(cfg, rows, pages),
+        links=links,
+        is_enabled=True,
+        overwrite=True,  # the plan is operator-confirmed; re-runs update in place (§6.5)
+    )
+    qr_paths = [str(p) for p in _render_qr_for(cfg, rows[0])]
+    link_hash = _link_set_hash(links)
+    for row in rows:
+        outcome = outcomes[row.language]
+        outcome.gs1_set = True
+        outcome.qr_paths = qr_paths
+        outcome.status = "ok"
+        state.entries.setdefault(gtin, {})[row.language] = StateEntry(
+            wp_page_id=fresh[row.language].page_id,
+            wp_url=fresh[row.language].url,
+            wp_featured_media_id=None,
+            content_hash=row.content_hash,
+            gs1_link_set_hash=link_hash,  # per-GTIN: every language shares the one link set
+            last_run=ts,
+            title=row.title,  # the next run diffs against this (§10.6.2)
+        )
+
+
+def _execute_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them only hides them
+    cfg: ClientConfig,
+    gtin: str,
+    rows: list[PlanRow],
     wp: WordPressClient,
     gs1: GS1DigitalLinkClient,
     engine: TemplateEngine,
     state: State,
     ts: datetime,
-) -> RunOutcome:
-    """Run one row end-to-end, updating ``state`` on success. Never raises."""
-    outcome = RunOutcome(gtin=row.gtin, language=row.language, ts=ts, status="pending")
-    try:
-        html = engine.render(row.product, row.language, _client_meta(cfg))
-        # Themes that render from ACF (Oxygen) ignore post_content entirely, so for those
-        # clients the ACF payload *is* the page. The body is still written: it is inert
-        # where it is ignored, and it is what non-ACF clients render from.
-        acf = build_acf_payload(row.product, row.language, cfg.wordpress.acf_map)
-        prior = state.entries.get(row.gtin, {}).get(row.language)
-        page = wp.upsert_page(
-            post_type=cfg.wordpress.post_type,
-            slug=row.slug,
-            title=row.title,
-            content=html,
-            language=row.language,
-            featured_media=None,  # image pipeline deferred to the Phase 9 pilot
-            meta={"gtin": row.gtin},
-            existing_id=prior.wp_page_id if prior else None,
-            acf=acf,
-        )
-        page_url = page["link"]
-        outcome.wp_page_id = page["id"]
-        outcome.wp_url = page_url
+) -> list[RunOutcome]:
+    """Run every confirmed row of one GTIN, then its per-product writes. Never raises."""
+    outcomes = {
+        row.language: RunOutcome(gtin=gtin, language=row.language, ts=ts, status="pending")
+        for row in rows
+    }
+    fresh: dict[str, _Page] = {}
+    for row in rows:
+        try:
+            fresh[row.language] = _upsert_row(cfg, row, wp, engine, state, outcomes[row.language])
+        except Exception as exc:  # noqa: BLE001 — one bad row must not abort the run
+            outcomes[row.language].status = "error"
+            outcomes[row.language].error = repr(exc)
+            _log.error("row %s/%s failed: %r", gtin, row.language, exc)
 
-        if not wp.verify_url(page_url):
-            raise RuntimeError(f"WordPress URL {page_url} did not return 200")
+    if len(fresh) != len(rows):
+        _block_gtin(gtin, rows, outcomes)
+    else:
+        try:
+            _finish_gtin(cfg, gtin, rows, fresh, wp, gs1, state, ts, outcomes)
+        except Exception as exc:  # noqa: BLE001 — one bad GTIN must not abort the run
+            for row in rows:
+                outcomes[row.language].status = "error"
+                outcomes[row.language].error = repr(exc)
+            _log.error("gtin %s failed its per-product writes: %r", gtin, exc)
+    return [outcomes[row.language] for row in rows]
 
-        links = _build_links(cfg, row, page_url)
-        gs1.safe_upsert(
-            gtin=row.gtin,
-            item_description=row.title,
-            links=links,
-            is_enabled=True,
-            overwrite=True,  # the plan is operator-confirmed; re-runs update in place (§6.5)
-        )
-        outcome.gs1_set = True
 
-        outcome.qr_paths = [str(p) for p in _render_qr_for(cfg, row)]
-        outcome.status = "ok"
-        state.entries.setdefault(row.gtin, {})[row.language] = StateEntry(
-            wp_page_id=page["id"],
-            wp_url=page_url,
-            wp_featured_media_id=None,
-            content_hash=row.content_hash,
-            gs1_link_set_hash=_link_set_hash(links),
-            last_run=ts,
-            title=row.title,  # the next run diffs against this (§10.6.2)
-        )
-    except Exception as exc:  # noqa: BLE001 — one bad row must not abort the run
-        outcome.status = "error"
-        outcome.error = repr(exc)
-        _log.error("row %s/%s failed: %r", row.gtin, row.language, exc)
-    return outcome
+def _execute(  # noqa: PLR0913 — one collaborator per step; bundling them only hides them
+    cfg: ClientConfig,
+    rows: list[PlanRow],
+    wp: WordPressClient,
+    gs1: GS1DigitalLinkClient,
+    engine: TemplateEngine,
+    state: State,
+    ts: datetime,
+) -> list[RunOutcome]:
+    """Execute the confirmed rows grouped by GTIN, returning outcomes in plan order.
+
+    Grouped with a dict rather than by walking runs of adjacent rows: rows for one GTIN
+    happen to be adjacent today only because ``diff_against_state`` builds them in a nested
+    loop, and :class:`~lib.records.Plan` promises no such ordering.
+    """
+    by_gtin: dict[str, list[PlanRow]] = {}
+    for row in rows:
+        by_gtin.setdefault(row.gtin, []).append(row)
+
+    done: dict[tuple[str, str], RunOutcome] = {}
+    for gtin, gtin_rows in by_gtin.items():
+        for outcome in _execute_gtin(cfg, gtin, gtin_rows, wp, gs1, engine, state, ts):
+            done[(outcome.gtin, outcome.language)] = outcome
+    return [done[(row.gtin, row.language)] for row in rows]
 
 
 def _render_qr_for(cfg: ClientConfig, row: PlanRow) -> list[Path]:
@@ -212,8 +403,11 @@ def _preview_row(
     outcome = RunOutcome(gtin=row.gtin, language=row.language, ts=ts, status="dry-run")
     try:
         engine.render(row.product, row.language, _client_meta(cfg))
+        # One line per row, but the GS1 write is per GTIN: a GTIN with two confirmed rows
+        # gets one resolver write carrying both languages' links, not one write per line.
         _log.info(
-            "[dry-run] %s/%s: would upsert WP %r page %r and set GS1 %s -> the page URL",
+            "[dry-run] %s/%s: would upsert WP %r page %r, then link this GTIN's languages "
+            "as translations and point GS1 %s at their pages",
             row.gtin,
             row.language,
             cfg.wordpress.post_type,
@@ -262,7 +456,7 @@ def _run(
             WordPressClient(cfg.wordpress) as wp,
             GS1DigitalLinkClient(resolved_gs1) as gs1,
         ):
-            outcomes = [_execute_row(cfg, row, wp, gs1, engine, state, ts) for row in rows]
+            outcomes = _execute(cfg, rows, wp, gs1, engine, state, ts)
         save_state(state)
 
     _write_log(log_path, outcomes)

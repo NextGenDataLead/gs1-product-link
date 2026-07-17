@@ -106,9 +106,26 @@ def _write_json(path: Path, model: Plan) -> Path:
     return path
 
 
-def _page_id(slug: str) -> int:
-    """Deterministic WordPress id per slug, so re-running yields the same page (idempotent)."""
-    return 1000 + int.from_bytes(hashlib.sha256(slug.encode()).digest()[:2], "big")
+def _page_id(slug: str, language: str = "nl") -> int:
+    """Deterministic WordPress id per (slug, language), so re-runs are idempotent (§6.5).
+
+    Language is part of the key because the slug deliberately has *no* language component
+    — nl and fr both live at ``p-{gtin}`` (that is the point of the ``?lang=`` write, see
+    the page-adapter doc §3.1). Keying on the slug alone would hand both languages the
+    same id, and every assertion about linking them as translations would pass vacuously.
+    """
+    return 1000 + int.from_bytes(hashlib.sha256(f"{slug}/{language}".encode()).digest()[:2], "big")
+
+
+def _page_url(language: str, slug: str, *, post_type: str = "product") -> str:
+    """The URL FakeWP returns for a page — default language at the root, others prefixed.
+
+    Mirrors the real site's ``/noviplast/{slug}/`` vs ``/fr/noviplast/{slug}/`` split, and
+    ``state.py:_lang_segment``. Without this the fake hands both languages the same URL and
+    "each link points at its own language's page" is untestable.
+    """
+    prefix = "" if language == "nl" else f"/{language}"
+    return f"https://wp.test{prefix}/{post_type}/{slug}/"
 
 
 class _Recorder:
@@ -116,6 +133,7 @@ class _Recorder:
         self.wp: list[dict[str, Any]] = []
         self.gs1: list[dict[str, Any]] = []
         self.verified: list[str] = []
+        self.translations: list[dict[str, int]] = []
 
 
 def _install(
@@ -124,12 +142,18 @@ def _install(
     *,
     verify: bool = True,
     wp_error: Exception | None = None,
+    wp_error_languages: tuple[str, ...] = ("nl", "fr"),
 ) -> _Recorder:
+    """Patch the two clients with recording fakes.
+
+    ``wp_error_languages`` narrows ``wp_error`` to specific languages, so a test can fail
+    one language of a GTIN and leave its sibling healthy.
+    """
     rec = _Recorder()
 
     class FakeWP:
         def __init__(self, config: WordPressConfig) -> None:
-            self._site = config.site_url
+            self._default_language = config.default_language
 
         def __enter__(self) -> FakeWP:
             return self
@@ -139,14 +163,18 @@ def _install(
 
         def upsert_page(self, **kw: Any) -> dict[str, Any]:
             rec.wp.append(kw)
-            if wp_error is not None:
+            if wp_error is not None and kw["language"] in wp_error_languages:
                 raise wp_error
-            pid = kw["existing_id"] or _page_id(kw["slug"])
-            return {"id": pid, "link": f"{self._site}/{kw['post_type']}/{kw['slug']}/"}
+            language = kw["language"]
+            pid = kw["existing_id"] or _page_id(kw["slug"], language)
+            return {"id": pid, "link": _page_url(language, kw["slug"], post_type=kw["post_type"])}
 
         def verify_url(self, url: str) -> bool:
             rec.verified.append(url)
             return verify
+
+        def link_translations(self, translations: dict[str, int]) -> None:
+            rec.translations.append(translations)
 
     class FakeGS1:
         def __init__(self, config: object) -> None:
@@ -167,6 +195,128 @@ def _install(
     return rec
 
 
+# --- Per-GTIN operations across languages ------------------------------------
+
+
+def test_both_languages_land_in_one_gs1_link_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One GS1 write per GTIN, carrying every language — not one write per language.
+
+    GS1's CreateOrUpdate **replaces** the links array (confirmed live against the real
+    API). The pipeline used to issue one ``safe_upsert`` per (GTIN, language), each with a
+    single-element array, so the fr row overwrote the record with only its own link — the
+    nl link was destroyed, the Dutch QR resolved nowhere, and the row reported ``ok``.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
+
+    code = run_execute.main(["acme", "--plan", str(plan)])
+
+    assert code == 0
+    assert len(rec.gs1) == 1  # one write for the GTIN, not one per language
+    links = {link["language"]: link for link in rec.gs1[0]["links"]}
+    assert set(links) == {"nl", "fr"}
+    # Each link points at its own language's page.
+    assert links["nl"]["target_url"] == _page_url("nl", f"p-{GTIN_A}")
+    assert links["fr"]["target_url"] == _page_url("fr", f"p-{GTIN_A}")
+    assert links["fr"]["link_title"] == "Support"  # the fr product_name, not the nl one
+    # "standaardlink voor nl, niet voor fr" — exactly one default link, and it is nl.
+    assert links["nl"]["default_link_type"] is True
+    assert links["fr"]["default_link_type"] is False
+
+
+def test_translations_are_linked_once_per_gtin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pages are linked as a translation group — the third call of §3.1.
+
+    ``link_translations`` existed on the client and was never called from the pipeline, so
+    a run left nl and fr as unrelated pages with their own trids.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    assert rec.translations == [
+        {
+            "nl": _page_id(f"p-{GTIN_A}", "nl"),
+            "fr": _page_id(f"p-{GTIN_A}", "fr"),
+        }
+    ]
+
+
+def test_sibling_language_failure_blocks_the_whole_gtin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If one language's page fails, the GTIN gets no GS1 write and no state at all.
+
+    A link set built from the surviving language would **replace** the array and destroy
+    the failed language's link. And writing state for the survivor would make the next run
+    classify it UNCHANGED, so the GS1 write would never be retried.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg, wp_error=RuntimeError("boom"), wp_error_languages=("fr",))
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
+
+    code = run_execute.main(["acme", "--plan", str(plan)])
+
+    assert code == 1
+    assert rec.gs1 == []  # a partial link set would have destroyed the fr link
+    assert rec.translations == []
+    assert run_execute.load_state("acme").entries == {}  # nl must stay retryable
+    logs = list((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
+    outcomes = [json.loads(line) for line in logs[0].read_text().splitlines()]
+    assert [o["status"] for o in outcomes] == ["error", "error"]
+
+
+def test_partial_confirm_reconstructs_the_other_language_from_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Confirming only fr must not drop nl from the link set.
+
+    The orchestrator confirms rows individually, so an operator can apply fr and skip nl.
+    Because the array replaces, sending links:[fr] would destroy the nl link — so the nl
+    link is rebuilt from the state entry written by the run that created its page.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg)
+
+    # A prior run created the nl page.
+    both = _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr"))
+    nl_only = _write_json(tmp_path / "nl.json", _plan(_row(GTIN_A, "nl")))
+    assert run_execute.main(["acme", "--plan", str(nl_only)]) == 0
+    rec.gs1.clear()
+    rec.translations.clear()
+
+    # Now only the fr row is confirmed.
+    confirmed = {
+        "plan": both.model_dump(mode="json"),
+        "confirmed_gtins_by_lang": [[GTIN_A, "fr"]],
+    }
+    path = tmp_path / "confirmed.json"
+    path.write_text(json.dumps(confirmed), encoding="utf-8")
+
+    assert run_execute.main(["acme", "--confirmed", str(path)]) == 0
+
+    assert len(rec.gs1) == 1
+    links = {link["language"]: link for link in rec.gs1[0]["links"]}
+    assert set(links) == {"nl", "fr"}  # nl survives, rebuilt from state
+    assert links["nl"]["target_url"] == _page_url("nl", f"p-{GTIN_A}")
+    assert links["nl"]["default_link_type"] is True
+    # The translation group keeps the stored nl page id alongside the fresh fr one.
+    assert rec.translations == [
+        {"nl": _page_id(f"p-{GTIN_A}", "nl"), "fr": _page_id(f"p-{GTIN_A}", "fr")}
+    ]
+
+
 # --- Happy path --------------------------------------------------------------
 
 
@@ -185,10 +335,12 @@ def test_happy_path_one_gtin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert rec.verified == [f"https://wp.test/product/p-{GTIN_A}/"]
     assert rec.gs1[0]["gtin"] == GTIN_A
     assert rec.gs1[0]["overwrite"] is True
-    # GS1 link points at the actual page URL and carries the resolved title.
-    link = rec.gs1[0]["links"][0]
-    assert link["target_url"] == f"https://wp.test/product/p-{GTIN_A}/"
-    assert link["link_title"] == "Rugsteun"  # title_pattern "{product_name}" for nl
+    # GS1 link points at the actual page URL and carries the resolved title. Keyed by
+    # language, not index: the link set spans every language of the GTIN, in sorted order.
+    links = {link["language"]: link for link in rec.gs1[0]["links"]}
+    assert set(links) == {"nl"}  # this plan confirms only nl
+    assert links["nl"]["target_url"] == f"https://wp.test/product/p-{GTIN_A}/"
+    assert links["nl"]["link_title"] == "Rugsteun"  # title_pattern "{product_name}" for nl
     # State persisted for the row.
     state = run_execute.load_state("acme")
     entry = state.entries[GTIN_A]["nl"]

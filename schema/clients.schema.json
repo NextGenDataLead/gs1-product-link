@@ -291,13 +291,9 @@
         },
         "default": {
           "type": "boolean",
-          "description": "Whether this is the default link type for the identifier."
+          "description": "Whether this is the default link type. Applied to the default language's link only, however many languages the record carries."
         },
         "public": { "type": "boolean" },
-        "per_language": {
-          "type": "boolean",
-          "description": "Emit one link per configured language."
-        },
         "title_pattern": {
           "type": "string",
           "description": "Template for the link title, e.g. '{product_name}'."

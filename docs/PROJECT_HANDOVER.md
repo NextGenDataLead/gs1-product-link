@@ -940,7 +940,6 @@ clients:
       - link_type: pip
         default: true
         public: true
-        per_language: true
         title_pattern: "{product_name}"
 ```
 

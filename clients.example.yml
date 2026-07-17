@@ -125,10 +125,12 @@ clients:
         fr: product.fr.html
 
     gs1_links:
+      # One link per configured language is always emitted — GS1's CreateOrUpdate replaces
+      # the whole links array, so a language left out is a language deleted from the
+      # resolver. `default` applies to the default language's link only.
       - link_type: pip
         default: true
         public: true
-        per_language: true
         title_pattern: "{product_name}"
 
     # Create-only gate (not in the datasource export): a product is a candidate for
