@@ -103,15 +103,29 @@ Three findings from scratch drafts against `www.noviplast.nl`, each of which fai
 3. **WPML does not copy ACF across the pair** (the fields behave as *Vertalen*, not *Kopiëren*):
    re-saving the nl page's ACF leaves the fr page's values intact. No `wpml-config.xml` override is
    needed, and there is no clobbering risk.
+4. **Lookups must be language-scoped, or they destroy data.** An unscoped collection query answers
+   for the **default language only**: verified live, `?slug=p-X` returned the nl page while the fr
+   page was invisible without `&lang=fr`. Since both pages share the GTIN-derived slug *and* the
+   same `meta.gtin`, the fr row's lookup finds the **nl** page, the E8 guard passes (the GTIN does
+   match), and the nl page is **overwritten with French** — no fr page is created and the row
+   reports `ok`. This is the only finding here that destroys correct data rather than merely
+   failing, and no unit test can catch it: it needs a real WPML site with two same-slug pages.
+   `find_by_slug` and `_find_by_meta_gtin` now pass `lang`; `existing_id` needs no scope.
 
 So the per-(GTIN, language) write is **three calls**, uniform across languages (no special case for
-the default language):
+the default language), with every lookup scoped to the row's language:
 
 ```
-POST /wp/v2/{post_type}?lang={lang}     title, slug, status, meta.gtin   — no acf
-POST /wp/v2/{post_type}/{id}            acf: {...}                       — second call
-POST /noviplast/v1/translations         {"translations": {...}, "source_language": "nl"}
+GET  /wp/v2/{post_type}?slug=…&lang={lang}     lookup — the &lang is not optional
+POST /wp/v2/{post_type}?lang={lang}            title, slug, status, meta.gtin   — no acf
+POST /wp/v2/{post_type}/{id}                   acf: {...}                       — second call
+POST /noviplast/v1/translations                {"translations": {...}, "source_language": "nl"}
 ```
+
+**Implemented** in `lib/wp_client.py` (`_lang_params`, `_write_acf`, `upsert_page(acf=...)`) and
+`lib/multilingual.WPMLAdapter`. Verified end-to-end through `upsert_page` against the live site:
+distinct pages per language, both keeping `p-{gtin}`, linked as translations, and a re-run
+returning the same ids rather than duplicating (§6.5).
 
 ## 4. Data map: page element → storage → source → transform
 
@@ -148,7 +162,7 @@ paragraph — one value written to three places, not three values.
 
 | Part | Source | Coverage | Generated? |
 |---|---|---|---|
-| Opening tagline | `description_short` — attr **1083** | 113/127 nl, 112/127 fr | no — feed |
+| Opening tagline | `description_short` — attr **1083** | 113/127 nl, 112/127 fr | **see §4.2 — the source is wrong for ~half** |
 | **Eigenschappen** bullets | `description_long` — attr **1067** | **6/127 nl, 5/127 fr** | **yes**, for the rest |
 | **Technische details** bullets | `net_content` (+ dimensions/material) | 125/127 | no — deterministic |
 
@@ -156,6 +170,39 @@ So the generator's real scope is **the Eigenschappen bullets** (~121 products) p
 missing taglines** — not "write the description". Everything else is assembly from data the parser
 already extracts. This matters twice over: it is a much smaller thing to review, and every value
 that comes from the feed instead of a model is one fewer line in the upstream report (§6).
+
+### 4.2 OPEN: attr 1083 is a marketing message, not a tagline
+
+**Needs a client decision; blocks a good-looking pilot page.** §3's table and §4's table contradict
+each other on where the tagline comes from — §3 says *"not in GDSN (open, §6)"*, §4 said *"attr
+1083 — use as-is"*. Measured against the real export, **§3 was right**:
+
+| | count | median | over 120 chars |
+|---|---|---|---|
+| nl | 113 | **54 chars** | 40% |
+| fr | 112 | **150 chars** | **54%** |
+
+The live page's real tagline is **31 characters** (`Reinigingssticks voor je afvoer`). But the fr
+1083 for `04895069002951` is a **~700-character marketing essay** (*"Découvrez l'outil parfait pour
+tous vos besoins en joints élastiques ! Que vous soyez un professionnel du bâtiment…"*), and the
+longest is **1433** (`08713195007076`). This is not a data-entry mistake: GS1 attr 1083
+*TradeItemMarketingMessage* is free-text marketing copy **by definition**. It and a tagline are
+different things, so "use as-is" holds only for the short half.
+
+`acf_map` wires `description_short` → `product_title` + `product_header_video_text` regardless.
+That is correct as far as it goes — and for ~half the catalogue it would render a wall of text
+where one line belongs. **Nothing is published yet**, so this is a decision, not damage.
+
+Options for the client:
+- **(a) Flag over-long values as `SourceIssue`s** *(recommended)* — they land in
+  `source_issues.json` with their GTINs and get shortened in MyGS1. Fixes the datapool
+  permanently; ~60 products of manual copywriting. A tagline is marketing voice worth owning.
+- **(b) Let the generator summarise them** — no manual work, but ~60 more generated values to
+  review and transcribe upstream, and the model is guessing at the brand's voice.
+- **(c) Both** — flag now to see the scale, generate later for whatever nobody wants to hand-write.
+
+Whichever is chosen, **reconcile §3's and §4's tables**: their disagreement is what made this look
+settled when it was not.
 
 1. **Eligibility (unchanged):** a product is a candidate when it is already in GS1 **and** not yet on
    the website (control-file `Al in GS1` filled + `Momenteel op Website` blank). The `Categorie`
