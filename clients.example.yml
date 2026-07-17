@@ -74,7 +74,11 @@ clients:
         # prefixes ("Noviplat", "Nociplast") are reported, never silently repaired.
         product_name:      { sheet: TradeItemDescription,            attribute: "3318", localised: true, strip_prefix: "Noviplast " }
         # 1083 TradeItemMarketingMessage = the page tagline.
-        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true }
+        # max_length flags the mismatch rather than hiding it: 1083 is free-text marketing
+        # copy by definition and is often a paragraph (fr median 150 chars, max 1433) where
+        # the tagline slot wants one line (~31 on live pages). Over-long values are reported
+        # to source_issues.json and kept verbatim — never truncated. See §4.2.
+        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true, max_length: 120 }
         # 1067 TradeItemFeatureBenefit = feature/benefit copy (sparse in the pilot export).
         description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true }
         brand:             { sheet: TradeItemDescription,            attribute: "3336" }

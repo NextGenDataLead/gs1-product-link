@@ -190,16 +190,28 @@ longest is **1433** (`08713195007076`). This is not a data-entry mistake: GS1 at
 different things, so "use as-is" holds only for the short half.
 
 `acf_map` wires `description_short` → `product_title` + `product_header_video_text` regardless.
-That is correct as far as it goes — and for ~half the catalogue it would render a wall of text
+That is correct as far as it goes — and for much of the catalogue it would render a wall of text
 where one line belongs. **Nothing is published yet**, so this is a decision, not damage.
 
-Options for the client:
-- **(a) Flag over-long values as `SourceIssue`s** *(recommended)* — they land in
-  `source_issues.json` with their GTINs and get shortened in MyGS1. Fixes the datapool
-  permanently; ~60 products of manual copywriting. A tagline is marketing voice worth owning.
-- **(b) Let the generator summarise them** — no manual work, but ~60 more generated values to
-  review and transcribe upstream, and the model is guessing at the brand's voice.
-- **(c) Both** — flag now to see the scale, generate later for whatever nobody wants to hand-write.
+**Decided (a): flag, don't repair.** `gdsn_map.description_short` declares `max_length: 120`, and
+`parse_export` reports every longer value to `source_issues.json` as `value_too_long`, keeping the
+text verbatim — truncating would sever a sentence mid-word on the page while the value stayed too
+long in MyGS1 and returned on the next export.
+
+**The measured scale is larger than first estimated: 107 findings, not ~60** (46 nl + 61 fr, out of
+127 products — the earlier guess counted French only). Total report: 111 findings, i.e. nearly one
+per product. That is the honest size of the mismatch, and it may well justify revisiting:
+
+- **(b) Let the generator summarise them** — no manual copywriting, but ~107 more generated values
+  to review and transcribe upstream, with the model guessing at the brand's voice.
+- **(c) Both** — hand-write the ones that matter, generate the tail.
+- **(d) Reconsider the mapping itself.** 107/127 is less "the data is untidy" than "attr 1083 is
+  not the tagline field". If a real tagline exists nowhere in the feed (as §3 always said), then
+  no amount of MyGS1 editing is the fix — the tagline is client content that belongs in the
+  page-build step, and 1083 is better used as generator *input* than as the value.
+
+`max_length` is tunable per field in `clients.yml`; 120 was chosen against a live tagline of ~31
+chars and an nl median of 54. Raising it hides the problem rather than solving it.
 
 Whichever is chosen, **reconcile §3's and §4's tables**: their disagreement is what made this look
 settled when it was not.

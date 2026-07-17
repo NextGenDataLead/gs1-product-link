@@ -98,6 +98,9 @@ class GdsnSource(BaseModel):
             but the page renders brand separately). Matched **exactly**: a value that only
             resembles the prefix is left untouched and reported, never corrected — see
             :func:`_strip_prefix`.
+        max_length: The longest this value is expected to be, in characters. A longer value
+            is **reported and kept**, never truncated — see :func:`_check_length`. ``0``
+            (the default) means no expectation.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -108,6 +111,7 @@ class GdsnSource(BaseModel):
     with_unit: bool = False
     primary_file: bool = False
     strip_prefix: str = ""
+    max_length: int = 0
 
 
 # --- Column / sheet models ---------------------------------------------------
@@ -531,6 +535,43 @@ def _strip_prefix(value: str, prefix: str, field: str, gtin: str, acc: _Accumula
     return value
 
 
+def _check_length(value: str, limit: int, field: str, gtin: str, acc: _Accumulator) -> str:
+    """Report a value longer than ``limit``; return it **unchanged** (§4.2).
+
+    Kept rather than truncated, for the same reason a near-miss prefix is not repaired: the
+    datapool is authoritative, and a value silently cut here stays too long in MyGS1 and
+    returns on the next export — while the page shows a sentence severed mid-word.
+
+    The case this exists for: Noviplast's tagline is mapped to GS1 attr 1083
+    *TradeItemMarketingMessage*, which is free-text marketing copy **by definition** and is
+    frequently a paragraph (fr median 150 chars, max 1433) where the page's tagline slot
+    wants one line (~31 on live pages). That is a mapping mismatch, not a typo, so the fix
+    is upstream — shorten the field, or decide the tagline lives somewhere else.
+    """
+    if len(value) <= limit:
+        return value
+    detail = (
+        f"is {len(value)} characters, longer than the {limit} expected for this field — "
+        f"too long for its slot on the page; shorten it at the source"
+    )
+    acc.warnings.append(f"{field} for {gtin} {detail}")
+    acc.issues.append(
+        SourceIssue(gtin=gtin, field=field, issue="value_too_long", value=value, detail=detail)
+    )
+    _log.warning("%s for %s %s", field, gtin, detail)
+    return value
+
+
+def _apply_checks(value: str, src: GdsnSource, field: str, gtin: str, acc: _Accumulator) -> str:
+    """Apply the configured source-value expectations, in order."""
+    if src.strip_prefix:
+        value = _strip_prefix(value, src.strip_prefix, field, gtin, acc)
+    if src.max_length:
+        # After stripping: the prefix is not part of what renders in the slot.
+        value = _check_length(value, src.max_length, field, gtin, acc)
+    return value
+
+
 def _resolve_field(
     ctx: _BuildContext, field: str, src: GdsnSource, gtin: str, acc: _Accumulator
 ) -> None:
@@ -544,11 +585,10 @@ def _resolve_field(
             for lang, market in ctx.lang_to_market.items()
             if (value := sheet.pick_localised(gtin, market, src.attribute, lang)) is not None
         }
-        if src.strip_prefix:
-            values = {
-                lang: _strip_prefix(value, src.strip_prefix, f"{field}.{lang}", gtin, acc)
-                for lang, value in values.items()
-            }
+        values = {
+            lang: _apply_checks(value, src, f"{field}.{lang}", gtin, acc)
+            for lang, value in values.items()
+        }
         if values:
             acc.localised[field] = values
     elif src.primary_file:
@@ -558,11 +598,7 @@ def _resolve_field(
     else:
         value = sheet.pick_scalar(gtin, ctx.primary_market, src.attribute, src.with_unit)
         if value is not None:
-            acc.scalars[field] = (
-                _strip_prefix(value, src.strip_prefix, field, gtin, acc)
-                if src.strip_prefix
-                else value
-            )
+            acc.scalars[field] = _apply_checks(value, src, field, gtin, acc)
 
 
 def _resolve_extra(ctx: _BuildContext, src: GdsnSource, gtin: str) -> str | None:

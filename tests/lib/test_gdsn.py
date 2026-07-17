@@ -230,6 +230,74 @@ def test_strip_prefix_reports_misspellings_but_never_repairs_them(
     assert "08713195007359" in caplog.text  # the GTIN, so it can be found in MyGS1
 
 
+def _length_map(limit: int) -> dict[str, GdsnSource]:
+    return {
+        **_GDSN_MAP,
+        "product_name": GdsnSource(
+            sheet="TradeItemDescription", attribute="3297", localised=True, max_length=limit
+        ),
+    }
+
+
+def _build_with(tmp_path: Path, gdsn_map: dict[str, GdsnSource], nl: str) -> BuildResult:
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    desc = wb.create_sheet("TradeItemDescription")
+    for row in _DESC_HEADER:
+        desc.append(row)
+    desc.append(_drow("08713195007359", "528", "nl", nl, None, None, "Noviplast"))
+    path = tmp_path / "len.xlsx"
+    wb.save(path)
+    return build_records(read_workbook(str(path)), gdsn_map, _MARKET_LANGUAGE, "nl")
+
+
+def test_max_length_reports_but_keeps_the_value(tmp_path: Path) -> None:
+    """Over-long is reported and kept verbatim — truncating would sever a sentence mid-word
+    on the page while the value stays too long in MyGS1 and returns on the next export."""
+    long_value = "x" * 200
+
+    result = _build_with(tmp_path, _length_map(120), long_value)
+
+    assert result.records[0].product_name.values["nl"] == long_value  # untruncated
+    issues = [i for i in result.issues if i.issue == "value_too_long"]
+    assert len(issues) == 1
+    assert issues[0].field == "product_name.nl"
+    assert issues[0].gtin == "08713195007359"
+    assert "200 characters, longer than the 120 expected" in issues[0].detail
+    assert result.errors == []  # non-fatal
+
+
+def test_max_length_silent_at_or_under_the_limit(tmp_path: Path) -> None:
+    result = _build_with(tmp_path, _length_map(120), "x" * 120)
+
+    assert [i for i in result.issues if i.issue == "value_too_long"] == []
+
+
+def test_no_max_length_means_no_expectation(tmp_path: Path) -> None:
+    result = _build_with(tmp_path, _GDSN_MAP, "x" * 5000)
+
+    assert result.issues == []
+
+
+def test_length_is_measured_after_the_prefix_is_stripped(tmp_path: Path) -> None:
+    """The brand prefix is removed before rendering, so it must not count toward the slot."""
+    gdsn_map = {
+        **_GDSN_MAP,
+        "product_name": GdsnSource(
+            sheet="TradeItemDescription",
+            attribute="3297",
+            localised=True,
+            strip_prefix="Noviplast ",
+            max_length=20,
+        ),
+    }
+
+    result = _build_with(tmp_path, gdsn_map, "Noviplast Rugsteun")  # 18 once stripped
+
+    assert result.records[0].product_name.values["nl"] == "Rugsteun"
+    assert [i for i in result.issues if i.issue == "value_too_long"] == []
+
+
 def test_strip_prefix_report_reaches_the_result_warnings(tmp_path: Path) -> None:
     """The note must land in BuildResult.warnings, not only in the log.
 
