@@ -47,6 +47,10 @@ STATE_FILENAME: Final = "state.json"
 #: Timestamp suffix for a quarantined corrupt state file (matches the run-log format).
 CORRUPT_BACKUP_TS_FORMAT: Final = "%Y%m%dT%H%M%SZ"
 
+#: The WordPress post status a live product page carries. Anything else means the page is
+#: not publicly reachable, which :func:`_is_held` reads as "taken down on purpose".
+_PUBLISHED_STATUS: Final = "publish"
+
 
 def state_path(client_id: str) -> Path:
     """Return the state-file path for ``client_id`` (``output/{id}/state.json``)."""
@@ -187,6 +191,17 @@ def _lang_segment(language: str, default_language: str) -> str:
     return "" if language == default_language else f"{language}/"
 
 
+def _is_held(prior: StateEntry) -> bool:
+    """Whether this entry records a product that was deliberately taken down.
+
+    Either half counts. ``run_unpublish`` retracts the resolver before drafting the pages,
+    so an interrupted run leaves entries with ``gs1_enabled=False`` and a still-published
+    page; treating that as held is what lets the next run finish the job rather than
+    reverse it.
+    """
+    return prior.wp_status != _PUBLISHED_STATUS or not prior.gs1_enabled
+
+
 def _classify(
     prior: StateEntry | None, content_hash: str, title: str, target_url: str
 ) -> tuple[PlanClassification, dict[str, tuple[str, str]] | None]:
@@ -198,9 +213,16 @@ def _classify(
     an entry written before titles were persisted (``title is None``) omits the title
     row rather than guessing. A CHANGED row whose recorded fields all still match
     carries no diff: the change is in the product body, which state does not retain.
+
+    HELD is tested **before** the hash, because a deliberately unpublished product's hash
+    still matches the content it was published with — that is what makes it invisible.
+    Comparing content first would classify it UNCHANGED and let the next confirmed run put
+    it straight back up.
     """
     if prior is None:
         return PlanClassification.NEW, None
+    if _is_held(prior):
+        return PlanClassification.HELD, None
     if prior.content_hash == content_hash:
         return PlanClassification.UNCHANGED, None
     diff: dict[str, tuple[str, str]] = {}

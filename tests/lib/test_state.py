@@ -323,6 +323,75 @@ def test_diff_unchanged_when_hash_matches() -> None:
     assert rows[0].diff is None
 
 
+def _held_state(product: ProductRecord, baseline_hash: str, url: str, **down: object) -> State:
+    """State for a product whose content still matches but which was taken down."""
+    state = _state_with(product.gtin, "nl", content_hash=baseline_hash, wp_url=url)
+    entry = state.entries[product.gtin]["nl"]
+    state.entries[product.gtin]["nl"] = entry.model_copy(update=down)
+    return state
+
+
+@pytest.mark.parametrize(
+    ("down", "why"),
+    [
+        ({"wp_status": "draft"}, "pages drafted"),
+        # An interrupted run_unpublish: the resolver is retracted but the pages are still
+        # up. Held too — the next run must finish taking it down, not put it back.
+        ({"gs1_enabled": False}, "resolver retracted, pages still published"),
+        ({"wp_status": "draft", "gs1_enabled": False}, "fully unpublished"),
+    ],
+)
+def test_diff_held_when_product_was_unpublished(down: dict[str, object], why: str) -> None:
+    # The whole point: a held product's content hash still MATCHES, so without the held
+    # check this classifies UNCHANGED and the next confirmed run republishes it.
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _held_state(product, baseline.content_hash, baseline.target_url, **down)
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.HELD, why
+
+
+def test_diff_held_outranks_changed() -> None:
+    # Editing an unpublished product's content must not un-hold it: the operator's
+    # decision to take it down is about the product, not about that revision of it.
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _held_state(product, "stale", baseline.target_url, wp_status="draft")
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.HELD
+
+
+def test_legacy_state_without_status_fields_is_not_held() -> None:
+    # Back-compat: entries written before wp_status/gs1_enabled existed default to the
+    # published condition. If they defaulted the other way, every pre-existing product
+    # in every client's state would silently classify HELD and stop being updated.
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    legacy = _entry().model_dump(mode="json")
+    del legacy["wp_status"]
+    del legacy["gs1_enabled"]
+    legacy["content_hash"] = baseline.content_hash
+    legacy["wp_url"] = baseline.target_url
+    state = State(
+        client_id="noviplast",
+        entries={product.gtin: {"nl": StateEntry.model_validate(legacy)}},
+    )
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.UNCHANGED
+
+
 def test_diff_changed_in_body_only_has_no_diff() -> None:
     product = _product()
     baseline = diff_against_state(

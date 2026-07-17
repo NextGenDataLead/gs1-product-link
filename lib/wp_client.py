@@ -428,6 +428,63 @@ class WordPressClient:
         """
         self._adapter.link_translations(self, translations)
 
+    def set_page_status(
+        self, post_type: str, page_id: int, *, gtin: str, status: str
+    ) -> WordPressPage | None:
+        """Set one product page's post status, guarded by its GTIN (§4.4, E8, E11).
+
+        Takes the same GTIN guard as :meth:`delete_page`, for the same reason: a page id
+        on its own is just a number, and a stale one addresses somebody else's content
+        every bit as validly as the intended page. Drafting a stranger's page is not as
+        destructive as deleting it, but it is just as invisible.
+
+        Deliberately **not** routed through :meth:`_write_page`, which hardcodes
+        ``status=self.config.post_status`` — the client-wide default that publishes — and
+        resends title, content and slug. Sending only ``status`` keeps this a status
+        change rather than a rewrite that happens to move the status.
+
+        Idempotent twice over: an id that is already gone is a no-op returning ``None``,
+        and a page already at ``status`` is returned unwritten.
+
+        Args:
+            post_type: The (custom) post type slug.
+            page_id: The page to restatus.
+            gtin: The GTIN the caller believes this page carries. Required — the write is
+                refused unless ``meta.gtin`` matches it.
+            status: The target post status, e.g. ``"draft"`` or ``"publish"``.
+
+        Returns:
+            The page as it now stands, or ``None`` if the id was already gone.
+
+        Raises:
+            GtinMismatchError: The page's ``meta.gtin`` differs from ``gtin`` (E8).
+            WordPressAPIError: The page carries no ``meta.gtin`` (E11), or any other
+                non-2xx after retries.
+        """
+        found = self._get_page(post_type, page_id)
+        if found is None:
+            _log.info("WP set_page_status %s/%s: already gone", post_type, page_id)
+            return None
+        self._guard_gtin_match(found, gtin)
+        if found.get("status") == status:
+            _log.info("WP %s/%s already %s (gtin=%s)", post_type, page_id, status, gtin)
+            return found
+        resp = self._request(
+            "POST",
+            f"{_WP_API_PREFIX}/{post_type}/{page_id}",
+            json_body={"status": status},
+            label=f"status {post_type}/{page_id} -> {status} (gtin={gtin})",
+        )
+        _log.warning(
+            "WP %s/%s status %s -> %s (gtin=%s)",
+            post_type,
+            page_id,
+            found.get("status"),
+            status,
+            gtin,
+        )
+        return cast(WordPressPage, resp.json())
+
     def delete_page(
         self, post_type: str, page_id: int, *, gtin: str, force: bool = True
     ) -> WordPressPage | None:

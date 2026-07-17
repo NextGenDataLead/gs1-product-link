@@ -1,7 +1,8 @@
 """Execute a confirmed run plan against WordPress and GS1 (IMPLEMENTATION_SPEC §8.3).
 
 Usage:
-    python -m scripts.run_execute CLIENT_ID (--plan PATH | --confirmed PATH) [--dry-run]
+    python -m scripts.run_execute CLIENT_ID (--plan PATH | --confirmed PATH)
+                                 [--dry-run] [--revive]
 
 Work is grouped by GTIN and runs in two phases, because some of it is per language and
 some of it is per *product*:
@@ -55,6 +56,7 @@ from lib.qr import render_qr
 from lib.records import (
     ConfirmedPlan,
     Plan,
+    PlanClassification,
     PlanRow,
     ProductRecord,
     RunOutcome,
@@ -429,6 +431,34 @@ def _confirmed_rows(confirmed: ConfirmedPlan) -> list[PlanRow]:
     return [row for row in confirmed.plan.rows if (row.gtin, row.language) in keys]
 
 
+def _drop_held(rows: list[PlanRow], *, revive: bool) -> list[PlanRow]:
+    """Drop rows for GTINs that were deliberately unpublished, unless ``revive`` (§8.3).
+
+    A held GTIN is one ``run_unpublish`` took down. Confirming a plan is a judgement about
+    *content* — the operator is agreeing the pages are right, not that a product somebody
+    unpublished should go back up — so reviving one takes its own flag rather than riding
+    along on that confirmation.
+
+    Dropped by GTIN rather than by row, for the reason the per-GTIN phase exists at all:
+    the resolver write carries every language at once, so publishing one language of a
+    held GTIN would write a link set missing the other.
+    """
+    held = {row.gtin for row in rows if row.classification is PlanClassification.HELD}
+    if not held:
+        return rows
+    if revive:
+        _log.warning(
+            "--revive: re-publishing %d held GTIN(s): %s", len(held), ", ".join(sorted(held))
+        )
+        return rows
+    _log.warning(
+        "skipping %d held (unpublished) GTIN(s): %s — pass --revive to publish them again",
+        len(held),
+        ", ".join(sorted(held)),
+    )
+    return [row for row in rows if row.gtin not in held]
+
+
 def _write_log(log_path: Path, outcomes: list[RunOutcome]) -> None:
     """Append each outcome as one JSON line to the run log."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -443,9 +473,10 @@ def _run(
     resolved_gs1: ResolvedGS1Config | None,
     *,
     dry_run: bool,
+    revive: bool,
 ) -> int:
     """Execute (or preview) the confirmed plan; return the process exit code."""
-    rows = _confirmed_rows(confirmed)
+    rows = _drop_held(_confirmed_rows(confirmed), revive=revive)
     engine = TemplateEngine(cfg.client_id, cfg.template)
     ts = datetime.now(UTC)
     log_path = Path("output") / cfg.client_id / "runs" / f"{ts.strftime(_TS_FORMAT)}.jsonl"
@@ -483,6 +514,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run", action="store_true", help="Preview intended mutations without performing them"
     )
+    parser.add_argument(
+        "--revive",
+        action="store_true",
+        help="Also publish GTINs that run_unpublish took down (skipped by default)",
+    )
     return parser.parse_args(argv)
 
 
@@ -503,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
     ) as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return _EXIT_CONFIG_ERROR
-    return _run(cfg, confirmed, resolved_gs1, dry_run=args.dry_run)
+    return _run(cfg, confirmed, resolved_gs1, dry_run=args.dry_run, revive=args.revive)
 
 
 if __name__ == "__main__":

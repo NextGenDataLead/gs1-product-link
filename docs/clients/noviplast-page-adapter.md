@@ -454,10 +454,16 @@ source — the filters survive updates to whatever registers them.
     safety is the teardown, and the page is live only between the upsert and the force-delete. The
     three non-publishing tests in `test_wp_staging.py` did move to `draft`.
   - **The GS1 entry cannot be deleted** — the v2 API has no DELETE. `GS1DigitalLinkClient.retract`
-    does the most that is possible (clear `links`, *then* disable via `isEnabled`), leaving a dead,
-    linkless, disabled record on the account **forever**. Its `get()`-first guard is load-bearing:
-    the clearing call is an *upsert*, so retracting an absent GTIN would **create** a production
-    record and then disable it.
+    does the most that is possible: PATCH `activationStatus` to `isEnabled: false`, the API-side
+    equivalent of clearing MyGS1's *"Activeer GS1 Digital Link"*. A dead, disabled record stays on
+    the account **forever**. It **keeps its `links`** — deactivating already stops the entry
+    resolving, so wiping them buys nothing and destroys the language/link-type/title/URL set a later
+    reactivation would have to re-enter by hand. Its `get()`-first guard turns a retract of an absent
+    GTIN into a clean `False` rather than a 404.
+    *(Corrected 2026-07-17: this bullet claimed retract cleared `links` first and that the guard
+    stopped an upsert-based retract from creating a production record. Neither was true of the code —
+    `retract` has only ever called `set_enabled`, and a PATCH cannot create. The doc described an
+    implementation that no longer exists.)*
   - **The prefix rule alone is not enough.** `STAGING_GTIN` must be in the `8713195` prefix *and*
     must not already have a page — enforced by a pre-flight that reuses `_lookup_existing`, the same
     resolution the write performs. A real product's GTIN passes the prefix check, and the run would

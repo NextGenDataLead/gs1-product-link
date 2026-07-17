@@ -121,11 +121,19 @@ class ProductRecord(BaseModel):
 
 
 class PlanClassification(StrEnum):
-    """How a plan row compares to prior state (§2.2)."""
+    """How a plan row compares to prior state (§2.2).
+
+    ``HELD`` means the product was deliberately taken down (``run_unpublish``) and must
+    not be re-published as a side effect of a routine run. It outranks the other three
+    because it is a fact about *intent*, not about content: a held product's hashes still
+    match, so without it the row classifies UNCHANGED and executing the plan quietly
+    republishes what somebody chose to unpublish.
+    """
 
     NEW = "new"
     UNCHANGED = "unchanged"
     CHANGED = "changed"
+    HELD = "held"
 
 
 class PlanRow(BaseModel):
@@ -227,6 +235,19 @@ class StateEntry(BaseModel):
     digest, can never say *what*. It is optional because state files written before
     titles were persisted have none; ``None`` means "not recorded", and the diff omits
     the title rather than guessing an old value.
+
+    ``wp_status`` and ``gs1_enabled`` record whether the product is actually *reachable*,
+    which the hashes cannot express: they describe what was written, not whether it is
+    still serving. Without them an unpublished product is indistinguishable from a
+    published one, so the next run reads its unchanged hashes, classifies it UNCHANGED,
+    and leaves a drafted page carrying an enabled Digital Link — or, if the entry were
+    deleted instead, silently republishes what somebody deliberately took down.
+
+    Both default to the published condition so state files written before they existed
+    load unchanged, the same back-compat move ``title`` makes. ``gs1_enabled`` describes
+    the GTIN, not the language, but is stored per-language because state is keyed
+    ``(gtin, language)`` — mirroring ``gs1_link_set_hash``, which is already duplicated
+    across an entry's languages for exactly that reason.
     """
 
     wp_page_id: int
@@ -236,6 +257,8 @@ class StateEntry(BaseModel):
     gs1_link_set_hash: str
     last_run: datetime
     title: str | None = None
+    wp_status: str = "publish"
+    gs1_enabled: bool = True
 
 
 class State(BaseModel):

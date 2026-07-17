@@ -142,6 +142,9 @@ def _summary(plan: Plan, excluded: dict[str, int], state_was_reset: bool) -> str
         f"{plan.counts[PlanClassification.UNCHANGED]} unchanged, "
         f"{plan.counts[PlanClassification.CHANGED]} changed"
     )
+    held = plan.counts[PlanClassification.HELD]
+    if held:
+        line += f", {held} held (unpublished; run_execute skips these without --revive)"
     gated = sum(excluded.values())
     if gated:
         line += (

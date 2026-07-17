@@ -483,6 +483,82 @@ def test_e11_slug_collision_on_create_409_raises(httpx_mock: HTTPXMock) -> None:
     assert len(posts) == 1  # not retried
 
 
+# --- set_page_status (§4.4) --------------------------------------------------
+
+
+def test_set_page_status_sends_only_status(httpx_mock: HTTPXMock) -> None:
+    # The point of not routing through _write_page: a status change must not resend
+    # title/content/slug, and must not pick up config.post_status ("publish") — which
+    # would make drafting a page silently re-publish it.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{TYPE_URL}/7?context=edit",
+        json={"id": 7, "status": "publish", "meta": {"gtin": "1"}},
+    )
+    httpx_mock.add_response(method="POST", json={"id": 7, "status": "draft"})
+
+    page = client.set_page_status(POST_TYPE, 7, gtin="1", status="draft")
+
+    assert page == {"id": 7, "status": "draft"}
+    posted = next(r for r in _business_requests(httpx_mock) if r.method == "POST")
+    assert json.loads(posted.content) == {"status": "draft"}
+
+
+def test_set_page_status_is_noop_when_already_at_status(httpx_mock: HTTPXMock) -> None:
+    # Idempotent: re-running run_unpublish must not rewrite an already-drafted page.
+    # No POST is registered, so pytest-httpx errors if one is issued.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{TYPE_URL}/7?context=edit",
+        json={"id": 7, "status": "draft", "meta": {"gtin": "1"}},
+    )
+
+    page = client.set_page_status(POST_TYPE, 7, gtin="1", status="draft")
+
+    assert page == {"id": 7, "status": "draft", "meta": {"gtin": "1"}}
+    assert all(r.method != "POST" for r in _business_requests(httpx_mock))
+
+
+def test_set_page_status_returns_none_when_page_is_gone(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", url=f"{TYPE_URL}/7?context=edit", status_code=404)
+
+    assert client.set_page_status(POST_TYPE, 7, gtin="1", status="draft") is None
+
+
+def test_set_page_status_refuses_on_gtin_mismatch(httpx_mock: HTTPXMock) -> None:
+    # E8: a stale page id in state addresses another product's page. Drafting a
+    # stranger's page is less destructive than deleting it and just as invisible.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{TYPE_URL}/7?context=edit",
+        json={"id": 7, "status": "publish", "meta": {"gtin": "999"}},
+    )
+
+    with pytest.raises(GtinMismatchError) as exc:
+        client.set_page_status(POST_TYPE, 7, gtin="1", status="draft")
+
+    assert exc.value.existing_gtin == "999"
+    assert all(r.method != "POST" for r in _business_requests(httpx_mock))
+
+
+def test_set_page_status_refuses_on_non_gtin_page(httpx_mock: HTTPXMock) -> None:
+    # E11: the id addresses a page that is not ours at all.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "status": "publish"}
+    )
+
+    with pytest.raises(WordPressAPIError) as exc:
+        client.set_page_status(POST_TYPE, 7, gtin="1", status="draft")
+
+    assert exc.value.status_code == 409
+    assert all(r.method != "POST" for r in _business_requests(httpx_mock))
+
+
 # --- delete_page / delete_media (§4.4) ---------------------------------------
 
 

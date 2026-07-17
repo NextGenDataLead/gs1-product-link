@@ -453,6 +453,75 @@ def test_confirmed_subset_executes_only_confirmed(
     assert set(load_state("acme").entries) == {GTIN_A}
 
 
+# --- Held rows (§8.3) --------------------------------------------------------
+
+
+def _held(row: PlanRow) -> PlanRow:
+    return row.model_copy(update={"classification": PlanClassification.HELD})
+
+
+def test_drop_held_skips_held_gtins_by_default() -> None:
+    rows = [_held(_row(GTIN_A)), _row(GTIN_B)]
+
+    kept = run_execute._drop_held(rows, revive=False)
+
+    assert [row.gtin for row in kept] == [GTIN_B]
+
+
+def test_drop_held_keeps_everything_with_revive() -> None:
+    rows = [_held(_row(GTIN_A)), _row(GTIN_B)]
+
+    kept = run_execute._drop_held(rows, revive=True)
+
+    assert [row.gtin for row in kept] == [GTIN_A, GTIN_B]
+
+
+def test_drop_held_drops_the_whole_gtin_not_just_the_held_row() -> None:
+    # The resolver write carries every language at once, so publishing the fr row of a
+    # held GTIN would write a link set missing nl — the per-language destruction the
+    # per-GTIN phase exists to prevent.
+    rows = [_held(_row(GTIN_A, "nl")), _row(GTIN_A, "fr"), _row(GTIN_B, "nl")]
+
+    kept = run_execute._drop_held(rows, revive=False)
+
+    assert [(row.gtin, row.language) for row in kept] == [(GTIN_B, "nl")]
+
+
+def test_held_gtin_is_not_republished_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The failure this guards: confirming a plan is a judgement about content, not a
+    # licence to undo somebody's unpublish. No WP or GS1 write may reach a held GTIN.
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _make_config())
+    path = _write_json(tmp_path / "plan.json", _plan(_held(_row(GTIN_A)), _row(GTIN_B)))
+
+    code = run_execute.main(["acme", "--plan", str(path)])
+
+    assert code == 0
+    assert [c["meta"]["gtin"] for c in rec.wp] == [GTIN_B]
+    assert [c["gtin"] for c in rec.gs1] == [GTIN_B]
+    assert set(load_state("acme").entries) == {GTIN_B}
+
+
+def test_revive_republishes_a_held_gtin_and_clears_the_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # --revive writes a fresh StateEntry, whose wp_status/gs1_enabled defaults are the
+    # published condition — so a successful revive clears the hold with no extra code.
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _make_config())
+    path = _write_json(tmp_path / "plan.json", _plan(_held(_row(GTIN_A))))
+
+    code = run_execute.main(["acme", "--plan", str(path), "--revive"])
+
+    assert code == 0
+    assert [c["meta"]["gtin"] for c in rec.wp] == [GTIN_A]
+    entry = load_state("acme").entries[GTIN_A]["nl"]
+    assert entry.wp_status == "publish"
+    assert entry.gs1_enabled is True
+
+
 # --- Config / setup errors ---------------------------------------------------
 
 
