@@ -52,12 +52,13 @@ class _ParseOutput:
         self.issues = issues or []
 
 
-def _run_gdsn(export: ExportConfig, default_language: str) -> _ParseOutput:
+def _run_gdsn(export: ExportConfig, languages: list[str], default_language: str) -> _ParseOutput:
     workbook = gdsn.read_workbook(export.path)
     result = gdsn.build_records(
         workbook,
         export.gdsn_map,
-        export.market_language,
+        export.market_priority,
+        languages,
         default_language,
         export.gdsn_extras,
     )
@@ -169,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         export = client.export
         default_language = client.wordpress.default_language
         result = (
-            _run_gdsn(export, default_language)
+            _run_gdsn(export, client.wordpress.languages, default_language)
             if export.format == "gdsn"
             else _run_flat(export, default_language)
         )

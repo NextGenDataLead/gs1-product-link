@@ -257,14 +257,16 @@ settled when it was not.
    carried in `extras.marketing_name` (it holds the brand-prefix typos). 3297 (`DescriptionShort`,
    an internal logistics string) remains in `extras.logistics_name`. The `3332`+`3301` intelligent
    combination is deferred to the generator — blind concatenation produces duplicates
-   (*"Snoeischaar snoeischaar"*). Coverage as built: nl 127/127, fr 124/127 under the current 1:1
-   `market_language` (126/127 once ranked `market_priority` lands — §later).
-   - **Data-quality caveat:** attr 3318 can differ per `TargetMarketCountryCode`. For **121 of 124**
-     products the nl value is identical across BE (056) and NL (528), but **3 diverge** — e.g.
-     `08713195000473`: BE-nl = *"Noviplast Screw Remove Tool"* (the name on the live page) vs NL-nl =
-     *"Noviplast Schroefverwijderaar metaal grijs"*. `market_language` maps `528 → nl`, so the tool
-     takes the NL row. These 3 are **Noviplast datapool corrections**, not a tool rule — the tool
-     follows the feed.
+   (*"Snoeischaar snoeischaar"*). Coverage as built: **nl 127/127, fr 126/127** under ranked
+   `market_priority` (was fr 124/127 under the old 1:1 `market_language` — the recovered coverage).
+   - **Ranked resolution (2026-07-17):** `market_priority: [528, 056, 276, 442]` replaced the 1:1
+     `market_language` map. Every market row carries every language, so the market that actually
+     holds a value varies by product; the tool walks the ranking and takes the first non-blank value
+     per field/language. Where two markets disagree it takes the highest-ranked and **reports the
+     conflict** (`value_inconsistent_across_markets`) rather than choosing silently — e.g.
+     `08713195005195` nl: 528 *"toilettas"* vs 442 *"Cosmetic Bag"*. Case/whitespace-only differences
+     are not reported (the title CSS uppercases anyway); accents are. These are **datapool
+     corrections**, not a tool rule — the tool follows the feed and surfaces the gaps.
 4. **Tagline.** `TradeItemMarketingMessage` (**attr 1083**), per language. Verified exactly against the
    live page (`08713195000473` nl → *"Verwijder makkelijk beschadigde schroeven"*, the page's tagline).
    Coverage: **113/127 nl, 112/127 fr**. Products without one leave the tagline empty for the marketer.

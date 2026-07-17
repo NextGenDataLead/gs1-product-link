@@ -19,15 +19,17 @@ Structure of a GDSN export:
   a repeated group; measurements as ``MeasurementUnitCode`` / ``Value`` pairs.
 
 The client declares, in ``clients.yml``, which GDSN attribute feeds each
-:class:`~lib.records.ProductRecord` field (a :class:`GdsnSource`) and which market
-supplies each language (``market_language``). :func:`build_records` joins across sheets
-by GTIN and produces the canonical records.
+:class:`~lib.records.ProductRecord` field (a :class:`GdsnSource`) and the order to
+consult markets (``market_priority``). :func:`build_records` joins across sheets by GTIN,
+takes the first non-blank value per field/language walking that order, and reports the
+gaps and cross-market disagreements it finds along the way.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Final, NamedTuple
@@ -101,6 +103,15 @@ class GdsnSource(BaseModel):
         max_length: The longest this value is expected to be, in characters. A longer value
             is **reported and kept**, never truncated — see :func:`_check_length`. ``0``
             (the default) means no expectation.
+        report_issues: Whether this field's cross-market source-quality findings —
+            ``value_blank`` (absent from every market) and ``value_inconsistent_across_markets``
+            (markets disagree) — reach ``source_issues.json``. Default ``True`` — a
+            published field's gaps and conflicts are the operator's work queue. Set
+            ``False`` for a field the tool parses but does not publish directly, e.g. a
+            generator *input*: its findings are the generator's future work, not today's
+            source-fix queue, and surfacing them now only asks the operator about a field
+            they cannot see on the page. Does not affect ``value_too_long`` /
+            ``brand_prefix_mismatch``, which are gated by ``max_length`` / ``strip_prefix``.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -112,6 +123,7 @@ class GdsnSource(BaseModel):
     primary_file: bool = False
     strip_prefix: str = ""
     max_length: int = 0
+    report_issues: bool = True
 
 
 # --- Column / sheet models ---------------------------------------------------
@@ -386,10 +398,11 @@ def _validate_sources(
     return warnings, errors
 
 
-def build_records(
+def build_records(  # noqa: PLR0913 — each argument is a distinct input; bundling hides them
     workbook: dict[str, GdsnSheet],
     gdsn_map: dict[str, GdsnSource],
-    market_language: dict[str, str],
+    market_priority: list[str],
+    languages: list[str],
     default_language: str,
     gdsn_extras: dict[str, GdsnSource] | None = None,
 ) -> BuildResult:
@@ -398,9 +411,16 @@ def build_records(
     Args:
         workbook: Parsed sheets from :func:`read_workbook`.
         gdsn_map: ProductRecord field → :class:`GdsnSource`.
-        market_language: ``{market_code: language}`` — which market supplies each
-            language (e.g. ``{"528": "nl", "056": "fr"}``).
-        default_language: The language whose ``product_name`` is required (E5).
+        market_priority: Market codes in the order to consult them (e.g.
+            ``["528", "056", "276", "442"]``). For each field and language the first
+            market that supplies a non-blank value wins; the same list picks scalars.
+            Replaces the old ``{market: language}`` map, which baked in a 1:1
+            market↔language constraint the real export contradicts — every market row
+            carries every language, so which market *has* a given value varies by product.
+        languages: The languages to resolve per product (the site's ``wordpress.languages``).
+            No longer derivable from the market map, so passed explicitly.
+        default_language: The language whose ``product_name`` is required (E5); must be in
+            ``languages``.
         gdsn_extras: Optional named pass-through attributes carried into ``extras``.
 
     Returns:
@@ -412,17 +432,18 @@ def build_records(
     if errors:
         return BuildResult(records=[], warnings=warnings, errors=errors)
 
-    lang_to_market = {lang: market for market, lang in market_language.items()}
-    if default_language not in lang_to_market:
+    if not market_priority:
+        return BuildResult(records=[], warnings=warnings, errors=["market_priority is empty"])
+    if default_language not in languages:
         return BuildResult(
             records=[],
             warnings=warnings,
-            errors=[f"default_language {default_language!r} has no market in market_language"],
+            errors=[f"default_language {default_language!r} not in languages {languages}"],
         )
     ctx = _BuildContext(
         workbook=workbook,
-        lang_to_market=lang_to_market,
-        primary_market=lang_to_market[default_language],
+        market_priority=market_priority,
+        languages=languages,
         default_language=default_language,
     )
 
@@ -461,8 +482,12 @@ class _BuildContext:
     """Shared inputs threaded through per-field resolution."""
 
     workbook: dict[str, GdsnSheet]
-    lang_to_market: dict[str, str]
-    primary_market: str
+    #: Markets in the order to consult them; the first with a value wins (per GTIN, per
+    #: field, per language). Replaces the old static ``lang_to_market``/``primary_market``
+    #: pair — with every market carrying every language, the market that actually holds a
+    #: value varies by product, so resolution walks the ranking rather than reading a map.
+    market_priority: list[str]
+    languages: list[str]
     default_language: str
 
 
@@ -593,43 +618,178 @@ def _apply_checks(value: str, src: GdsnSource, field: str, gtin: str, acc: _Accu
     return value
 
 
+def _localised_picker(
+    sheet: GdsnSheet, gtin: str, attribute: str, lang: str
+) -> Callable[[str], str | None]:
+    """A single-market picker for one language, so :func:`_pick_ranked` sees one arg.
+
+    Binds ``lang`` in a fresh scope per call, which both keeps the returned callable
+    single-argument (the shape ``_pick_ranked`` expects) and avoids the classic
+    loop-variable capture bug when this is called once per language.
+    """
+    return lambda market: sheet.pick_localised(gtin, market, attribute, lang)
+
+
+def _pick_ranked(
+    pick: Callable[[str], str | None], market_priority: list[str]
+) -> tuple[str | None, dict[str, str]]:
+    """Walk markets in priority order, collecting each one's non-blank value.
+
+    Returns ``(chosen, per_market)`` where ``chosen`` is the first market's value in
+    priority order (``None`` if every market is blank) and ``per_market`` maps each market
+    that supplied a value to it — the raw material for both the ranked choice and the
+    cross-market inconsistency check, gathered in one pass because you cannot rank without
+    seeing every candidate.
+    """
+    per_market: dict[str, str] = {}
+    chosen: str | None = None
+    for market in market_priority:
+        value = pick(market)
+        if value is not None:
+            per_market[market] = value
+            if chosen is None:
+                chosen = value
+    return chosen, per_market
+
+
+def _report_inconsistency(per_market: dict[str, str], where: _Where, acc: _Accumulator) -> None:
+    """Report when 2+ markets carry different non-blank values for one field/language (§6).
+
+    The datapool is authoritative, so a disagreement is not the tool's to resolve — it
+    picks the ranked winner and reports the conflict for a human to reconcile in MyGS1.
+
+    Case- and whitespace-only differences are *not* reported: ``"voegstrijker"`` vs
+    ``"Voegstrijker"`` is not a content disagreement, and the page CSS uppercases the title
+    regardless — flagging it buries the substantive conflicts (``"toilettas"`` vs
+    ``"Cosmetic Bag"``, ``"5 H87"`` vs ``"1 H87"``) in noise. Accents survive casefolding,
+    so a missing diacritic (``"Désherbant"`` vs ``"Desherbant"``) is still a real conflict.
+    """
+    if len({v.strip().casefold() for v in per_market.values()}) <= 1:
+        return
+    chosen = next(iter(per_market.values()))
+    pairs = "; ".join(f"{market}={value!r}" for market, value in per_market.items())
+    detail = (
+        f"differs across target markets ({pairs}) — same field, same language, different "
+        f"text; the tool used the highest-ranked ({chosen!r}). Decide which market is "
+        f"authoritative and align them at the source"
+    )
+    acc.warnings.append(f"{where.field} for {where.gtin} {detail}")
+    acc.issues.append(
+        SourceIssue(
+            gtin=where.gtin,
+            field=where.field,
+            source=where.source,
+            issue="value_inconsistent_across_markets",
+            value=chosen,
+            detail=detail,
+        )
+    )
+    _log.warning("%s for %s %s", where.field, where.gtin, detail)
+
+
+def _report_blank(where: _Where, acc: _Accumulator) -> None:
+    """Report a published field with no value in any market that describes the product (§6).
+
+    Not raised for a product that simply has no row in a market — that is not a gap
+    (:func:`_pick_ranked` only ever sees markets, and a product absent from all of them is
+    absent from ``records`` entirely). This fires only when the product exists but the slot
+    is empty everywhere, which is a hole on the page and, later, the generator's work list.
+    """
+    detail = "is empty in every target market that carries this product — fill it at the source"
+    acc.warnings.append(f"{where.field} for {where.gtin} {detail}")
+    acc.issues.append(
+        SourceIssue(
+            gtin=where.gtin,
+            field=where.field,
+            source=where.source,
+            issue="value_blank",
+            value="",
+            detail=detail,
+        )
+    )
+    _log.warning("%s for %s %s", where.field, where.gtin, detail)
+
+
 def _resolve_field(
     ctx: _BuildContext, field: str, src: GdsnSource, gtin: str, acc: _Accumulator
 ) -> None:
-    """Resolve one mapped field for one GTIN into the accumulator."""
+    """Resolve one mapped field for one GTIN into the accumulator, reporting as it goes."""
     sheet = ctx.workbook.get(src.sheet)
     if sheet is None:
         return
     if src.localised:
-        values = {
-            lang: value
-            for lang, market in ctx.lang_to_market.items()
-            if (value := sheet.pick_localised(gtin, market, src.attribute, lang)) is not None
-        }
-        values = {
-            lang: _apply_checks(value, src, f"{field}.{lang}", gtin, acc)
-            for lang, value in values.items()
-        }
-        if values:
-            acc.localised[field] = values
+        _resolve_localised(ctx, sheet, field, src, gtin, acc)
     elif src.primary_file:
-        value = sheet.pick_primary_file(gtin, ctx.primary_market)
-        if value is not None:
-            acc.scalars[field] = value
+        chosen, _ = _pick_ranked(
+            lambda market: sheet.pick_primary_file(gtin, market), ctx.market_priority
+        )
+        if chosen is not None:
+            acc.scalars[field] = chosen
+        elif src.report_issues:
+            _report_blank(_Where(field, _source_label(src), gtin), acc)
     else:
-        value = sheet.pick_scalar(gtin, ctx.primary_market, src.attribute, src.with_unit)
-        if value is not None:
-            acc.scalars[field] = _apply_checks(value, src, field, gtin, acc)
+        _resolve_scalar(ctx, sheet, field, src, gtin, acc)
+
+
+def _resolve_localised(  # noqa: PLR0913 — one collaborator per step; bundling hides them
+    ctx: _BuildContext, sheet: GdsnSheet, field: str, src: GdsnSource, gtin: str, acc: _Accumulator
+) -> None:
+    """Resolve a per-language field across ranked markets, reporting blanks and conflicts."""
+    values: dict[str, str] = {}
+    for lang in ctx.languages:
+        chosen, per_market = _pick_ranked(
+            _localised_picker(sheet, gtin, src.attribute, lang), ctx.market_priority
+        )
+        where = _Where(f"{field}.{lang}", _source_label(src), gtin)
+        if src.report_issues:
+            _report_inconsistency(per_market, where, acc)
+        if chosen is not None:
+            values[lang] = _apply_checks(chosen, src, f"{field}.{lang}", gtin, acc)
+        elif src.report_issues:
+            _report_blank(where, acc)
+    if values:
+        acc.localised[field] = values
+
+
+def _resolve_scalar(  # noqa: PLR0913 — one collaborator per step; bundling hides them
+    ctx: _BuildContext, sheet: GdsnSheet, field: str, src: GdsnSource, gtin: str, acc: _Accumulator
+) -> None:
+    """Resolve a language-agnostic field from the highest-priority market that carries it."""
+    chosen, per_market = _pick_ranked(
+        lambda market: sheet.pick_scalar(gtin, market, src.attribute, src.with_unit),
+        ctx.market_priority,
+    )
+    where = _Where(field, _source_label(src), gtin)
+    if src.report_issues:
+        _report_inconsistency(per_market, where, acc)
+    if chosen is not None:
+        acc.scalars[field] = _apply_checks(chosen, src, field, gtin, acc)
+    elif src.report_issues:
+        _report_blank(where, acc)
 
 
 def _resolve_extra(ctx: _BuildContext, src: GdsnSource, gtin: str) -> str | None:
-    """Resolve a pass-through extra to a single string (default language for localised)."""
+    """Resolve a pass-through extra to a single string (default language for localised).
+
+    Extras are carried verbatim and unreported: they are not page fields, so a blank or a
+    cross-market disagreement in one is not a source-fix finding here.
+    """
     sheet = ctx.workbook.get(src.sheet)
     if sheet is None:
         return None
     if src.localised:
-        market = ctx.lang_to_market.get(ctx.default_language, ctx.primary_market)
-        return sheet.pick_localised(gtin, market, src.attribute, ctx.default_language)
+        chosen, _ = _pick_ranked(
+            lambda market: sheet.pick_localised(gtin, market, src.attribute, ctx.default_language),
+            ctx.market_priority,
+        )
+        return chosen
     if src.primary_file:
-        return sheet.pick_primary_file(gtin, ctx.primary_market)
-    return sheet.pick_scalar(gtin, ctx.primary_market, src.attribute, src.with_unit)
+        chosen, _ = _pick_ranked(
+            lambda market: sheet.pick_primary_file(gtin, market), ctx.market_priority
+        )
+        return chosen
+    chosen, _ = _pick_ranked(
+        lambda market: sheet.pick_scalar(gtin, market, src.attribute, src.with_unit),
+        ctx.market_priority,
+    )
+    return chosen

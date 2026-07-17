@@ -58,10 +58,13 @@ clients:
       # MyGS1 article list (see column_map/extras_columns). See IMPLEMENTATION_SPEC §3.
       format: gdsn
       path: "./input/noviplast/products.xlsx"
-      # Map each GDSN TargetMarketCountryCode to the language it supplies.
-      market_language:
-        "528": nl          # Netherlands → Dutch
-        "056": fr          # Belgium → French
+      # Markets in the order to consult them (highest priority first). Every market row
+      # carries every language, so which market *has* a value varies by product — the tool
+      # takes the first non-blank value per product/field/language walking this order.
+      # Replaced market_language {528:nl, 056:fr}, whose 1:1 constraint cost coverage and
+      # could not resolve products whose markets disagree. Languages come from
+      # wordpress.languages.
+      market_priority: ["528", "056", "276", "442"]   # NL, BE, DE, LU
       # ProductRecord field → GDSN attribute source. `attribute` is the GDSN attribute
       # number (e.g. "3297") or a path segment name (e.g. GpcCategoryCode). Discover
       # these by running: python -m scripts.inspect_export input/noviplast/products.xlsx
@@ -78,11 +81,13 @@ clients:
         # that (34/36 live taglines match nothing here; 1083 is paragraph-length marketing
         # copy). Kept parsed as a GENERATOR INPUT only; feeds no ACF slot (see acf_map).
         # No max_length — the 120-char limit was the tagline slot's width, which 1083 no
-        # longer fills, so its value_too_long findings were measuring the wrong field. §4.2.
-        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true }
+        # longer fills, so its value_too_long findings were measuring the wrong field.
+        # report_issues: false — a generator input; its blanks are the generator's future
+        # work, not today's source-fix queue. §4.2.
+        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true, report_issues: false }
         # 1067 TradeItemFeatureBenefit = feature/benefit copy (sparse). A generator seed for
-        # the Eigenschappen bullets, not a page field on its own.
-        description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true }
+        # the Eigenschappen bullets — report_issues: false, same reason.
+        description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true, report_issues: false }
         brand:             { sheet: TradeItemDescription,            attribute: "3336" }
         net_content:       { sheet: TradeItemMeasurements,           attribute: "3510", with_unit: true }
         gpc_brick_code:    { sheet: BrickGPCCommercialData,          attribute: GpcCategoryCode }

@@ -114,7 +114,13 @@ class ExportConfig(BaseModel):
     column_map: dict[str, str] = Field(default_factory=dict)
     extras_columns: list[str] = Field(default_factory=list)
     # GDSN datapool path (§3 extension).
-    market_language: dict[str, str] = Field(default_factory=dict)
+    #: Market codes in the order to consult them (e.g. ``["528", "056", "276", "442"]``).
+    #: The first market with a non-blank value wins, per product/field/language; the same
+    #: order picks scalars. Replaces the old ``market_language`` 1:1 map — every market row
+    #: carries every language, so which market *has* a value varies by product, and a static
+    #: map both mis-resolves and undercounts coverage. The site's languages come from
+    #: ``wordpress.languages`` instead.
+    market_priority: list[str] = Field(default_factory=list)
     gdsn_map: dict[str, GdsnSource] = Field(default_factory=dict)
     gdsn_extras: dict[str, GdsnSource] = Field(default_factory=dict)
 

@@ -212,10 +212,10 @@
           "description": "Flat format: export columns carried through verbatim into ProductRecord.extras.",
           "items": { "type": "string" }
         },
-        "market_language": {
-          "type": "object",
-          "description": "GDSN format: mapping of TargetMarketCountryCode to the language it supplies, e.g. {\"528\": \"nl\", \"056\": \"fr\"}.",
-          "additionalProperties": { "type": "string" }
+        "market_priority": {
+          "type": "array",
+          "description": "GDSN format: TargetMarketCountryCodes in the order to consult them, e.g. [\"528\", \"056\", \"276\", \"442\"]. The first market with a non-blank value wins, per product/field/language; the same order picks scalars. The site's languages come from wordpress.languages.",
+          "items": { "type": "string" }
         },
         "gdsn_map": {
           "type": "object",
@@ -262,6 +262,10 @@
         "primary_file": {
           "type": "boolean",
           "description": "Whether to resolve the primary referenced-file URI (for image_url)."
+        },
+        "report_issues": {
+          "type": "boolean",
+          "description": "Whether this field's cross-market findings — value_blank (absent from every market) and value_inconsistent_across_markets (markets disagree) — reach source_issues.json. Default true. Set false for a field the tool parses but does not publish directly (e.g. a generator input), whose findings are deferred. Does not affect value_too_long / brand_prefix_mismatch."
         }
       }
     },

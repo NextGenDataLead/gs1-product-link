@@ -42,6 +42,7 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, export: dict[
                     "username": "bot",
                     "app_password_env": "WP",
                     "default_language": "nl",
+                    "languages": ["nl", "fr"],
                 },
             }
         },
@@ -198,7 +199,7 @@ def _gdsn_export(xlsx: str, *, strip_prefix: str = "") -> dict[str, object]:
     return {
         "format": "gdsn",
         "path": xlsx,
-        "market_language": {"528": "nl", "056": "fr"},
+        "market_priority": ["528", "056"],
         "gdsn_map": {
             "product_name": name_src,
             "brand": {"sheet": "TradeItemDescription", "attribute": "3336"},
