@@ -66,20 +66,22 @@ clients:
       # number (e.g. "3297") or a path segment name (e.g. GpcCategoryCode). Discover
       # these by running: python -m scripts.inspect_export input/noviplast/products.xlsx
       gdsn_map:
-        # 3318 TradeItemDescription = the marketing product name shown as the page title
-        # (strip the leading brand prefix — brand is a separate field). NOT 3297, which is
-        # DescriptionShort, an internal logistics string ("Schroefverwijderaar metaal grs").
-        # strip_prefix: the feed repeats the brand in the name ("Noviplast Microvezeldoek
-        # stof") but the page renders brand separately. Matched exactly — misspelled
-        # prefixes ("Noviplat", "Nociplast") are reported, never silently repaired.
-        product_name:      { sheet: TradeItemDescription,            attribute: "3318", localised: true, strip_prefix: "Noviplast " }
-        # 1083 TradeItemMarketingMessage = the page tagline.
-        # max_length flags the mismatch rather than hiding it: 1083 is free-text marketing
-        # copy by definition and is often a paragraph (fr median 150 chars, max 1433) where
-        # the tagline slot wants one line (~31 on live pages). Over-long values are reported
-        # to source_issues.json and kept verbatim — never truncated. See §4.2.
-        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true, max_length: 120 }
-        # 1067 TradeItemFeatureBenefit = feature/benefit copy (sparse in the pilot export).
+        # 3301 Functional Name = the page title (big name). The clean functional name
+        # ("voegstrijker"), matching the live "Cable Organiser" style — NOT 3318, which
+        # carries material+colour noise ("Noviplast Voegstrijker kunststof oranje"), and
+        # NOT 3297, which is DescriptionShort, an internal logistics string. Verified live
+        # 2026-07-17. No strip_prefix — 3301 has no brand prefix. See docs §4.1.
+        # DEFERRED to the generator: prefix/suffix with 3332 (Product variation) — blind
+        # concatenation produces duplicates ("Snoeischaar snoeischaar").
+        product_name:      { sheet: TradeItemDescription,            attribute: "3301", localised: true }
+        # 1083 TradeItemMarketingMessage. NOT the tagline — exhaustive search disproved
+        # that (34/36 live taglines match nothing here; 1083 is paragraph-length marketing
+        # copy). Kept parsed as a GENERATOR INPUT only; feeds no ACF slot (see acf_map).
+        # No max_length — the 120-char limit was the tagline slot's width, which 1083 no
+        # longer fills, so its value_too_long findings were measuring the wrong field. §4.2.
+        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true }
+        # 1067 TradeItemFeatureBenefit = feature/benefit copy (sparse). A generator seed for
+        # the Eigenschappen bullets, not a page field on its own.
         description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true }
         brand:             { sheet: TradeItemDescription,            attribute: "3336" }
         net_content:       { sheet: TradeItemMeasurements,           attribute: "3510", with_unit: true }
@@ -89,6 +91,11 @@ clients:
       gdsn_extras:
         functional_name:   { sheet: TradeItemDescription, attribute: "3301", localised: true }
         logistics_name:    { sheet: TradeItemDescription, attribute: "3297", localised: true }
+        # 3318 = the old product_name source, kept as a pass-through now the title comes
+        # from 3301. Carried, not published: it holds the brand-prefix typos ("Nociplast",
+        # "Noviplat"), which the report may check once its scope widens past published
+        # fields.
+        marketing_name:    { sheet: TradeItemDescription, attribute: "3318", localised: true }
 
     wordpress:
       site_url: "https://www.noviplast.nl"
@@ -108,13 +115,17 @@ clients:
           map_from_column: "category"
       # The Oxygen template renders from ACF, not post_content, so these fields *are* the
       # page (docs/clients/noviplast-page-adapter.md §3). Field names are the client's;
-      # they live here rather than in lib/. The tagline feeds two fields — one value, two
-      # places, as on the live pages. product_description is not here yet: it is
-      # tagline + Eigenschappen + Technische details, and the bullets need the generator
-      # and the H87 unit decoding (§4.1, §8).
-      acf_map:
-        product_title: description_short
-        product_header_video_text: description_short
+      # they live here rather than in lib/.
+      #
+      # EMPTY on purpose. Both slots are the tagline (product_title is the sentence below
+      # the name; product_header_video_text is the banner — same value, verified live).
+      # Their source is generator-owned: 1083 when present, else the first generated USP —
+      # not a deterministic mapping. They were wired 1:1 to description_short (1083), which
+      # the pilot proved wrong. Pages carry the title (and image) only until the generator
+      # lands; the missing taglines are the generator's work list. See docs §4.1/§4.2.
+      # product_description (tagline + Eigenschappen + Technische details) also waits on
+      # the generator + H87 unit decoding (§4.1, §8).
+      acf_map: {}
       slug_pattern: "p-{gtin}"
       target_url_pattern: "{site_url}/{lang_segment}{post_type}/{slug}/"
 

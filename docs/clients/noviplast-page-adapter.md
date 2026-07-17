@@ -177,16 +177,31 @@ paragraph — one value written to three places, not three values.
 
 | Part | Source | Coverage | Generated? |
 |---|---|---|---|
-| Opening tagline | `description_short` — attr **1083** | 113/127 nl, 112/127 fr | **see §4.2 — the source is wrong for ~half** |
+| Opening tagline | **generator**: 1083 if present, else first USP | 1083: 113/127 nl, 112/127 fr | **yes** — see §4.2 (1083 is a generator *input*, not the value) |
 | **Eigenschappen** bullets | `description_long` — attr **1067** | **6/127 nl, 5/127 fr** | **yes**, for the rest |
 | **Technische details** bullets | `net_content` (+ dimensions/material) | 125/127 | no — deterministic |
+
+The title (WP post title) is a fourth, separate field: **3301** (Functional Name), 3301+3332
+intelligently combined when 3332 is present — also generator territory for the combination. Slot
+semantics verified live 2026-07-17: ACF `product_title` is the tagline *below* the name, not the
+name; the big name is the WP post title.
 
 So the generator's real scope is **the Eigenschappen bullets** (~121 products) plus **the ~14
 missing taglines** — not "write the description". Everything else is assembly from data the parser
 already extracts. This matters twice over: it is a much smaller thing to review, and every value
 that comes from the feed instead of a model is one fewer line in the upstream report (§6).
 
-### 4.2 OPEN: attr 1083 is a marketing message, not a tagline
+### 4.2 RESOLVED (2026-07-17): attr 1083 is a marketing message, not a tagline
+
+**Decided — option (d), unwired.** The field walk with the client resolved this. `acf_map` is now
+empty: 1083 no longer feeds `product_title` or `product_header_video_text`. Both slots are the
+tagline, and its source is generator-owned — 1083 when present, else the first generated USP, a
+choice the tool cannot make deterministically. 1083 stays parsed as a **generator input**
+(`gdsn_map.description_short`, no `max_length`), so the 107 `value_too_long` findings retire: they
+were measuring 1083 against a slot it does not belong in. The title now comes from **3301**
+(Functional Name), not 3318 — see §4.1. The record below is kept for the reasoning that led here.
+
+---
 
 **Needs a client decision; blocks a good-looking pilot page.** §3's table and §4's table contradict
 each other on where the tagline comes from — §3 says *"not in GDSN (open, §6)"*, §4 said *"attr
@@ -236,10 +251,14 @@ settled when it was not.
    action column is **not** used.
 2. **Draft-first:** the tool creates each page as a **draft**. A marketer completes the tagline and
    any media the feed can't supply, then publishes. The tool never auto-publishes marketing pages.
-3. **Title — `TradeItemDescription` (attr 3318).** Per language, minus a leading `"Noviplast "` (brand
-   is a separate field, `BrandName` 3336). **Fixed in `clients.yml`** — `product_name` was bound to
-   `DescriptionShort` (3297), an internal logistics string (*"Schroefverwijderaar metaal grs"*); 3297
-   is now carried in `extras.logistics_name` instead.
+3. **Title — `Functional Name` (attr 3301).** Per language, the clean functional name
+   (*"voegstrijker"*), matching the live "Cable Organiser" style. **Changed 2026-07-17 from 3318**,
+   which carried material+colour noise (*"Noviplast Voegstrijker kunststof oranje"*); 3318 is now
+   carried in `extras.marketing_name` (it holds the brand-prefix typos). 3297 (`DescriptionShort`,
+   an internal logistics string) remains in `extras.logistics_name`. The `3332`+`3301` intelligent
+   combination is deferred to the generator — blind concatenation produces duplicates
+   (*"Snoeischaar snoeischaar"*). Coverage as built: nl 127/127, fr 124/127 under the current 1:1
+   `market_language` (126/127 once ranked `market_priority` lands — §later).
    - **Data-quality caveat:** attr 3318 can differ per `TargetMarketCountryCode`. For **121 of 124**
      products the nl value is identical across BE (056) and NL (528), but **3 diverge** — e.g.
      `08713195000473`: BE-nl = *"Noviplast Screw Remove Tool"* (the name on the live page) vs NL-nl =
