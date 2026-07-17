@@ -111,6 +111,21 @@ Three findings from scratch drafts against `www.noviplast.nl`, each of which fai
    reports `ok`. This is the only finding here that destroys correct data rather than merely
    failing, and no unit test can catch it: it needs a real WPML site with two same-slug pages.
    `find_by_slug` and `_find_by_meta_gtin` now pass `lang`; `existing_id` needs no scope.
+5. **A language-scoped collection query under-reports ACF — so do not verify ACF with one.** The
+   mirror image of finding 2, and it lies in the opposite direction: where `?lang=` on *write*
+   silently drops ACF, `?lang=` on a *collection read* silently returns it empty. Verified live on
+   the first pilot product (2026-07-17):
+
+   ```
+   GET /wp/v2/noviplast?slug=p-08713195000527&lang=fr&context=edit  -> id 1448, acf.product_title = null
+   GET /wp/v2/noviplast/1448?context=edit                           -> acf.product_title = "Chiffons micro fibres…"
+   ```
+
+   The value is **stored correctly**; only the collection read is wrong, and only for the
+   non-default language (the nl page reports its ACF fine either way). This cost a false alarm on
+   the first live run — the French page looked like it had lost its ACF when it had not. No
+   production code reads ACF this way (`_lookup_existing` only needs ids and `meta.gtin`), so this
+   is a trap for *verification*, not a defect in the write path: **read ACF back by page id.**
 
 So the per-(GTIN, language) write is **three calls**, uniform across languages (no special case for
 the default language), with every lookup scoped to the row's language:
@@ -451,12 +466,16 @@ source — the filters survive updates to whatever registers them.
 
   `pytest` also gained `addopts = "-m 'not staging'"`: the env-var skipif was satisfied by any shell
   that had sourced `.env`, so a bare `pytest` could hit production. `pytest -m staging` still opts in.
-- **BUG: the GS1 link set is written per language, so the fr write destroys the nl link.**
-  Found while making the staging tests safe; **not yet fixed**. `PlanRow` is *"one (GTIN, language)
-  unit of work"* and `_execute_row` runs once per row, but `_build_links` (`run_execute.py:103`)
-  sets `language=row.language` — it builds links for **one** language, and `safe_upsert` then sends
-  that one-element array as the record's **entire** `links` set. So a nl+fr GTIN gets two upserts,
-  `links:[nl]` then `links:[fr]`.
+- ~~**BUG: the GS1 link set is written per language, so the fr write destroys the nl link.**~~
+  **Fixed and verified live 2026-07-17** — see the pilot result at the end of this section.
+  `PlanRow` is *"one (GTIN, language)
+  unit of work"* and `_execute_row` ran once per row, but `_build_links`
+  set `language=row.language` — it built links for **one** language, and `safe_upsert` then sent
+  that one-element array as the record's **entire** `links` set. So a nl+fr GTIN got two upserts,
+  `links:[nl]` then `links:[fr]`. `run_execute` now groups by GTIN and runs two phases: per row
+  (render/upsert/verify), then per GTIN (link translations → **one** resolver write carrying every
+  language → QR). `wp.link_translations` was also **never called** by the pipeline — same root
+  cause, since a translation group needs every page id at once.
 
   **CreateOrUpdate REPLACES the links array — confirmed live, 2026-07-17.** Probed against
   `08713195000374` (disabled throughout, restored after): sending `links: []` left the record with
@@ -466,19 +485,44 @@ source — the filters survive updates to whatever registers them.
   and `UpdateDigitalLinkIsEnabledStatus` are the whole relevant surface and none mentions merge
   semantics; it took a probe.
 
-  Two further defects in the same few lines:
-  - `gs1_links[0].default: true` is applied to **both** languages, so both links would claim
-    `defaultLinkType`. The client's rule is *standaardlink* for **nl only**, not fr.
-  - `per_language: true` in `clients.yml` is **dead config** — `GS1LinkConfig` declares it, the
-    config sets it, and nothing in `lib/` or `scripts/` ever reads it.
+  Two further defects in the same few lines, both fixed with it:
+  - `gs1_links[0].default: true` was applied to **both** languages, so both links claimed
+    `defaultLinkType`. The client's rule is *standaardlink* for **nl only**, not fr. It is now
+    `link.default and language == default_language`.
+  - `per_language: true` was **dead config** — declared on `GS1LinkConfig`, set in `clients.yml`,
+    read nowhere. Deleted: its own schema description ("Emit one link per configured language") is
+    exactly what now happens unconditionally, and must — a language omitted from the array is a
+    language deleted from the resolver.
 
-  This has not bitten yet only because `clients.yml:9` leaves `environment: test`, so a live run
-  hits the contract-less sandbox and fails before writing. **The fix** (client requirement): group
-  rows by GTIN and send **one** upsert per GTIN carrying the full `[nl, fr]` set, with
-  `defaultLinkType` on **nl only** — never more than two links. Because the array replaces, that
-  alone satisfies "adjust the existing links, don't duplicate them": a manual link at the same
-  (linkType, language) is overwritten, not appended. **Open:** whether to preserve links of *other*
-  link types that we do not manage — a wholesale replace would silently delete them.
+  It never bit only because `clients.yml` left `environment: test`, so a live run hit the
+  contract-less sandbox and failed before writing. Because the array replaces, sending the full
+  `[nl, fr]` set *is* "adjust the existing links, don't duplicate them": a manual link at the same
+  (linkType, language) is overwritten, not appended. ~~**Open:** whether to preserve links of other
+  link types we do not manage~~ — **closed:** wholesale replace, max two links (client decision).
+
+  **Pilot result — `08713195000527` (*Microvezeldoek stof*), live 2026-07-17.** The first product
+  page this tool has published, and the live proof of the fix:
+  - two pages, ids **1447** (nl) / **1448** (fr), same slug `p-08713195000527`, both published,
+    both URLs 200, `meta.gtin` on both, tagline in ACF per language;
+  - linked as translations, **`trid` 626**;
+  - GS1 enabled with **exactly 2 links**, `gs1:pip` (read back as *"Product Information Page"* —
+    i.e. recognised), **nl `defaultLinkType: true`, fr `false`**, each pointing at its own
+    language's page;
+  - a re-run returned the same ids and still exactly 2 links (§6.5).
+
+  Before the fix this run would have left **one** link — French — and no translation group.
+
+- **Re-run `parse_export` before `run_plan`, always.** `run_plan` reads
+  `output/{client_id}/data/products.json` off disk and cannot tell how old it is. Caught live on the
+  pilot run: the on-disk copy predated `strip_prefix`, so the first plan carried titles like
+  *"Noviplast Microvezeldoek stof"* — the very prefix `clients.yml` has been configured to strip for
+  weeks. `strip_prefix` was working; the artifact was stale. Re-parsing produced *"Microvezeldoek
+  stof"* and the plan was correct.
+
+  The tell was that `source_issues.json` did not exist at all, while `products.json` did — the two
+  are written by the same run, so their disagreement dated the artifact. Worth a staleness check
+  (compare against the export's mtime and warn), because the failure is silent and lands on the
+  page title of every product.
 
 - **`accountNumber` in `clients.yml` was wrong — fixed 2026-07-17.** It read `8713195000008`,
   commented *"Noviplast GLN — confirmed accepted (200) in prod"*: a guess derived from the

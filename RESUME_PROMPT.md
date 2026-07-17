@@ -76,21 +76,39 @@ writable; write it and read it back.
 - Run `run_execute` live expecting good pages: `product_description` isn't assembled
   yet (needs the generator + H87), so pages would publish with title + tagline only.
 
-## Known bug, not yet fixed
-**The GS1 link set is written per language, and the fr write destroys the nl link.**
-`_build_links` (`run_execute.py:103`) uses `row.language`, and rows are per-(GTIN, language),
-so a nl+fr GTIN gets two upserts each sending a *one-element* `links` array as the whole
-record. **CreateOrUpdate REPLACES that array — confirmed live 2026-07-17** by probing
-`08713195000374` (`links: []` → 0 links; disabled throughout, restored after). So this is
-data loss: the Dutch QR resolves nowhere and the row reports `ok`. The GS1 docs specify
-merge semantics nowhere — it took a probe. Also: `default: true` applies to both languages
-(should be nl only), and `per_language: true` is dead config. Hasn't fired yet only because
-`clients.yml:9` still points at the contract-less sandbox. Fix + open question in §8.
+## The pilot is live — one product is published
+**`08713195000527` (*Microvezeldoek stof*) is the first product this tool has published**, on
+the real site, with an **enabled** GS1 production resolver entry (2026-07-17). Pages 1447
+(nl) / 1448 (fr), same slug, linked as translations (`trid` 626), 2 links, nl default only,
+idempotent on re-run. It carries **title + tagline only** — no description, images, or
+category — a knowing trade to verify the mechanism. `clients.yml` now has
+`environment: production` on the noviplast block (the default stays `test`).
 
-**`clients.yml` accountNumber was wrong — fixed.** Was `8713195000008` (a guess from the
-GTIN prefix); the production token claims **`8719965024137`**, as does the live record. Every
-prod POST carried an account that wasn't ours, and returned 200. The accountNumber always
-comes from the token claim. `clients.yml` is gitignored, so §8 is the durable record.
+Four bugs were fixed getting there, all of which returned 200 while doing the wrong thing:
+- **The GS1 link set was written per language**, and CreateOrUpdate **replaces** the array
+  (confirmed by probing `08713195000374`: `links: []` → 0 links), so the fr write destroyed
+  the nl link. `run_execute` now groups by GTIN: per-row upsert/verify, then one per-GTIN
+  phase for translations + a single resolver write. Also `default: true` applied to both
+  languages (now nl only), and `per_language` was dead config (deleted).
+- **`wp.link_translations` was never called** by the pipeline — zero call sites. nl and fr
+  were left as unrelated pages. Same root cause; same fix.
+- **`link_type: pip` was unrecognised.** The API stores `linkType` unvalidated: ours read
+  back with `linkTypeTitle: null`, the UI's as `gs1:pip` / "Product Information Page". Now
+  `gs1:pip`. Every link the tool ever wrote had a bad type.
+- **`accountNumber` was a guess** (`8713195000008`, from the GTIN prefix). The token claims
+  **`8719965024137`**, as does the live record — every prod POST carried an account that
+  wasn't ours. It always comes from the token claim. `clients.yml` is gitignored, so §8 is
+  the durable record.
+
+## Two traps worth knowing before you verify anything
+- **Re-run `parse_export` before `run_plan`.** `run_plan` reads `products.json` off disk and
+  cannot date it. The pilot's first plan carried *"Noviplast Microvezeldoek stof"* because
+  the artifact predated `strip_prefix` — which was working fine. The tell: `source_issues.json`
+  was absent while `products.json` was not, and the same run writes both.
+- **Never verify ACF via a language-scoped collection query.** `?slug=…&lang=fr` returns
+  `acf.product_title: null` for the non-default language *even when the value is stored*; a
+  direct `GET /noviplast/{id}` shows it. This produced a false alarm on the live run. Read
+  ACF back **by page id**. (§3.1 finding 5 — the mirror of the `?lang=`+acf write trap.)
 
 ## Next, once unblocked
 §8's remaining tool-side work: the LLM generator (Eigenschappen bullets ~121 products
