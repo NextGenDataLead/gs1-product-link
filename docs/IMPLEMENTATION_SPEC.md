@@ -1082,7 +1082,10 @@ Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered 
       and verified live (both URLs 404, resolver disabled, links intact).
 - [ ] Feature/benefit + tagline **generator** (LLM) — the report above is its spec. Not started; it
       owns the 3332+3301 title combination, the 1083-vs-USP tagline choice, and the USP bullets.
-- [ ] `net_content` H87 → *stuks*/*pièces* decoding — blocked on the operator's DIY datamodel (§7.5).
+- [x] `net_content` H87 → functional-name decoding (2026-07-18) — `reference/measurement_units.json`
+      (the datamodel's `MeasurementUnitCode_GDSN` picklist, 129 codes → nl/en/fr) + `lib/units.py`
+      (`decode_net_content`), decoded per language at render time in `templates._build_context`.
+      `H87` → *Stuk* / *Piece* / *Pièce*; all 125 pilot net_contents (all H87) now render words.
 - [ ] Brand-typo report (the 5 typos now live in the unpublished `3318`/`extras.marketing_name`) —
       deferred with the report's scope, to widen past published fields later.
 
@@ -1109,8 +1112,8 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > `scripts/build_brick_map.py`, and the `run_plan` wiring, all test-covered. The operator's DIY
 > datamodel then unblocked #1; the client's sign-off of the 73-brick map + nutcracker override
 > closed #2/#4. The signed-off map lives in the gitignored `clients.yml`; the reviewed source is
-> `output/noviplast/data/categories.proposed.yml`. The same DIY datamodel also unblocks the Phase 7
-> page-adapter `net_content` H87 decoding item (still open).
+> `output/noviplast/data/categories.proposed.yml`. The same DIY datamodel also supplied the unit
+> picklist that closed the Phase 7 page-adapter `net_content` H87 decoding item (above).
 
 ### Phase 8 — Skills
 - [ ] Each SKILL.md finalised per §10

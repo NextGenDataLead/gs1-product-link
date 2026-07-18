@@ -241,6 +241,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reviewed source is `output/noviplast/data/categories.proposed.yml`. Open decision resolved:
     missing WordPress terms must **pre-exist** (`require_terms_exist`), enforced later at the
     not-yet-built term-assignment step.
+- **Page adapter — `net_content` unit decoding.** `reference/measurement_units.json` (the GS1 DIY
+  datamodel's `MeasurementUnitCode_GDSN` picklist, 129 codes → nl/en/fr) + `lib/units.py`
+  (`decode_net_content`) turn the raw code the feed carries (`"5 H87"`) into words per language
+  (`H87` → *Stuk* / *Piece* / *Pièce*), decoded at render time in `templates._build_context`.
+  net_content stays language-agnostic on the record; the decoder is reusable by the future
+  Technische-details generator. All 125 pilot products (all H87) now render words. Tests in
+  `tests/lib/test_units.py` and `tests/lib/test_templates.py`.
 
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment

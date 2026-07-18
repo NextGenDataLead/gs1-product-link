@@ -471,9 +471,11 @@ source — the filters survive updates to whatever registers them.
     `strip_prefix` concern (and its `brand_prefix_mismatch` findings) retired with the 3318 title.
   - ~~ranked market resolution~~ — **done**: `market_priority` replaced the 1:1 `market_language`
     map; first non-blank value per field/language walking the order. `product_name` fr 124 → 126/127.
-  - **decode `net_content` unit codes** — still todo, blocked on the DIY datamodel. The feed gives
-    the raw UN/ECE code (`"5 H87"`); the page needs words per language (`H87` → *stuks* / *pièces*).
-    Deterministic — a lookup table, not a generator.
+  - ~~decode `net_content` unit codes~~ — **done (2026-07-18)**: the feed gives the raw code
+    (`"5 H87"`), the page needs words per language. `reference/measurement_units.json` (the DIY
+    datamodel's `MeasurementUnitCode_GDSN` picklist, 129 codes → nl/en/fr) + `lib/units.py`
+    `decode_net_content`, applied per language in `templates._build_context`. `H87` → *Stuk* /
+    *Piece* / *Pièce* (the datamodel's functional labels). Deterministic lookup, not a generator.
   - extract **multiple** referenced images (all 12 slots, with mime / `IsPrimaryFile` / `FileName`).
 - ~~**Unpublish lifecycle**~~ — **done 2026-07-17**. `scripts/run_unpublish.py`: retract GS1 →
   draft pages → record `HELD` in state, so a routine run never republishes a deliberately-downed
