@@ -232,11 +232,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     count. No-op when the client has no `categories` config.
   - Tests: `tests/lib/test_categories.py`, `tests/lib/test_config.py`,
     `tests/scripts/test_build_brick_map.py`, `tests/scripts/test_run_plan.py`.
-  - DoD note (§12): the whole tool layer is built and test-covered. Two items stay open on external
-    inputs — the operator supplying the DIY datamodel (#1) and the client signing off the
-    `brick_category_map` + overrides (#4, and thereby #2 "every brick maps") — the same pattern as the
-    export and control file. Open decision resolved: missing WordPress terms must **pre-exist**
-    (`require_terms_exist`), enforced later at the not-yet-built term-assignment step.
+  - DoD note (§12): **all five items met (2026-07-18).** The operator supplied the GS1 DIY datamodel
+    (`GS1 Data Source Datamodel 3.1.36.xlsx`, sheet `Bricks` / `NL Brick Title`) covering all 73
+    export bricks; the client signed off the 73-brick map + one override (`10003865` Tuin
+    Handgereedschap → `tuin`, with the Notenkraker `08713195003948` → `keuken`). `build_brick_map
+    noviplast --check` is green and `run_plan` assigns a category to all 73 planned rows
+    (`category_issues.json` empty). The signed-off map lives in the gitignored `clients.yml`; the
+    reviewed source is `output/noviplast/data/categories.proposed.yml`. Open decision resolved:
+    missing WordPress terms must **pre-exist** (`require_terms_exist`), enforced later at the
+    not-yet-built term-assignment step.
 
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment

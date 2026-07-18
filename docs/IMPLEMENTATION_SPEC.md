@@ -1090,28 +1090,27 @@ Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered 
 Derive the product-category assignment from the **GS1 DIY sector datamodel**, since GPC bricks do
 not map 1:1 onto a client's marketing categories. **The operator supplies the DIY datamodel** at the
 start of the phase (like the export and control file). See `docs/clients/noviplast-page-adapter.md` §5.7.
-- [ ] DIY datamodel supplied by the operator and parsed — *parser built (`load_diy_datamodel`, columns
-      as parameters) and `scripts/build_brick_map.py` drafts a map from it; closes when the operator
-      supplies the file.*
-- [ ] Every GPC brick present in the client export maps to a category term — *the coverage gate is
-      built (`build_brick_map --check`, exits non-zero while any brick is unmapped); turns green once
-      the signed-off map is complete.*
-- [x] Bricks that span categories are resolved by a per-GTIN override list — override machinery
-      (override > brick map > none) built and test-covered; the real override values are part of the
-      sign-off below.
-- [ ] `brick_category_map` + overrides live in `clients.yml`, reviewed and signed off by the client —
-      *config schema, validator, and `categories:` block built; the reviewed values are the client's
-      to approve.*
+- [x] DIY datamodel supplied by the operator and parsed — operator supplied `GS1 Data Source
+      Datamodel 3.1.36.xlsx` ("do-it-yourself, garden and pets"); `load_diy_datamodel` reads it (sheet
+      `Bricks`, `Brick Code` / `NL Brick Title`), covering all 73 export bricks.
+- [x] Every GPC brick present in the client export maps to a category term — `build_brick_map
+      noviplast --check` is green (73 bricks, 0 unmapped).
+- [x] Bricks that span categories are resolved by a per-GTIN override list — brick `10003865`
+      (Tuin Handgereedschap) → `tuin`, with `08713195003948` (Notenkraker) overridden to `keuken`.
+- [x] `brick_category_map` + overrides live in `clients.yml`, reviewed and signed off by the client —
+      73 bricks + 1 override, client-signed-off 2026-07-18 (the 6 terms: keuken, doe_het_zelf,
+      schoonmaak, tuin, dier, specials).
 - [x] `run_plan` assigns the correct category for every planned product; unmapped bricks warn rather
-      than guess — assigned before hashing (a category change classifies CHANGED); unmapped bricks
-      warn and leave the category unset.
+      than guess — all 73 planned rows carry a category, `category_issues.json` empty; assignment
+      precedes hashing so a category change classifies CHANGED.
 
-> **Built this session (branch `noviplast-page-adapter`):** the whole tool layer — `CategoryConfig`
-> + schema, `lib/categories.py` (resolver, coverage, DIY-datamodel parser, draft generator),
-> `scripts/build_brick_map.py`, and the `run_plan` wiring — with tests. Two items stay open on
-> **external inputs**, the same pattern as the export and control file: the operator supplying the DIY
-> datamodel (#1), and the client signing off the `brick_category_map` + overrides (#4, and thereby #2).
-> The same DIY datamodel also unblocks the Phase 7 page-adapter `net_content` H87 decoding item.
+> **Done 2026-07-18 (branch `noviplast-page-adapter`).** Tool layer: `CategoryConfig` + schema,
+> `lib/categories.py` (resolver, coverage, DIY-datamodel parser, draft generator),
+> `scripts/build_brick_map.py`, and the `run_plan` wiring, all test-covered. The operator's DIY
+> datamodel then unblocked #1; the client's sign-off of the 73-brick map + nutcracker override
+> closed #2/#4. The signed-off map lives in the gitignored `clients.yml`; the reviewed source is
+> `output/noviplast/data/categories.proposed.yml`. The same DIY datamodel also unblocks the Phase 7
+> page-adapter `net_content` H87 decoding item (still open).
 
 ### Phase 8 — Skills
 - [ ] Each SKILL.md finalised per §10
