@@ -27,7 +27,7 @@ does not. Last updated 2026-07-18.
 | 7 | Re-run + change detection | **Done** (§12 [x]) |
 | — | **Page-adapter track** | Mostly done; **generator in progress** (see below) |
 | 7.5 | GPC brick → category | **Done** (§12 [x], 2026-07-18) |
-| 8 | Skills | Partial — only `flow-orchestrator` has a SKILL.md; 4 others empty |
+| 8 | Skills | Partial — `flow-orchestrator` + `content-generator` (generator c5) have SKILL.md; 4 stubs empty |
 | 9 | Pilot end-to-end (≥10 live, QR scans, no manual fixes) | Not started — **gated by the generator** |
 | 10 | Docs | Not started |
 | 11 | Release | Not started |
@@ -44,7 +44,7 @@ H87→word decoding. **Open:** the generator (below) and the deferred brand-typo
 ## Generator — commit tracker
 
 Branch `noviplast-page-adapter` (unpushed). SPEC: [generator SPEC](clients/noviplast-generator-spec.md).
-Suite 393 green, ruff + `mypy --strict` clean.
+Suite 395 green, ruff + `mypy --strict` clean.
 
 | # | Commit | State |
 |---|---|---|
@@ -54,13 +54,13 @@ Suite 393 green, ruff + `mypy --strict` clean.
 | — | Capture all 1067 slots (multivalue) | ✅ `babd01b` |
 | — | 1067 routing: verbatim / tighten / generate + adjusted report | ✅ `3fff444` |
 | 4 | `scripts/run_generate.py` spine + `LLMClient` seam + `--emit`/`--ingest` | ✅ `a61c1fd` |
-| 5 | Cowork-native producer (generation skill + voice) | ▶ next |
-| 6 | API backend (`lib/llm.py`, Sonnet 5, `--backend api`) | — |
+| 5 | Cowork-native producer (generation skill + voice) | ✅ `bf31dd9` |
+| 6 | API backend (`lib/llm.py`, Sonnet 5, `--backend api`) | ▶ next |
 | 7 | `run_plan` merge (before `diff_against_state`; E18 backstop; `generated_issues.json`) | — |
 | 8 | Wire `acf_map` (title/tagline/description → generated fields) | — |
 | 9 | Docs + flow-orchestrator gate | — |
 
-**5 commits left.** Copy producer is **both** Cowork-native (no API key) and a headless API backend,
+**4 commits left.** Copy producer is **both** Cowork-native (no API key) and a headless API backend,
 sharing one cache/contract seam.
 
 ### How the generator commits touch the phases
