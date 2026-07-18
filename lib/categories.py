@@ -16,10 +16,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+import openpyxl
+
 from lib.config import CategoryConfig
-from lib.records import ProductRecord, SourceIssue
+from lib.errors import ExportParseError
+from lib.records import ProductRecord, SourceIssue, _coerce_cell
 
 _log = logging.getLogger(__name__)
+
+#: How many product names to show per brick when annotating a draft.
+_DRAFT_SAMPLE_LIMIT: int = 3
 
 #: How the ``category`` field is named where the operator finds it — the GPC brick, carried
 #: on the ``BrickGPCCommercialData`` sheet as ``GpcCategoryCode``.
@@ -142,6 +148,128 @@ class CoverageReport:
     def is_complete(self) -> bool:
         """Whether every brick in the export resolves to a term."""
         return not self.unmapped
+
+
+# --- DIY datamodel parse + draft generation (DoD #1) -------------------------
+
+
+def load_diy_datamodel(path: str, *, code_column: str, category_column: str) -> dict[str, str]:
+    """Read the operator-supplied GS1 DIY sector datamodel into ``{brick_code: sector_label}``.
+
+    The datamodel is supplied by the operator (like the export and control file), so its
+    format is not fixed here: the two column identities are parameters. Reads the first
+    worksheet of an ``.xlsx``; the first row with any content is the header, matched by exact
+    (whitespace-trimmed) column name.
+
+    Args:
+        path: Path to the datamodel workbook.
+        code_column: Header of the column holding the GPC brick code.
+        category_column: Header of the column holding the DIY sector label.
+
+    Returns:
+        Mapping of brick code to its DIY sector label (label ``""`` when the cell is blank).
+
+    Raises:
+        ExportParseError: If the file cannot be read, is empty, or lacks either column.
+    """
+    try:
+        workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    except (FileNotFoundError, OSError) as exc:
+        raise ExportParseError(f"cannot read DIY datamodel at {path}: {exc}") from exc
+    try:
+        rows = list(workbook[workbook.sheetnames[0]].iter_rows(values_only=True))
+    finally:
+        workbook.close()
+
+    header_index = next(
+        (i for i, row in enumerate(rows) if any(cell is not None for cell in row)), None
+    )
+    if header_index is None:
+        raise ExportParseError(f"DIY datamodel at {path} is empty")
+    header = [_coerce_cell(cell) for cell in rows[header_index]]
+    try:
+        code_idx = header.index(code_column)
+        cat_idx = header.index(category_column)
+    except ValueError as exc:
+        raise ExportParseError(
+            f"DIY datamodel at {path}: column {code_column!r} or {category_column!r} "
+            f"not found in header {header}"
+        ) from exc
+
+    mapping: dict[str, str] = {}
+    for row in rows[header_index + 1 :]:
+        code = _coerce_cell(row[code_idx]) if code_idx < len(row) else None
+        label = _coerce_cell(row[cat_idx]) if cat_idx < len(row) else None
+        if code:
+            mapping[code] = label or ""
+    return mapping
+
+
+@dataclass(frozen=True)
+class BrickMapDraft:
+    """A human-review skeleton for ``brick_category_map`` (DoD #1).
+
+    Every brick in the export is present with an UNSET (``""``) term for a person to fill; the
+    datamodel supplies the DIY *sector* label, not the client's site term, so the mapping from
+    label to term — and the client sign-off — remain a human step. ``annotations`` gives each
+    brick its DIY label, product count, and sample names; ``unannotated`` lists bricks the
+    datamodel did not cover.
+    """
+
+    entries: dict[str, str]
+    annotations: dict[str, str]
+    unannotated: list[str]
+
+
+def _names_by_gtin14(products: list[ProductRecord]) -> dict[str, str]:
+    """First available product name per GTIN-14, for annotating a draft."""
+    names: dict[str, str] = {}
+    for product in products:
+        values = product.product_name.values
+        if values:
+            names[product.gtin14] = next(iter(values.values()))
+    return names
+
+
+def draft_brick_map(
+    bricks: dict[str, list[str]],
+    products: list[ProductRecord],
+    datamodel: dict[str, str] | None,
+) -> BrickMapDraft:
+    """Build a review skeleton covering every brick in ``bricks`` (from :func:`distinct_bricks`).
+
+    Args:
+        bricks: Brick code → GTIN-14s carrying it.
+        products: The products, used to annotate each brick with sample names.
+        datamodel: Optional brick → DIY sector label from :func:`load_diy_datamodel`.
+
+    Returns:
+        A :class:`BrickMapDraft` with every brick UNSET, annotated, and the datamodel's
+        coverage gap recorded.
+    """
+    names = _names_by_gtin14(products)
+    entries: dict[str, str] = {}
+    annotations: dict[str, str] = {}
+    unannotated: list[str] = []
+    for brick in sorted(bricks):
+        gtins = bricks[brick]
+        entries[brick] = ""
+        label = datamodel.get(brick) if datamodel else None
+        if not label:
+            unannotated.append(brick)
+        samples: list[str] = []
+        for gtin in gtins:
+            name = names.get(gtin)
+            if name and name not in samples:
+                samples.append(name)
+            if len(samples) >= _DRAFT_SAMPLE_LIMIT:
+                break
+        parts = [label] if label else []
+        parts.append(f"{len(gtins)} product(s)")
+        if samples:
+            parts.append("e.g. " + ", ".join(samples))
+        annotations[brick] = " | ".join(parts)
+    return BrickMapDraft(entries=entries, annotations=annotations, unannotated=unannotated)
 
 
 def coverage_report(products: list[ProductRecord], categories: CategoryConfig) -> CoverageReport:

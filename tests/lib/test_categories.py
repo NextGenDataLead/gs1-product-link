@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import openpyxl
+import pytest
+
 from lib.categories import (
     coverage_report,
     distinct_bricks,
+    draft_brick_map,
+    load_diy_datamodel,
     resolve_category,
 )
 from lib.config import CategoryConfig
+from lib.errors import ExportParseError
 from lib.records import LocalisedText, ProductRecord
 
 _TERMS = frozenset({"tuin", "keuken", "specials"})
@@ -181,3 +189,75 @@ def test_coverage_partial_override_leaves_brick_unmapped() -> None:
     report = coverage_report(products, categories)
     assert report.unmapped == {"10003865": ["08713195000002"]}
     assert report.is_complete is False
+
+
+# --- load_diy_datamodel ------------------------------------------------------
+
+
+def _write_datamodel(path: Path, header: list[str], rows: list[list[str]]) -> str:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(header)
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+    return str(path)
+
+
+def test_load_diy_datamodel_reads_parameterized_columns(tmp_path: Path) -> None:
+    path = _write_datamodel(
+        tmp_path / "diy.xlsx",
+        header=["Brick", "Sector", "Ignored"],
+        rows=[["10003865", "Garden", "x"], ["10006459", "Lighting", "y"]],
+    )
+    mapping = load_diy_datamodel(path, code_column="Brick", category_column="Sector")
+    assert mapping == {"10003865": "Garden", "10006459": "Lighting"}
+
+
+def test_load_diy_datamodel_blank_label_kept_as_empty(tmp_path: Path) -> None:
+    path = _write_datamodel(
+        tmp_path / "diy.xlsx", header=["Brick", "Sector"], rows=[["10003865", None]]
+    )
+    assert load_diy_datamodel(path, code_column="Brick", category_column="Sector") == {
+        "10003865": ""
+    }
+
+
+def test_load_diy_datamodel_missing_column_raises(tmp_path: Path) -> None:
+    path = _write_datamodel(tmp_path / "diy.xlsx", header=["Brick"], rows=[["10003865"]])
+    with pytest.raises(ExportParseError, match="not found in header"):
+        load_diy_datamodel(path, code_column="Brick", category_column="Sector")
+
+
+# --- draft_brick_map ---------------------------------------------------------
+
+
+def test_draft_lists_every_brick_unset_and_annotates() -> None:
+    products = [
+        ProductRecord(
+            gtin="08713195000001",
+            brand="Noviplast",
+            product_name=LocalisedText(values={"nl": "Snoeischaar"}),
+            gpc_brick_code="10003865",
+        ),
+        ProductRecord(
+            gtin="08713195000002",
+            brand="Noviplast",
+            product_name=LocalisedText(values={"nl": "Lamp"}),
+            gpc_brick_code="10006459",
+        ),
+    ]
+    bricks = distinct_bricks(products)
+    draft = draft_brick_map(bricks, products, datamodel={"10003865": "Garden"})
+
+    assert draft.entries == {"10003865": "", "10006459": ""}  # every brick UNSET
+    assert "Garden" in draft.annotations["10003865"]
+    assert "Snoeischaar" in draft.annotations["10003865"]
+    assert draft.unannotated == ["10006459"]  # not covered by the datamodel
+
+
+def test_draft_without_datamodel_marks_all_unannotated() -> None:
+    products = [_product("08713195000001", "10003865")]
+    draft = draft_brick_map(distinct_bricks(products), products, datamodel=None)
+    assert draft.unannotated == ["10003865"]
+    assert "1 product(s)" in draft.annotations["10003865"]
