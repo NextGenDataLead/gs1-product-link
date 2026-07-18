@@ -101,6 +101,21 @@ clients:
         # "Noviplat"), which the report may check once its scope widens past published
         # fields.
         marketing_name:    { sheet: TradeItemDescription, attribute: "3318", localised: true }
+        # --- Content-generator inputs (see docs/clients/noviplast-generator-spec.md) ---
+        # 3332 Product variation — the intelligent title suffix. Near-empty (4/127), so the
+        # generator's title step is a deterministic dedup rule, not LLM work. Localised, but
+        # only the default-language token is carried (extras collapse to one language).
+        product_variation: { sheet: TradeItemDescription,   attribute: "3332", localised: true }
+        # Dimensions (all 127/127) carry a MeasurementUnitCode ("MMT" = mm); with_unit keeps
+        # the code so the Technische-details assembler decodes it via lib/units like
+        # net_content. Feed both the deterministic spec line and the Eigenschappen prompt.
+        dim_height:        { sheet: TradeItemMeasurements,   attribute: "3498", with_unit: true }
+        dim_width:         { sheet: TradeItemMeasurements,   attribute: "3520", with_unit: true }
+        dim_depth:         { sheet: TradeItemMeasurements,   attribute: "3492", with_unit: true }
+        # Material (75/127) is language-agnostic (Information[0]/Material[n]/Value, no
+        # LanguageCode pair) so it is a scalar, matched by the path segment "Material", not a
+        # number. Watch for the junk value "zzzanders" — the generator treats it as absent.
+        material:          { sheet: BrickGPCCommercialData,  attribute: "Material" }
 
     wordpress:
       site_url: "https://www.noviplast.nl"

@@ -485,3 +485,81 @@ def test_scalars_come_from_the_highest_priority_market_with_a_row(tmp_path: Path
     record = next(r for r in result.records if r.gtin == "08713195007359")
     assert record.brand == "Noviplast"
     assert record.net_content == "4 H87"  # from market 528, though fr is default
+
+
+def _write_generator_inputs_workbook(tmp_path: Path) -> str:
+    """A workbook exercising the three content-generator input shapes as ``gdsn_extras``:
+    a localised variation (3332), a with-unit dimension (3498), and a segment-matched
+    scalar material (no numeric attr id — matched by the ``Material`` path segment)."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    desc = wb.create_sheet("TradeItemDescription")
+    for row in [
+        # name (3301) + brand (3336) + variation (3332), name & variation as LanguageCode/Value
+        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
+         "TradeItemUnitDescriptorCode", "Info", "Info", "BrandNameInformation", "Info", "Info"],
+        [None, None, None, None, "Name[0]", "Name[0]", None, "Variation[0]", "Variation[0]"],
+        [None, None, None, None, "LanguageCode", "Value", "BrandName", "LanguageCode", "Value"],
+        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
+         "Functional (3301)", "Functional (3301)", "Brand (3336)",
+         "Variation (3332)", "Variation (3332)"],
+        _drow("08713195000794", "528", "nl", "Voegstrijker", "Noviplast", "nl", "Set"),
+    ]:
+        desc.append(row)
+
+    meas = wb.create_sheet("TradeItemMeasurements")
+    for row in [
+        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
+         "TradeItemUnitDescriptorCode", "TradeItemMeasurements", "TradeItemMeasurements"],
+        [None, None, None, None, "Height[0]", "Height[0]"],
+        [None, None, None, None, "MeasurementUnitCode", "Value"],
+        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
+         "Height (3498)", "Height (3498)"],
+        _drow("08713195000794", "528", "MMT", "250"),
+    ]:
+        meas.append(row)
+
+    brick = wb.create_sheet("BrickGPCCommercialData")
+    for row in [
+        # Material is Information[0]/Material[0]/Value with a non-numeric "(4.012)" label,
+        # so it carries no attr_id and must be matched by the "Material" path segment.
+        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
+         "TradeItemUnitDescriptorCode", "Information[0]"],
+        [None, None, None, None, "Material[0]"],
+        [None, None, None, None, "Value"],
+        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)", "Material (4.012)"],
+        _drow("08713195000794", "528", "kunststof"),
+    ]:
+        brick.append(row)
+
+    path = tmp_path / "generator_inputs.xlsx"
+    wb.save(path)
+    return str(path)
+
+
+def test_gdsn_extras_carry_generator_inputs(tmp_path: Path) -> None:
+    # The generator's parser inputs ride in extras, one entry per shape: a localised token
+    # collapsed to the default language, a dimension with its unit code preserved for later
+    # decoding, and a segment-matched scalar. None of these are published fields.
+    sheets = read_workbook(_write_generator_inputs_workbook(tmp_path))
+    gdsn_map = {
+        "product_name": GdsnSource(sheet="TradeItemDescription", attribute="3301", localised=True),
+        "brand": GdsnSource(sheet="TradeItemDescription", attribute="3336"),
+    }
+    gdsn_extras = {
+        "product_variation": GdsnSource(
+            sheet="TradeItemDescription", attribute="3332", localised=True
+        ),
+        "dim_height": GdsnSource(sheet="TradeItemMeasurements", attribute="3498", with_unit=True),
+        "material": GdsnSource(sheet="BrickGPCCommercialData", attribute="Material"),
+    }
+
+    result = build_records(
+        sheets, gdsn_map, ["528"], ["nl"], "nl", gdsn_extras=gdsn_extras
+    )
+
+    record = next(r for r in result.records if r.gtin == "08713195000794")
+    assert record.extras["product_variation"] == "Set"
+    assert record.extras["dim_height"] == "250 MMT"  # unit code kept for lib/units decoding
+    assert record.extras["material"] == "kunststof"
