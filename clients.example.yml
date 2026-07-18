@@ -158,3 +158,25 @@ clients:
       on_website_column: "Momenteel op Website"
       in_gs1_column: "Al in Gs1"
       site_link_column: "Link naar site"
+
+    # Phase 7.5: GPC brick -> site category. The GDSN feed carries a GPC brick
+    # (gpc_brick_code, attr GpcCategoryCode) but not the client's marketing category, so
+    # this maps one to the other. It is NOT derivable from the feed: bricks span categories
+    # (10003865 holds garden tools AND a nutcracker) and the client scheme is not semantic
+    # (Power Splash, a shower head, is filed under keuken). So a brick_category_map plus a
+    # per-GTIN override list, built from the GS1 DIY sector datamodel and signed off by the
+    # client. Draft one with: python -m scripts.build_brick_map noviplast --datamodel <file>
+    # --code-column <c> --category-column <c>. Unmapped bricks warn and leave the category
+    # unset — never guess. See docs/clients/noviplast-page-adapter.md §5.7.
+    #
+    # The VALUES below are illustrative placeholders, not the signed-off map. Replace them.
+    categories:
+      terms: [keuken, doe_het_zelf, schoonmaak, tuin, dier, specials]
+      brick_category_map:
+        "10003865": tuin           # garden tools (the nutcracker is overridden per-GTIN below)
+        "10006459": specials       # lighting has no category of its own -> specials
+      overrides:
+        "08713195000XXX": keuken   # the nutcracker in brick 10003865 (illustrative GTIN)
+      # on_unmapped: warn          # fixed; shown for documentation only
+      # require_terms_exist: true  # resolved decision: require the WP term to pre-exist,
+      #                            # warn on miss. Enforced at the future term-assignment step.

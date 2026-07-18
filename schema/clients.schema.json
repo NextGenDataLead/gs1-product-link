@@ -346,6 +346,38 @@
         "site_link_column": { "type": "string" }
       }
     },
+    "categories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terms"],
+      "description": "Phase 7.5: GPC brick -> client category-term mapping. Client-owned, signed-off data. Term-membership of map/override values is enforced by the loader, not this schema.",
+      "properties": {
+        "terms": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "The closed set of allowed category terms."
+        },
+        "brick_category_map": {
+          "type": "object",
+          "description": "Map of GPC brick code to a category term.",
+          "additionalProperties": { "type": "string" }
+        },
+        "overrides": {
+          "type": "object",
+          "description": "Per-GTIN category term, overriding the brick map for bricks that span categories.",
+          "additionalProperties": { "type": "string" }
+        },
+        "on_unmapped": {
+          "enum": ["warn"],
+          "description": "What to do with a brick that maps to no term. Fixed at 'warn': leave unset, never guess."
+        },
+        "require_terms_exist": {
+          "type": "boolean",
+          "description": "Whether a resolved term must already exist as a WordPress taxonomy term (vs auto-create). Recorded here; enforced at the future term-assignment step."
+        }
+      }
+    },
     "multilingualPlugin": { "enum": ["none", "polylang", "wpml"] },
     "imageHandling": { "enum": ["url_in_export", "local_folder", "manual"] },
     "languages": {
@@ -374,7 +406,8 @@
         },
         "qr": { "$ref": "#/$defs/qr" },
         "flow": { "$ref": "#/$defs/flow" },
-        "website_status": { "$ref": "#/$defs/websiteStatus" }
+        "website_status": { "$ref": "#/$defs/websiteStatus" },
+        "categories": { "$ref": "#/$defs/categories" }
       }
     }
   }

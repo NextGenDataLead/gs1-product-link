@@ -19,7 +19,7 @@ from typing import Any, Final, Literal
 
 import jsonschema
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from lib.errors import ConfigError, ExportParseError
 from lib.gdsn import GdsnSource
@@ -229,6 +229,45 @@ class WebsiteStatusConfig(BaseModel):
     site_link_column: str | None = "Link naar site"
 
 
+class CategoryConfig(BaseModel):
+    """GPC brick → client category-term mapping (Phase 7.5).
+
+    Client-owned, signed-off data that is *not* derivable from the feed: GPC bricks span
+    marketing categories and a client's own scheme is not purely semantic (see
+    ``docs/clients/noviplast-page-adapter.md`` §5.7). ``terms`` is the closed set of allowed
+    category terms; ``brick_category_map`` maps a GPC brick code to one of them; ``overrides``
+    resolves bricks that span categories, per GTIN, and win over the brick map.
+
+    ``on_unmapped`` is fixed at ``"warn"`` — an unmapped brick leaves the category unset and
+    is reported; the tool never guesses. ``require_terms_exist`` records the resolved open
+    decision (require the WordPress term to pre-exist rather than auto-creating it); its
+    enforcement point is the future term-assignment step, so it is carried here, not acted on
+    yet.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    terms: list[str]
+    brick_category_map: dict[str, str] = Field(default_factory=dict)
+    overrides: dict[str, str] = Field(default_factory=dict)
+    on_unmapped: Literal["warn"] = "warn"
+    require_terms_exist: bool = True
+
+    @model_validator(mode="after")
+    def _check_terms(self) -> CategoryConfig:
+        """Reject an empty/duplicate ``terms`` list or a map/override value outside it."""
+        allowed = set(self.terms)
+        if not self.terms or len(allowed) != len(self.terms):
+            raise ValueError("categories.terms must be non-empty and unique")
+        for brick, term in self.brick_category_map.items():
+            if term not in allowed:
+                raise ValueError(f"brick_category_map[{brick!r}] = {term!r} is not in terms")
+        for gtin, term in self.overrides.items():
+            if term not in allowed:
+                raise ValueError(f"overrides[{gtin!r}] = {term!r} is not in terms")
+        return self
+
+
 class ClientConfig(BaseModel):
     """The full resolved configuration for one client (§2.4)."""
 
@@ -245,6 +284,7 @@ class ClientConfig(BaseModel):
     qr: QRConfig | None = None
     flow: FlowConfig | None = None
     website_status: WebsiteStatusConfig | None = None
+    categories: CategoryConfig | None = None
 
 
 # --- Loading (§4.2) ----------------------------------------------------------
