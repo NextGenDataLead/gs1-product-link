@@ -1,6 +1,7 @@
 # Content Generator — implementation SPEC
 
-**Status:** scoped, not started. Supersedes the scoping questions in
+**Status:** in progress (see [`../ROADMAP.md`](../ROADMAP.md) for the commit tracker and how this
+fits the numbered phases). Supersedes the scoping questions in
 `docs/clients/noviplast-generator-handoff.md`. Grounded in a full read of the codebase and the
 real 127-product export. Written 2026-07-18.
 
