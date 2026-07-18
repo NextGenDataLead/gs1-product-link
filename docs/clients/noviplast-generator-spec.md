@@ -34,8 +34,8 @@ data; the generator owns the handful of slots that require *writing* copy.
 |---|---|---|---|---|
 | Functional name | 3301 | TradeItemDescription | 127 nl / 126 fr | title base (already `product_name`; raw in `extras.functional_name`) |
 | Product variation | 3332 | TradeItemDescription | **4** nl | title suffix — near-empty, deterministic rule only |
-| Marketing message | 1083 | MarketingInformation | 113 nl / 112 fr | tagline source + Eigenschappen input (`description_short`) |
-| Feature/benefit | 1067 | — | 6 nl / 5 fr | Eigenschappen seed where present (`description_long`) |
+| Marketing message | 1083 | MarketingInformation | 113 nl / 112 fr | primary USP-generation input; blank is flagged (`description_short`) |
+| Feature/benefit | 1067 | MarketingInformation | 6 nl / 5 fr | USP seed where present (`description_long`; only slot [0] parsed today) |
 | Net content | 3510 | TradeItemMeasurements | 125 | Technische details (`decode_net_content`) |
 | Height / Width / Depth | 3498 / 3520 / 3492 | TradeItemMeasurements | **127 / 127 / 127** (mm, `MMT`) | Technische details + Eigenschappen — needs parsing |
 | Material | 4.012 | BrickGPCCommercialData | 75 | Technische details + Eigenschappen — needs parsing |
@@ -89,8 +89,9 @@ third field), so slug/title/`diff_against_state` keep working. Raw 3301 stays in
 ## Pipeline placement — shared spine + two producers
 
 The cache is the producer seam. `lib/generator.py` owns a producer-agnostic contract:
-- `GenerationRequest` (gtin, language, the assembled inputs + few-shot voice, `input_fingerprint`)
-  and `GenerationResult` (`usps`, `eigenschappen`).
+- `GenerationRequest` (gtin, language, the assembled inputs + few-shot voice, `input_fingerprint`,
+  `needs_name`) and `GenerationResult` (`usps`, optional `product_name` for the French fill).
+  **`usps` is one ranked list: `usps[0]` is the tagline, `usps[1:]` are the Eigenschappen bullets.**
 - `pending_requests(products, cache, cfg) -> list[GenerationRequest]` — the gaps whose fingerprint
   misses the cache (pure).
 - `apply_result(cache, request, result) -> GeneratedCache` — validate a result and write its entry
@@ -122,21 +123,37 @@ Operator flow: `parse_export` → **`run_generate`** (API fills the cache, or em
 first copy review) → `run_plan` (merges cache, classifies, second review in `plan.json`) → confirm →
 `run_execute` (draft-first).
 
+## The page model (grounded in the live page)
+The generator produces **one ranked USP list** per `(gtin, language)`; everything else is
+deterministic:
+- **Post title** ("CABLE ORGANISER") = 3301 combined with 3332 when present (`_combine_title`).
+- **Tagline** = `usps[0]` — the page headline, the header-video caption, and the description's
+  opening `<p>`. **Not 1083.** 1083 is a *generation input*, and its blank is flagged in the report.
+- **Eigenschappen** = `usps[1:]` — the generated benefit bullets.
+- **Technische details** = **deterministic** from net content (decoded) + dimensions + material —
+  *not* generated, *not* 1067.
+
 ## LLM call shape & prompt
 - **One call per `(gtin, language)`** returning structured JSON via tool-use / strict schema:
-  `{"usps": [...], "eigenschappen": [...]}`. One call per unit keeps prompts small, cache keys clean,
-  failures local. Batch API (50% off) is an optional optimisation.
+  `{"usps": [...], "product_name"?: "..."}`. USPs are seeded by 1067 (all `TradeItemFeatureBenefit`
+  slots) plus net content / dims / material as context, generated from 1083; `product_name` only
+  when the feed lacks the language (French fill). One call per unit keeps prompts small and cache
+  keys clean. Batch API (50% off) is an optional optimisation.
 - **Determinism:** `temperature=0`, pinned model id, versioned prompt template, inputs sorted
   deterministically.
-- **Tagline "first USP" ordering** solved structurally — the one call returns both `usps` and
-  `eigenschappen`, so `merge_generated` sets tagline = 1083 if present else `usps[0]`, and assembles:
+- **Assembly** (`merge_generated`, deterministic): tagline = `usps[0]`; Eigenschappen = `usps[1:]`;
+  Technische details from feed data.
   ```html
-  <p><strong>{tagline}</strong></p>
-  <p><strong>Eigenschappen</strong><br />• …</p>          <!-- from eigenschappen -->
-  <p><strong>Technische details</strong><br />• …</p>     <!-- deterministic: net_content + dims + material -->
+  <p><strong>{usps[0]}</strong></p>
+  <p><strong>Eigenschappen</strong><br />• {usps[1]} • …</p>       <!-- generated -->
+  <p><strong>Technische details</strong><br />• {net_content} • {H×W×D} • {material}</p>  <!-- deterministic -->
   ```
-- **Brand voice:** few-shot block of real feed taglines/1083 that read well, per language, in the
+- **Report:** one `content_generated` issue per generated value (with its source-language input),
+  and one `missing_generation_input` issue per language whose 1083 is blank.
+- **Brand voice:** few-shot block of real feed marketing copy that reads well, per language, in the
   versioned prompt.
+- **Known limitation:** the parser currently captures only `TradeItemFeatureBenefit[0]`; capturing
+  all 1067 slots as seeds is a follow-up (1067 is 6/127, and generation runs regardless).
 
 ## Parser extensions (`clients.yml` + `clients.example.yml`, `gdsn_extras`)
 ```yaml
@@ -218,6 +235,12 @@ for schemas, absolute imports. Tests: `.venv/bin/python -m pytest -q`.
    pipeline fails silently — verify against the real parsed data, not just green tests.**
 
 ## Progress
-- **Commit 1 done** (`3b2ffb5`): parser inputs wired into `gdsn_extras`; the material segment (open
-  item) is resolved to the scalar `"Material"`. Coverage verified against the real export
-  (variation 4/127, dimensions 127/127, material 75/127). Next: commit 2 (record fields).
+- **Commit 1 done** (`3b2ffb5`): parser inputs → `gdsn_extras`; material resolved to scalar
+  `"Material"`. Coverage verified (variation 4/127, dims 127/127, material 75/127).
+- **Commit 2 done** (`d5e8b0f`): `generated_tagline`/`generated_description` record fields.
+- **Commit 3 done**: `lib/generator.py` deterministic core — cache + atomic IO,
+  `pending_requests`/`apply_result`, title combiner, one-ranked-USP-list assembly (tagline =
+  `usps[0]`, Eigenschappen = `usps[1:]`, deterministic Technische details), `merge_generated` +
+  `content_generated`/`missing_generation_input` reporting. 19 tests. **Model corrected with the
+  user from the live page: tagline = first USP (not 1083); Technische details deterministic.**
+- Next: commit 4 (`run_generate` spine + `LLMClient` seam).

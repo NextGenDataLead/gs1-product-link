@@ -136,3 +136,13 @@ class WebsiteStatusError(OrchestratorError):
     a missing or malformed one is an operator-config error, so ``run_plan.py``
     treats it like :class:`ConfigError` (exit 2).
     """
+
+
+class GeneratorError(OrchestratorError):
+    """The generated-content cache could not be loaded, parsed, written, or validated.
+
+    Raised by ``lib.generator`` for a corrupt/unwritable ``generated_cache.json`` or a
+    producer result that fails validation (e.g. empty bullet lists). Mirrors
+    :class:`StateError`: the cache is a between-runs artifact, and a malformed one is a
+    fault the operator must see rather than silently ignore.
+    """
