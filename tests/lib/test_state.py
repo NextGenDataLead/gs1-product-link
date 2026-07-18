@@ -234,6 +234,13 @@ def test_content_hash_is_deterministic() -> None:
         ("fr", "https://noviplast.test/p/1", _product()),
         ("nl", "https://noviplast.test/p/2", _product()),
         ("nl", "https://noviplast.test/p/1", _product(brand="Other")),
+        # Generated content lives on the record, so filling it reclassifies the row (the
+        # merge step relies on this: newly generated copy must not read as UNCHANGED).
+        (
+            "nl",
+            "https://noviplast.test/p/1",
+            _product(generated_tagline=LocalisedText(values={"nl": "Slogan"})),
+        ),
     ],
 )
 def test_content_hash_sensitive_to_each_input(

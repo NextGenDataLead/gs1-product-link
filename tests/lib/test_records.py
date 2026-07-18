@@ -185,9 +185,17 @@ def test_product_record_json_round_trip_preserves_all_fields() -> None:
         category="outdoor",
         description_short=LocalisedText(values={"nl": "Kort", "fr": "Court"}),
         description_long=LocalisedText(values={"nl": "Lang", "fr": "Long"}),
+        generated_tagline=LocalisedText(values={"nl": "Slogan", "fr": "Slogan FR"}),
+        generated_description=LocalisedText(values={"nl": "<p>NL</p>", "fr": "<p>FR</p>"}),
         extras={"functional_name": "Rugsteun"},
     )
 
     restored = ProductRecord.model_validate_json(record.model_dump_json())
 
     assert restored == record
+
+
+def test_generated_fields_default_to_none() -> None:
+    record = _product()
+    assert record.generated_tagline is None
+    assert record.generated_description is None

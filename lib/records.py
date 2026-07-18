@@ -109,6 +109,13 @@ class ProductRecord(BaseModel):
     description_short: LocalisedText | None = None
     description_long: LocalisedText | None = None
 
+    # Content-generator outputs (docs/clients/noviplast-generator-spec.md). Net-new fields the feed
+    # never writes: net-new so they stay distinguishable from feed values, per-language so ACF can
+    # deliver nl/fr to one static field, and on the record so a run_plan merge step folds them into
+    # the content hash before classification. ``None`` until generated.
+    generated_tagline: LocalisedText | None = None
+    generated_description: LocalisedText | None = None
+
     extras: dict[str, str] = Field(default_factory=dict)
 
     @property
