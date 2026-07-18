@@ -7,6 +7,13 @@ enough to scope without re-deriving. Written 2026-07-18.
 > After `/clear`: point me at this file (`docs/clients/noviplast-generator-handoff.md`). The
 > auto-loaded `MEMORY.md` also links it. Next intended step is **scoping** (a SPEC), not coding.
 
+> **UPDATE 2026-07-18 — scoping DONE.** The SPEC now lives at
+> `docs/clients/noviplast-generator-spec.md` (all §4/§6 open decisions settled: Sonnet 5, full
+> three-part description, separate `run_generate`, few-shot voice; 3332 confirmed 4/127 so title
+> combination is a trivial rule; dims 127/127 and material 75/127 need small `gdsn_extras` adds).
+> **Next step is coding commit 1** of that SPEC's list. This handoff remains useful background;
+> the SPEC is now the authority.
+
 ---
 
 ## 0. Where the project is
