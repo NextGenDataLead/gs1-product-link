@@ -117,13 +117,14 @@ gdsn_extras:
   dim_height:        { sheet: TradeItemMeasurements,  attribute: "3498", with_unit: true }
   dim_width:         { sheet: TradeItemMeasurements,  attribute: "3520", with_unit: true }
   dim_depth:         { sheet: TradeItemMeasurements,  attribute: "3492", with_unit: true }
-  material:          { sheet: BrickGPCCommercialData, attribute: "<segment-name>" }   # see open item
+  material:          { sheet: BrickGPCCommercialData, attribute: "Material" }
 ```
 - Dimensions carry `MeasurementUnitCode` (`MMT`) → decode via existing `lib/units` (reuse).
-- **Material (open item):** `Material (4.012)` has no clean numeric attr id → `attribute` must be the
-  **path-segment name**, confirmed with `.venv/bin/python -m scripts.inspect_export
-  input/noviplast/products.xlsx` before wiring (`matches_attribute`, `lib/gdsn.py:151-155`). The value
-  `"zzzanders"` appears in the column — treat obvious junk as absent.
+- **Material** is `Information[0]/Material[0]/Value` with a non-numeric `(4.012)` label, so it is a
+  **language-agnostic scalar** matched by the path segment `"Material"` (confirmed at commit 1 via
+  `inspect_export`; `matches_attribute`, `lib/gdsn.py:151-155`). Multi-value in the feed
+  (`Material[0..2]`); the parser takes the first. The value `"zzzanders"` appears in the column — the
+  generator treats obvious junk as absent.
 - `product_variation` (3332) resolves at default language only (`_resolve_extra`, `lib/gdsn.py:780`) —
   fine for the base variation token.
 
@@ -184,6 +185,7 @@ for schemas, absolute imports. Tests: `.venv/bin/python -m pytest -q`.
    appear on `plan.json` rows and reclassify. Draft-first execute protects the live site. **This
    pipeline fails silently — verify against the real parsed data, not just green tests.**
 
-## Open item
-- Exact `BrickGPCCommercialData` path segment for `Material (4.012)` — confirm via `inspect_export`
-  before commit 1.
+## Progress
+- **Commit 1 done** (`3b2ffb5`): parser inputs wired into `gdsn_extras`; the material segment (open
+  item) is resolved to the scalar `"Material"`. Coverage verified against the real export
+  (variation 4/127, dimensions 127/127, material 75/127). Next: commit 2 (record fields).
