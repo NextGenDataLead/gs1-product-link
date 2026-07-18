@@ -249,12 +249,11 @@ for schemas, absolute imports. Tests: `.venv/bin/python -m pytest -q`.
    pipeline fails silently — verify against the real parsed data, not just green tests.**
 
 ## Progress
-- **Commit 1 done** (`3b2ffb5`): parser inputs → `gdsn_extras`; material resolved to scalar
-  `"Material"`. Coverage verified (variation 4/127, dims 127/127, material 75/127).
-- **Commit 2 done** (`d5e8b0f`): `generated_tagline`/`generated_description` record fields.
-- **Commit 3 done**: `lib/generator.py` deterministic core — cache + atomic IO,
-  `pending_requests`/`apply_result`, title combiner, one-ranked-USP-list assembly (tagline =
-  `usps[0]`, Eigenschappen = `usps[1:]`, deterministic Technische details), `merge_generated` +
-  `content_generated`/`missing_generation_input` reporting. 19 tests. **Model corrected with the
-  user from the live page: tagline = first USP (not 1083); Technische details deterministic.**
-- Next: commit 4 (`run_generate` spine + `LLMClient` seam).
+Canonical commit tracker: [`../ROADMAP.md`](../ROADMAP.md). Summary: the deterministic core is done
+(commits 1–3 + the multivalue-1067 and 1067-routing refinements, `3b2ffb5`…`3fff444`); suite 381
+green. **Next: commit 4** (`scripts/run_generate.py` spine + `LLMClient` seam + `--emit`/`--ingest`),
+then 5 Cowork producer, 6 API backend, 7 `run_plan` merge, 8 `acf_map`, 9 docs — 6 left.
+
+The page model was **corrected with the operator against the live page** partway through: tagline =
+first USP (not 1083); Technische details deterministic; 1067 routes verbatim/tighten/generate. Those
+corrections are reflected throughout this SPEC above.
