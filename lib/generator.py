@@ -22,7 +22,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -33,6 +33,11 @@ from lib.units import decode_net_content, decode_unit
 _log = logging.getLogger(__name__)
 
 CACHE_FILENAME: Final = "generated_cache.json"
+
+#: Default prompt version — part of every cache fingerprint. Lives here (not in a script) so
+#: ``run_generate`` and, later, ``run_plan`` fingerprint identically; bumping it invalidates
+#: cached copy. Moves into ``GeneratorConfig`` when the API backend lands.
+DEFAULT_PROMPT_VERSION: Final = "v1"
 
 #: Longest a feed USP (attr 1067) may be to use verbatim; a longer one is tightened by the
 #: producer instead. Roughly one readable line — the live taglines run ~30-60 chars.
@@ -123,6 +128,20 @@ class GenerationRequest(BaseModel):
     needs_name: bool = False
     mode: str = MODE_GENERATE  # MODE_TIGHTEN to shorten a long 1067, else MODE_GENERATE
     candidates: list[str] = Field(default_factory=list)  # the 1067 USPs to tighten (MODE_TIGHTEN)
+
+
+class LLMClient(Protocol):
+    """A copy producer: turns one :class:`GenerationRequest` into a :class:`GenerationResult`.
+
+    The seam both producers satisfy — the headless API backend (``lib.llm``) and test fakes —
+    so ``scripts/run_generate.py`` can drive either through one loop. The Protocol takes no
+    network dependency itself; determinism still comes from the cache, so a producer is only
+    ever called for the gaps :func:`pending_requests` reports.
+    """
+
+    def generate_copy(self, request: GenerationRequest) -> GenerationResult:
+        """Produce copy for ``request`` (its ``mode`` says tighten a 1067 or generate from 1083)."""
+        ...
 
 
 class CacheEntry(BaseModel):
