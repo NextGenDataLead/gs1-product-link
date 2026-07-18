@@ -14,6 +14,10 @@ import pytest
 
 from lib.errors import GeneratorError
 from lib.generator import (
+    MODE_GENERATE,
+    MODE_TIGHTEN,
+    ORIGIN_GENERATED,
+    ORIGIN_TIGHTENED,
     GeneratedCache,
     GenerationResult,
     _combine_title,
@@ -21,6 +25,7 @@ from lib.generator import (
     load_cache,
     merge_generated,
     pending_requests,
+    prefill_from_feed,
     save_cache,
 )
 from lib.records import LocalisedText, ProductRecord
@@ -82,7 +87,14 @@ def test_pending_requests_skips_when_fingerprint_matches() -> None:
     cache = GeneratedCache(client_id="noviplast")
     product = _product()
     request = next(r for r in pending_requests([product], cache, ["nl"], "v1"))
-    apply_result(cache, request, _result("Tagline", "Bullet"), provenance="cowork", now=_NOW)
+    apply_result(
+        cache,
+        request,
+        _result("Tagline", "Bullet"),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_NOW,
+    )
 
     assert pending_requests([product], cache, ["nl"], "v1") == []
 
@@ -101,7 +113,14 @@ def test_apply_result_stores_entry() -> None:
     cache = GeneratedCache(client_id="noviplast")
     request = next(r for r in pending_requests([_product()], cache, ["nl"], "v1"))
 
-    apply_result(cache, request, _result("Tagline", "Bullet"), provenance="cowork", now=_NOW)
+    apply_result(
+        cache,
+        request,
+        _result("Tagline", "Bullet"),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_NOW,
+    )
 
     entry = cache.get("08713195007359", "nl")
     assert entry is not None
@@ -114,7 +133,9 @@ def test_apply_result_rejects_empty_usps() -> None:
     request = next(r for r in pending_requests([_product()], cache, ["nl"], "v1"))
 
     with pytest.raises(GeneratorError, match="empty generation result"):
-        apply_result(cache, request, _result("   "), provenance="cowork", now=_NOW)
+        apply_result(
+            cache, request, _result("   "), origin=ORIGIN_GENERATED, provenance="cowork", now=_NOW
+        )
 
 
 # --- merge_generated ---------------------------------------------------------
@@ -124,7 +145,9 @@ def _merge_one(product: ProductRecord, *usps: str, **kw: object) -> ProductRecor
     """Generate for ``product`` (nl) and return the merged record."""
     cache = GeneratedCache(client_id="noviplast")
     request = next(r for r in pending_requests([product], cache, ["nl"], "v1"))
-    apply_result(cache, request, _result(*usps), provenance="cowork", now=_NOW)
+    apply_result(
+        cache, request, _result(*usps), origin=ORIGIN_GENERATED, provenance="cowork", now=_NOW
+    )
     merged, _ = merge_generated([product], cache, ["nl"], "nl", "v1")
     return merged[0]
 
@@ -141,8 +164,7 @@ def test_merge_assembles_the_three_part_description() -> None:
     assert "<p><strong>Alle kabels perfect weggewerkt!</strong></p>" in html
     # usps[1:] become Eigenschappen; usps[0] does not reappear as a bullet
     eigenschappen = (
-        "<strong>Eigenschappen</strong><br />"
-        "• Klem om te bundelen<br />• Op maat te knippen"
+        "<strong>Eigenschappen</strong><br />• Klem om te bundelen<br />• Op maat te knippen"
     )
     assert eigenschappen in html
     assert "• Alle kabels perfect weggewerkt!" not in html
@@ -156,7 +178,14 @@ def test_merge_reports_one_generated_issue_with_source_input() -> None:
     cache = GeneratedCache(client_id="noviplast")
     product = _product()
     request = next(r for r in pending_requests([product], cache, ["nl"], "v1"))
-    apply_result(cache, request, _result("Tagline", "Bullet"), provenance="cowork", now=_NOW)
+    apply_result(
+        cache,
+        request,
+        _result("Tagline", "Bullet"),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_NOW,
+    )
 
     _, issues = merge_generated([product], cache, ["nl"], "nl", "v1")
 
@@ -171,7 +200,14 @@ def test_merge_ignores_stale_entry_when_feed_changed() -> None:
     cache = GeneratedCache(client_id="noviplast")
     old = _product(description_short=LocalisedText(values={"nl": "Oud"}))
     request = next(r for r in pending_requests([old], cache, ["nl"], "v1"))
-    apply_result(cache, request, _result("Tagline", "Bullet"), provenance="cowork", now=_NOW)
+    apply_result(
+        cache,
+        request,
+        _result("Tagline", "Bullet"),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_NOW,
+    )
 
     edited = _product(description_short=LocalisedText(values={"nl": "Nieuw"}))
     merged, _ = merge_generated([edited], cache, ["nl"], "nl", "v1")
@@ -207,13 +243,90 @@ def test_merge_fills_missing_french_name_from_cache() -> None:
     request = next(r for r in pending_requests([product], cache, ["fr"], "v1"))
     assert request.needs_name is True
     apply_result(
-        cache, request, _result("Slogan", "Puce", product_name="Pic d'arrosage"),
-        provenance="cowork", now=_NOW,
+        cache,
+        request,
+        _result("Slogan", "Puce", product_name="Pic d'arrosage"),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_NOW,
     )
 
     merged, _ = merge_generated([product], cache, ["fr"], "nl", "v1")
 
     assert merged[0].product_name.get("fr") == "Pic d'arrosage"
+
+
+# --- 1067 routing: verbatim / tighten / generate -----------------------------
+
+
+def _with_1067(text: str) -> ProductRecord:
+    return _product(description_long=LocalisedText(values={"nl": text}))
+
+
+def test_prefill_uses_short_1067_verbatim() -> None:
+    cache = GeneratedCache(client_id="noviplast")
+    product = _with_1067("Speciaal voor kleine honden\nGemaakt van kunststof")
+
+    prefill_from_feed([product], cache, ["nl"], "v1", now=_NOW)
+
+    entry = cache.get("08713195007359", "nl")
+    assert entry is not None
+    assert entry.origin == "feed"
+    assert entry.usps == ["Speciaal voor kleine honden", "Gemaakt van kunststof"]
+    # a verbatim-filled unit is no longer pending
+    assert pending_requests([product], cache, ["nl"], "v1") == []
+
+
+def test_prefill_skips_long_1067() -> None:
+    cache = GeneratedCache(client_id="noviplast")
+    product = _with_1067("De Noviplast Hydro Jet is een handige oplossing " * 3)  # > 80 chars
+
+    prefill_from_feed([product], cache, ["nl"], "v1", now=_NOW)
+
+    assert cache.get("08713195007359", "nl") is None  # left for the producer
+
+
+def test_pending_request_mode_tighten_for_long_1067() -> None:
+    product = _with_1067("De Noviplast Hydro Jet is een handige oplossing " * 3)
+    requests = pending_requests([product], GeneratedCache(client_id="noviplast"), ["nl"], "v1")
+
+    assert requests[0].mode == MODE_TIGHTEN
+    assert requests[0].candidates  # the 1067 text to shorten
+
+
+def test_pending_request_mode_generate_without_1067() -> None:
+    requests = pending_requests([_product()], GeneratedCache(client_id="noviplast"), ["nl"], "v1")
+
+    assert requests[0].mode == MODE_GENERATE
+
+
+def test_feed_verbatim_copy_is_not_reported() -> None:
+    cache = GeneratedCache(client_id="noviplast")
+    product = _with_1067("Speciaal voor kleine honden\nGemaakt van kunststof")
+    prefill_from_feed([product], cache, ["nl"], "v1", now=_NOW)
+
+    _, issues = merge_generated([product], cache, ["nl"], "nl", "v1")
+
+    assert [i for i in issues if i.issue in {"content_generated", "content_adjusted"}] == []
+
+
+def test_tightened_copy_is_reported_as_adjusted() -> None:
+    cache = GeneratedCache(client_id="noviplast")
+    product = _with_1067("A very long feature benefit sentence " * 3)
+    request = next(r for r in pending_requests([product], cache, ["nl"], "v1"))
+    apply_result(
+        cache,
+        request,
+        _result("Kort", "Bullet"),
+        origin=ORIGIN_TIGHTENED,
+        provenance="cowork",
+        now=_NOW,
+    )
+
+    _, issues = merge_generated([product], cache, ["nl"], "nl", "v1")
+
+    adjusted = [i for i in issues if i.issue == "content_adjusted"]
+    assert len(adjusted) == 1
 
 
 # --- cache IO ----------------------------------------------------------------
@@ -222,10 +335,15 @@ def test_merge_fills_missing_french_name_from_cache() -> None:
 def test_cache_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     cache = GeneratedCache(client_id="noviplast")
-    request = next(
-        r for r in pending_requests([_product()], cache, ["nl"], "v1")
+    request = next(r for r in pending_requests([_product()], cache, ["nl"], "v1"))
+    apply_result(
+        cache,
+        request,
+        _result("Tagline", "Bullet"),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_NOW,
     )
-    apply_result(cache, request, _result("Tagline", "Bullet"), provenance="cowork", now=_NOW)
 
     save_cache(cache)
     reloaded = load_cache("noviplast")
@@ -233,9 +351,7 @@ def test_cache_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert reloaded == cache
 
 
-def test_load_cache_absent_returns_empty(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_cache_absent_returns_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     assert load_cache("noviplast").entries == {}
 

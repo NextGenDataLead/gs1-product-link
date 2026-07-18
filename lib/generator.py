@@ -34,6 +34,19 @@ _log = logging.getLogger(__name__)
 
 CACHE_FILENAME: Final = "generated_cache.json"
 
+#: Longest a feed USP (attr 1067) may be to use verbatim; a longer one is tightened by the
+#: producer instead. Roughly one readable line — the live taglines run ~30-60 chars.
+MAX_VERBATIM_USP_CHARS: Final = 80
+
+#: How a cache entry's copy came to be — drives what the report says about it.
+ORIGIN_FEED: Final = "feed"  # 1067 used verbatim (short); authoritative, not reported
+ORIGIN_TIGHTENED: Final = "tightened"  # 1067 shortened by the producer; reported as adjusted
+ORIGIN_GENERATED: Final = "generated"  # produced from 1083 (no usable 1067); reported as generated
+
+#: What a pending request asks the producer to do.
+MODE_TIGHTEN: Final = "tighten"  # 1067 present but too long — shorten and rank it
+MODE_GENERATE: Final = "generate"  # no usable 1067 — write from 1083
+
 #: Placeholder material values the feed carries in lieu of a real one — treated as absent.
 _PLACEHOLDER_PREFIX: Final = "zzz"
 
@@ -108,6 +121,8 @@ class GenerationRequest(BaseModel):
     inputs: GenerationInputs
     input_fingerprint: str
     needs_name: bool = False
+    mode: str = MODE_GENERATE  # MODE_TIGHTEN to shorten a long 1067, else MODE_GENERATE
+    candidates: list[str] = Field(default_factory=list)  # the 1067 USPs to tighten (MODE_TIGHTEN)
 
 
 class CacheEntry(BaseModel):
@@ -122,6 +137,7 @@ class CacheEntry(BaseModel):
 
     usps: list[str]
     product_name: str | None
+    origin: str  # ORIGIN_FEED | ORIGIN_TIGHTENED | ORIGIN_GENERATED
     input_fingerprint: str
     provenance: str
     source_input: str
@@ -261,46 +277,110 @@ def _gather_inputs(product: ProductRecord, language: str) -> GenerationInputs:
     )
 
 
+def _feature_candidates(inputs: GenerationInputs) -> list[str]:
+    """Split the joined 1067 feature/benefit text into candidate USPs (newline-separated)."""
+    if not inputs.feature_benefit:
+        return []
+    return [line.strip() for line in inputs.feature_benefit.split("\n") if line.strip()]
+
+
+def _all_short(candidates: list[str]) -> bool:
+    """Whether every candidate USP is short enough to use verbatim."""
+    return all(len(c) <= MAX_VERBATIM_USP_CHARS for c in candidates)
+
+
+def _has_name(product: ProductRecord, language: str) -> bool:
+    return product.product_name is not None and product.product_name.get(language) is not None
+
+
+def _is_fresh(cache: GeneratedCache, gtin: str, language: str, fingerprint: str) -> bool:
+    """Whether the cache already holds an entry matching the current input fingerprint."""
+    entry = cache.get(gtin, language)
+    return entry is not None and entry.input_fingerprint == fingerprint
+
+
+def prefill_from_feed(
+    products: list[ProductRecord],
+    cache: GeneratedCache,
+    languages: list[str],
+    prompt_version: str,
+    *,
+    now: datetime,
+) -> None:
+    """Fill the cache in place for units whose 1067 USPs are short enough to use verbatim.
+
+    Deterministic and network-free: when the feed carries feature/benefit copy (attr 1067) and
+    every entry is within :data:`MAX_VERBATIM_USP_CHARS`, that copy *is* the ranked USP list, so no
+    producer is needed. Longer 1067 and absent 1067 are left for :func:`pending_requests`. Skips
+    units already fresh in the cache. Run this before ``pending_requests``.
+    """
+    for product in products:
+        for language in languages:
+            inputs = _gather_inputs(product, language)
+            fingerprint = _fingerprint(inputs, language, prompt_version)
+            if _is_fresh(cache, product.gtin, language, fingerprint):
+                continue
+            candidates = _feature_candidates(inputs)
+            if not candidates or not _all_short(candidates):
+                continue
+            request = GenerationRequest(
+                gtin=product.gtin,
+                language=language,
+                inputs=inputs,
+                input_fingerprint=fingerprint,
+                needs_name=not _has_name(product, language),
+            )
+            apply_result(
+                cache,
+                request,
+                GenerationResult(usps=candidates),
+                origin=ORIGIN_FEED,
+                provenance="feed:1067",
+                now=now,
+            )
+
+
 def pending_requests(
     products: list[ProductRecord],
     cache: GeneratedCache,
     languages: list[str],
     prompt_version: str,
 ) -> list[GenerationRequest]:
-    """Return the ``(gtin, language)`` units whose copy is missing or stale in the cache.
+    """Return the ``(gtin, language)`` units still needing a producer, each with its mode.
 
-    A unit is pending when it has no cache entry, or its entry's fingerprint no longer matches
-    the current inputs (a feed edit, or a ``prompt_version`` bump). This is the work list a
-    producer fills; every unit needs copy because the feed's own feature/benefit text is too
-    sparse (6/127) to serve as the Eigenschappen bullets.
+    A unit is pending when it has no fresh cache entry (no entry, or a fingerprint that no longer
+    matches the inputs after a feed edit or ``prompt_version`` bump) and it was not verbatim-filled
+    by :func:`prefill_from_feed`. Its ``mode`` is :data:`MODE_TIGHTEN` when the feed carries 1067
+    copy that is too long to use as-is (the producer shortens and ranks it), else
+    :data:`MODE_GENERATE` (the producer writes from 1083).
 
     Args:
         products: The parsed products.
-        cache: The current generated-copy cache.
+        cache: The current generated-copy cache (call ``prefill_from_feed`` first).
         languages: The languages to generate for.
         prompt_version: The active prompt version (part of the fingerprint).
 
     Returns:
-        The pending requests, each carrying its inputs and fingerprint.
+        The pending requests, each carrying its inputs, fingerprint, mode, and 1067 candidates.
     """
     requests: list[GenerationRequest] = []
     for product in products:
         for language in languages:
             inputs = _gather_inputs(product, language)
             fingerprint = _fingerprint(inputs, language, prompt_version)
-            entry = cache.get(product.gtin, language)
-            if entry is not None and entry.input_fingerprint == fingerprint:
+            if _is_fresh(cache, product.gtin, language, fingerprint):
                 continue
-            has_name = product.product_name is not None and product.product_name.get(
-                language
-            ) is not None
+            candidates = _feature_candidates(inputs)
+            mode = MODE_TIGHTEN if candidates else MODE_GENERATE
             requests.append(
                 GenerationRequest(
                     gtin=product.gtin,
                     language=language,
                     inputs=inputs,
                     input_fingerprint=fingerprint,
-                    needs_name=not has_name,
+                    needs_name=not _has_name(product, language),
+                    mode=mode,
+                    candidates=candidates,
                 )
             )
     return requests
@@ -311,11 +391,12 @@ def _clean_bullets(bullets: list[str]) -> list[str]:
     return [stripped for stripped in (b.strip() for b in bullets) if stripped]
 
 
-def apply_result(
+def apply_result(  # noqa: PLR0913 — a validated write needs its result, provenance, and clock
     cache: GeneratedCache,
     request: GenerationRequest,
     result: GenerationResult,
     *,
+    origin: str,
     provenance: str,
     now: datetime,
 ) -> None:
@@ -325,6 +406,9 @@ def apply_result(
         cache: The cache to update (mutated).
         request: The request this result answers (supplies gtin/language/fingerprint/inputs).
         result: The producer's copy.
+        origin: How the copy came to be — :data:`ORIGIN_TIGHTENED` (shortened from 1067) or
+            :data:`ORIGIN_GENERATED` (written from 1083). :data:`ORIGIN_FEED` is set by
+            :func:`prefill_from_feed`, not here.
         provenance: Which producer made it, e.g. ``"api:claude-sonnet-5"`` or ``"cowork"``.
         now: The generation timestamp (injected for determinism).
 
@@ -346,6 +430,7 @@ def apply_result(
     entry = CacheEntry(
         usps=usps,
         product_name=result.product_name if request.needs_name else None,
+        origin=origin,
         input_fingerprint=request.input_fingerprint,
         provenance=provenance,
         source_input=source_input,
@@ -468,6 +553,41 @@ def _missing_input_issue(gtin: str, language: str, inputs: GenerationInputs) -> 
     )
 
 
+def _content_issue(gtin: str, language: str, entry: CacheEntry) -> SourceIssue | None:
+    """Report generated or adjusted copy; verbatim feed copy needs no report.
+
+    Feed copy (attr 1067 used as-is) is authoritative and reported nowhere. Tightened copy — the
+    feed's 1067 was too long and the producer shortened it — is flagged so a human confirms the
+    shortening and fixes 1067 at source. Fully generated copy (no usable 1067) is flagged for
+    review with its source-language input.
+    """
+    if entry.origin == ORIGIN_FEED:
+        return None
+    if entry.origin == ORIGIN_TIGHTENED:
+        return SourceIssue(
+            gtin=gtin,
+            field=f"generated_description.{language}",
+            source="adjusted from TradeItemFeatureBenefit attr 1067",
+            issue="content_adjusted",
+            value=entry.source_input,
+            detail=(
+                f"1067 copy for {language} was too long and was shortened ({entry.provenance}); "
+                "review the adjusted copy and tighten attr 1067 at the source."
+            ),
+        )
+    return SourceIssue(
+        gtin=gtin,
+        field=f"generated_description.{language}",
+        source="generated (usps: tagline + Eigenschappen)",
+        issue="content_generated",
+        value=entry.source_input,
+        detail=(
+            f"Tagline and Eigenschappen for {language} were generated ({entry.provenance}); "
+            "review the copy before publishing."
+        ),
+    )
+
+
 def merge_generated(
     products: list[ProductRecord],
     cache: GeneratedCache,
@@ -524,19 +644,9 @@ def merge_generated(
                 descriptions[language] = _assemble_description(
                     entry.usps, product, language, default_language
                 )
-                issues.append(
-                    SourceIssue(
-                        gtin=product.gtin,
-                        field=f"generated_description.{language}",
-                        source="generated (usps: tagline + Eigenschappen)",
-                        issue="content_generated",
-                        value=entry.source_input,
-                        detail=(
-                            f"Tagline and Eigenschappen for {language} were generated "
-                            f"({entry.provenance}); review the copy before publishing."
-                        ),
-                    )
-                )
+                issue = _content_issue(product.gtin, language, entry)
+                if issue is not None:
+                    issues.append(issue)
 
         update: dict[str, object] = {}
         if product.product_name is None or names != product.product_name.values:

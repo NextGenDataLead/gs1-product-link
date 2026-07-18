@@ -133,6 +133,19 @@ deterministic:
 - **Technische details** = **deterministic** from net content (decoded) + dimensions + material —
   *not* generated, *not* 1067.
 
+### 1067 routing (verbatim / tighten / generate)
+When attr 1067 is present it *is* the ranked USP source (all `TradeItemFeatureBenefit[n]` slots,
+captured via `multivalue`, newline-split into candidates). Per `(gtin, language)`:
+- **Verbatim** — every candidate ≤ `MAX_VERBATIM_USP_CHARS` (80): the feed copy is the USP list,
+  filled deterministically by `prefill_from_feed` (no producer, `origin=feed`). Not reported.
+- **Tighten** — 1067 present but a candidate is too long: a `MODE_TIGHTEN` request; the producer
+  shortens/ranks it (`origin=tightened`). **Reported as `content_adjusted`** (the operator confirms
+  the shortening and fixes 1067 at source).
+- **Generate** — no usable 1067: a `MODE_GENERATE` request from 1083 (`origin=generated`).
+  **Reported as `content_generated`**; a blank 1083 is flagged `missing_generation_input`.
+
+Real-export split: 8 verbatim, 3 tighten, 243 generate (127 products × 2 languages).
+
 ## LLM call shape & prompt
 - **One call per `(gtin, language)`** returning structured JSON via tool-use / strict schema:
   `{"usps": [...], "product_name"?: "..."}`. USPs are seeded by 1067 (all `TradeItemFeatureBenefit`
