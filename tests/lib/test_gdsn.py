@@ -563,3 +563,58 @@ def test_gdsn_extras_carry_generator_inputs(tmp_path: Path) -> None:
     assert record.extras["product_variation"] == "Set"
     assert record.extras["dim_height"] == "250 MMT"  # unit code kept for lib/units decoding
     assert record.extras["material"] == "kunststof"
+
+
+def _write_multivalue_workbook(tmp_path: Path) -> str:
+    """A workbook whose 1067 attribute spreads USPs across two repeated slots."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    desc = wb.create_sheet("TradeItemDescription")
+    for row in [
+        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
+         "TradeItemUnitDescriptorCode", "Info", "Info", "BrandNameInformation"],
+        [None, None, None, None, "Name[0]", "Name[0]", None],
+        [None, None, None, None, "LanguageCode", "Value", "BrandName"],
+        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
+         "Functional (3301)", "Functional (3301)", "Brand (3336)"],
+        _drow("08713195007717", "528", "nl", "Hogedrukreiniger", "Noviplast"),
+    ]:
+        desc.append(row)
+
+    mi = wb.create_sheet("MarketingInformation")
+    for row in [
+        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
+         "TradeItemUnitDescriptorCode", "MI", "MI", "MI", "MI"],
+        [None, None, None, None, "FeatureBenefit[0]", "FeatureBenefit[0]",
+         "FeatureBenefit[1]", "FeatureBenefit[1]"],
+        [None, None, None, None, "LanguageCode", "Value", "LanguageCode", "Value"],
+        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
+         "Feature (1067)", "Feature (1067)", "Feature (1067)", "Feature (1067)"],
+        _drow("08713195007717", "528", "nl", "Eerste USP", "nl", "Tweede USP"),
+    ]:
+        mi.append(row)
+
+    path = tmp_path / "multivalue.xlsx"
+    wb.save(path)
+    return str(path)
+
+
+def test_multivalue_joins_all_slots(tmp_path: Path) -> None:
+    # 1067 spreads USPs across TradeItemFeatureBenefit[0] and [1]; multivalue joins both with a
+    # newline so the generator can split them into one ranked list (single-value picking would
+    # silently drop the second USP).
+    sheets = read_workbook(_write_multivalue_workbook(tmp_path))
+    gdsn_map = {
+        "product_name": GdsnSource(sheet="TradeItemDescription", attribute="3301", localised=True),
+        "brand": GdsnSource(sheet="TradeItemDescription", attribute="3336"),
+        "description_long": GdsnSource(
+            sheet="MarketingInformation", attribute="1067", localised=True, multivalue=True
+        ),
+    }
+
+    result = build_records(sheets, gdsn_map, ["528"], ["nl"], "nl")
+
+    record = next(r for r in result.records if r.gtin == "08713195007717")
+    assert record.description_long is not None
+    assert record.description_long.get("nl") == "Eerste USP\nTweede USP"

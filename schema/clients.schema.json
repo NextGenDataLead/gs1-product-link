@@ -246,6 +246,10 @@
           "type": "boolean",
           "description": "Whether the attribute is a per-language LanguageCode/Value group."
         },
+        "multivalue": {
+          "type": "boolean",
+          "description": "For a localised attribute that repeats (e.g. all TradeItemFeatureBenefit[n] slots), join every slot's value with a newline instead of taking only the first. Ignored for non-localised sources."
+        },
         "with_unit": {
           "type": "boolean",
           "description": "Whether to append the paired MeasurementUnitCode to the value."

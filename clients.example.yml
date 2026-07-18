@@ -85,9 +85,12 @@ clients:
         # report_issues: false — a generator input; its blanks are the generator's future
         # work, not today's source-fix queue. §4.2.
         description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true, report_issues: false }
-        # 1067 TradeItemFeatureBenefit = feature/benefit copy (sparse). A generator seed for
-        # the Eigenschappen bullets — report_issues: false, same reason.
-        description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true, report_issues: false }
+        # 1067 TradeItemFeatureBenefit = the ranked USP source (tagline + Eigenschappen) when
+        # present. multivalue: true joins every TradeItemFeatureBenefit[n] slot with a newline so
+        # the generator sees all of them (the feed spreads USPs across slots AND newline-separates
+        # within a slot); the generator splits on newlines to rank. report_issues: false — a
+        # generator input, its blanks are the generator's work (flagged there), not the source queue.
+        description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true, multivalue: true, report_issues: false }
         brand:             { sheet: TradeItemDescription,            attribute: "3336" }
         net_content:       { sheet: TradeItemMeasurements,           attribute: "3510", with_unit: true }
         gpc_brick_code:    { sheet: BrickGPCCommercialData,          attribute: GpcCategoryCode }

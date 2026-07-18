@@ -92,6 +92,9 @@ class GdsnSource(BaseModel):
             name (e.g. ``"GpcCategoryCode"``) identifying the column.
         localised: Whether the attribute is a per-language ``LanguageCode``/``Value``
             group (resolved once per configured language).
+        multivalue: For a ``localised`` attribute that repeats (e.g. all
+            ``TradeItemFeatureBenefit[n]`` slots), join every slot's value with a newline
+            instead of taking only the first. Ignored for non-localised sources.
         with_unit: Whether to append the paired ``MeasurementUnitCode`` to the value.
         primary_file: Whether to resolve the primary referenced-file URI instead of a
             plain attribute (used for ``image_url``).
@@ -119,6 +122,7 @@ class GdsnSource(BaseModel):
     sheet: str
     attribute: str = ""
     localised: bool = False
+    multivalue: bool = False
     with_unit: bool = False
     primary_file: bool = False
     strip_prefix: str = ""
@@ -198,6 +202,30 @@ class GdsnSheet:
                 if value:
                     return value
         return None
+
+    def pick_localised_all(self, gtin: str, market: str, attribute: str, lang: str) -> list[str]:
+        """Return every ``Value`` matching ``lang`` for ``attribute``, in column (slot) order.
+
+        Unlike :meth:`pick_localised`, which returns the first match, this collects every repeated
+        group — e.g. all ``TradeItemFeatureBenefit[n]`` slots — so a multi-slot attribute is
+        captured whole rather than truncated to its first slot.
+        """
+        row = self.rows_by_key.get((gtin, market))
+        if row is None:
+            return []
+        values: list[str] = []
+        for value_col in self.columns:
+            if value_col.leaf_name != _LEAF_VALUE or not value_col.matches_attribute(attribute):
+                continue
+            lang_col = self._sibling(value_col.group_path, _LEAF_LANGUAGE)
+            if lang_col is None:
+                continue
+            cell_lang = self._cell(row, lang_col.index)
+            if cell_lang and cell_lang.strip().lower() == lang.lower():
+                value = self._cell(row, value_col.index)
+                if value:
+                    values.append(value)
+        return values
 
     def pick_scalar(
         self, gtin: str, market: str, attribute: str, with_unit: bool = False
@@ -630,6 +658,22 @@ def _localised_picker(
     return lambda market: sheet.pick_localised(gtin, market, attribute, lang)
 
 
+def _multivalue_picker(
+    sheet: GdsnSheet, gtin: str, attribute: str, lang: str
+) -> Callable[[str], str | None]:
+    """A single-market picker that joins every repeated slot's value with a newline.
+
+    Returns ``None`` when the market carries no slot, so :func:`_pick_ranked` skips it and ranks
+    to the next market — matching the single-value picker's contract.
+    """
+
+    def pick(market: str) -> str | None:
+        values = sheet.pick_localised_all(gtin, market, attribute, lang)
+        return "\n".join(values) if values else None
+
+    return pick
+
+
 def _pick_ranked(
     pick: Callable[[str], str | None], market_priority: list[str]
 ) -> tuple[str | None, dict[str, str]]:
@@ -737,9 +781,12 @@ def _resolve_localised(  # noqa: PLR0913 — one collaborator per step; bundling
     """Resolve a per-language field across ranked markets, reporting blanks and conflicts."""
     values: dict[str, str] = {}
     for lang in ctx.languages:
-        chosen, per_market = _pick_ranked(
-            _localised_picker(sheet, gtin, src.attribute, lang), ctx.market_priority
+        picker = (
+            _multivalue_picker(sheet, gtin, src.attribute, lang)
+            if src.multivalue
+            else _localised_picker(sheet, gtin, src.attribute, lang)
         )
+        chosen, per_market = _pick_ranked(picker, ctx.market_priority)
         where = _Where(f"{field}.{lang}", _source_label(src), gtin)
         if src.report_issues:
             _report_inconsistency(per_market, where, acc)
