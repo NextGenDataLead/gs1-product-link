@@ -15,8 +15,16 @@ data; the generator owns the handful of slots that require *writing* copy.
 - **Scope:** the **full three-part `product_description` block** — AI tagline + AI Eigenschappen
   bullets + French gap-fill, PLUS the deterministic Technische-details specs line. Publishable
   end-to-end. NOT the full ACF page-assembly step (that stays a follow-up).
-- **LLM spend placement:** a **separate `scripts/run_generate.py` command** — the only step that
-  spends money / needs network. `run_plan` only *reads* the cache: free, offline, CI-safe.
+- **Copy producer: BOTH, with the cache as the seam.** `generated_cache.json` is filled by either
+  producer and read identically downstream (`merge_generated`, `run_plan`, ACF, hash are
+  producer-agnostic):
+  - **Cowork-native** — Claude in the operator's Cowork session reads the pending gaps and writes the
+    copy through a validated helper. No API key, no separate billing; generation happens in-session.
+  - **API backend** — headless `scripts/run_generate.py --backend api` calls the Sonnet 5 Messages API
+    for unattended / CI / cron runs. Needs an API key.
+  Both go through one shared request/result contract; `run_plan` only ever *reads* the cache
+  (free, offline, CI-safe). Determinism comes from the cache (fingerprint-keyed, frozen once written),
+  not the producer.
 - **Brand voice:** **few-shot from existing feed copy** — seed prompts with real taglines/1083
   messages that already read well (113 nl / 112 fr), frozen by `prompt_version`.
 
@@ -78,21 +86,41 @@ third field), so slug/title/`diff_against_state` keep working. Raw 3301 stays in
   changes the fingerprint → cache miss → stale value ignored + re-flagged. `prompt_version`/`model`
   bump invalidates the same way.
 
-## Pipeline placement
-- **`lib/generator.py`** — `generate(products, cfg, llm) -> GeneratedCache` (LLM path, used by
-  `run_generate`) and `merge_generated(products, cache, cfg) -> tuple[list[ProductRecord],
-  list[SourceIssue]]` (pure, no network: title combiner, tagline resolution, three-part HTML assembly,
-  French fill, one `SourceIssue` per generated value; used by `run_plan`).
-- **`lib/llm.py`** — sync `AnthropicClient` over the Messages API (sync `httpx`, matching
-  `gs1_dl_client`/`wp_client`) + an `LLMClient` Protocol for test fakes. Credential via a config-named
-  env var, lazily read, raising `MissingCredentialError`.
-- **`scripts/run_generate.py CLIENT_ID`** — fills the cache, prints a spend/coverage summary.
-- **`run_plan._build_plan`** (`scripts/run_plan.py:150-176`) — gains `_generate_content(cfg, products)`
-  after `_assign_categories`, before `diff_against_state`, cache-only. Gaps with no valid cache entry
-  become "needs generation" `SourceIssue`s and fall to the E18 backstop.
+## Pipeline placement — shared spine + two producers
 
-Operator flow: `parse_export` → **`run_generate`** (spend + first copy review) → `run_plan` (merges
-cache, classifies, second review in `plan.json`) → confirm → `run_execute` (draft-first).
+The cache is the producer seam. `lib/generator.py` owns a producer-agnostic contract:
+- `GenerationRequest` (gtin, language, the assembled inputs + few-shot voice, `input_fingerprint`)
+  and `GenerationResult` (`usps`, `eigenschappen`).
+- `pending_requests(products, cache, cfg) -> list[GenerationRequest]` — the gaps whose fingerprint
+  misses the cache (pure).
+- `apply_result(cache, request, result) -> GeneratedCache` — validate a result and write its entry
+  with provenance/fingerprint (pure). Both producers write through this.
+- `merge_generated(products, cache, cfg) -> tuple[list[ProductRecord], list[SourceIssue]]` — pure,
+  no network: title combiner, tagline resolution, three-part HTML assembly, French fill, one
+  `SourceIssue` per generated value; used by `run_plan`.
+
+An `LLMClient` Protocol (`generate_copy(request) -> GenerationResult`) lets any backend satisfy the
+contract; test fakes and the API client both implement it.
+
+**Producers:**
+- **`scripts/run_generate.py CLIENT_ID`** — the spine. `--backend api` calls the API client and fills
+  the cache directly. Default/`--emit` writes `output/{client}/data/generation_requests.json` (the
+  pending gaps + inputs + voice) for a Cowork session to fill; `--ingest` validates a
+  `generation_results.json` back into the cache via `apply_result`. Prints coverage.
+- **`lib/llm.py`** (API backend) — sync `AnthropicClient` over the Messages API (sync `httpx`) + the
+  `LLMClient` Protocol. Credential via a config-named env var, lazily read, raising
+  `MissingCredentialError`.
+- **Cowork-native producer** — a generation skill (or flow-orchestrator step): read
+  `generation_requests.json`, generate per-language copy in the few-shot voice, hand results to
+  `run_generate --ingest`. No API key.
+
+`run_plan._build_plan` (`scripts/run_plan.py:150-176`) gains `_generate_content(cfg, products)` after
+`_assign_categories`, before `diff_against_state`, **cache-only**. Gaps with no valid cache entry
+become "needs generation" `SourceIssue`s and fall to the E18 backstop.
+
+Operator flow: `parse_export` → **`run_generate`** (API fills the cache, or emit→Cowork generates→ingest;
+first copy review) → `run_plan` (merges cache, classifies, second review in `plan.json`) → confirm →
+`run_execute` (draft-first).
 
 ## LLM call shape & prompt
 - **One call per `(gtin, language)`** returning structured JSON via tool-use / strict schema:
@@ -148,13 +176,16 @@ name, `max_tokens`. Typed, validated at load.
 1. **Parser inputs** — `product_variation`/`dim_*`/`material` in both configs; confirm material
    segment; test they land in `extras`.
 2. **Record fields** — add `generated_tagline`, `generated_description`; round-trip + hash tests.
-3. **`lib/generator.py` deterministic core** — `GeneratedCache` + atomic IO, title combiner, tagline
-   resolver, three-part HTML assembler, `merge_generated` + `SourceIssue`; full unit tests, no LLM.
-4. **`lib/llm.py`** + `GeneratorConfig` — sync `AnthropicClient`, `LLMClient` Protocol,
-   `MissingCredentialError`; `pytest-httpx` tests; schema update.
-5. **`generator.generate` (LLM path)** — prompt templates + few-shot voice, cache population, fr-fill;
-   fake-`LLMClient` tests.
-6. **`scripts/run_generate.py`** — CLI + summary; smoke test.
+3. **`lib/generator.py` deterministic core (producer-agnostic)** — `GeneratedCache` + atomic IO,
+   `GenerationRequest`/`GenerationResult`, `pending_requests`, `apply_result` (fingerprint +
+   provenance + validation), title combiner, tagline resolver, three-part HTML assembler,
+   `merge_generated` + `SourceIssue`; full unit tests, no network.
+4. **`scripts/run_generate.py` spine** — gap listing, `--emit`/`--ingest` (Cowork path), coverage
+   summary; `LLMClient` Protocol seam. Tests with a fake `LLMClient` + emit/ingest round-trip.
+5. **Cowork-native producer** — a generation skill (or flow-orchestrator step) + prompt/voice template
+   that fills `generation_requests.json` and calls `--ingest`. Validate against real `products.json`.
+6. **API backend** — `lib/llm.py` (sync `AnthropicClient`, `MissingCredentialError`) + `GeneratorConfig`
+   + `--backend api`; `pytest-httpx` tests; schema update. Load `claude-api` to pin `claude-sonnet-5`.
 7. **`run_plan` integration** — merge before `diff_against_state`; E18 backstop; `generated_issues.json`;
    summary line; tests.
 8. **Wire `acf_map`** in `clients.yml`; acf test.
@@ -176,8 +207,9 @@ for schemas, absolute imports. Tests: `.venv/bin/python -m pytest -q`.
 1. **Unit** — `test_generator.py`, `test_llm.py`: cache hit reused; fingerprint change → miss; feed
    present → cache ignored (supersession); title dedup cases; per-language materialisation; one
    `SourceIssue` per generated value with its source input.
-2. **LLM surface** — `pytest-httpx` asserts request shape (model, `temperature=0`, auth header),
-   parses a canned tool-result; HTTP error → typed error.
+2. **Producers** — API backend: `pytest-httpx` asserts request shape (model, `temperature=0`, auth
+   header), parses a canned tool-result, HTTP error → typed error. Cowork path: `--emit`/`--ingest`
+   round-trip validates via `apply_result` (bad-shape result rejected; good result lands in cache).
 3. **Integration** — `test_run_plan.py`: generated content reclassifies CHANGED; E18 row with cached
    fr plans; E18 row with no cache still SKIPs.
 4. **Real run (staged)** — `run_generate noviplast` on the real `products.json`, eyeball
