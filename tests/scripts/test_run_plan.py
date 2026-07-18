@@ -18,6 +18,7 @@ import openpyxl
 import pytest
 
 from lib.config import (
+    CategoryConfig,
     ClientConfig,
     ExportConfig,
     GS1Config,
@@ -66,11 +67,12 @@ def _make_config(**overrides: Any) -> ClientConfig:
     return ClientConfig(**params)
 
 
-def _product(gtin: str = GTIN_A) -> ProductRecord:
+def _product(gtin: str = GTIN_A, brick: str | None = None) -> ProductRecord:
     return ProductRecord(
         gtin=gtin,
         brand="Acme",
         product_name=LocalisedText(values={"nl": "Rugsteun"}),
+        gpc_brick_code=brick,
     )
 
 
@@ -290,6 +292,104 @@ def test_healthy_state_does_not_warn(
     run_plan.main(["acme", "--products", str(products)])
 
     assert "corrupt" not in capsys.readouterr().err
+
+
+# --- Category assignment (Phase 7.5) -----------------------------------------
+
+
+def _categories(**kwargs: Any) -> CategoryConfig:
+    kwargs.setdefault("terms", ["tuin", "keuken"])
+    return CategoryConfig(**kwargs)
+
+
+def test_assigns_category_from_brick_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(categories=_categories(brick_category_map={"10003865": "tuin"}))
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A, brick="10003865")])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    assert _read_plan().rows[0].product.category == "tuin"
+    # The report is written even when it found nothing.
+    issues = json.loads(Path("output/acme/data/category_issues.json").read_text(encoding="utf-8"))
+    assert issues == []
+
+
+def test_override_wins_in_run_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        categories=_categories(
+            brick_category_map={"10003865": "tuin"}, overrides={GTIN_A: "keuken"}
+        )
+    )
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A, brick="10003865")])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    assert _read_plan().rows[0].product.category == "keuken"
+
+
+def test_category_change_reclassifies_as_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The category is part of the content hash: planning it onto a product that had none
+    # must reclassify the row as CHANGED, not UNCHANGED.
+    monkeypatch.chdir(tmp_path)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A, brick="10003865")])
+
+    _patch_client(monkeypatch, _make_config())  # no categories -> baseline hash, category None
+    run_plan.main(["acme", "--products", str(products)])
+    baseline = _read_plan().rows[0]
+    assert baseline.product.category is None
+    save_state(
+        State(
+            client_id="acme",
+            entries={GTIN_A: {"nl": _entry(baseline.content_hash, baseline.target_url)}},
+        )
+    )
+
+    cfg = _make_config(categories=_categories(brick_category_map={"10003865": "tuin"}))
+    _patch_client(monkeypatch, cfg)
+    run_plan.main(["acme", "--products", str(products)])
+    row = _read_plan().rows[0]
+
+    assert row.product.category == "tuin"
+    assert row.classification is PlanClassification.CHANGED
+
+
+def test_unmapped_brick_warns_and_leaves_category_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(categories=_categories(brick_category_map={"10003865": "tuin"}))
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A, brick="99999999")])
+
+    code = run_plan.main(["acme", "--products", str(products)])
+
+    assert code == 0
+    row = _read_plan().rows[0]
+    assert row.product.category is None  # never guessed
+    assert "1 product(s) with unmapped category (left unset)" in capsys.readouterr().err
+    issues = json.loads(Path("output/acme/data/category_issues.json").read_text(encoding="utf-8"))
+    assert len(issues) == 1
+    assert issues[0]["issue"] == "category_unmapped"
+
+
+def test_no_category_report_without_categories_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A, brick="10003865")])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    assert not Path("output/acme/data/category_issues.json").exists()
 
 
 # --- Error paths (all exit 2) ------------------------------------------------

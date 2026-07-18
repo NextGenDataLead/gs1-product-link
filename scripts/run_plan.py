@@ -37,9 +37,10 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from lib.categories import resolve_category
 from lib.config import ClientConfig, get_client
 from lib.errors import ConfigError, StateError, WebsiteStatusError
-from lib.records import Plan, PlanClassification, ProductRecord
+from lib.records import Plan, PlanClassification, ProductRecord, SourceIssue
 from lib.state import diff_against_state, load_state
 from lib.website_status import WebsiteStatus, load_website_status
 
@@ -94,19 +95,73 @@ def _gate(
     return eligible, excluded
 
 
+def _assign_categories(
+    cfg: ClientConfig, products: list[ProductRecord]
+) -> tuple[list[ProductRecord], list[SourceIssue]]:
+    """Assign each product's site category from ``cfg.categories`` (Phase 7.5).
+
+    A no-op when the client has no ``categories`` config. Otherwise resolves every product's
+    category (per-GTIN override > brick map > none) and returns products with ``category`` set,
+    plus one :class:`SourceIssue` per product whose brick maps to nothing. An unmapped brick
+    warns and leaves the category unset — the tool never guesses. Called before classification
+    so the category is part of the content hash: a category change reclassifies as CHANGED.
+    """
+    if cfg.categories is None:
+        return products, []
+
+    allowed = frozenset(cfg.categories.terms)
+    assigned: list[ProductRecord] = []
+    issues: list[SourceIssue] = []
+    for product in products:
+        resolution = resolve_category(
+            product,
+            brick_category_map=cfg.categories.brick_category_map,
+            overrides=cfg.categories.overrides,
+            allowed_terms=allowed,
+        )
+        if resolution.term is None:
+            assigned.append(product)
+        else:
+            assigned.append(product.model_copy(update={"category": resolution.term}))
+        if resolution.issue is not None:
+            issues.append(resolution.issue)
+
+    for brick in sorted({i.value for i in issues if i.issue == "category_unmapped" and i.value}):
+        _log.warning("GPC brick %s maps to no category term; leaving category unset", brick)
+    missing_brick = sum(1 for i in issues if i.issue == "category_brick_missing")
+    if missing_brick:
+        _log.warning("%d product(s) have no GPC brick to derive a category from", missing_brick)
+    return assigned, issues
+
+
+def _write_category_issues(client_id: str, issues: list[SourceIssue]) -> None:
+    """Write the category-mapping issue report, always — even when empty.
+
+    Written unconditionally (like ``parse_export``'s source_issues.json) so an empty file means
+    "this run found nothing" and a missing file means "category resolution did not run". Kept
+    separate from source_issues.json, which ``parse_export`` owns and overwrites.
+    """
+    path = Path("output") / client_id / "data" / "category_issues.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [issue.model_dump(mode="json") for issue in issues]
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _build_plan(
     cfg: ClientConfig, products: list[ProductRecord]
-) -> tuple[Plan, dict[str, int], bool]:
-    """Gate, classify, and assemble the :class:`Plan`.
+) -> tuple[Plan, dict[str, int], bool, list[SourceIssue]]:
+    """Gate, assign categories, classify, and assemble the :class:`Plan`.
 
-    Returns the plan, the gate-exclusion tally, and whether prior state was reset from a
-    corrupt file (E19) — the last of which the caller must surface, because it means every
-    row re-plans as NEW.
+    Returns the plan, the gate-exclusion tally, whether prior state was reset from a corrupt
+    file (E19) — which the caller must surface, because it means every row re-plans as NEW —
+    and the category-mapping issues (unmapped bricks left unset).
     """
     if cfg.website_status is not None:
         candidates, excluded = _gate(products, load_website_status(cfg.website_status))
     else:
         candidates, excluded = products, {"on_website": 0, "not_in_gs1": 0, "unknown": 0}
+
+    candidates, category_issues = _assign_categories(cfg, candidates)
 
     state = load_state(cfg.client_id)
     rows = diff_against_state(candidates, state, cfg.wordpress.languages, cfg.wordpress)
@@ -118,7 +173,7 @@ def _build_plan(
         counts=counts,
         rows=rows,
     )
-    return plan, excluded, state.reset_from_corrupt
+    return plan, excluded, state.reset_from_corrupt, category_issues
 
 
 def _write_plan(client_id: str, plan: Plan) -> Path:
@@ -130,7 +185,9 @@ def _write_plan(client_id: str, plan: Plan) -> Path:
     return path
 
 
-def _summary(plan: Plan, excluded: dict[str, int], state_was_reset: bool) -> str:
+def _summary(
+    plan: Plan, excluded: dict[str, int], state_was_reset: bool, unmapped_categories: int = 0
+) -> str:
     """Render the stderr summary (§8.2): gate exclusions when non-zero, E19 reset when it fired.
 
     The reset warning leads, because it reframes every count below it — with no prior state
@@ -153,6 +210,8 @@ def _summary(plan: Plan, excluded: dict[str, int], state_was_reset: bool) -> str
             f"{excluded['not_in_gs1']} not yet in GS1, "
             f"{excluded['unknown']} not in control file)"
         )
+    if unmapped_categories:
+        line += f"; {unmapped_categories} product(s) with unmapped category (left unset)"
     if state_was_reset:
         line = f"{_STATE_RESET_WARNING}\n{line}"
     return line
@@ -178,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
         products = _load_products(products_path)
-        plan, excluded, state_was_reset = _build_plan(cfg, products)
+        plan, excluded, state_was_reset, category_issues = _build_plan(cfg, products)
     except (
         ConfigError,
         StateError,
@@ -191,8 +250,10 @@ def main(argv: list[str] | None = None) -> int:
         return _EXIT_CONFIG_ERROR
 
     path = _write_plan(cfg.client_id, plan)
+    if cfg.categories is not None:
+        _write_category_issues(cfg.client_id, category_issues)
     _log.info("wrote plan for %s (%d rows) to %s", cfg.client_id, plan.total, path)
-    print(_summary(plan, excluded, state_was_reset), file=sys.stderr)
+    print(_summary(plan, excluded, state_was_reset, len(category_issues)), file=sys.stderr)
     return _EXIT_OK
 
 
