@@ -246,6 +246,12 @@ chars and an nl median of 54. Raising it hides the problem rather than solving i
 Whichever is chosen, **reconcile §3's and §4's tables**: their disagreement is what made this look
 settled when it was not.
 
+## 5. Content sources and build pipeline
+
+The per-element sequence that turns one export row into a bilingual draft page: where each page
+element's value comes from, and the transform between. The numbered items are referenced elsewhere
+as §5.n (e.g. the category design is **§5.7**).
+
 1. **Eligibility (unchanged):** a product is a candidate when it is already in GS1 **and** not yet on
    the website (control-file `Al in GS1` filled + `Momenteel op Website` blank). The `Categorie`
    action column is **not** used.
@@ -302,17 +308,36 @@ settled when it was not.
 6. **Video (folder):** a single flat folder, e.g. `input/noviplast/media/`, with files named
    `{gtin}*.mp4`; the tool matches by GTIN prefix, uploads, and sets `product_header_video_file`.
    Products without a matching file simply get no video.
-7. **Category → deferred to its own phase (Phase 7.5).** Derived from the GPC brick via the **GS1 DIY
-   sector datamodel**. It is not a simple lookup, which is why it gets a phase of its own:
+7. **Category — GPC brick → site term (Phase 7.5, §5.7).** Derived from the GPC brick
+   (`gpc_brick_code`, GDSN `GpcCategoryCode`) via the **GS1 DIY sector datamodel**. Not a simple
+   lookup, which is why it is its own phase:
    - **~70 distinct bricks** across the 127-product pilot export (many singletons).
    - **Bricks span categories** — e.g. `10003865` holds garden tools *and* a nutcracker (keuken). A
      pure brick map will misclassify, so a **per-GTIN override list** is required.
    - **The client's categorisation is not purely semantic** — *Power Splash* is a shower head, filed
      under **keuken** on the live site. No inferred map reproduces that; it needs client sign-off.
    - **Lighting (~20 products, 6 bricks)** has no category of its own and falls into `specials`.
-   - Output: `brick_category_map` + per-GTIN overrides in `clients.yml`. Unmapped bricks **warn and
-     leave the category unset** — never guess. Terms: `keuken`, `doe_het_zelf`, `schoonmaak`, `tuin`,
-     `dier`, `specials`.
+   - The six terms: `keuken`, `doe_het_zelf`, `schoonmaak`, `tuin`, `dier`, `specials`.
+
+   **How it is built (implemented):**
+   - **Config** (`clients.yml categories:`, `lib.config.CategoryConfig`): `terms` (the closed allowed
+     set), `brick_category_map` (brick → term), and `overrides` (GTIN → term). The loader rejects any
+     map/override value outside `terms`. This is *client-owned, signed-off data* — it lives in config,
+     not code, because it is a business decision, not a feed fact.
+   - **The DIY datamodel is operator-supplied** (like the export and control file). It maps a brick to
+     a DIY *sector* label, **not** to one of the six site terms — so a human still maps label → term,
+     and the client signs off. `scripts/build_brick_map.py` reads the datamodel + the export's
+     distinct bricks and prints a review skeleton (every brick present, term UNSET, annotated with the
+     sector label, product count, and sample names). `--code-column` / `--category-column` name the
+     datamodel's columns, since its format is the operator's.
+   - **Resolution** (`lib.categories.resolve_category`): per-GTIN override > brick map > **nothing**.
+     An unmapped brick, an out-of-set term, or a product with no brick leaves the category unset and is
+     reported (`category_unmapped` / `category_brick_missing` in `output/{client}/data/
+     category_issues.json`). The tool **never guesses** — a brick spans categories, so a guess is a
+     mis-filed page, not a near-miss.
+   - **`run_plan` assigns** the category onto each planned product **before** hashing, so a category
+     change reclassifies the row as CHANGED. `build_brick_map --check` is the coverage gate: it exits
+     non-zero while any export brick is unmapped (a brick covered entirely by overrides counts).
 8. **Bilingual (WPML):** create the nl and fr drafts, set each page's language, and link them as
    translations. WPML has **no clean REST endpoint** for language assignment / translation linking
    (its REST API is translation-*workflow* oriented), so this needs a **small server-side helper**
@@ -344,9 +369,13 @@ settled when it was not.
   tool has just rewritten the French itself — dashboard noise, not breakage. Unverified from here:
   the TM endpoints are admin-only and the automation user is an editor. Revisit when updates start;
   clearing the flag via WPML's API is the likely fix.
-- **GPC brick → category mapping** — **deferred to Phase 7.5** (GS1 DIY sector datamodel; see §5.7).
-- **Auto-create missing category terms**, or require them to pre-exist? (Recommend: require pre-exist,
-  warn on miss.) — settle in Phase 7.5.
+- ~~**GPC brick → category mapping**~~ — **resolved (Phase 7.5, built):** GS1 DIY sector datamodel →
+  `brick_category_map` + per-GTIN overrides in `clients.yml`, client-signed-off; unmapped bricks warn
+  and leave the category unset. Design and tooling in §5.7.
+- ~~**Auto-create missing category terms**, or require them to pre-exist?~~ — **resolved: require
+  pre-exist, warn on miss.** Recorded as `categories.require_terms_exist = true`. Its enforcement point
+  is the future term-assignment step (nothing writes WordPress taxonomy terms yet); Phase 7.5 only
+  assigns `product.category`.
 - **LLM provider/prompt + cache location** for the bullet generation — settle when that phase is planned.
 
 ## 7. WordPress-side enablers (onboarding tasks)

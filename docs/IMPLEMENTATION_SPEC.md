@@ -1090,12 +1090,28 @@ Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered 
 Derive the product-category assignment from the **GS1 DIY sector datamodel**, since GPC bricks do
 not map 1:1 onto a client's marketing categories. **The operator supplies the DIY datamodel** at the
 start of the phase (like the export and control file). See `docs/clients/noviplast-page-adapter.md` §5.7.
-- [ ] DIY datamodel supplied by the operator and parsed
-- [ ] Every GPC brick present in the client export maps to a category term
-- [ ] Bricks that span categories are resolved by a per-GTIN override list
-- [ ] `brick_category_map` + overrides live in `clients.yml`, reviewed and signed off by the client
-- [ ] `run_plan` assigns the correct category for every planned product; unmapped bricks warn rather
-      than guess
+- [ ] DIY datamodel supplied by the operator and parsed — *parser built (`load_diy_datamodel`, columns
+      as parameters) and `scripts/build_brick_map.py` drafts a map from it; closes when the operator
+      supplies the file.*
+- [ ] Every GPC brick present in the client export maps to a category term — *the coverage gate is
+      built (`build_brick_map --check`, exits non-zero while any brick is unmapped); turns green once
+      the signed-off map is complete.*
+- [x] Bricks that span categories are resolved by a per-GTIN override list — override machinery
+      (override > brick map > none) built and test-covered; the real override values are part of the
+      sign-off below.
+- [ ] `brick_category_map` + overrides live in `clients.yml`, reviewed and signed off by the client —
+      *config schema, validator, and `categories:` block built; the reviewed values are the client's
+      to approve.*
+- [x] `run_plan` assigns the correct category for every planned product; unmapped bricks warn rather
+      than guess — assigned before hashing (a category change classifies CHANGED); unmapped bricks
+      warn and leave the category unset.
+
+> **Built this session (branch `noviplast-page-adapter`):** the whole tool layer — `CategoryConfig`
+> + schema, `lib/categories.py` (resolver, coverage, DIY-datamodel parser, draft generator),
+> `scripts/build_brick_map.py`, and the `run_plan` wiring — with tests. Two items stay open on
+> **external inputs**, the same pattern as the export and control file: the operator supplying the DIY
+> datamodel (#1), and the client signing off the `brick_category_map` + overrides (#4, and thereby #2).
+> The same DIY datamodel also unblocks the Phase 7 page-adapter `net_content` H87 decoding item.
 
 ### Phase 8 — Skills
 - [ ] Each SKILL.md finalised per §10

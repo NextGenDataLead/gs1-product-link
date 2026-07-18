@@ -213,6 +213,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     export with zero warnings and `run_plan` gates it to 73 rows (37 nl + 36 fr; one fr row
     skipped by E18 for a missing `product_name.fr`), excluding 90 products — 61 already on the
     website, 12 not yet in GS1, 17 absent from the control file.
+- **Phase 7.5 — GPC brick → category mapping.**
+  - `lib/config.py` `CategoryConfig` + `schema/clients.schema.json` `$defs.categories`: a client
+    `categories:` block with `terms` (the closed allowed set), `brick_category_map` (brick → term),
+    and `overrides` (GTIN → term). The loader rejects any map/override value outside `terms`. This is
+    client-owned, signed-off data, so it lives in config, not code.
+  - `lib/categories.py`: `resolve_category` (precedence override > brick map > none; an unmapped
+    brick, out-of-set term, or missing brick reports a `SourceIssue` and never guesses),
+    `distinct_bricks`, `coverage_report`/`CoverageReport`, plus the operator-input half —
+    `load_diy_datamodel` (columns as parameters, since the GS1 DIY sector datamodel's format is the
+    operator's) and `draft_brick_map`/`BrickMapDraft`.
+  - `scripts/build_brick_map.py`: read-only. Default mode prints a `categories:` review skeleton
+    (every export brick present, term UNSET, annotated from the datamodel); `--check` is the coverage
+    gate, exiting non-zero while any export brick is unmapped.
+  - `scripts/run_plan.py`: assigns `product.category` after the website-status gate and **before**
+    hashing, so a category change reclassifies the row as CHANGED. Unmapped bricks warn and leave the
+    category unset; findings go to `output/{client}/data/category_issues.json`; the summary reports the
+    count. No-op when the client has no `categories` config.
+  - Tests: `tests/lib/test_categories.py`, `tests/lib/test_config.py`,
+    `tests/scripts/test_build_brick_map.py`, `tests/scripts/test_run_plan.py`.
+  - DoD note (§12): the whole tool layer is built and test-covered. Two items stay open on external
+    inputs — the operator supplying the DIY datamodel (#1) and the client signing off the
+    `brick_category_map` + overrides (#4, and thereby #2 "every brick maps") — the same pattern as the
+    export and control file. Open decision resolved: missing WordPress terms must **pre-exist**
+    (`require_terms_exist`), enforced later at the not-yet-built term-assignment step.
 
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
