@@ -225,8 +225,50 @@ def test_load_diy_datamodel_blank_label_kept_as_empty(tmp_path: Path) -> None:
 
 def test_load_diy_datamodel_missing_column_raises(tmp_path: Path) -> None:
     path = _write_datamodel(tmp_path / "diy.xlsx", header=["Brick"], rows=[["10003865"]])
-    with pytest.raises(ExportParseError, match="not found in header"):
+    with pytest.raises(ExportParseError, match="no worksheet has a header row"):
         load_diy_datamodel(path, code_column="Brick", category_column="Sector")
+
+
+def test_load_diy_datamodel_finds_header_below_preamble(tmp_path: Path) -> None:
+    # Real datamodels carry a banner/numbering preamble above the header row.
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["GS1 data pool - banner"])
+    sheet.append([None, None])
+    sheet.append(["1", "3"])  # a numbering row
+    sheet.append(["Brick Code", "NL Brick Title"])
+    sheet.append(["10003865", "Tuingereedschap"])
+    path = tmp_path / "diy.xlsx"
+    workbook.save(path)
+
+    mapping = load_diy_datamodel(
+        str(path), code_column="Brick Code", category_column="NL Brick Title"
+    )
+    assert mapping == {"10003865": "Tuingereedschap"}
+
+
+def test_load_diy_datamodel_scans_to_the_matching_sheet(tmp_path: Path) -> None:
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Explanation"
+    workbook.active.append(["irrelevant"])
+    bricks = workbook.create_sheet("Bricks")
+    bricks.append(["Brick Code", "NL Brick Title"])
+    bricks.append(["10006459", "Verlichting"])
+    path = tmp_path / "diy.xlsx"
+    workbook.save(path)
+
+    mapping = load_diy_datamodel(
+        str(path), code_column="Brick Code", category_column="NL Brick Title"
+    )
+    assert mapping == {"10006459": "Verlichting"}
+
+
+def test_load_diy_datamodel_unknown_sheet_raises(tmp_path: Path) -> None:
+    path = _write_datamodel(
+        tmp_path / "diy.xlsx", header=["Brick", "Sector"], rows=[["10003865", "Garden"]]
+    )
+    with pytest.raises(ExportParseError, match="no worksheet named"):
+        load_diy_datamodel(path, code_column="Brick", category_column="Sector", sheet="Nope")
 
 
 # --- draft_brick_map ---------------------------------------------------------

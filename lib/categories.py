@@ -153,56 +153,79 @@ class CoverageReport:
 # --- DIY datamodel parse + draft generation (DoD #1) -------------------------
 
 
-def load_diy_datamodel(path: str, *, code_column: str, category_column: str) -> dict[str, str]:
+#: How many rows to scan for the header before giving up on a worksheet. Real datamodels
+#: carry a banner/numbering preamble above the header (the GS1 DIY workbook's is on row 4).
+_HEADER_SCAN_LIMIT: int = 30
+
+
+def _read_brick_sheet(
+    worksheet: object, code_column: str, category_column: str
+) -> dict[str, str] | None:
+    """Read one worksheet into ``{brick_code: label}``, or ``None`` if it has no matching header.
+
+    The header is the first row (within :data:`_HEADER_SCAN_LIMIT`) that carries both
+    ``code_column`` and ``category_column``; rows below it are the data.
+    """
+    code_idx: int | None = None
+    cat_idx = 0
+    mapping: dict[str, str] = {}
+    for index, row in enumerate(worksheet.iter_rows(values_only=True)):  # type: ignore[attr-defined]
+        if code_idx is None:
+            if index >= _HEADER_SCAN_LIMIT:
+                return None
+            cells = [_coerce_cell(cell) for cell in row]
+            if code_column in cells and category_column in cells:
+                code_idx = cells.index(code_column)
+                cat_idx = cells.index(category_column)
+            continue
+        code = _coerce_cell(row[code_idx]) if code_idx < len(row) else None
+        label = _coerce_cell(row[cat_idx]) if cat_idx < len(row) else None
+        if code:
+            mapping[code] = label or ""
+    return mapping if code_idx is not None else None
+
+
+def load_diy_datamodel(
+    path: str, *, code_column: str, category_column: str, sheet: str | None = None
+) -> dict[str, str]:
     """Read the operator-supplied GS1 DIY sector datamodel into ``{brick_code: sector_label}``.
 
-    The datamodel is supplied by the operator (like the export and control file), so its
-    format is not fixed here: the two column identities are parameters. Reads the first
-    worksheet of an ``.xlsx``; the first row with any content is the header, matched by exact
-    (whitespace-trimmed) column name.
+    The datamodel is supplied by the operator (like the export and control file), so its shape
+    is not fixed here. The two column identities are parameters, the header may sit below a
+    banner/preamble (found by scanning for a row that carries both columns), and the mapping may
+    live on any worksheet: with ``sheet`` that one is read, otherwise every sheet is tried and
+    the first with a matching header wins.
 
     Args:
         path: Path to the datamodel workbook.
         code_column: Header of the column holding the GPC brick code.
         category_column: Header of the column holding the DIY sector label.
+        sheet: Worksheet to read; ``None`` scans all sheets for a matching header.
 
     Returns:
         Mapping of brick code to its DIY sector label (label ``""`` when the cell is blank).
 
     Raises:
-        ExportParseError: If the file cannot be read, is empty, or lacks either column.
+        ExportParseError: If the file cannot be read, or no worksheet carries both columns.
     """
     try:
         workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
     except (FileNotFoundError, OSError) as exc:
         raise ExportParseError(f"cannot read DIY datamodel at {path}: {exc}") from exc
     try:
-        rows = list(workbook[workbook.sheetnames[0]].iter_rows(values_only=True))
+        names = [sheet] if sheet is not None else list(workbook.sheetnames)
+        if sheet is not None and sheet not in workbook.sheetnames:
+            raise ExportParseError(f"DIY datamodel at {path}: no worksheet named {sheet!r}")
+        for name in names:
+            mapping = _read_brick_sheet(workbook[name], code_column, category_column)
+            if mapping is not None:
+                return mapping
     finally:
         workbook.close()
-
-    header_index = next(
-        (i for i, row in enumerate(rows) if any(cell is not None for cell in row)), None
+    raise ExportParseError(
+        f"DIY datamodel at {path}: no worksheet has a header row with both "
+        f"{code_column!r} and {category_column!r}"
     )
-    if header_index is None:
-        raise ExportParseError(f"DIY datamodel at {path} is empty")
-    header = [_coerce_cell(cell) for cell in rows[header_index]]
-    try:
-        code_idx = header.index(code_column)
-        cat_idx = header.index(category_column)
-    except ValueError as exc:
-        raise ExportParseError(
-            f"DIY datamodel at {path}: column {code_column!r} or {category_column!r} "
-            f"not found in header {header}"
-        ) from exc
-
-    mapping: dict[str, str] = {}
-    for row in rows[header_index + 1 :]:
-        code = _coerce_cell(row[code_idx]) if code_idx < len(row) else None
-        label = _coerce_cell(row[cat_idx]) if cat_idx < len(row) else None
-        if code:
-            mapping[code] = label or ""
-    return mapping
 
 
 @dataclass(frozen=True)

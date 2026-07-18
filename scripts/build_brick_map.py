@@ -108,6 +108,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--datamodel", help="Path to the GS1 DIY sector datamodel (.xlsx)")
     parser.add_argument("--code-column", help="Datamodel column holding the GPC brick code")
     parser.add_argument("--category-column", help="Datamodel column holding the DIY sector label")
+    parser.add_argument("--sheet", help="Datamodel worksheet to read (default: scan all sheets)")
     parser.add_argument(
         "--products", help="Parsed products JSON (default: output/{id}/data/products.json)"
     )
@@ -140,7 +141,10 @@ def main(argv: list[str] | None = None) -> int:
             return _EXIT_USAGE
         try:
             datamodel = load_diy_datamodel(
-                args.datamodel, code_column=args.code_column, category_column=args.category_column
+                args.datamodel,
+                code_column=args.code_column,
+                category_column=args.category_column,
+                sheet=args.sheet,
             )
         except ExportParseError as exc:
             print(f"error: {exc}", file=sys.stderr)
