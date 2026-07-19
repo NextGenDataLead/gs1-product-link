@@ -1156,6 +1156,53 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 - [ ] Every printed QR sample scans and resolves correctly
 - [ ] No manual corrections needed during the run
 
+> Status (2026-07-19): the deferred **execute + resolution leg is proven**. The first real GTIN
+> `08713195007717` (Hogedrukreiniger / Nettoyeur haute pression) was published live nl+fr (WP pages
+> 1449/1450), renders its ACF content on the public pages, is registered on GS1 production (enabled,
+> `gs1:pip` nl+fr), and its QR resolves: `GET https://id.gs1.org/01/08713195007717` → 307 → nl page →
+> 200. (Gotcha: the resolver **404s to HEAD but 307s to GET** — test resolution with GET.) Scaling to
+> ≥10 is **paused by operator choice**; the boxes above stay unchecked until the batch runs. Two items
+> were split out for a real client-facing pilot: **media (Phase 9.5)** and the **fr-QR strategy** (one
+> QR resolves only to the nl default; no single QR robustly routes by language — see
+> `clients/noviplast-page-adapter.md`).
+
+### Phase 9.5 — Media (images + video)
+- [ ] Product-name → GTIN mapping for the video files built and **client-confirmed** (per language)
+- [ ] Product images downloaded from the export `image_url`s, uploaded to WP, and rendering on pilot pages
+- [ ] NL + FR videos matched via the mapping, uploaded, and set on the correct-language page
+- [ ] Media wired into `run_execute` (replaces `featured_media=None`); re-runs stay idempotent
+
+> Split out of Phase 9 (2026-07-19). Today the execute path writes no media (`run_execute.py`
+> `featured_media=None`; the Noviplast `acf_map` maps only the 3 text slots), so pilot pages are
+> text-only. Two independent media sources: **images** come from the export `image_url` (a public
+> `.jpg` per product on GDSN blob storage) — download → `upload_media` → the image ACF fields
+> (`product_header_image`/`product_regular_image`; write-shape to confirm live). **Videos** are **not**
+> in the feed (all 375 feed media are `PRODUCT_IMAGE`); the operator supplies them in two local folders
+> (nl, fr), and the files are named by **product name, not GTIN**, so a name→GTIN mapping must be built
+> and **client-confirmed first** (names carry known typos — see the brand-typo note) before any upload.
+> Then per language → `upload_media` → ACF `product_header_video_file` (caption `product_header_video_text`
+> already = tagline). This revises the folder plan in `clients/noviplast-page-adapter.md` §3 (which
+> assumed one `{gtin}*.mp4` folder).
+
+### Phase 9.8 — Operator flow in Cowork
+- [ ] `flow-orchestrator` driven end-to-end from a **real Cowork chat session** on ≥1 GTIN (draft-first)
+- [ ] Every operator gate exercised and confirmed correct: language select → review gate #1 (generated
+      copy) → plan-review gate #2 → **production environment-confirmation gate** (`[confirm | switch-to-test
+      | cancel]`) → execute → progress → post-execute summary → retry
+- [ ] Operator **guided step-by-step** at each gate — each verbatim prompt presented and its off-menu reply
+      handled; the operator confirms at every gate, nothing auto-proceeds
+- [ ] Ticks the open **Phase 8 DoD box #4** (full re-run flow plan → diff → confirm → execute in a fresh
+      Cowork session)
+
+> Split out 2026-07-19 to make explicit what Phase 9's smoke did NOT cover. The execute leg was proven by
+> invoking `scripts/run_execute.py` **directly**, which bypasses the entire operator UX: the language
+> prompt, both review gates, the mandatory production environment-confirmation gate, progress lines, the
+> post-execute summary, and the retry prompt. This phase validates that whole experience through the
+> `flow-orchestrator` skill in Cowork — and the operator is to be **walked through each gate one step at a
+> time** (present the gate, wait for the operator's choice, then proceed), never batching or auto-confirming.
+> Generation stays on the Cowork-native producer (no API key required). Placed at 9.8 (after media, before
+> the ≥10 batch) so the batch is driven through the validated operator flow, not raw scripts.
+
 ### Phase 10 — Docs
 - [ ] Setup steps executed by unfamiliar person succeed
 - [ ] Every skill and script has a docstring
