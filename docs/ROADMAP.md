@@ -44,7 +44,7 @@ H87→word decoding. **Open:** the generator (below) and the deferred brand-typo
 ## Generator — commit tracker
 
 Branch `noviplast-page-adapter` (unpushed). SPEC: [generator SPEC](clients/noviplast-generator-spec.md).
-Suite 407 green, ruff + `mypy --strict` clean.
+Suite 412 green, ruff + `mypy --strict` clean.
 
 | # | Commit | State |
 |---|---|---|
@@ -56,11 +56,11 @@ Suite 407 green, ruff + `mypy --strict` clean.
 | 4 | `scripts/run_generate.py` spine + `LLMClient` seam + `--emit`/`--ingest` | ✅ `a61c1fd` |
 | 5 | Cowork-native producer (generation skill + voice) | ✅ `bf31dd9` |
 | 6 | API backend (`lib/llm.py`, Sonnet 5, `--backend api`) | ✅ `c6a91e4` |
-| 7 | `run_plan` merge (before `diff_against_state`; E18 backstop; `generated_issues.json`) | ▶ next |
-| 8 | Wire `acf_map` (title/tagline/description → generated fields) | — |
+| 7 | `run_plan` merge (before `diff_against_state`; E18 backstop; `generated_issues.json`) | ✅ `6316ad4` |
+| 8 | Wire `acf_map` (title/tagline/description → generated fields) | ▶ next |
 | 9 | Docs + flow-orchestrator gate | — |
 
-**3 commits left.** Copy producer is **both** Cowork-native (no API key) and a headless API backend,
+**2 commits left.** Copy producer is **both** Cowork-native (no API key) and a headless API backend,
 sharing one cache/contract seam.
 
 ### How the generator commits touch the phases
