@@ -21,11 +21,20 @@ from lib.config import (
     CategoryConfig,
     ClientConfig,
     ExportConfig,
+    GeneratorConfig,
     GS1Config,
     WebsiteStatusConfig,
     WordPressConfig,
 )
 from lib.errors import ConfigError
+from lib.generator import (
+    ORIGIN_GENERATED,
+    GeneratedCache,
+    GenerationResult,
+    apply_result,
+    pending_requests,
+    save_cache,
+)
 from lib.records import LocalisedText, Plan, PlanClassification, ProductRecord, State, StateEntry
 from lib.state import save_state
 from scripts import run_plan
@@ -444,3 +453,121 @@ def test_missing_target_url_pattern_exit_2(
 
     assert run_plan.main(["acme", "--products", str(products)]) == 2
     assert "target_url_pattern" in capsys.readouterr().err
+
+
+# --- Generated-content merge (generator SPEC, commit 7) ----------------------
+
+_GEN_NOW = datetime(2026, 7, 19, tzinfo=UTC)
+
+
+def _bilingual_wp() -> WordPressConfig:
+    return WordPressConfig(
+        site_url="https://wp.test",
+        username="bot",
+        app_password_env="WP_PASS",
+        post_type="product",
+        default_language="nl",
+        languages=["nl", "fr"],
+        slug_pattern="p-{gtin}",
+        target_url_pattern="{site_url}/{lang_segment}{post_type}/{slug}/",
+    )
+
+
+def _cache_with(gtin: str, language: str, **result: Any) -> None:
+    """Build and persist a generated_cache.json with one fresh entry for (gtin, language)."""
+    cache = GeneratedCache(client_id="acme")
+    request = pending_requests([_product(gtin)], cache, [language], "v1")[0]
+    apply_result(
+        cache,
+        request,
+        GenerationResult(**result),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_GEN_NOW,
+    )
+    save_cache(cache)
+
+
+def test_generated_content_reclassifies_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    # Baseline: plan once with no cache, then record state so the row would be UNCHANGED.
+    run_plan.main(["acme", "--products", str(products)])
+    row = next(r for r in _read_plan().rows if r.gtin == GTIN_A)
+    save_state(
+        State(client_id="acme", entries={GTIN_A: {"nl": _entry(row.content_hash, row.target_url)}})
+    )
+
+    # Now generated copy lands in the cache — it enters the hash and reclassifies the row.
+    _cache_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
+    run_plan.main(["acme", "--products", str(products)])
+
+    row = next(r for r in _read_plan().rows if r.gtin == GTIN_A)
+    assert row.classification is PlanClassification.CHANGED
+
+
+def test_e18_cached_french_name_is_planned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(wordpress=_bilingual_wp(), generator=GeneratorConfig(enabled=True))
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])  # nl name only
+    _cache_with(GTIN_A, "fr", usps=["Slogan"], product_name="Nom FR")  # French fill
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    planned = {(r.gtin, r.language) for r in _read_plan().rows}
+    assert (GTIN_A, "fr") in planned  # E18 no longer fires — the fr name came from the cache
+    assert (GTIN_A, "nl") in planned
+
+
+def test_e18_without_cache_still_skips_french(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(wordpress=_bilingual_wp(), generator=GeneratorConfig(enabled=True))
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])  # nl name only, no cache
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    planned = {(r.gtin, r.language) for r in _read_plan().rows}
+    assert (GTIN_A, "fr") not in planned  # E18 backstop: no fr name anywhere -> skipped
+    assert (GTIN_A, "nl") in planned
+
+
+def test_generated_issues_report_written_when_generator_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])  # no 1083 -> a missing_generation_input note
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    report = Path("output/acme/data/generated_issues.json")
+    assert report.exists()
+    issues = json.loads(report.read_text(encoding="utf-8"))
+    assert any(i["issue"] == "missing_generation_input" for i in issues)
+
+
+def test_no_generated_issues_file_without_generator_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())  # no generator block
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    assert not Path("output/acme/data/generated_issues.json").exists()

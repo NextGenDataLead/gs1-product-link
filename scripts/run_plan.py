@@ -39,7 +39,8 @@ from pydantic import ValidationError
 
 from lib.categories import resolve_category
 from lib.config import ClientConfig, get_client
-from lib.errors import ConfigError, StateError, WebsiteStatusError
+from lib.errors import ConfigError, GeneratorError, StateError, WebsiteStatusError
+from lib.generator import load_cache, merge_generated
 from lib.records import Plan, PlanClassification, ProductRecord, SourceIssue
 from lib.state import diff_against_state, load_state
 from lib.website_status import WebsiteStatus, load_website_status
@@ -134,14 +135,40 @@ def _assign_categories(
     return assigned, issues
 
 
-def _write_category_issues(client_id: str, issues: list[SourceIssue]) -> None:
-    """Write the category-mapping issue report, always — even when empty.
+def _generate_content(
+    cfg: ClientConfig, products: list[ProductRecord]
+) -> tuple[list[ProductRecord], list[SourceIssue]]:
+    """Fold cached generated copy onto each product (generator SPEC), cache-only — no network.
+
+    A no-op when the client has no ``generator`` config. Otherwise loads the generated-copy cache
+    and runs :func:`lib.generator.merge_generated`, materialising the combined title, tagline, and
+    three-part description onto each record so generated changes enter the content hash and
+    reclassify as CHANGED — mirroring :func:`_assign_categories`, and for the same reason it runs
+    before ``diff_against_state``. Filling a missing French name from the cache also stops the E18
+    skip firing for a gap the generator has since filled; a genuine gap (no fresh cache entry) gets
+    no generated fields and falls to the E18 backstop. Returns the products with generated fields
+    set, plus one :class:`SourceIssue` per generated/adjusted value and per blank marketing message.
+    """
+    if cfg.generator is None:
+        return products, []
+    cache = load_cache(cfg.client_id)
+    return merge_generated(
+        products,
+        cache,
+        cfg.wordpress.languages,
+        cfg.wordpress.default_language,
+        cfg.generator.prompt_version,
+    )
+
+
+def _write_issue_report(client_id: str, filename: str, issues: list[SourceIssue]) -> None:
+    """Write a per-step issue report to ``output/{client}/data/{filename}``, always — even empty.
 
     Written unconditionally (like ``parse_export``'s source_issues.json) so an empty file means
-    "this run found nothing" and a missing file means "category resolution did not run". Kept
-    separate from source_issues.json, which ``parse_export`` owns and overwrites.
+    "this run found nothing" and a missing file means "this step did not run". Each step owns its
+    own file, separate from source_issues.json, which ``parse_export`` owns and overwrites.
     """
-    path = Path("output") / client_id / "data" / "category_issues.json"
+    path = Path("output") / client_id / "data" / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = [issue.model_dump(mode="json") for issue in issues]
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -149,12 +176,13 @@ def _write_category_issues(client_id: str, issues: list[SourceIssue]) -> None:
 
 def _build_plan(
     cfg: ClientConfig, products: list[ProductRecord]
-) -> tuple[Plan, dict[str, int], bool, list[SourceIssue]]:
-    """Gate, assign categories, classify, and assemble the :class:`Plan`.
+) -> tuple[Plan, dict[str, int], bool, list[SourceIssue], list[SourceIssue]]:
+    """Gate, assign categories, merge generated copy, classify, and assemble the :class:`Plan`.
 
     Returns the plan, the gate-exclusion tally, whether prior state was reset from a corrupt
     file (E19) — which the caller must surface, because it means every row re-plans as NEW —
-    and the category-mapping issues (unmapped bricks left unset).
+    the category-mapping issues (unmapped bricks left unset), and the generated-content issues
+    (one per generated/adjusted value and per blank marketing message).
     """
     if cfg.website_status is not None:
         candidates, excluded = _gate(products, load_website_status(cfg.website_status))
@@ -162,6 +190,7 @@ def _build_plan(
         candidates, excluded = products, {"on_website": 0, "not_in_gs1": 0, "unknown": 0}
 
     candidates, category_issues = _assign_categories(cfg, candidates)
+    candidates, generated_issues = _generate_content(cfg, candidates)
 
     state = load_state(cfg.client_id)
     rows = diff_against_state(candidates, state, cfg.wordpress.languages, cfg.wordpress)
@@ -173,7 +202,7 @@ def _build_plan(
         counts=counts,
         rows=rows,
     )
-    return plan, excluded, state.reset_from_corrupt, category_issues
+    return plan, excluded, state.reset_from_corrupt, category_issues, generated_issues
 
 
 def _write_plan(client_id: str, plan: Plan) -> Path:
@@ -186,7 +215,11 @@ def _write_plan(client_id: str, plan: Plan) -> Path:
 
 
 def _summary(
-    plan: Plan, excluded: dict[str, int], state_was_reset: bool, unmapped_categories: int = 0
+    plan: Plan,
+    excluded: dict[str, int],
+    state_was_reset: bool,
+    unmapped_categories: int = 0,
+    generated_issues: int = 0,
 ) -> str:
     """Render the stderr summary (§8.2): gate exclusions when non-zero, E19 reset when it fired.
 
@@ -212,6 +245,8 @@ def _summary(
         )
     if unmapped_categories:
         line += f"; {unmapped_categories} product(s) with unmapped category (left unset)"
+    if generated_issues:
+        line += f"; {generated_issues} generated-content note(s) — see generated_issues.json"
     if state_was_reset:
         line = f"{_STATE_RESET_WARNING}\n{line}"
     return line
@@ -237,9 +272,12 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
         products = _load_products(products_path)
-        plan, excluded, state_was_reset, category_issues = _build_plan(cfg, products)
+        plan, excluded, state_was_reset, category_issues, generated_issues = _build_plan(
+            cfg, products
+        )
     except (
         ConfigError,
+        GeneratorError,
         StateError,
         WebsiteStatusError,
         FileNotFoundError,
@@ -251,9 +289,14 @@ def main(argv: list[str] | None = None) -> int:
 
     path = _write_plan(cfg.client_id, plan)
     if cfg.categories is not None:
-        _write_category_issues(cfg.client_id, category_issues)
+        _write_issue_report(cfg.client_id, "category_issues.json", category_issues)
+    if cfg.generator is not None:
+        _write_issue_report(cfg.client_id, "generated_issues.json", generated_issues)
     _log.info("wrote plan for %s (%d rows) to %s", cfg.client_id, plan.total, path)
-    print(_summary(plan, excluded, state_was_reset, len(category_issues)), file=sys.stderr)
+    print(
+        _summary(plan, excluded, state_was_reset, len(category_issues), len(generated_issues)),
+        file=sys.stderr,
+    )
     return _EXIT_OK
 
 
