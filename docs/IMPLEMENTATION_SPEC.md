@@ -1121,21 +1121,34 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > picklist that closed the Phase 7 page-adapter `net_content` H87 decoding item (above).
 
 ### Phase 8 — Skills
-- [ ] Each SKILL.md finalised per §10
-- [ ] Full flow via chat instruction works end-to-end
-- [ ] Skills load when expected trigger phrases used
+- [x] Each SKILL.md finalised per §10
+- [x] Full flow via chat instruction works end-to-end
+- [x] Skills load when expected trigger phrases used
 - [ ] Full re-run flow (plan → diff → confirm → execute) in a fresh Cowork session *(moved from
       Phase 7; see the note there)*. The plan half is already exercisable on real data — both
       operator files are in `input/{client_id}/` — so this gate is about the chat surface and the
-      execute leg, not the data.
+      execute leg, not the data. **The chat surface (parse → generate → plan → confirm) is
+      validated; the execute leg is deferred to the Phase 9 pilot — see status below.**
 
-> **Status (2026-07-19):** 2 of 6 skills finalised — `flow-orchestrator` (now carrying the generator
-> review gate) and `content-generator` (generator commit 5). Remaining are empty `.gitkeep` stubs
-> (skeletons in §10.1–10.4): `gs1-export-parser`, `gs1-digital-link`, `qr-render`,
-> `wordpress-product-page`. Each wraps a capability that already works as code (`scripts/`, `lib/`,
-> `mcps/`), so what's left is the SKILL.md bodies plus the end-to-end chat-flow validation — not new
-> functionality. The Noviplast pilot (Phase 9) can run on `flow-orchestrator` + `content-generator`;
-> the other four are documentation gaps, not pilot blockers.
+> **Status (2026-07-19):** All 6 skills finalised. The four former `.gitkeep` stubs
+> (`gs1-export-parser`, `gs1-digital-link`, `qr-render`, `wordpress-product-page`) now have full
+> SKILL.md bodies per §10.1–10.4, joining `flow-orchestrator` and `content-generator`. Each is a
+> documentation wrapper over code that already works (`scripts/`, `lib/`, `mcps/`), grounded in the
+> real flags, output paths, and exit codes of what it wraps.
+>
+> The end-to-end chat flow was driven in a Cowork session on the real Noviplast operator files
+> (`input/noviplast/products.xlsx` + `website_status.xlsx`): `parse_export` (127 products, 11
+> warnings) → `run_generate --emit` (246 pending) → `content-generator` write + `--ingest` (review
+> gate 1) → `run_plan` (72 new, 2 held, 90 excluded — review gate 2) → confirm gate. Every §10.6
+> gate presented correctly. Each skill loads on its documented trigger phrase (all 6 phrases are
+> distinct and non-colliding).
+>
+> The 4th box — the **execute** leg — is deliberately left for the Phase 9 pilot. A throwaway-GTIN
+> execute proves the write machinery but not QR **resolution** (the staging harness does not scan
+> `id.gs1.org`, and "a 200 proves nothing here"); and validating resolution needs a real
+> in-GS1/not-on-website GTIN, which *is* the pilot (and which the safety harness deliberately
+> refuses). So execute + resolution are validated together in Phase 9 with its pre-checks (WPML
+> helper endpoint + a real ACF page rendering), not here.
 
 ### Phase 9 — Pilot end-to-end
 - [ ] ≥10 real products live on pilot WP staging → production

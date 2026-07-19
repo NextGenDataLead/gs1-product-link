@@ -3,7 +3,7 @@
 One-screen overview tying the two planning axes together. **Not** the source of truth for phase
 Definition-of-Done — that stays in [`IMPLEMENTATION_SPEC.md §12`](IMPLEMENTATION_SPEC.md) (the `[x]`
 checkboxes). This file gives the big picture and tracks the generator commit-by-commit, which §12
-does not. Last updated 2026-07-18.
+does not. Last updated 2026-07-19.
 
 ## Two axes
 
@@ -28,7 +28,7 @@ does not. Last updated 2026-07-18.
 | 7 | Re-run + change detection | **Done** (§12 [x]) |
 | — | **Page-adapter track** | Done — **generator complete** (all 9 commits, see below) |
 | 7.5 | GPC brick → category | **Done** (§12 [x], 2026-07-18) |
-| 8 | Skills | Partial — `flow-orchestrator` + `content-generator` (generator c5) have SKILL.md; 4 stubs empty |
+| 8 | Skills | **Done except execute leg** — all 6 SKILL.md finalised; chat flow (parse→generate→plan→confirm) validated on real files; execute leg deferred to Phase 9 (§12) |
 | 9 | Pilot end-to-end (≥10 live, QR scans, no manual fixes) | **Unblocked** (generator done) — not started |
 | 10 | Docs | Not started |
 | 11 | Release | Not started |
