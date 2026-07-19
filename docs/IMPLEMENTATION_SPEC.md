@@ -1060,8 +1060,8 @@ tests/
 - [x] Chat-format diff readable and unambiguous, matches §10.6
 
 > **Moved to Phase 8:** "Full re-run flow tested in fresh Cowork session" was a Phase 7 item, but
-> it duplicates Phase 8's own exit gate and cannot be met before it. Only `flow-orchestrator` has a
-> SKILL.md; the other four skills are empty, and step 1 of the flow delegates parsing to
+> it duplicates Phase 8's own exit gate and cannot be met before it. Only `flow-orchestrator` and
+> `content-generator` have a SKILL.md; the other four skills are empty, and step 1 of the flow delegates parsing to
 > `gs1-export-parser`. A Cowork test in Phase 7 would exercise one-fifth of the surface it is meant
 > to validate. Tracked below as Phase 8's "Full re-run flow (plan → diff → confirm → execute) in a
 > fresh Cowork session".
@@ -1080,8 +1080,13 @@ Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered 
 - [x] Unpublish lifecycle: `scripts/run_unpublish.py` (retract GS1 → draft pages → `HELD` so a run
       never republishes; reversible via `run_execute --revive`). Pilot `08713195000527` taken down
       and verified live (both URLs 404, resolver disabled, links intact).
-- [ ] Feature/benefit + tagline **generator** (LLM) — the report above is its spec. Not started; it
-      owns the 3332+3301 title combination, the 1083-vs-USP tagline choice, and the USP bullets.
+- [x] Feature/benefit + tagline **generator** (LLM) — **done 2026-07-19 (generator commits 1–9,
+      merged to `main` via PR #2).** `lib/generator.py` (fingerprint cache, request/result contract,
+      `merge_generated`), the `run_generate` spine, both producers behind one cache seam — the
+      Cowork-native `content-generator` skill and the headless `--backend api` (`lib/llm.py`, Sonnet
+      5) — the `run_plan` merge, the wired `acf_map`, and `generated_issues.json`. Owns the 3301(+3332)
+      title combination, the tagline = `usps[0]` (NOT 1083) choice, and the USP bullets. Design +
+      tracker: `docs/clients/noviplast-generator-spec.md`, `docs/ROADMAP.md`.
 - [x] `net_content` H87 → functional-name decoding (2026-07-18) — `reference/measurement_units.json`
       (the datamodel's `MeasurementUnitCode_GDSN` picklist, 129 codes → nl/en/fr) + `lib/units.py`
       (`decode_net_content`), decoded per language at render time in `templates._build_context`.
@@ -1123,6 +1128,14 @@ start of the phase (like the export and control file). See `docs/clients/novipla
       Phase 7; see the note there)*. The plan half is already exercisable on real data — both
       operator files are in `input/{client_id}/` — so this gate is about the chat surface and the
       execute leg, not the data.
+
+> **Status (2026-07-19):** 2 of 6 skills finalised — `flow-orchestrator` (now carrying the generator
+> review gate) and `content-generator` (generator commit 5). Remaining are empty `.gitkeep` stubs
+> (skeletons in §10.1–10.4): `gs1-export-parser`, `gs1-digital-link`, `qr-render`,
+> `wordpress-product-page`. Each wraps a capability that already works as code (`scripts/`, `lib/`,
+> `mcps/`), so what's left is the SKILL.md bodies plus the end-to-end chat-flow validation — not new
+> functionality. The Noviplast pilot (Phase 9) can run on `flow-orchestrator` + `content-generator`;
+> the other four are documentation gaps, not pilot blockers.
 
 ### Phase 9 — Pilot end-to-end
 - [ ] ≥10 real products live on pilot WP staging → production
