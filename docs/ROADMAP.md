@@ -29,7 +29,9 @@ does not. Last updated 2026-07-19.
 | — | **Page-adapter track** | Done — **generator complete** (all 9 commits, see below) |
 | 7.5 | GPC brick → category | **Done** (§12 [x], 2026-07-18) |
 | 8 | Skills | **Done except execute leg** — all 6 SKILL.md finalised; chat flow (parse→generate→plan→confirm) validated on real files; execute leg deferred to Phase 9 (§12) |
-| 9 | Pilot end-to-end (≥10 live, QR scans, no manual fixes) | **Unblocked** (generator done) — not started |
+| 9 | Pilot end-to-end (≥10 live, QR scans, no manual fixes) | **In progress — paused.** Execute + resolution **proven live** on the first real GTIN (`08713195007717`, nl+fr; QR resolves via `id.gs1.org`). ≥10 batch paused by operator choice; §12 boxes stay unchecked |
+| 9.5 | Media (images + video) | **New — not started.** Images from export `image_url`s; videos from operator's per-language folders, named by product name → needs a client-confirmed name→GTIN mapping. Split out of Phase 9 |
+| 9.8 | Operator flow in Cowork | **New — not started.** Drive `flow-orchestrator` end-to-end from a real Cowork chat session (all gates incl. execute), operator guided step-by-step. Ticks open Phase 8 box #4 |
 | 10 | Docs | Not started |
 | 11 | Release | Not started |
 
@@ -74,7 +76,11 @@ pilot (now unblocked).
 - Finishing the generator **unblocks Phase 9** — the live pilot is the next milestone after it.
 
 ## The critical path
-~~`generator (commits 4–9)`~~ **done** → **Phase 9** live pilot (≥10 products, QR scans, zero manual
-corrections) → Phase 10 docs → Phase 11 release. The generator is complete; the live pilot is now the
-active next milestone (verify the WPML helper endpoint and a real published page against the live
-site first — the ACF pipeline fails silently).
+~~`generator (commits 4–9)`~~ **done** → ~~verify WPML helper + a real published ACF page live~~ **done**
+→ ~~**Phase 9** execute + resolution on the first real GTIN~~ **PROVEN (paused)** → **Phase 9.5 media**
+(images from export URLs; videos from the operator's nl/fr folders via a client-confirmed name→GTIN
+mapping) → **Phase 9.8 operator flow in Cowork** (drive `flow-orchestrator` end-to-end through its chat
+gates, operator guided step-by-step) → **finish Phase 9** (scale to ≥10 live via that validated flow,
+decide fr-QR strategy, tick §12) → Phase 10 docs → Phase 11 release. The pilot's execute + QR resolution are validated live on `08713195007717`; the
+remaining pilot work is media + the ≥10 batch. The ACF pipeline still fails silently — verify each page
+renders against the live site, not just green tests.
