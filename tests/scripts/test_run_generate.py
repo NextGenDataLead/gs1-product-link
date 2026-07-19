@@ -88,9 +88,7 @@ def _write_products(client_id: str, products: list[ProductRecord]) -> None:
 def _write_results(client_id: str, results: list[dict[str, Any]]) -> None:
     path = Path("output") / client_id / "data" / "generation_results.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"client_id": client_id, "results": results}), encoding="utf-8"
-    )
+    path.write_text(json.dumps({"client_id": client_id, "results": results}), encoding="utf-8")
 
 
 def _patch_client(monkeypatch: pytest.MonkeyPatch, cfg: ClientConfig) -> None:
@@ -196,9 +194,7 @@ def test_ingest_applies_results_into_cache(
     assert "ingested 1 result(s), skipped 0; 1/1 units cached; 0 pending" in capsys.readouterr().err
 
 
-def test_emit_then_ingest_round_trips(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_emit_then_ingest_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, _make_config())
     _write_products("noviplast", [_product()])
@@ -238,9 +234,7 @@ def test_ingest_skips_result_with_no_pending_request(
     assert "ingested 0 result(s), skipped 1" in capsys.readouterr().err
 
 
-def test_ingest_skips_stale_fingerprint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ingest_skips_stale_fingerprint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, _make_config())
     _write_products("noviplast", [_product()])
@@ -363,9 +357,7 @@ def test_backend_api_fills_cache_via_mocked_messages_api(
 # --- shared failure paths ----------------------------------------------------
 
 
-def test_missing_products_file_exits_2(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_missing_products_file_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, _make_config())
 

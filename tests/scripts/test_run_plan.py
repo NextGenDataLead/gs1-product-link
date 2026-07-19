@@ -511,9 +511,7 @@ def test_generated_content_reclassifies_changed(
     assert row.classification is PlanClassification.CHANGED
 
 
-def test_e18_cached_french_name_is_planned(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_e18_cached_french_name_is_planned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     cfg = _make_config(wordpress=_bilingual_wp(), generator=GeneratorConfig(enabled=True))
     _patch_client(monkeypatch, cfg)

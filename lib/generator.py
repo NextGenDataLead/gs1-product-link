@@ -437,8 +437,7 @@ def apply_result(  # noqa: PLR0913 — a validated write needs its result, prove
     usps = _clean_bullets(result.usps)
     if not usps:
         raise GeneratorError(
-            f"empty generation result for {request.gtin}/{request.language}: "
-            f"usps={result.usps!r}"
+            f"empty generation result for {request.gtin}/{request.language}: usps={result.usps!r}"
         )
     source_input = (
         request.inputs.feature_benefit

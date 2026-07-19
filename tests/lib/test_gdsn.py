@@ -497,25 +497,54 @@ def _write_generator_inputs_workbook(tmp_path: Path) -> str:
     desc = wb.create_sheet("TradeItemDescription")
     for row in [
         # name (3301) + brand (3336) + variation (3332), name & variation as LanguageCode/Value
-        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
-         "TradeItemUnitDescriptorCode", "Info", "Info", "BrandNameInformation", "Info", "Info"],
+        [
+            "Gtin",
+            "TargetMarketCountryCode",
+            "InformationProviderOfTradeItem",
+            "TradeItemUnitDescriptorCode",
+            "Info",
+            "Info",
+            "BrandNameInformation",
+            "Info",
+            "Info",
+        ],
         [None, None, None, None, "Name[0]", "Name[0]", None, "Variation[0]", "Variation[0]"],
         [None, None, None, None, "LanguageCode", "Value", "BrandName", "LanguageCode", "Value"],
-        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
-         "Functional (3301)", "Functional (3301)", "Brand (3336)",
-         "Variation (3332)", "Variation (3332)"],
+        [
+            "GTIN (3059)",
+            "Country (3179)",
+            "Provider (3088)",
+            "Unit (3074)",
+            "Functional (3301)",
+            "Functional (3301)",
+            "Brand (3336)",
+            "Variation (3332)",
+            "Variation (3332)",
+        ],
         _drow("08713195000794", "528", "nl", "Voegstrijker", "Noviplast", "nl", "Set"),
     ]:
         desc.append(row)
 
     meas = wb.create_sheet("TradeItemMeasurements")
     for row in [
-        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
-         "TradeItemUnitDescriptorCode", "TradeItemMeasurements", "TradeItemMeasurements"],
+        [
+            "Gtin",
+            "TargetMarketCountryCode",
+            "InformationProviderOfTradeItem",
+            "TradeItemUnitDescriptorCode",
+            "TradeItemMeasurements",
+            "TradeItemMeasurements",
+        ],
         [None, None, None, None, "Height[0]", "Height[0]"],
         [None, None, None, None, "MeasurementUnitCode", "Value"],
-        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
-         "Height (3498)", "Height (3498)"],
+        [
+            "GTIN (3059)",
+            "Country (3179)",
+            "Provider (3088)",
+            "Unit (3074)",
+            "Height (3498)",
+            "Height (3498)",
+        ],
         _drow("08713195000794", "528", "MMT", "250"),
     ]:
         meas.append(row)
@@ -524,8 +553,13 @@ def _write_generator_inputs_workbook(tmp_path: Path) -> str:
     for row in [
         # Material is Information[0]/Material[0]/Value with a non-numeric "(4.012)" label,
         # so it carries no attr_id and must be matched by the "Material" path segment.
-        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
-         "TradeItemUnitDescriptorCode", "Information[0]"],
+        [
+            "Gtin",
+            "TargetMarketCountryCode",
+            "InformationProviderOfTradeItem",
+            "TradeItemUnitDescriptorCode",
+            "Information[0]",
+        ],
         [None, None, None, None, "Material[0]"],
         [None, None, None, None, "Value"],
         ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)", "Material (4.012)"],
@@ -555,9 +589,7 @@ def test_gdsn_extras_carry_generator_inputs(tmp_path: Path) -> None:
         "material": GdsnSource(sheet="BrickGPCCommercialData", attribute="Material"),
     }
 
-    result = build_records(
-        sheets, gdsn_map, ["528"], ["nl"], "nl", gdsn_extras=gdsn_extras
-    )
+    result = build_records(sheets, gdsn_map, ["528"], ["nl"], "nl", gdsn_extras=gdsn_extras)
 
     record = next(r for r in result.records if r.gtin == "08713195000794")
     assert record.extras["product_variation"] == "Set"
@@ -572,25 +604,63 @@ def _write_multivalue_workbook(tmp_path: Path) -> str:
 
     desc = wb.create_sheet("TradeItemDescription")
     for row in [
-        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
-         "TradeItemUnitDescriptorCode", "Info", "Info", "BrandNameInformation"],
+        [
+            "Gtin",
+            "TargetMarketCountryCode",
+            "InformationProviderOfTradeItem",
+            "TradeItemUnitDescriptorCode",
+            "Info",
+            "Info",
+            "BrandNameInformation",
+        ],
         [None, None, None, None, "Name[0]", "Name[0]", None],
         [None, None, None, None, "LanguageCode", "Value", "BrandName"],
-        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
-         "Functional (3301)", "Functional (3301)", "Brand (3336)"],
+        [
+            "GTIN (3059)",
+            "Country (3179)",
+            "Provider (3088)",
+            "Unit (3074)",
+            "Functional (3301)",
+            "Functional (3301)",
+            "Brand (3336)",
+        ],
         _drow("08713195007717", "528", "nl", "Hogedrukreiniger", "Noviplast"),
     ]:
         desc.append(row)
 
     mi = wb.create_sheet("MarketingInformation")
     for row in [
-        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem",
-         "TradeItemUnitDescriptorCode", "MI", "MI", "MI", "MI"],
-        [None, None, None, None, "FeatureBenefit[0]", "FeatureBenefit[0]",
-         "FeatureBenefit[1]", "FeatureBenefit[1]"],
+        [
+            "Gtin",
+            "TargetMarketCountryCode",
+            "InformationProviderOfTradeItem",
+            "TradeItemUnitDescriptorCode",
+            "MI",
+            "MI",
+            "MI",
+            "MI",
+        ],
+        [
+            None,
+            None,
+            None,
+            None,
+            "FeatureBenefit[0]",
+            "FeatureBenefit[0]",
+            "FeatureBenefit[1]",
+            "FeatureBenefit[1]",
+        ],
         [None, None, None, None, "LanguageCode", "Value", "LanguageCode", "Value"],
-        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)",
-         "Feature (1067)", "Feature (1067)", "Feature (1067)", "Feature (1067)"],
+        [
+            "GTIN (3059)",
+            "Country (3179)",
+            "Provider (3088)",
+            "Unit (3074)",
+            "Feature (1067)",
+            "Feature (1067)",
+            "Feature (1067)",
+            "Feature (1067)",
+        ],
         _drow("08713195007717", "528", "nl", "Eerste USP", "nl", "Tweede USP"),
     ]:
         mi.append(row)

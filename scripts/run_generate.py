@@ -145,9 +145,7 @@ def _load_results(path: Path, client_id: str) -> ResultsFile:
     """
     results = ResultsFile.model_validate(json.loads(path.read_text(encoding="utf-8")))
     if results.client_id != client_id:
-        raise GeneratorError(
-            f"results file is for client {results.client_id!r}, not {client_id!r}"
-        )
+        raise GeneratorError(f"results file is for client {results.client_id!r}, not {client_id!r}")
     return results
 
 
@@ -343,8 +341,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--results",
         help=(
-            "Path to the results JSON to ingest "
-            "(default: output/{id}/data/generation_results.json)"
+            "Path to the results JSON to ingest (default: output/{id}/data/generation_results.json)"
         ),
     )
     mode = parser.add_mutually_exclusive_group()

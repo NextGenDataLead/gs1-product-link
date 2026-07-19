@@ -178,9 +178,7 @@ def test_categories_brick_map_value_outside_terms_raises(tmp_path: Path) -> None
 
 
 def test_categories_override_value_outside_terms_raises(tmp_path: Path) -> None:
-    client = _client_with_categories(
-        {"terms": ["tuin"], "overrides": {"08713195000123": "keuken"}}
-    )
+    client = _client_with_categories({"terms": ["tuin"], "overrides": {"08713195000123": "keuken"}})
     path = _write_config(tmp_path, client)
     with pytest.raises(ConfigError, match="keuken"):
         load_clients(path)
