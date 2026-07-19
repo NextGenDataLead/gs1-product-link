@@ -48,10 +48,12 @@ from typing import NamedTuple
 from pydantic import ValidationError
 
 from lib.acf import build_acf_payload
-from lib.config import ClientConfig, GS1LinkConfig, get_client
+from lib.config import ClientConfig, GS1LinkConfig, MediaConfig, get_client
 from lib.errors import ConfigError, StateError
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
+from lib.media import convert_image_for_web
+from lib.media_video import load_video_map, prepare_video
 from lib.qr import render_qr
 from lib.records import (
     ConfirmedPlan,
@@ -116,6 +118,7 @@ class _Page(NamedTuple):
     page_id: int
     url: str
     title: str
+    featured_media_id: int | None = None
 
 
 def _known_pages(gtin: str, fresh: dict[str, _Page], state: State) -> dict[str, _Page]:
@@ -133,7 +136,9 @@ def _known_pages(gtin: str, fresh: dict[str, _Page], state: State) -> dict[str, 
     known = dict(fresh)
     for language, entry in state.entries.get(gtin, {}).items():
         if language not in known:
-            known[language] = _Page(entry.wp_page_id, entry.wp_url, entry.title or "")
+            known[language] = _Page(
+                entry.wp_page_id, entry.wp_url, entry.title or "", entry.wp_featured_media_id
+            )
     return known
 
 
@@ -198,6 +203,94 @@ def _digital_link_url(cfg: ClientConfig, row: PlanRow) -> str:
     return cfg.gs1.digital_link_url_pattern.format(gtin14=row.product.gtin14)
 
 
+# --- Media (Phase 9.5) -------------------------------------------------------
+
+
+class _RowMedia(NamedTuple):
+    """The media a row contributes to its page: the hero image and this language's video."""
+
+    featured_media_id: int | None
+    image_acf_value: int | str | None
+    video_media_id: int | None
+
+
+_NO_MEDIA = _RowMedia(None, None, None)
+
+
+def _row_media(cfg: ClientConfig, row: PlanRow, wp: WordPressClient) -> _RowMedia:
+    """Resolve the hero image and video for a row, uploading each to WP media.
+
+    Returns all-``None`` when the client has no ``media`` config, so clients without media are
+    untouched. Every failure (a 404 image, an undecodable file, a missing video, an ffmpeg
+    error) degrades to ``None`` (edge E7): media must never stop the page publishing. Uploads
+    are idempotent — ``upload_media`` dedupes by content hash and the converters are
+    deterministic — so re-runs reuse attachments rather than duplicating them.
+    """
+    media = cfg.media
+    if media is None:
+        return _NO_MEDIA
+    hero_id = _hero_media_id(cfg.client_id, media, row, wp)
+    image_value = _image_acf_value(media, hero_id, wp)
+    video_id = _video_media_id(cfg.client_id, media, row, wp)
+    return _RowMedia(hero_id, image_value, video_id)
+
+
+def _hero_media_id(
+    client_id: str, media: MediaConfig, row: PlanRow, wp: WordPressClient
+) -> int | None:
+    """Download the export image, convert it to web JPEG, and upload it; ``None`` on any failure."""
+    url = row.product.image_url
+    if not url:
+        return None
+    data = wp.download_image(url)  # bytes | None (E7)
+    if data is None:
+        return None
+    dest = Path("output") / client_id / "media" / "images" / f"{row.gtin}.jpg"
+    jpeg = convert_image_for_web(
+        data, dest, max_dim=media.image_max_dim, quality=media.image_quality
+    )
+    if jpeg is None:
+        return None
+    return wp.upload_media(jpeg, title=f"{row.title} ({row.gtin})")
+
+
+def _image_acf_value(
+    media: MediaConfig, hero_id: int | None, wp: WordPressClient
+) -> int | str | None:
+    """The value written to the image ACF fields: an attachment id or its URL, per config."""
+    if hero_id is None:
+        return None
+    if media.image_write_shape == "url":
+        return wp.media_source_url(hero_id)
+    return hero_id
+
+
+def _video_media_id(
+    client_id: str, media: MediaConfig, row: PlanRow, wp: WordPressClient
+) -> int | None:
+    """Resolve, prepare (transcode), and upload this language's video; ``None`` if none matches."""
+    folder = media.video_folders.get(row.language)
+    if not folder or not media.video_map_path:
+        return None
+    try:
+        vmap = load_video_map(Path(media.video_map_path))
+    except (OSError, ValueError) as exc:
+        _log.warning("could not load video map %s: %r (skipping video)", media.video_map_path, exc)
+        return None
+    filename = vmap.resolve(row.gtin, row.language)
+    if not filename:
+        return None
+    prepared = prepare_video(
+        Path(folder) / filename,
+        Path("output") / client_id / "media" / "videos",
+        transcode=media.video_transcode,
+        ffmpeg_bin=media.ffmpeg_bin,
+    )
+    if prepared is None:
+        return None
+    return wp.upload_media(prepared, title=f"{row.title} video {row.language} ({row.gtin})")
+
+
 # --- Execution ---------------------------------------------------------------
 
 
@@ -223,6 +316,17 @@ def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcom
     # clients the ACF payload *is* the page. The body is still written: it is inert
     # where it is ignored, and it is what non-ACF clients render from.
     acf = build_acf_payload(row.product, row.language, cfg.wordpress.acf_map)
+    # Media (Phase 9.5): the hero image and this language's video are uploaded here and injected
+    # into the ACF dict imperatively — their attachment ids are only known after upload, so they
+    # cannot ride the static acf_map. They join the second (_write_acf) call, never the ?lang
+    # create; featured_media is a core field on the create/update body.
+    media = _row_media(cfg, row, wp)
+    if cfg.media is not None:
+        if media.image_acf_value is not None:
+            acf[cfg.media.header_image_field] = media.image_acf_value
+            acf[cfg.media.regular_image_field] = media.image_acf_value
+        if media.video_media_id is not None:
+            acf[cfg.media.video_file_field] = media.video_media_id
     prior = state.entries.get(row.gtin, {}).get(row.language)
     page = wp.upsert_page(
         post_type=cfg.wordpress.post_type,
@@ -230,7 +334,7 @@ def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcom
         title=row.title,
         content=html,
         language=row.language,
-        featured_media=None,  # image pipeline deferred to the Phase 9 pilot
+        featured_media=media.featured_media_id,
         meta={"gtin": row.gtin},
         existing_id=prior.wp_page_id if prior else None,
         acf=acf,
@@ -240,7 +344,7 @@ def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcom
     outcome.wp_url = page_url
     if not wp.verify_url(page_url):
         raise RuntimeError(f"WordPress URL {page_url} did not return 200")
-    return _Page(page["id"], page_url, row.title)
+    return _Page(page["id"], page_url, row.title, media.featured_media_id)
 
 
 def _item_description(cfg: ClientConfig, rows: list[PlanRow], pages: dict[str, _Page]) -> str:
@@ -313,7 +417,7 @@ def _finish_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them 
         state.entries.setdefault(gtin, {})[row.language] = StateEntry(
             wp_page_id=fresh[row.language].page_id,
             wp_url=fresh[row.language].url,
-            wp_featured_media_id=None,
+            wp_featured_media_id=fresh[row.language].featured_media_id,
             content_hash=row.content_hash,
             gs1_link_set_hash=link_hash,  # per-GTIN: every language shares the one link set
             last_run=ts,
@@ -410,12 +514,13 @@ def _preview_row(
         # One line per row, but the GS1 write is per GTIN: a GTIN with two confirmed rows
         # gets one resolver write carrying both languages' links, not one write per line.
         _log.info(
-            "[dry-run] %s/%s: would upsert WP %r page %r, then link this GTIN's languages "
+            "[dry-run] %s/%s: would upsert WP %r page %r%s, then link this GTIN's languages "
             "as translations and point GS1 %s at their pages",
             row.gtin,
             row.language,
             cfg.wordpress.post_type,
             row.slug,
+            " (with hero image/video)" if cfg.media is not None else "",
             _digital_link_url(cfg, row),
         )
     except Exception as exc:  # noqa: BLE001 — surface template errors as a failed preview row

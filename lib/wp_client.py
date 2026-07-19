@@ -393,6 +393,28 @@ class WordPressClient:
         _log.warning("WP image fetch for %s -> %d (skipping featured media)", url, resp.status_code)
         return None
 
+    def media_source_url(self, media_id: int) -> str | None:
+        """Return the public ``source_url`` of a media attachment, or ``None`` if unavailable.
+
+        Used when the ACF image field takes a URL string rather than an attachment id
+        (``media.image_write_shape``). The write shape is confirmed live (page-adapter §3), so
+        supporting both shapes makes the choice a config flip rather than a code change.
+        """
+        try:
+            resp = self._request(
+                "GET",
+                f"{_MEDIA_PATH}/{media_id}",
+                params={"context": "edit"},
+                label=f"media {media_id}",
+            )
+        except WordPressAPIError as exc:
+            if exc.status_code == HTTPStatus.NOT_FOUND:
+                return None
+            raise
+        data = resp.json()
+        url = data.get("source_url") if isinstance(data, dict) else None
+        return url if isinstance(url, str) else None
+
     def verify_url(self, url: str) -> bool:
         """Return whether ``url`` resolves to a 2xx/3xx response via HEAD (§4.4, §5.1).
 
