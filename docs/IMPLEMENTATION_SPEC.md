@@ -1060,11 +1060,12 @@ tests/
 - [x] Chat-format diff readable and unambiguous, matches §10.6
 
 > **Moved to Phase 8:** "Full re-run flow tested in fresh Cowork session" was a Phase 7 item, but
-> it duplicates Phase 8's own exit gate and cannot be met before it. Only `flow-orchestrator` and
-> `content-generator` have a SKILL.md; the other four skills are empty, and step 1 of the flow delegates parsing to
-> `gs1-export-parser`. A Cowork test in Phase 7 would exercise one-fifth of the surface it is meant
-> to validate. Tracked below as Phase 8's "Full re-run flow (plan → diff → confirm → execute) in a
-> fresh Cowork session".
+> it duplicates Phase 8's own exit gate and cannot be met before it. When it was moved, only
+> `flow-orchestrator` and `content-generator` had a SKILL.md; the other four skills were empty
+> stubs, and step 1 of the flow delegates parsing to `gs1-export-parser`. A Cowork test in Phase 7
+> would have exercised one-fifth of the surface it is meant to validate. (All six SKILL.md are now
+> finalised as of Phase 8, 2026-07-19.) Tracked below as Phase 8's "Full re-run flow (plan → diff →
+> confirm → execute) in a fresh Cowork session".
 
 ### Page adapter (Noviplast pilot) — mapping, data quality, lifecycle
 Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered gate. Detail in
