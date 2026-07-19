@@ -1,18 +1,20 @@
 # Noviplast Page Adapter — Design
 
-> Status: **design / tool-side not yet built.** This specifies a Noviplast-specific WordPress
-> page-building adapter, discovered during live pilot reconnaissance (July 2026). It is
-> **new scope** on top of the completed Phase 7 (plan / change-detection / flow-orchestrator),
-> which stands unchanged underneath it.
+> Status: **implemented — content generator built 2026-07-19, the page-adapter track's last
+> critical-path item.** This specifies a Noviplast-specific WordPress page-building adapter,
+> discovered during live pilot reconnaissance (July 2026), on top of the completed Phase 7 (plan /
+> change-detection / flow-orchestrator), which stands unchanged underneath it.
 >
-> **The WordPress-side enablers in §7 are now live** (CPT, `meta.gtin`, ACF fields and taxonomy all
-> REST-exposed) — except the **WPML helper endpoint**, which remains the last WP blocker and fails
-> every `fr` row until it exists. The tool-side work in §8 is unstarted: `clients.yml` still says
-> `multilingual_plugin: polylang`, `WPMLAdapter` is still a `NotImplementedError` stub, and
-> `wp_client` still writes `post_content` (which this theme ignores). **Until §8 lands, a live
-> `run_execute` would publish blank pages** — Oxygen renders from ACF, so template HTML into
-> `post_content` produces a page that returns 200, passes `verify_url`, reports `ok`, and shows
-> nothing to the customer.
+> The tool-side work in §8 is now built: the GDSN parser inputs, the **content generator** (both
+> producers — the Cowork-native `content-generator` skill and the headless `run_generate --backend
+> api`, sharing one cache/contract seam), the `run_plan` merge, and the wired `acf_map` (generator
+> commits 1–8; see [`../ROADMAP.md`](../ROADMAP.md) and
+> [`noviplast-generator-spec.md`](noviplast-generator-spec.md)). `run_execute` renders ACF via
+> `build_acf_payload`, and `multilingual_plugin: wpml` selects `WPMLAdapter`. **The one remaining
+> WP-side enabler is the WPML helper endpoint (§7): a site-side route with no core REST equivalent.
+> Verify it — and a real published page — against the live site before the pilot. This pipeline fails
+> silently:** Oxygen renders from ACF, so a page can return 200, pass `verify_url`, report `ok`, and
+> still show the customer nothing.
 
 ## 1. Why this exists
 
@@ -191,12 +193,25 @@ missing taglines** — not "write the description". Everything else is assembly 
 already extracts. This matters twice over: it is a much smaller thing to review, and every value
 that comes from the feed instead of a model is one fewer line in the upstream report (§6).
 
+**Built (generator commits 1–8, 2026-07-19).** The generator emits one ranked USP list per
+`(gtin, language)` — `usps[0]` is the tagline (all three slots above), `usps[1:]` the Eigenschappen
+bullets, Technische details stay deterministic. `lib/generator.py` owns the fingerprint-keyed cache
+and the pure `merge_generated` assembly; `scripts/run_generate.py` fills the cache through one
+contract from either producer (Cowork emit→ingest, or `--backend api` via `lib/llm.py`);
+`run_plan` merges the cache before `diff_against_state` so generated copy enters the content hash;
+and `acf_map` feeds `product_title`/`product_header_video_text` ← `generated_tagline` and
+`product_description` ← `generated_description`. Full design and 1067 verbatim/tighten/generate
+routing: [`noviplast-generator-spec.md`](noviplast-generator-spec.md).
+
 ### 4.2 RESOLVED (2026-07-17): attr 1083 is a marketing message, not a tagline
 
-**Decided — option (d), unwired.** The field walk with the client resolved this. `acf_map` is now
-empty: 1083 no longer feeds `product_title` or `product_header_video_text`. Both slots are the
-tagline, and its source is generator-owned — 1083 when present, else the first generated USP, a
-choice the tool cannot make deterministically. 1083 stays parsed as a **generator input**
+**Decided — option (d), unwired.** The field walk with the client resolved this. 1083 no longer
+feeds `product_title` or `product_header_video_text`. Both slots are the tagline, and its source is
+generator-owned — 1083 when present, else the first generated USP, a choice the tool cannot make
+deterministically. `acf_map` was emptied here and, with the generator built (§4.1 *Built*, generator
+commit 8), **re-wired to the generated fields** — `product_title`/`product_header_video_text` ←
+`generated_tagline`, `product_description` ← `generated_description`; 1083 stays a *generator input*,
+never an ACF value. 1083 stays parsed as a **generator input**
 (`gdsn_map.description_short`, no `max_length`), so the 107 `value_too_long` findings retire: they
 were measuring 1083 against a slot it does not belong in. The title now comes from **3301**
 (Functional Name), not 3318 — see §4.1. The record below is kept for the reasoning that led here.
@@ -446,19 +461,20 @@ source — the filters survive updates to whatever registers them.
 ## 8. Tool-side work (new development)
 
 - `clients.yml`: `multilingual_plugin: wpml`; add `brick_category_map`, media-folder path, and the
-  ACF field-name mapping (so field names live in config, not code).
+  ACF field-name mapping (so field names live in config, not code). **`acf_map` done** — wired to the
+  generated fields (generator commit 8); `multilingual_plugin: wpml` and the category map are set.
 - `lib/multilingual.py`: implement `WPMLAdapter` against the helper endpoint (replaces the
   `NotImplementedError` stub).
 - `lib/wp_client.py`: the **three-call write sequence** of §3.1 — `create ?lang=` (no acf) → write
   acf → link translations. All three constraints behind it are live-verified and each fails
   silently, so none may be dropped as an optimisation. Plus media upload **from a URL** and **from
   a local file**.
-- `lib/state.py` / `run_plan`: **E18 changes meaning.** Today a missing `product_name.{lang}` omits
-  that row with a warning, on the assumption that no source text means no page. Now that the LLM
-  fills missing French (§6), the row should be **planned and flagged for generation** instead of
-  skipped — otherwise the one pilot product without a French name (`08713195007649`) silently never
-  gets a French page. Keep a skip path for the case where *neither* a feed value nor a generated one
-  is available.
+- ~~`lib/state.py` / `run_plan`: **E18 changes meaning.**~~ **Done (generator commit 7).** No new
+  branch: `merge_generated` fills a missing `product_name.{lang}` from the cache before
+  `diff_against_state`, so the row is planned rather than E18-skipped once the generator has filled
+  it. The skip remains the backstop for a genuine gap — neither a feed value nor a cached one — so
+  the one pilot product without a French name (`08713195007649`) is skipped only while no French
+  copy exists, and planned as soon as it does.
 - `lib/gdsn.py` / parser + `clients.yml` `gdsn_map`:
   - ~~fix `product_name` → attr 3318~~ — **superseded 2026-07-17**: the title is now **3301**
     (Functional Name). 3318 carried material/colour noise (*"Noviplast Voegstrijker kunststof
@@ -481,12 +497,15 @@ source — the filters survive updates to whatever registers them.
   draft pages → record `HELD` in state, so a routine run never republishes a deliberately-downed
   product (`run_execute --revive` overrides). New `wp_client.set_page_status()`; `StateEntry` gained
   `wp_status`/`gs1_enabled`. Pilot `08713195000527` taken down and verified live. See §3.1.
-- New **feature/benefit generator** (LLM) with a deterministic cache + human-approval gate. Scope now
-  also covers **filling missing French** (§6): the feed carries French for most products but not all
-  (name 36/37 planned, tagline 112/127). Prefer the feed value whenever present — it is the
-  authoritative datapool text — and generate only into the gaps. Generated text carries the same
-  approval gate as generated descriptions, and should be distinguishable from feed text in the cache
-  so a later feed update can supersede it.
+- ~~New **feature/benefit generator** (LLM) with a deterministic cache + human-approval gate.~~
+  **Done (generator commits 1–8, 2026-07-19).** `lib/generator.py` (fingerprint-keyed
+  `generated_cache.json`, request/result contract, `merge_generated`), two producers behind one
+  seam — the Cowork-native `content-generator` skill (emit→ingest, no key) and `run_generate
+  --backend api` (`lib/llm.py`, Sonnet 5) — and the `run_plan` merge. **Filling missing French** is
+  covered: the feed value always supersedes generated (fingerprint miss re-flags a stale one), and
+  the merge fills a missing `product_name.fr` from the cache. Generated values are distinguishable
+  from feed text (net-new fields; the cache stores `origin`/`provenance`/`source_input`) and each is
+  reviewed twice — the `run_generate` cache output and `plan.json` — before a draft-first publish.
 - **Source-data issue report — `output/{client_id}/data/source_issues.json`.** **Built.** The
   operator's work queue for fixing the **GS1 datapool itself**: `parse_export` writes it on every
   run (always, even when empty — a report that only appears with bad news is one whose absence you
@@ -503,13 +522,13 @@ source — the filters survive updates to whatever registers them.
     `brand_prefix_mismatch` retired with the tagline unwiring and the 3301 title (no `max_length`,
     no `strip_prefix`). The 5 brand typos now sit in the unpublished `3318`/`extras.marketing_name`;
     re-surfacing them waits on widening the report past published fields.
-  - **To add: the generated-content entries (client requirement).** Every LLM-generated value
-    belongs here too: the gap it fills is a datapool gap, and the generated French belongs back in
-    MyGS1 as the authoritative value — the tool filling it at publish time is a stopgap, not the
-    fix. Those entries additionally need the source-language value they were derived from, so the
-    text can be judged before being transcribed upstream. Once a value lands upstream the next
-    export carries it, the generator stops firing for that field, and the feed value supersedes the
-    cached generation (hence the feed-vs-generated distinction above).
+  - ~~**To add: the generated-content entries (client requirement).**~~ **Done (generator commit
+    7):** `run_plan` writes a separate `output/{client_id}/data/generated_issues.json` (always, even
+    empty), one `SourceIssue` per generated (`content_generated`) / adjusted (`content_adjusted`)
+    value and per blank marketing message (`missing_generation_input`), each carrying the
+    source-language value it was derived from so the text can be judged before being transcribed
+    upstream. Once a value lands in MyGS1 the next export supersedes the cached generation
+    (fingerprint miss), and the generator stops firing for that field.
 - New **image pipeline**: download → convert/resize (Pillow) → upload → dedupe.
 - ~~**Make `tests/integration/test_run_execute_staging.py` safe before it is ever run.**~~ **Done** —
   along with `test_wp_staging.py`, which had the same defect. Both now clean up in a `finally`, so a
