@@ -211,8 +211,17 @@ class StateEntry(BaseModel):
     content_hash: str
     gs1_link_set_hash: str
     last_run: datetime
+    title: str | None = None
+```
 
+`title` is the page title as last written — the one product field state keeps verbatim, so a
+re-run can show a real before/after in a CHANGED row's diff (§10.6.2). `content_hash` proves
+*that* a product changed but, being a digest, can never say *what*; without a retained title the
+§10.6.2 block renders an empty `Changes:` list whenever a rename leaves the (GTIN-derived) slug
+in place. Optional because state files predating the field have no title: `None` means "not
+recorded", and `_classify` omits the title row rather than guessing.
 
+```python
 class State(BaseModel):
     client_id: str
     entries: dict[str, dict[str, StateEntry]]
@@ -498,7 +507,7 @@ def _auth_header(self) -> dict[str, str]:
 
 ### 4.8 `lib/state.py`
 
-`load_state(client_id) -> State` (empty if not present), `save_state(state)` (atomic write-to-temp-then-rename), `compute_content_hash(product, language, target_url) -> str` (SHA-256 over canonicalised JSON), `diff_against_state(products, state, languages, target_url_pattern) -> list[PlanRow]`.
+`load_state(client_id) -> State` (empty if not present; a **corrupt** file is quarantined to `state.json.corrupt.{ts}` and an empty state returned with `reset_from_corrupt=True` — see E19 in §7; an **unreadable** file raises `StateError`), `save_state(state)` (atomic write-to-temp-then-rename), `compute_content_hash(product, language, target_url) -> str` (SHA-256 over canonicalised JSON), `diff_against_state(products, state, languages, target_url_pattern) -> list[PlanRow]`.
 
 ### 4.9 `lib/records.py`
 
@@ -595,8 +604,27 @@ Tool implements **Level A + B** for v0.1.0. Level C documented for future.
 | E16 | Excel has more columns than `column_map` | WARNING per unmapped column | `parse_export.py` |
 | E17 | Excel has fewer columns than `column_map` expects | `ExportParseError` if required; WARNING if optional | `parse_export.py` |
 | E18 | Language in `wordpress.languages` has no `product_name.{lang}` for a GTIN | Row for that language classified SKIPPED; noted in chat prompt | `run_plan.py` |
-| E19 | State file corrupt / invalid JSON | Backup as `state.json.corrupt.{ts}`, start fresh, log ERROR | `state.load_state` |
+| E19 | State file corrupt / invalid JSON | Backup as `state.json.corrupt.{ts}`, start fresh, log ERROR, **and surface the reset in the plan summary** (see below) | `state.load_state` + `run_plan.py` |
 | E20 | Two `run_execute.py` interleave for same client | Not supported. Document risk in troubleshooting.md. No lockfile in v0.1 | doc only |
+
+**E19 — why recovery is safe, and why it must still be loud.** State is a *cache* of what the
+tool believes it already did, derivable from the live systems, so rebuilding it is safe: every
+write path is idempotent (§6.1–§6.5). Without a known page id `wp_client.upsert_page` still
+matches the live page by slug then `meta.gtin` and updates it in place (no duplicates),
+`gs1_dl_client.safe_upsert` reads before it writes, and `qr.render_qr` is byte-deterministic.
+So a reset costs redundant work, not corruption — which is why aborting the run would be the
+wrong trade.
+
+But a reset also *reclassifies every row as NEW*, silently converting an incremental re-run
+into a full rewrite of live pages and resolver targets. An ERROR in the log is too quiet for
+that: the operator is reading the chat, not stderr. So `load_state` returns the empty state
+with `State.reset_from_corrupt` set (a load-scoped flag, excluded from serialisation),
+`run_plan.py` leads its summary with a warning, and the flow-orchestrator surfaces it **above**
+the §10.6.1 counts. The existing confirmation gate is what makes the reset safe in practice —
+it only works if the operator is told.
+
+An *unreadable* state file (permissions, I/O fault) is not this case: that is an environmental
+fault and still raises `StateError` → exit 2.
 
 ---
 
@@ -1028,25 +1056,73 @@ tests/
 - [ ] State file atomicity: kill mid-write, verify no corruption
 
 ### Phase 7 — Re-run and change detection
-- [ ] Change classification correctness tested for all edge cases
-- [ ] Chat-format diff readable and unambiguous, matches §10.6
-- [ ] Full re-run flow tested in fresh Cowork session
+- [x] Change classification correctness tested for all edge cases
+- [x] Chat-format diff readable and unambiguous, matches §10.6
+
+> **Moved to Phase 8:** "Full re-run flow tested in fresh Cowork session" was a Phase 7 item, but
+> it duplicates Phase 8's own exit gate and cannot be met before it. Only `flow-orchestrator` has a
+> SKILL.md; the other four skills are empty, and step 1 of the flow delegates parsing to
+> `gs1-export-parser`. A Cowork test in Phase 7 would exercise one-fifth of the surface it is meant
+> to validate. Tracked below as Phase 8's "Full re-run flow (plan → diff → confirm → execute) in a
+> fresh Cowork session".
+
+### Page adapter (Noviplast pilot) — mapping, data quality, lifecycle
+Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered gate. Detail in
+`docs/clients/noviplast-page-adapter.md` §4/§8. Done 2026-07-17:
+- [x] Field mapping resolved *with the client* (field walk): title from **3301** (was 3318, which
+      carried material/colour noise); the 1083 "tagline" mapping unwired — it is a generator *input*,
+      never the tagline (exhaustive search: 34/36 live taglines are not in the feed). 3297/3318 kept
+      as `extras`. Slot semantics verified live (ACF `product_title` is the tagline, not the name).
+- [x] Ranked `market_priority` replaced the 1:1 `market_language` map — every market row carries
+      every language, so the map both mis-resolved and undercounted. `product_name` fr 124 → 126/127.
+- [x] Source-data report emits `value_blank` + `value_inconsistent_across_markets` (per-field
+      `report_issues` gate; scoped to published fields). Live: 6 blanks + 5 substantive conflicts.
+- [x] Unpublish lifecycle: `scripts/run_unpublish.py` (retract GS1 → draft pages → `HELD` so a run
+      never republishes; reversible via `run_execute --revive`). Pilot `08713195000527` taken down
+      and verified live (both URLs 404, resolver disabled, links intact).
+- [ ] Feature/benefit + tagline **generator** (LLM) — the report above is its spec. Not started; it
+      owns the 3332+3301 title combination, the 1083-vs-USP tagline choice, and the USP bullets.
+- [x] `net_content` H87 → functional-name decoding (2026-07-18) — `reference/measurement_units.json`
+      (the datamodel's `MeasurementUnitCode_GDSN` picklist, 129 codes → nl/en/fr) + `lib/units.py`
+      (`decode_net_content`), decoded per language at render time in `templates._build_context`.
+      `H87` → *Stuk* / *Piece* / *Pièce*; all 125 pilot net_contents (all H87) now render words.
+- [ ] Brand-typo report (the 5 typos now live in the unpublished `3318`/`extras.marketing_name`) —
+      deferred with the report's scope, to widen past published fields later.
 
 ### Phase 7.5 — GPC brick → category mapping
 Derive the product-category assignment from the **GS1 DIY sector datamodel**, since GPC bricks do
 not map 1:1 onto a client's marketing categories. **The operator supplies the DIY datamodel** at the
 start of the phase (like the export and control file). See `docs/clients/noviplast-page-adapter.md` §5.7.
-- [ ] DIY datamodel supplied by the operator and parsed
-- [ ] Every GPC brick present in the client export maps to a category term
-- [ ] Bricks that span categories are resolved by a per-GTIN override list
-- [ ] `brick_category_map` + overrides live in `clients.yml`, reviewed and signed off by the client
-- [ ] `run_plan` assigns the correct category for every planned product; unmapped bricks warn rather
-      than guess
+- [x] DIY datamodel supplied by the operator and parsed — operator supplied `GS1 Data Source
+      Datamodel 3.1.36.xlsx` ("do-it-yourself, garden and pets"); `load_diy_datamodel` reads it (sheet
+      `Bricks`, `Brick Code` / `NL Brick Title`), covering all 73 export bricks.
+- [x] Every GPC brick present in the client export maps to a category term — `build_brick_map
+      noviplast --check` is green (73 bricks, 0 unmapped).
+- [x] Bricks that span categories are resolved by a per-GTIN override list — brick `10003865`
+      (Tuin Handgereedschap) → `tuin`, with `08713195003948` (Notenkraker) overridden to `keuken`.
+- [x] `brick_category_map` + overrides live in `clients.yml`, reviewed and signed off by the client —
+      73 bricks + 1 override, client-signed-off 2026-07-18 (the 6 terms: keuken, doe_het_zelf,
+      schoonmaak, tuin, dier, specials).
+- [x] `run_plan` assigns the correct category for every planned product; unmapped bricks warn rather
+      than guess — all 73 planned rows carry a category, `category_issues.json` empty; assignment
+      precedes hashing so a category change classifies CHANGED.
+
+> **Done 2026-07-18 (branch `noviplast-page-adapter`).** Tool layer: `CategoryConfig` + schema,
+> `lib/categories.py` (resolver, coverage, DIY-datamodel parser, draft generator),
+> `scripts/build_brick_map.py`, and the `run_plan` wiring, all test-covered. The operator's DIY
+> datamodel then unblocked #1; the client's sign-off of the 73-brick map + nutcracker override
+> closed #2/#4. The signed-off map lives in the gitignored `clients.yml`; the reviewed source is
+> `output/noviplast/data/categories.proposed.yml`. The same DIY datamodel also supplied the unit
+> picklist that closed the Phase 7 page-adapter `net_content` H87 decoding item (above).
 
 ### Phase 8 — Skills
 - [ ] Each SKILL.md finalised per §10
 - [ ] Full flow via chat instruction works end-to-end
 - [ ] Skills load when expected trigger phrases used
+- [ ] Full re-run flow (plan → diff → confirm → execute) in a fresh Cowork session *(moved from
+      Phase 7; see the note there)*. The plan half is already exercisable on real data — both
+      operator files are in `input/{client_id}/` — so this gate is about the chat surface and the
+      execute leg, not the data.
 
 ### Phase 9 — Pilot end-to-end
 - [ ] ≥10 real products live on pilot WP staging → production

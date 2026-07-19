@@ -49,7 +49,12 @@ _MEDIA_PATH: Final = f"{_WP_API_PREFIX}/media"
 #: Polylang detection route — a 200 means the plugin is active (§4.4).
 _PLL_LANGUAGES_PATH: Final = "/wp-json/pll/v1/languages"
 #: WPML detection route — its presence means WPML is active (§4.4).
-_WPML_PROBE_PATH: Final = "/wp-json/sitepress-multilingual-cms/v1/languages"
+#: WPML's REST namespace root. Probed rather than a concrete endpoint because WPML's routes
+#: are admin-gated and version-dependent — the namespace index is the one thing that answers
+#: 200 unauthenticated on any WPML site. (The former probe,
+#: ``/wp-json/sitepress-multilingual-cms/v1/languages``, is not a namespace WPML registers; it
+#: 404s even on a WPML site, so detection always fell through to "none".)
+_WPML_PROBE_PATH: Final = "/wp-json/wpml/v1"
 
 #: Post ``meta`` key holding the GTIN — the idempotency key for ``upsert_page`` (§6.1).
 _GTIN_META_KEY: Final = "gtin"
@@ -142,8 +147,12 @@ class WordPressClient:
         self._username = config.username
         self._http = httpx.Client(timeout=timeout or _DEFAULT_TIMEOUT)
         self._sleep = sleep
-        self.multilingual_plugin: MultilingualPlugin = self.detect_multilingual_plugin()
-        self._adapter: MultilingualAdapter = make_adapter(self.multilingual_plugin)
+        self.multilingual_plugin: MultilingualPlugin = self._resolve_plugin()
+        self._adapter: MultilingualAdapter = make_adapter(
+            self.multilingual_plugin,
+            wpml_helper_path=config.wpml_helper_path,
+            source_language=config.default_language,
+        )
 
     # -- Lifecycle ------------------------------------------------------------
 
@@ -176,38 +185,86 @@ class WordPressClient:
     # -- Public API -----------------------------------------------------------
 
     def detect_multilingual_plugin(self) -> MultilingualPlugin:
-        """Detect which multilingual plugin the site runs (§4.4).
+        """Detect which multilingual plugin the site runs, by probing (§4.4).
 
-        Probes the Polylang route first, then WPML; a present route (200) wins.
-        Returns ``"none"`` when neither responds. If the configured plugin disagrees
-        with what was detected, logs a WARNING — the config value stays authoritative
-        for adapter selection, but the mismatch is worth surfacing.
+        Probes the Polylang route first, then WPML's namespace root; a 200 wins.
 
         Returns:
-            ``"polylang"``, ``"wpml"``, or ``"none"``.
+            ``"polylang"``, ``"wpml"``, or ``"none"`` when neither answers.
         """
         if self._probe(_PLL_LANGUAGES_PATH):
-            detected: MultilingualPlugin = "polylang"
-        elif self._probe(_WPML_PROBE_PATH):
-            detected = "wpml"
-        else:
-            detected = "none"
-        configured = self.config.multilingual_plugin
-        if configured not in ("none", detected):
-            _log.warning(
-                "WP multilingual plugin configured as %r but detected %r", configured, detected
-            )
-        return detected
+            return "polylang"
+        if self._probe(_WPML_PROBE_PATH):
+            return "wpml"
+        return "none"
 
-    def find_by_slug(self, post_type: str, slug: str) -> WordPressPage | None:
+    def _resolve_plugin(self) -> MultilingualPlugin:
+        """Choose the multilingual plugin: an explicit config value wins over detection (§4.4).
+
+        Detection is a probe, and a probe can be wrong for reasons that have nothing to do
+        with the site's real setup — a renamed route, a plugin version change, an
+        admin-gated endpoint. When the operator has declared a plugin, that declaration is
+        the stronger signal and it wins; detection only supplies the value when the config
+        says ``none`` (i.e. "work it out"), and otherwise just warns on a mismatch.
+
+        This ordering matters because the failure is silent: letting a failed probe override
+        a configured ``wpml`` swaps in :class:`~lib.multilingual.NoOpAdapter`, whose
+        ``link_translations`` does nothing and raises nothing — so every page publishes,
+        reports ``ok``, and is simply never linked to its translation.
+
+        Returns:
+            The plugin to build the adapter for.
+        """
+        configured = self.config.multilingual_plugin
+        detected = self.detect_multilingual_plugin()
+        if configured == "none":
+            return detected
+        if configured != detected:
+            _log.warning(
+                "WP multilingual plugin configured as %r but detected %r; using the "
+                "configured value",
+                configured,
+                detected,
+            )
+        return configured
+
+    def _lang_params(self, language: str | None) -> dict[str, str]:
+        """Return the ``lang`` query param scoping a lookup to one language (§4.4).
+
+        On a multilingual site the same slug exists once per language — ``p-{gtin}`` is
+        GTIN-derived and carries no language component — and an unscoped collection query
+        answers with the **default language only**. Verified against a live WPML site:
+        ``?slug=p-X`` returned the nl page while the fr page was invisible.
+
+        Omitting this is not a near miss, it is data loss. Both pages share a ``meta.gtin``
+        (same product), so the E8 guard cannot catch it: upserting the fr row finds the nl
+        page by slug, the GTIN matches, and the nl page is *overwritten with French* — no fr
+        page is created and the row reports ``ok``.
+
+        Sent for Polylang as well as WPML. Only WPML is verified; for Polylang this is at
+        worst inert, since WordPress silently ignores query params it does not know.
+        """
+        if language and self.multilingual_plugin in ("wpml", "polylang"):
+            return {"lang": language}
+        return {}
+
+    def find_by_slug(
+        self, post_type: str, slug: str, language: str | None = None
+    ) -> WordPressPage | None:
         """Return the page with ``slug`` under ``post_type``, or ``None`` (§4.4).
+
+        Args:
+            post_type: The (custom) post type slug.
+            slug: The page slug to look up.
+            language: Scope the lookup to this language — **required on a multilingual
+                site**, where the same slug exists per language (see :meth:`_lang_params`).
 
         Raises:
             WordPressAPIError: On a non-2xx response other than 404, after retries.
         """
         pages = self._get_list(
             f"{_WP_API_PREFIX}/{post_type}",
-            params={"slug": slug, "context": "edit"},
+            params={"slug": slug, "context": "edit", **self._lang_params(language)},
             label=f"{post_type}?slug={slug}",
         )
         return cast(WordPressPage, pages[0]) if pages else None
@@ -223,27 +280,36 @@ class WordPressClient:
         parent: int | None = None,
         meta: dict[str, object] | None = None,
         existing_id: int | None = None,
+        acf: dict[str, object] | None = None,
     ) -> WordPressPage:
         """Create or update one product page, idempotently (§6.1).
 
-        Lookup order: (1) ``existing_id``, (2) ``slug``, (3) ``meta.gtin``. On a match
-        the page is updated in place (same id, content replaced); with no match a new
-        page is created carrying ``meta.gtin``. Callers must always set ``meta['gtin']``
-        — it is the idempotency key.
+        Lookup order: (1) ``existing_id``, (2) ``slug``, (3) ``meta.gtin`` — the last two
+        scoped to ``language`` (see :meth:`_lang_params`). On a match the page is updated in
+        place (same id, content replaced); with no match a new page is created carrying
+        ``meta.gtin``. Callers must always set ``meta['gtin']`` — it is the idempotency key.
+
+        On a multilingual site a create is issued with ``?lang=``, and ``acf`` is written in
+        a **separate** follow-up call. Both are required, and both fail silently otherwise —
+        see :meth:`_write_page` and :meth:`_write_acf`.
 
         Args:
             post_type: The (custom) post type slug.
             slug: The page slug (typically GTIN-derived).
             title: The page title.
-            content: The page HTML content.
-            language: The page's language code (set on WordPress when Polylang is active).
+            content: The page HTML content. Themes that render from ACF (e.g. Oxygen)
+                ignore this — pass ``""`` and supply ``acf`` instead.
+            language: The page's language code. Scopes the lookups and, on a multilingual
+                site, is what the page is created *as*.
             featured_media: Media id for the featured image, if any.
             parent: Parent page id, if any.
             meta: Post meta; must include ``gtin``.
             existing_id: A known page id to update directly, if available.
+            acf: ACF field values to write, if any.
 
         Returns:
-            The created or updated :class:`WordPressPage`.
+            The created or updated :class:`WordPressPage`. When ``acf`` was written, this is
+            the response to *that* call, so the returned page reflects the ACF values.
 
         Raises:
             GtinMismatchError: The matched page's ``meta.gtin`` differs from the row's
@@ -253,23 +319,23 @@ class WordPressClient:
                 other non-2xx response after retries.
         """
         gtin = _meta_gtin(meta)
-        found = self._lookup_existing(post_type, slug, gtin, existing_id)
+        found = self._lookup_existing(post_type, slug, gtin, existing_id, language)
         if found is not None:
             self._guard_gtin_match(found, gtin)
-            return self._write_page(
-                post_type,
-                title,
-                content,
-                language,
-                slug,
-                featured_media,
-                parent,
-                meta,
-                page_id=found["id"],
-            )
-        return self._write_page(
-            post_type, title, content, language, slug, featured_media, parent, meta, page_id=None
+        page = self._write_page(
+            post_type,
+            title,
+            content,
+            language,
+            slug,
+            featured_media,
+            parent,
+            meta,
+            page_id=found["id"] if found is not None else None,
         )
+        if acf:
+            page = self._write_acf(post_type, int(page["id"]), acf)
+        return page
 
     def upload_media(self, file_path: str | Path, title: str | None = None) -> int:
         """Upload a media file, idempotently by content hash + slug (§6.2).
@@ -362,21 +428,175 @@ class WordPressClient:
         """
         self._adapter.link_translations(self, translations)
 
+    def set_page_status(
+        self, post_type: str, page_id: int, *, gtin: str, status: str
+    ) -> WordPressPage | None:
+        """Set one product page's post status, guarded by its GTIN (§4.4, E8, E11).
+
+        Takes the same GTIN guard as :meth:`delete_page`, for the same reason: a page id
+        on its own is just a number, and a stale one addresses somebody else's content
+        every bit as validly as the intended page. Drafting a stranger's page is not as
+        destructive as deleting it, but it is just as invisible.
+
+        Deliberately **not** routed through :meth:`_write_page`, which hardcodes
+        ``status=self.config.post_status`` — the client-wide default that publishes — and
+        resends title, content and slug. Sending only ``status`` keeps this a status
+        change rather than a rewrite that happens to move the status.
+
+        Idempotent twice over: an id that is already gone is a no-op returning ``None``,
+        and a page already at ``status`` is returned unwritten.
+
+        Args:
+            post_type: The (custom) post type slug.
+            page_id: The page to restatus.
+            gtin: The GTIN the caller believes this page carries. Required — the write is
+                refused unless ``meta.gtin`` matches it.
+            status: The target post status, e.g. ``"draft"`` or ``"publish"``.
+
+        Returns:
+            The page as it now stands, or ``None`` if the id was already gone.
+
+        Raises:
+            GtinMismatchError: The page's ``meta.gtin`` differs from ``gtin`` (E8).
+            WordPressAPIError: The page carries no ``meta.gtin`` (E11), or any other
+                non-2xx after retries.
+        """
+        found = self._get_page(post_type, page_id)
+        if found is None:
+            _log.info("WP set_page_status %s/%s: already gone", post_type, page_id)
+            return None
+        self._guard_gtin_match(found, gtin)
+        if found.get("status") == status:
+            _log.info("WP %s/%s already %s (gtin=%s)", post_type, page_id, status, gtin)
+            return found
+        resp = self._request(
+            "POST",
+            f"{_WP_API_PREFIX}/{post_type}/{page_id}",
+            json_body={"status": status},
+            label=f"status {post_type}/{page_id} -> {status} (gtin={gtin})",
+        )
+        _log.warning(
+            "WP %s/%s status %s -> %s (gtin=%s)",
+            post_type,
+            page_id,
+            found.get("status"),
+            status,
+            gtin,
+        )
+        return cast(WordPressPage, resp.json())
+
+    def delete_page(
+        self, post_type: str, page_id: int, *, gtin: str, force: bool = True
+    ) -> WordPressPage | None:
+        """Delete one product page, guarded by its GTIN and idempotent (§4.4, E8, E11).
+
+        Reads the page first and refuses unless its ``meta.gtin`` matches ``gtin``. That
+        guard is why this takes a GTIN at all: a page id on its own is just a number, and
+        a stale or mistyped one addresses somebody else's content every bit as validly as
+        the intended page. Deleting is strictly more destructive than the ``upsert_page``
+        overwrite the same guards already cover, so it gets the same guards.
+
+        Idempotent: an id that is already gone (404, or 410 when it was purged between
+        the read and the delete) is a no-op returning ``None``, so this is safe to call
+        unconditionally from a teardown or a retry.
+
+        Args:
+            post_type: The (custom) post type slug.
+            page_id: The page to delete.
+            gtin: The GTIN the caller believes this page carries. Required — the delete
+                is refused unless ``meta.gtin`` matches it.
+            force: ``True`` (default) bypasses the trash and deletes permanently.
+                ``False`` trashes the page, which keeps its row and appends
+                ``__trashed`` to its slug.
+
+        Returns:
+            The page as it was immediately before deletion, or ``None`` if it was
+            already gone.
+
+        Raises:
+            GtinMismatchError: The page's ``meta.gtin`` differs from ``gtin`` (E8).
+            WordPressAPIError: The page carries no ``meta.gtin`` (E11, a 409-class
+                collision with a non-GTIN page), or any other non-2xx after retries.
+        """
+        found = self._get_page(post_type, page_id)
+        if found is None:
+            _log.info("WP delete %s/%s: already gone", post_type, page_id)
+            return None
+        self._guard_gtin_match(found, gtin)
+        try:
+            resp = self._request(
+                "DELETE",
+                f"{_WP_API_PREFIX}/{post_type}/{page_id}",
+                params={"force": "true"} if force else None,
+                label=f"delete {post_type}/{page_id} (gtin={gtin})",
+            )
+        except WordPressAPIError as exc:
+            if exc.status_code in (HTTPStatus.NOT_FOUND, HTTPStatus.GONE):
+                return None
+            raise
+        _log.warning("WP deleted %s/%s (gtin=%s, force=%s)", post_type, page_id, gtin, force)
+        return _deleted_page(resp.json())
+
+    def delete_media(self, media_id: int) -> bool:
+        """Permanently delete one media attachment; idempotent (§4.4).
+
+        Always force-deletes: WordPress refuses to trash attachments
+        (``rest_trash_not_supported``, HTTP 501), so bypassing the trash is the only
+        mode there is and a ``force`` flag here could only ever be ``True``.
+
+        **Unlike :meth:`delete_page` this has no ownership guard.** Media carries
+        ``meta.content_sha256``, not a GTIN, so there is no key to check the caller's
+        intent against — an id is taken at face value. Pass only ids you got back from
+        :meth:`upload_media`.
+
+        Args:
+            media_id: The attachment to delete.
+
+        Returns:
+            ``True`` when an attachment was deleted, ``False`` when it was already gone.
+
+        Raises:
+            WordPressAPIError: On any non-2xx response after retries.
+        """
+        try:
+            self._request(
+                "DELETE",
+                f"{_MEDIA_PATH}/{media_id}",
+                params={"force": "true"},
+                label=f"delete media {media_id}",
+            )
+        except WordPressAPIError as exc:
+            if exc.status_code in (HTTPStatus.NOT_FOUND, HTTPStatus.GONE):
+                return False
+            raise
+        _log.warning("WP deleted media %s", media_id)
+        return True
+
     # -- Lookup internals -----------------------------------------------------
 
-    def _lookup_existing(
-        self, post_type: str, slug: str, gtin: str | None, existing_id: int | None
+    def _lookup_existing(  # noqa: PLR0913 — one param per lookup key, plus its language scope
+        self,
+        post_type: str,
+        slug: str,
+        gtin: str | None,
+        existing_id: int | None,
+        language: str | None,
     ) -> WordPressPage | None:
-        """Resolve the existing page by id, then slug, then ``meta.gtin`` (§6.1)."""
+        """Resolve the existing page by id, then slug, then ``meta.gtin`` (§6.1).
+
+        Both collection lookups are scoped to ``language``: on a multilingual site they
+        would otherwise answer for the default language only, and adopt the wrong page
+        (see :meth:`_lang_params`). ``existing_id`` needs no scope — an id is unambiguous.
+        """
         if existing_id is not None:
             page = self._get_page(post_type, existing_id)
             if page is not None:
                 return page
-        page = self.find_by_slug(post_type, slug)
+        page = self.find_by_slug(post_type, slug, language)
         if page is not None:
             return page
         if gtin is not None:
-            return self._find_by_meta_gtin(post_type, gtin)
+            return self._find_by_meta_gtin(post_type, gtin, language)
         return None
 
     def _guard_gtin_match(self, found: WordPressPage, gtin: str | None) -> None:
@@ -425,14 +645,37 @@ class WordPressClient:
             raise
         return cast(WordPressPage, resp.json())
 
-    def _find_by_meta_gtin(self, post_type: str, gtin: str) -> WordPressPage | None:
-        """GET the page whose ``meta.gtin`` equals ``gtin``, or ``None`` (§6.1)."""
+    def _find_by_meta_gtin(
+        self, post_type: str, gtin: str, language: str | None = None
+    ) -> WordPressPage | None:
+        """GET the page whose ``meta.gtin`` equals ``gtin``, or ``None`` (§6.1).
+
+        The ``meta_key``/``meta_value`` params are **not** core WordPress REST features:
+        core silently drops unknown query params rather than erroring, so a site without a
+        ``rest_{post_type}_query`` enabler answers this request with an unfiltered page of
+        *every* post. Never trust the server to have filtered — verify ``meta.gtin`` on the
+        way out. Taking ``pages[0]`` on an unfiltered list returns an arbitrary unrelated
+        page, which the E8/E11 guards in :meth:`_guard_gtin_match` then reject, turning
+        every would-be create into a bogus "slug collision" error.
+
+        Returning ``None`` when nothing matches is also the right fallback on a site with no
+        enabler: the caller creates the page instead of adopting the wrong one.
+        """
         pages = self._get_list(
             f"{_WP_API_PREFIX}/{post_type}",
-            params={"meta_key": _GTIN_META_KEY, "meta_value": gtin, "context": "edit"},
+            params={
+                "meta_key": _GTIN_META_KEY,
+                "meta_value": gtin,
+                "context": "edit",
+                **self._lang_params(language),
+            },
             label=f"{post_type}?meta.gtin={gtin}",
         )
-        return cast(WordPressPage, pages[0]) if pages else None
+        for page in pages:
+            meta = page.get("meta")
+            if isinstance(meta, dict) and _meta_gtin(meta) == gtin:
+                return cast(WordPressPage, page)
+        return None
 
     def _find_media_by_slug(self, slug: str) -> WordPressMedia | None:
         """GET the media item at ``slug``, or ``None`` (§6.2)."""
@@ -469,7 +712,18 @@ class WordPressClient:
         *,
         page_id: int | None,
     ) -> WordPressPage:
-        """POST a create (``page_id is None``) or update to the post-type endpoint."""
+        """POST a create (``page_id is None``) or update to the post-type endpoint.
+
+        A create on a multilingual site carries ``?lang=`` so the page is created **as** that
+        language. This is what keeps the slug intact: ``slug_pattern`` is GTIN-derived and
+        identical across languages, so a page created without a language collides with its
+        sibling and WordPress silently appends ``-2``. The French page would then live at
+        ``/fr/…/p-{gtin}-2/`` while ``target_url_pattern`` builds ``/fr/…/p-{gtin}/`` — and
+        the GS1 resolver would point every French QR at a 404. Verified live: with ``?lang=``
+        both pages keep ``p-{gtin}``.
+
+        Deliberately no ``acf`` here — see :meth:`_write_acf`.
+        """
         body: dict[str, object] = {
             "title": title,
             "content": content,
@@ -488,10 +742,34 @@ class WordPressClient:
         if page_id is None:
             path = f"{_WP_API_PREFIX}/{post_type}"
             label = f"create {post_type} {slug}"
+            # Only on create: an existing page already has its language, and re-asserting it
+            # here is not this method's job (translation linking owns it).
+            params = self._lang_params(language)
         else:
             path = f"{_WP_API_PREFIX}/{post_type}/{page_id}"
             label = f"update {post_type}/{page_id}"
-        resp = self._request("POST", path, json_body=body, label=label)
+            params = {}
+        resp = self._request("POST", path, params=params or None, json_body=body, label=label)
+        return cast(WordPressPage, resp.json())
+
+    def _write_acf(self, post_type: str, page_id: int, acf: dict[str, object]) -> WordPressPage:
+        """Write ACF field values in their own call, after the page exists (§3.1).
+
+        ACF cannot ride along on a create that carries ``?lang=``: the values are **silently
+        dropped** — ``201 Created``, fields empty, no error. Measured three ways against the
+        live site: create without ``?lang`` + acf persists; create with ``?lang=fr`` + acf is
+        empty; create with ``?lang=fr`` *then* acf in a second call persists. Unhandled, this
+        yields pages with a correct URL and no content, which ``verify_url`` passes as ok.
+
+        Done for updates too, not just creates: one path is easier to keep correct than two,
+        and the extra call is cheap next to publishing a blank page.
+        """
+        resp = self._request(
+            "POST",
+            f"{_WP_API_PREFIX}/{post_type}/{page_id}",
+            json_body={"acf": acf},
+            label=f"acf {post_type}/{page_id} ({', '.join(sorted(acf))})",
+        )
         return cast(WordPressPage, resp.json())
 
     def _create_media(
@@ -691,6 +969,22 @@ def _meta_gtin(meta: dict[str, object] | None) -> str | None:
         return None
     value = meta.get(_GTIN_META_KEY)
     return str(value) if value is not None and value != "" else None
+
+
+def _deleted_page(body: object) -> WordPressPage | None:
+    """Unwrap a DELETE response into the page as it was before deletion.
+
+    The shape depends on the mode: a force-delete answers
+    ``{"deleted": true, "previous": {...}}``, while a trash answers with the trashed
+    post itself. Casting the force-delete body straight to a page would yield a dict
+    with no ``id``, and :class:`WordPressPage` is ``total=False``, so nothing would
+    complain until a caller read a field that was never there.
+    """
+    if not isinstance(body, dict):
+        return None
+    if "previous" in body:
+        return cast(WordPressPage, body["previous"])
+    return cast(WordPressPage, body)
 
 
 def _media_hash(media: WordPressMedia) -> str | None:

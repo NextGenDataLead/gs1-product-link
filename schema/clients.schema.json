@@ -122,6 +122,10 @@
         "post_type": { "type": "string" },
         "post_status": { "type": "string" },
         "multilingual_plugin": { "$ref": "#/$defs/multilingualPlugin" },
+        "wpml_helper_path": {
+          "type": "string",
+          "description": "Path to the site-side WPML helper route (multilingual_plugin: wpml only). WPML exposes no core REST route for language assignment or translation linking; the namespace is per-site."
+        },
         "default_language": { "type": "string" },
         "languages": { "$ref": "#/$defs/languages" },
         "image_handling": { "$ref": "#/$defs/imageHandling" }
@@ -148,6 +152,10 @@
         "post_type": { "type": "string" },
         "post_status": { "type": "string" },
         "multilingual_plugin": { "$ref": "#/$defs/multilingualPlugin" },
+        "wpml_helper_path": {
+          "type": "string",
+          "description": "Path to the site-side WPML helper route (multilingual_plugin: wpml only). WPML exposes no core REST route for language assignment or translation linking; the namespace is per-site."
+        },
         "default_language": { "type": "string" },
         "languages": { "$ref": "#/$defs/languages" },
         "image_handling": { "$ref": "#/$defs/imageHandling" },
@@ -165,6 +173,11 @@
               }
             }
           }
+        },
+        "acf_map": {
+          "type": "object",
+          "description": "Map of ACF field name to the ProductRecord field feeding it, for themes that render from ACF rather than post_content (e.g. Oxygen). Reach into extras with 'extras.{name}'. Omit for clients that render from the body template.",
+          "additionalProperties": { "type": "string" }
         },
         "slug_pattern": {
           "type": "string",
@@ -199,10 +212,10 @@
           "description": "Flat format: export columns carried through verbatim into ProductRecord.extras.",
           "items": { "type": "string" }
         },
-        "market_language": {
-          "type": "object",
-          "description": "GDSN format: mapping of TargetMarketCountryCode to the language it supplies, e.g. {\"528\": \"nl\", \"056\": \"fr\"}.",
-          "additionalProperties": { "type": "string" }
+        "market_priority": {
+          "type": "array",
+          "description": "GDSN format: TargetMarketCountryCodes in the order to consult them, e.g. [\"528\", \"056\", \"276\", \"442\"]. The first market with a non-blank value wins, per product/field/language; the same order picks scalars. The site's languages come from wordpress.languages.",
+          "items": { "type": "string" }
         },
         "gdsn_map": {
           "type": "object",
@@ -233,13 +246,30 @@
           "type": "boolean",
           "description": "Whether the attribute is a per-language LanguageCode/Value group."
         },
+        "multivalue": {
+          "type": "boolean",
+          "description": "For a localised attribute that repeats (e.g. all TradeItemFeatureBenefit[n] slots), join every slot's value with a newline instead of taking only the first. Ignored for non-localised sources."
+        },
         "with_unit": {
           "type": "boolean",
           "description": "Whether to append the paired MeasurementUnitCode to the value."
         },
+        "max_length": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Longest this value is expected to be, in characters. A longer value is reported to source_issues.json and kept verbatim — never truncated. Omit for no expectation."
+        },
+        "strip_prefix": {
+          "type": "string",
+          "description": "Literal prefix removed from the resolved value when present (e.g. 'Noviplast ' where the feed repeats the brand in the product name). Matched exactly; a value that only resembles the prefix is reported as a likely source-data misspelling and left unchanged, never repaired."
+        },
         "primary_file": {
           "type": "boolean",
           "description": "Whether to resolve the primary referenced-file URI (for image_url)."
+        },
+        "report_issues": {
+          "type": "boolean",
+          "description": "Whether this field's cross-market findings — value_blank (absent from every market) and value_inconsistent_across_markets (markets disagree) — reach source_issues.json. Default true. Set false for a field the tool parses but does not publish directly (e.g. a generator input), whose findings are deferred. Does not affect value_too_long / brand_prefix_mismatch."
         }
       }
     },
@@ -269,13 +299,9 @@
         },
         "default": {
           "type": "boolean",
-          "description": "Whether this is the default link type for the identifier."
+          "description": "Whether this is the default link type. Applied to the default language's link only, however many languages the record carries."
         },
         "public": { "type": "boolean" },
-        "per_language": {
-          "type": "boolean",
-          "description": "Emit one link per configured language."
-        },
         "title_pattern": {
           "type": "string",
           "description": "Template for the link title, e.g. '{product_name}'."
@@ -324,6 +350,66 @@
         "site_link_column": { "type": "string" }
       }
     },
+    "categories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terms"],
+      "description": "Phase 7.5: GPC brick -> client category-term mapping. Client-owned, signed-off data. Term-membership of map/override values is enforced by the loader, not this schema.",
+      "properties": {
+        "terms": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "The closed set of allowed category terms."
+        },
+        "brick_category_map": {
+          "type": "object",
+          "description": "Map of GPC brick code to a category term.",
+          "additionalProperties": { "type": "string" }
+        },
+        "overrides": {
+          "type": "object",
+          "description": "Per-GTIN category term, overriding the brick map for bricks that span categories.",
+          "additionalProperties": { "type": "string" }
+        },
+        "on_unmapped": {
+          "enum": ["warn"],
+          "description": "What to do with a brick that maps to no term. Fixed at 'warn': leave unset, never guess."
+        },
+        "require_terms_exist": {
+          "type": "boolean",
+          "description": "Whether a resolved term must already exist as a WordPress taxonomy term (vs auto-create). Recorded here; enforced at the future term-assignment step."
+        }
+      }
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Content-generator (LLM copy) settings. The API backend is opt-in via enabled; api_key_env names the env var holding the key, never the key. prompt_version selects the frozen voice template prompts/{client}/generation.{prompt_version}.md and is part of the cache fingerprint.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the API backend (run_generate --backend api) may run for this client. Defaults false; the Cowork-native producer needs no key."
+        },
+        "model": {
+          "type": "string",
+          "description": "Anthropic model id, e.g. claude-sonnet-5. Prefer a pinned snapshot for production."
+        },
+        "prompt_version": {
+          "type": "string",
+          "description": "Voice/prompt template version; selects prompts/{client}/generation.{prompt_version}.md and gates cache reuse."
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Name of the env var holding the Anthropic API key."
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Max output tokens per generation call."
+        }
+      }
+    },
     "multilingualPlugin": { "enum": ["none", "polylang", "wpml"] },
     "imageHandling": { "enum": ["url_in_export", "local_folder", "manual"] },
     "languages": {
@@ -352,7 +438,9 @@
         },
         "qr": { "$ref": "#/$defs/qr" },
         "flow": { "$ref": "#/$defs/flow" },
-        "website_status": { "$ref": "#/$defs/websiteStatus" }
+        "website_status": { "$ref": "#/$defs/websiteStatus" },
+        "categories": { "$ref": "#/$defs/categories" },
+        "generator": { "$ref": "#/$defs/generator" }
       }
     }
   }

@@ -125,6 +125,17 @@ def test_client_meta_and_scalar_fields(tmp_path: Path) -> None:
     assert out == "Acme|10 L|Buckets|Acme B.V.|acme"
 
 
+def test_net_content_unit_code_decoded_per_language(tmp_path: Path) -> None:
+    # net_content carries a raw GDSN unit code ("H87"); the render decodes it per language.
+    product = make_product(net_content="4 H87")
+    _write(_default_path(tmp_path, "nl"), "{{net_content}}")
+    _write(_default_path(tmp_path, "fr"), "{{net_content}}")
+    engine = TemplateEngine(CLIENT_ID, None, base_dir=tmp_path)
+
+    assert engine.render(product, "nl", CLIENT_META) == "4 Stuk"
+    assert engine.render(product, "fr", CLIENT_META) == "4 Pièce"
+
+
 def test_gtin14_is_zero_padded(tmp_path: Path) -> None:
     _write(_default_path(tmp_path, "nl"), "{{gtin}}|{{gtin14}}")
     engine = TemplateEngine(CLIENT_ID, None, base_dir=tmp_path)

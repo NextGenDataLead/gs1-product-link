@@ -109,6 +109,13 @@ class ProductRecord(BaseModel):
     description_short: LocalisedText | None = None
     description_long: LocalisedText | None = None
 
+    # Content-generator outputs (docs/clients/noviplast-generator-spec.md). Net-new fields the feed
+    # never writes: net-new so they stay distinguishable from feed values, per-language so ACF can
+    # deliver nl/fr to one static field, and on the record so a run_plan merge step folds them into
+    # the content hash before classification. ``None`` until generated.
+    generated_tagline: LocalisedText | None = None
+    generated_description: LocalisedText | None = None
+
     extras: dict[str, str] = Field(default_factory=dict)
 
     @property
@@ -121,11 +128,19 @@ class ProductRecord(BaseModel):
 
 
 class PlanClassification(StrEnum):
-    """How a plan row compares to prior state (§2.2)."""
+    """How a plan row compares to prior state (§2.2).
+
+    ``HELD`` means the product was deliberately taken down (``run_unpublish``) and must
+    not be re-published as a side effect of a routine run. It outranks the other three
+    because it is a fact about *intent*, not about content: a held product's hashes still
+    match, so without it the row classifies UNCHANGED and executing the plan quietly
+    republishes what somebody chose to unpublish.
+    """
 
     NEW = "new"
     UNCHANGED = "unchanged"
     CHANGED = "changed"
+    HELD = "held"
 
 
 class PlanRow(BaseModel):
@@ -183,8 +198,64 @@ class RunOutcome(BaseModel):
     error: str | None = None
 
 
+class SourceIssue(BaseModel):
+    """One defect in the source datapool, for the operator to fix upstream.
+
+    The tool reports these rather than repairing them: the datapool is the authoritative
+    record, so a value silently corrected here stays wrong in MyGS1 and comes back on the
+    next export. Emitted to ``output/{client_id}/data/source_issues.json`` — a file rather
+    than a log line, because the work of fixing them happens later, elsewhere, by a person.
+
+    The eventual home for generated-content reporting too: when the LLM fills a gap the feed
+    should have carried, that is the same kind of finding — a datapool gap with a suggested
+    value. Success is this file shrinking to empty.
+
+    Attributes:
+        gtin: The product, so it can be found in MyGS1.
+        field: Dotted path in *our* vocabulary, e.g. ``product_name.nl``. Useful for
+            debugging the tool; useless for finding the field in the source system.
+        source: The same field in the **source system's** vocabulary, e.g.
+            ``MarketingInformation attr 1083``. This is what the operator searches MyGS1
+            for — ``description_short`` exists nowhere but in this codebase, and a work
+            queue naming fields nobody can find is not a work queue.
+        issue: Machine-readable kind, e.g. ``brand_prefix_mismatch``.
+        value: The current source value, verbatim.
+        detail: One human-readable sentence: what is wrong and what to do.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    gtin: str
+    field: str
+    source: str = ""
+    issue: str
+    value: str
+    detail: str
+
+
 class StateEntry(BaseModel):
-    """Persisted state for one (GTIN, language) between runs (§2.3)."""
+    """Persisted state for one (GTIN, language) between runs (§2.3).
+
+    ``title`` is the page title as last written. It is the one product field state
+    keeps verbatim, so that a re-run can show a real before/after in a CHANGED row's
+    diff (§10.6.2) — ``content_hash`` proves *that* something changed but, being a
+    digest, can never say *what*. It is optional because state files written before
+    titles were persisted have none; ``None`` means "not recorded", and the diff omits
+    the title rather than guessing an old value.
+
+    ``wp_status`` and ``gs1_enabled`` record whether the product is actually *reachable*,
+    which the hashes cannot express: they describe what was written, not whether it is
+    still serving. Without them an unpublished product is indistinguishable from a
+    published one, so the next run reads its unchanged hashes, classifies it UNCHANGED,
+    and leaves a drafted page carrying an enabled Digital Link — or, if the entry were
+    deleted instead, silently republishes what somebody deliberately took down.
+
+    Both default to the published condition so state files written before they existed
+    load unchanged, the same back-compat move ``title`` makes. ``gs1_enabled`` describes
+    the GTIN, not the language, but is stored per-language because state is keyed
+    ``(gtin, language)`` — mirroring ``gs1_link_set_hash``, which is already duplicated
+    across an entry's languages for exactly that reason.
+    """
 
     wp_page_id: int
     wp_url: str
@@ -192,16 +263,26 @@ class StateEntry(BaseModel):
     content_hash: str
     gs1_link_set_hash: str
     last_run: datetime
+    title: str | None = None
+    wp_status: str = "publish"
+    gs1_enabled: bool = True
 
 
 class State(BaseModel):
     """The full persisted state for a client (§2.3).
 
     ``entries`` is keyed ``entries[gtin][language]``.
+
+    ``reset_from_corrupt`` is set by :func:`lib.state.load_state` when it recovered from a
+    corrupt state file (edge E19) and is excluded from serialisation — it describes *this*
+    load, not the persisted state. It exists so the reset reaches the operator in the plan
+    summary they actually read: a reset silently turns an incremental re-run into a full
+    rewrite (every row reclassifies as NEW), and an ERROR log line is too quiet for that.
     """
 
     client_id: str
     entries: dict[str, dict[str, StateEntry]]
+    reset_from_corrupt: bool = Field(default=False, exclude=True)
 
 
 # --- Flat single-sheet row parsing (§4.9) ------------------------------------

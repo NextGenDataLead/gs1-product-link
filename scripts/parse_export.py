@@ -27,7 +27,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from lib import gdsn
 from lib.config import ExportConfig, get_client
 from lib.errors import ConfigError, ExportParseError
-from lib.records import ProductRecord, _coerce_cell, parse_excel_row
+from lib.records import ProductRecord, SourceIssue, _coerce_cell, parse_excel_row
 
 _log = logging.getLogger("scripts.parse_export")
 
@@ -37,26 +37,32 @@ _EXIT_CONFIG_ERROR = 2
 
 
 class _ParseOutput:
-    """Accumulated records plus non-fatal warnings and fatal errors."""
+    """Accumulated records plus non-fatal warnings, fatal errors, and source-data issues."""
 
     def __init__(
-        self, records: list[ProductRecord], warnings: list[str], errors: list[str]
+        self,
+        records: list[ProductRecord],
+        warnings: list[str],
+        errors: list[str],
+        issues: list[SourceIssue] | None = None,
     ) -> None:
         self.records = records
         self.warnings = warnings
         self.errors = errors
+        self.issues = issues or []
 
 
-def _run_gdsn(export: ExportConfig, default_language: str) -> _ParseOutput:
+def _run_gdsn(export: ExportConfig, languages: list[str], default_language: str) -> _ParseOutput:
     workbook = gdsn.read_workbook(export.path)
     result = gdsn.build_records(
         workbook,
         export.gdsn_map,
-        export.market_language,
+        export.market_priority,
+        languages,
         default_language,
         export.gdsn_extras,
     )
-    return _ParseOutput(result.records, result.warnings, result.errors)
+    return _ParseOutput(result.records, result.warnings, result.errors, result.issues)
 
 
 def _run_flat(export: ExportConfig, default_language: str) -> _ParseOutput:
@@ -135,6 +141,18 @@ def _write_output(path: Path, records: list[ProductRecord]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_issues(path: Path, issues: list[SourceIssue]) -> None:
+    """Write the source-data issue report — **always**, even when empty.
+
+    Written unconditionally so the file's meaning is unambiguous: an empty list means "this
+    run found nothing", while a missing file means "no run has looked". A report that only
+    appears when there is bad news is one you cannot trust the absence of.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [issue.model_dump(mode="json") for issue in issues]
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="parse_export", description="Parse a client export.")
     parser.add_argument("client_id", help="Key under clients: in clients.yml")
@@ -152,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         export = client.export
         default_language = client.wordpress.default_language
         result = (
-            _run_gdsn(export, default_language)
+            _run_gdsn(export, client.wordpress.languages, default_language)
             if export.format == "gdsn"
             else _run_flat(export, default_language)
         )
@@ -168,13 +186,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(result.errors)} parse errors", file=sys.stderr)
         return _EXIT_PARSE_ERROR
 
+    issues_path = Path(f"output/{args.client_id}/data/source_issues.json")
     if not args.dry_run:
         output = Path(args.output or f"output/{args.client_id}/data/products.json")
         _write_output(output, result.records)
+        _write_issues(issues_path, result.issues)
     print(
         f"Parsed {len(result.records)} products ({len(result.warnings)} warnings)",
         file=sys.stderr,
     )
+    if result.issues and not args.dry_run:
+        # Named explicitly: these are defects in the *source datapool* that a person must
+        # fix in MyGS1, and they outlive this run. A count in a scrolling log is not a
+        # work queue.
+        print(
+            f"{len(result.issues)} source-data issue(s) need fixing at the source "
+            f"(MyGS1) — see {issues_path}",
+            file=sys.stderr,
+        )
     return _EXIT_OK
 
 

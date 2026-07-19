@@ -19,10 +19,11 @@ from typing import Any, Final, Literal
 
 import jsonschema
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from lib.errors import ConfigError, ExportParseError
 from lib.gdsn import GdsnSource
+from lib.generator import DEFAULT_PROMPT_VERSION
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import ResolverSettings
 from lib.records import ProductRecord, is_valid_target_path
@@ -114,7 +115,13 @@ class ExportConfig(BaseModel):
     column_map: dict[str, str] = Field(default_factory=dict)
     extras_columns: list[str] = Field(default_factory=list)
     # GDSN datapool path (§3 extension).
-    market_language: dict[str, str] = Field(default_factory=dict)
+    #: Market codes in the order to consult them (e.g. ``["528", "056", "276", "442"]``).
+    #: The first market with a non-blank value wins, per product/field/language; the same
+    #: order picks scalars. Replaces the old ``market_language`` 1:1 map — every market row
+    #: carries every language, so which market *has* a value varies by product, and a static
+    #: map both mis-resolves and undercounts coverage. The site's languages come from
+    #: ``wordpress.languages`` instead.
+    market_priority: list[str] = Field(default_factory=list)
     gdsn_map: dict[str, GdsnSource] = Field(default_factory=dict)
     gdsn_extras: dict[str, GdsnSource] = Field(default_factory=dict)
 
@@ -138,10 +145,19 @@ class WordPressConfig(BaseModel):
     post_type: str = "page"
     post_status: str = "publish"
     multilingual_plugin: Literal["none", "polylang", "wpml"] = "none"
+    #: Path to the site-side WPML helper route (``multilingual_plugin: wpml`` only). WPML has
+    #: no core REST route for language assignment or translation linking, so each site hosts a
+    #: small helper; the namespace is per-site, hence config rather than a constant. See
+    #: ``lib.multilingual.WPMLAdapter`` and ``docs/clients/noviplast-page-adapter.md`` §7.
+    wpml_helper_path: str = "/wp-json/gs1dl/v1/translations"
     default_language: str = "nl"
     languages: list[str] = Field(default_factory=lambda: ["nl"])
     image_handling: Literal["url_in_export", "local_folder", "manual"] = "url_in_export"
     taxonomies: dict[str, TaxonomyConfig] = Field(default_factory=dict)
+    #: ``{acf_field_name: product_record_field}`` for themes that render from ACF rather than
+    #: ``post_content`` (Oxygen, and similar page builders). Empty means the client renders
+    #: from the body template, as in Phase 5. See :mod:`lib.acf`.
+    acf_map: dict[str, str] = Field(default_factory=dict)
     slug_pattern: str | None = None
     target_url_pattern: str | None = None
 
@@ -176,9 +192,10 @@ class GS1LinkConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     link_type: str
+    #: Whether this link type is the resolver's default — applied to the **default
+    #: language only**, however many languages the record carries.
     default: bool = False
     public: bool = True
-    per_language: bool = False
     title_pattern: str | None = None
 
 
@@ -213,6 +230,65 @@ class WebsiteStatusConfig(BaseModel):
     site_link_column: str | None = "Link naar site"
 
 
+class CategoryConfig(BaseModel):
+    """GPC brick → client category-term mapping (Phase 7.5).
+
+    Client-owned, signed-off data that is *not* derivable from the feed: GPC bricks span
+    marketing categories and a client's own scheme is not purely semantic (see
+    ``docs/clients/noviplast-page-adapter.md`` §5.7). ``terms`` is the closed set of allowed
+    category terms; ``brick_category_map`` maps a GPC brick code to one of them; ``overrides``
+    resolves bricks that span categories, per GTIN, and win over the brick map.
+
+    ``on_unmapped`` is fixed at ``"warn"`` — an unmapped brick leaves the category unset and
+    is reported; the tool never guesses. ``require_terms_exist`` records the resolved open
+    decision (require the WordPress term to pre-exist rather than auto-creating it); its
+    enforcement point is the future term-assignment step, so it is carried here, not acted on
+    yet.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    terms: list[str]
+    brick_category_map: dict[str, str] = Field(default_factory=dict)
+    overrides: dict[str, str] = Field(default_factory=dict)
+    on_unmapped: Literal["warn"] = "warn"
+    require_terms_exist: bool = True
+
+    @model_validator(mode="after")
+    def _check_terms(self) -> CategoryConfig:
+        """Reject an empty/duplicate ``terms`` list or a map/override value outside it."""
+        allowed = set(self.terms)
+        if not self.terms or len(allowed) != len(self.terms):
+            raise ValueError("categories.terms must be non-empty and unique")
+        for brick, term in self.brick_category_map.items():
+            if term not in allowed:
+                raise ValueError(f"brick_category_map[{brick!r}] = {term!r} is not in terms")
+        for gtin, term in self.overrides.items():
+            if term not in allowed:
+                raise ValueError(f"overrides[{gtin!r}] = {term!r} is not in terms")
+        return self
+
+
+class GeneratorConfig(BaseModel):
+    """Content-generator (LLM copy) settings for one client (generator SPEC §"Config additions").
+
+    Governs the copy generator that writes the tagline + Eigenschappen. The headless API backend
+    (``scripts/run_generate.py --backend api`` via :class:`lib.llm.AnthropicClient`) is opt-in via
+    ``enabled``; the Cowork-native producer needs no key. Secrets are handled as elsewhere —
+    ``api_key_env`` names the env var holding the API key, never the key itself. ``prompt_version``
+    selects the frozen voice template (``prompts/{client}/generation.{prompt_version}.md``) and is
+    part of every cache fingerprint, so bumping it invalidates cached copy.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    model: str = "claude-sonnet-5"
+    prompt_version: str = DEFAULT_PROMPT_VERSION
+    api_key_env: str = "ANTHROPIC_API_KEY"
+    max_tokens: int = Field(default=1024, ge=1)
+
+
 class ClientConfig(BaseModel):
     """The full resolved configuration for one client (§2.4)."""
 
@@ -229,6 +305,8 @@ class ClientConfig(BaseModel):
     qr: QRConfig | None = None
     flow: FlowConfig | None = None
     website_status: WebsiteStatusConfig | None = None
+    categories: CategoryConfig | None = None
+    generator: GeneratorConfig | None = None
 
 
 # --- Loading (§4.2) ----------------------------------------------------------

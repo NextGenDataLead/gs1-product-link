@@ -937,10 +937,9 @@ clients:
         fr: product.fr.html
 
     gs1_links:
-      - link_type: pip
+      - link_type: "gs1:pip"
         default: true
         public: true
-        per_language: true
         title_pattern: "{product_name}"
 ```
 
@@ -1043,7 +1042,7 @@ def main(client_id: str, plan_path: Path) -> int:
                 digital_link_url=cfg.gs1.digital_link_url_pattern.format(
                     gtin14=gtin.zfill(14)
                 ),
-                link_type="pip",
+                link_type="gs1:pip",  # a GS1 Web Vocabulary CURIE; bare "pip" is unrecognised
                 language=lang,
                 target_url=page.url,
                 link_title=row["title"],

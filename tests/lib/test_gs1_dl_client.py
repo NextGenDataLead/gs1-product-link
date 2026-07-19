@@ -461,6 +461,53 @@ def test_safe_upsert_overwrites_when_allowed_and_returns_prior(httpx_mock: HTTPX
     assert any(r.method == "POST" for r in httpx_mock.get_requests())
 
 
+# --- retract: the closest thing to a delete the v2 API has -------------------
+
+
+def test_retract_deactivates_and_leaves_links_intact(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="GET",
+        status_code=200,
+        json={"itemDescription": "Widget", "links": [{"linkType": "pip"}], "isEnabled": True},
+    )
+    httpx_mock.add_response(method="PATCH", status_code=204)
+    client, _ = make_client()
+
+    assert client.retract("8712345678905") is True
+
+    requests = httpx_mock.get_requests()
+    # Read, then flip the switch — and nothing else. No POST: rewriting the record would
+    # destroy the configured link set, which deactivating already makes unreachable.
+    assert [r.method for r in requests] == ["GET", "PATCH"]
+    assert json.loads(requests[1].content) == {"isEnabled": False}
+    assert requests[1].url.path.endswith("/digitalLink/01/08712345678905/activationStatus")
+
+
+def test_retract_absent_gtin_writes_nothing(httpx_mock: HTTPXMock) -> None:
+    # Only the GET is registered: pytest-httpx errors on any request beyond it, so this
+    # asserts the no-write rather than merely observing it afterwards.
+    httpx_mock.add_response(method="GET", status_code=400, text=_NOT_FOUND_BODY)
+    client, _ = make_client()
+
+    assert client.retract("8712345678905") is False
+
+    assert all(r.method == "GET" for r in httpx_mock.get_requests())
+
+
+def test_retract_is_idempotent(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="GET",
+        status_code=200,
+        json={"itemDescription": "Widget", "links": [{"linkType": "pip"}], "isEnabled": False},
+    )
+    httpx_mock.add_response(method="PATCH", status_code=204)
+    client, _ = make_client()
+
+    assert client.retract("8712345678905") is True
+
+    assert json.loads(httpx_mock.get_requests()[1].content) == {"isEnabled": False}
+
+
 def test_resolver_settings_override_flows_into_body(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(method="POST", status_code=200)
     config = make_config(

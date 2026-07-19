@@ -21,15 +21,21 @@ from pytest_httpx import HTTPXMock
 
 from lib.config import WordPressConfig
 from lib.errors import GtinMismatchError, MissingCredentialError, WordPressAPIError
-from lib.wp_client import WordPressClient
+from lib.wp_client import (
+    _PLL_LANGUAGES_PATH,
+    _WPML_PROBE_PATH,
+    WordPressClient,
+)
 
 APP_PASS_ENV = "TEST_WP_APP_PASS"
 APP_PASS_VALUE = "abcd EFGH ijkl MNOP"  # WordPress app passwords are space-grouped
 USERNAME = "automation-bot"
 
 SITE = "https://staging.example.com"
-PLL_PATH = "/wp-json/pll/v1/languages"
-WPML_PATH = "/wp-json/sitepress-multilingual-cms/v1/languages"
+# Imported, not duplicated: hardcoding these let the WPML probe path drift out of sync with
+# lib/ and go unnoticed — detection silently returned "none" on a real WPML site.
+PLL_PATH = _PLL_LANGUAGES_PATH
+WPML_PATH = _WPML_PROBE_PATH
 PLL_URL = f"{SITE}{PLL_PATH}"
 WPML_URL = f"{SITE}{WPML_PATH}"
 DETECTION_PATHS = {PLL_PATH, WPML_PATH}
@@ -102,13 +108,30 @@ def test_detect_none(httpx_mock: HTTPXMock) -> None:
     assert client.multilingual_plugin == "none"
 
 
-def test_detect_mismatch_warns(httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture) -> None:
-    # Configured polylang, but the site probes as none -> WARNING, config stays authoritative.
+def test_detect_mismatch_warns_and_config_wins(
+    httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An explicit config value beats a failed probe.
+
+    A probe can fail for reasons unrelated to the site's real setup — a renamed route, a
+    plugin version change, an admin-gated endpoint — and letting it override a configured
+    plugin swaps in NoOpAdapter, which links nothing and raises nothing. Pages then publish,
+    report ok, and are silently never linked to their translations. (This is not
+    hypothetical: the WPML probe path was wrong, so a real WPML site detected as "none".)
+    """
     config = make_config(multilingual_plugin="polylang")
     with caplog.at_level(logging.WARNING, logger="lib.wp_client"):
         client, _ = make_client(httpx_mock, plugin="none", config=config)
-    assert client.multilingual_plugin == "none"
+    assert client.multilingual_plugin == "polylang"  # configured value, not the probe's
     assert "configured as 'polylang'" in caplog.text
+    assert "using the configured value" in caplog.text
+
+
+def test_config_none_defers_to_detection(httpx_mock: HTTPXMock) -> None:
+    """`none` means "work it out" — the probe supplies the value."""
+    config = make_config(multilingual_plugin="none")
+    client, _ = make_client(httpx_mock, plugin="polylang", config=config)
+    assert client.multilingual_plugin == "polylang"
 
 
 # --- Auth (§4.4) -------------------------------------------------------------
@@ -162,6 +185,169 @@ def test_find_by_slug_404_returns_none(httpx_mock: HTTPXMock) -> None:
     assert client.find_by_slug(POST_TYPE, "p-1") is None
 
 
+# --- _find_by_meta_gtin (§6.1) -----------------------------------------------
+
+
+def test_find_by_meta_gtin_returns_the_matching_page(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        json=[
+            {"id": 1, "slug": "other", "meta": {"gtin": "08713195000001"}},
+            {"id": 2, "slug": "p-2", "meta": {"gtin": "08713195000002"}},
+        ],
+    )
+
+    page = client._find_by_meta_gtin(POST_TYPE, "08713195000002")
+
+    assert page is not None
+    assert page["id"] == 2  # the match, not merely the first row
+
+
+def test_find_by_meta_gtin_ignores_an_unfiltered_response(httpx_mock: HTTPXMock) -> None:
+    """WP core drops unknown query params, so an un-enabled site returns *every* page.
+
+    Taking ``pages[0]`` there adopts an arbitrary unrelated page: the E8/E11 guards then
+    reject it and every would-be create fails as a bogus slug collision. Verified live
+    against www.noviplast.nl — a query for a GTIN matching nothing returned 10 rows.
+    """
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        json=[
+            {"id": 1347, "slug": "drian-sticks", "meta": {"gtin": ""}},
+            {"id": 1341, "slug": "power-splash", "meta": {"gtin": ""}},
+        ],
+    )
+
+    assert client._find_by_meta_gtin(POST_TYPE, "08713195000527") is None
+
+
+def test_find_by_meta_gtin_tolerates_pages_without_meta(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        json=[
+            {"id": 1, "slug": "no-meta-key"},
+            {"id": 2, "slug": "meta-not-a-dict", "meta": None},
+            {"id": 3, "slug": "p-3", "meta": {"gtin": "08713195000003"}},
+        ],
+    )
+
+    page = client._find_by_meta_gtin(POST_TYPE, "08713195000003")
+
+    assert page is not None
+    assert page["id"] == 3
+
+
+def test_find_by_meta_gtin_empty_list_returns_none(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])
+
+    assert client._find_by_meta_gtin(POST_TYPE, "08713195000527") is None
+
+
+# --- Multilingual write path (§3.1 of the page-adapter doc) ------------------
+
+
+def _wpml_config(**overrides: object) -> WordPressConfig:
+    return make_config(multilingual_plugin="wpml", default_language="nl", **overrides)
+
+
+def test_lookups_are_scoped_to_the_language_on_a_multilingual_site(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Unscoped, a slug lookup answers for the default language only — and clobbers it.
+
+    Both languages share the GTIN-derived slug and the same meta.gtin, so an unscoped
+    lookup for the fr row returns the *nl* page, the E8 guard passes (same GTIN), and the
+    nl page is overwritten with French — no fr page created, row reports ok. Verified live:
+    ?slug=p-X returned the nl page while the fr page was invisible without &lang=fr.
+    """
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    httpx_mock.add_response(method="GET", json=[])  # slug lookup
+    httpx_mock.add_response(method="GET", json=[])  # meta.gtin lookup
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+
+    client.upsert_page(POST_TYPE, "p-1", "T", "", "fr", meta={"gtin": "1"})
+
+    gets = [r for r in _business_requests(httpx_mock) if r.method == "GET"]
+    assert len(gets) == 2
+    for request in gets:
+        assert "lang=fr" in str(request.url)
+
+
+def test_create_carries_the_lang_param_but_update_does_not(httpx_mock: HTTPXMock) -> None:
+    """?lang= on create keeps the slug; on update it is neither needed nor this call's job."""
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    # Create: nothing found.
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+    # Update: found by slug.
+    httpx_mock.add_response(method="GET", json=[{"id": 7, "slug": "p-1", "meta": {"gtin": "1"}}])
+    httpx_mock.add_response(method="POST", json={"id": 7, "slug": "p-1"})
+
+    client.upsert_page(POST_TYPE, "p-1", "T", "", "fr", meta={"gtin": "1"})
+    client.upsert_page(POST_TYPE, "p-1", "T2", "", "fr", meta={"gtin": "1"})
+
+    posts = [r for r in _business_requests(httpx_mock) if r.method == "POST"]
+    create, update = posts[0], posts[1]
+    assert create.url.path == f"/wp-json/wp/v2/{POST_TYPE}"
+    assert "lang=fr" in str(create.url)
+    assert update.url.path == f"/wp-json/wp/v2/{POST_TYPE}/7"
+    assert "lang=" not in str(update.url)
+
+
+def test_acf_is_written_in_a_second_call_never_on_create(httpx_mock: HTTPXMock) -> None:
+    """?lang= and acf in one create silently drop the acf — 201, fields empty, no error.
+
+    So the create body must not carry acf, and the values go in a follow-up call.
+    """
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+    httpx_mock.add_response(
+        method="POST", json={"id": 7, "slug": "p-1", "acf": {"product_title": "Tagline"}}
+    )
+
+    page = client.upsert_page(
+        POST_TYPE, "p-1", "T", "", "fr", meta={"gtin": "1"}, acf={"product_title": "Tagline"}
+    )
+
+    posts = [r for r in _business_requests(httpx_mock) if r.method == "POST"]
+    assert len(posts) == 2
+    assert b"acf" not in posts[0].content  # create body carries no acf
+    assert json.loads(posts[1].content) == {"acf": {"product_title": "Tagline"}}
+    assert posts[1].url.path == f"/wp-json/wp/v2/{POST_TYPE}/7"
+    # The returned page is the ACF response, so it reflects what was written.
+    assert page["acf"] == {"product_title": "Tagline"}  # type: ignore[typeddict-item]
+
+
+def test_no_acf_call_when_no_acf_given(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+
+    client.upsert_page(POST_TYPE, "p-1", "T", "body", "nl", meta={"gtin": "1"})
+
+    assert len([r for r in _business_requests(httpx_mock) if r.method == "POST"]) == 1
+
+
+def test_single_language_site_sends_no_lang_param(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock, plugin="none")
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 7, "slug": "p-1"})
+
+    client.upsert_page(POST_TYPE, "p-1", "T", "body", "nl", meta={"gtin": "1"})
+
+    for request in _business_requests(httpx_mock):
+        assert "lang=" not in str(request.url)
+
+
 # --- upsert_page idempotency (§6.1) ------------------------------------------
 
 
@@ -178,6 +364,35 @@ def test_upsert_creates_when_absent(httpx_mock: HTTPXMock) -> None:
     )
 
     assert page["id"] == 10
+    posts = [r for r in _business_requests(httpx_mock) if r.method == "POST"]
+    assert len(posts) == 1
+    assert posts[0].url.path == f"/wp-json/wp/v2/{POST_TYPE}"  # create at collection
+
+
+def test_upsert_creates_when_site_does_not_filter_meta(httpx_mock: HTTPXMock) -> None:
+    """A new product must still be created on a site whose REST ignores meta filtering.
+
+    The regression this locks: WP core silently drops the meta_key/meta_value params, so
+    the gtin lookup came back holding every existing page. Adopting the first one made
+    _guard_gtin_match raise E11 ("slug collision with non-GTIN page"), so *every* new row
+    errored against a real site — pointing at an unrelated page — and none were created.
+    """
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])  # slug lookup: no such page yet
+    httpx_mock.add_response(  # meta.gtin lookup: unfiltered — real pages, none ours
+        method="GET",
+        json=[
+            {"id": 1347, "slug": "drian-sticks", "meta": {"gtin": ""}},
+            {"id": 1341, "slug": "power-splash", "meta": {"gtin": ""}},
+        ],
+    )
+    httpx_mock.add_response(
+        method="POST", status_code=201, json={"id": 99, "slug": "p-1", "meta": {"gtin": "1"}}
+    )
+
+    page = client.upsert_page(POST_TYPE, "p-1", "Title", "Body", "nl", meta={"gtin": "1"})
+
+    assert page["id"] == 99  # created, not adopted and not raised on
     posts = [r for r in _business_requests(httpx_mock) if r.method == "POST"]
     assert len(posts) == 1
     assert posts[0].url.path == f"/wp-json/wp/v2/{POST_TYPE}"  # create at collection
@@ -266,6 +481,180 @@ def test_e11_slug_collision_on_create_409_raises(httpx_mock: HTTPXMock) -> None:
     assert exc.value.status_code == 409
     posts = [r for r in _business_requests(httpx_mock) if r.method == "POST"]
     assert len(posts) == 1  # not retried
+
+
+# --- set_page_status (§4.4) --------------------------------------------------
+
+
+def test_set_page_status_sends_only_status(httpx_mock: HTTPXMock) -> None:
+    # The point of not routing through _write_page: a status change must not resend
+    # title/content/slug, and must not pick up config.post_status ("publish") — which
+    # would make drafting a page silently re-publish it.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{TYPE_URL}/7?context=edit",
+        json={"id": 7, "status": "publish", "meta": {"gtin": "1"}},
+    )
+    httpx_mock.add_response(method="POST", json={"id": 7, "status": "draft"})
+
+    page = client.set_page_status(POST_TYPE, 7, gtin="1", status="draft")
+
+    assert page == {"id": 7, "status": "draft"}
+    posted = next(r for r in _business_requests(httpx_mock) if r.method == "POST")
+    assert json.loads(posted.content) == {"status": "draft"}
+
+
+def test_set_page_status_is_noop_when_already_at_status(httpx_mock: HTTPXMock) -> None:
+    # Idempotent: re-running run_unpublish must not rewrite an already-drafted page.
+    # No POST is registered, so pytest-httpx errors if one is issued.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{TYPE_URL}/7?context=edit",
+        json={"id": 7, "status": "draft", "meta": {"gtin": "1"}},
+    )
+
+    page = client.set_page_status(POST_TYPE, 7, gtin="1", status="draft")
+
+    assert page == {"id": 7, "status": "draft", "meta": {"gtin": "1"}}
+    assert all(r.method != "POST" for r in _business_requests(httpx_mock))
+
+
+def test_set_page_status_returns_none_when_page_is_gone(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", url=f"{TYPE_URL}/7?context=edit", status_code=404)
+
+    assert client.set_page_status(POST_TYPE, 7, gtin="1", status="draft") is None
+
+
+def test_set_page_status_refuses_on_gtin_mismatch(httpx_mock: HTTPXMock) -> None:
+    # E8: a stale page id in state addresses another product's page. Drafting a
+    # stranger's page is less destructive than deleting it and just as invisible.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{TYPE_URL}/7?context=edit",
+        json={"id": 7, "status": "publish", "meta": {"gtin": "999"}},
+    )
+
+    with pytest.raises(GtinMismatchError) as exc:
+        client.set_page_status(POST_TYPE, 7, gtin="1", status="draft")
+
+    assert exc.value.existing_gtin == "999"
+    assert all(r.method != "POST" for r in _business_requests(httpx_mock))
+
+
+def test_set_page_status_refuses_on_non_gtin_page(httpx_mock: HTTPXMock) -> None:
+    # E11: the id addresses a page that is not ours at all.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "status": "publish"}
+    )
+
+    with pytest.raises(WordPressAPIError) as exc:
+        client.set_page_status(POST_TYPE, 7, gtin="1", status="draft")
+
+    assert exc.value.status_code == 409
+    assert all(r.method != "POST" for r in _business_requests(httpx_mock))
+
+
+# --- delete_page / delete_media (§4.4) ---------------------------------------
+
+
+def test_delete_page_force_deletes_and_returns_previous(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {"gtin": "1"}}
+    )
+    httpx_mock.add_response(method="DELETE", json={"deleted": True, "previous": {"id": 7}})
+
+    page = client.delete_page(POST_TYPE, 7, gtin="1")
+
+    # Unwrapped from {"deleted": ..., "previous": {...}} — the raw body has no "id".
+    assert page == {"id": 7}
+    deleted = next(r for r in _business_requests(httpx_mock) if r.method == "DELETE")
+    assert deleted.url.params["force"] == "true"  # a string: params are dict[str, str]
+
+
+def test_delete_page_trashes_when_not_forced(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {"gtin": "1"}}
+    )
+    httpx_mock.add_response(method="DELETE", json={"id": 7, "status": "trash"})
+
+    page = client.delete_page(POST_TYPE, 7, gtin="1", force=False)
+
+    assert page == {"id": 7, "status": "trash"}  # trash answers with the post itself
+    deleted = next(r for r in _business_requests(httpx_mock) if r.method == "DELETE")
+    assert "force" not in deleted.url.params
+
+
+def test_delete_page_refuses_on_gtin_mismatch(httpx_mock: HTTPXMock) -> None:
+    # E8 for a delete: the page belongs to another product. No DELETE is registered, so
+    # pytest-httpx would error if one were issued.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {"gtin": "999"}}
+    )
+
+    with pytest.raises(GtinMismatchError) as exc:
+        client.delete_page(POST_TYPE, 7, gtin="1")
+
+    assert exc.value.existing_gtin == "999"
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
+
+
+def test_delete_page_refuses_on_non_gtin_page(httpx_mock: HTTPXMock) -> None:
+    # E11 for a delete: the id addresses a page that is not ours at all.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {}}
+    )
+
+    with pytest.raises(WordPressAPIError) as exc:
+        client.delete_page(POST_TYPE, 7, gtin="1")
+
+    assert exc.value.status_code == 409
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
+
+
+def test_delete_page_missing_is_noop(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", url=f"{TYPE_URL}/7?context=edit", status_code=404)
+
+    assert client.delete_page(POST_TYPE, 7, gtin="1") is None
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
+
+
+def test_delete_page_gone_during_delete_is_noop(httpx_mock: HTTPXMock) -> None:
+    # The race: purged between the read and the delete.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", url=f"{TYPE_URL}/7?context=edit", json={"id": 7, "meta": {"gtin": "1"}}
+    )
+    httpx_mock.add_response(method="DELETE", status_code=410)
+
+    assert client.delete_page(POST_TYPE, 7, gtin="1") is None
+
+
+def test_delete_media_forces(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="DELETE", json={"deleted": True})
+
+    assert client.delete_media(5) is True
+
+    deleted = next(r for r in _business_requests(httpx_mock) if r.method == "DELETE")
+    assert deleted.url.path == "/wp-json/wp/v2/media/5"
+    assert deleted.url.params["force"] == "true"  # WP refuses to trash attachments (501)
+
+
+def test_delete_media_missing_is_noop(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="DELETE", status_code=404)
+
+    assert client.delete_media(5) is False
 
 
 # --- upload_media idempotency (§6.2) -----------------------------------------

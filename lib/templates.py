@@ -29,6 +29,7 @@ import pystache
 from lib.config import TemplateConfig
 from lib.errors import TemplateError
 from lib.records import ProductRecord
+from lib.units import decode_net_content
 
 _log = logging.getLogger(__name__)
 
@@ -141,7 +142,9 @@ class TemplateEngine:
             "gtin14": product.gtin14,
             "brand": product.brand,
             "gpc_brick_code": _s(product.gpc_brick_code),
-            "net_content": _s(product.net_content),
+            "net_content": _s(
+                decode_net_content(product.net_content, language, fallback_language=fallback)
+            ),
             "image_url": _s(product.image_url),
             "category": _s(product.category),
             "product_name": _s(product.product_name.get(language, fallback)),

@@ -52,7 +52,8 @@ def test_loads_example_config_with_defaults_applied() -> None:
     assert noviplast.display_name == "Noviplast B.V."
     assert noviplast.gs1.batch_size == 50  # inherited from defaults
     assert noviplast.wordpress.post_status == "publish"  # inherited from defaults
-    assert noviplast.wordpress.multilingual_plugin == "polylang"  # client override
+    assert noviplast.wordpress.multilingual_plugin == "wpml"  # client override
+    assert noviplast.wordpress.wpml_helper_path == "/wp-json/noviplast/v1/translations"
 
 
 def test_get_client_returns_config(tmp_path: Path) -> None:
@@ -134,6 +135,79 @@ def test_resolve_production_without_credentials_raises() -> None:
     )
     with pytest.raises(ConfigError, match="production"):
         cfg.resolve("production")
+
+
+# --- Categories block (Phase 7.5) --------------------------------------------
+
+
+def _client_with_categories(categories: dict[str, Any]) -> dict[str, Any]:
+    client = _base_client()
+    client["categories"] = categories
+    return client
+
+
+def test_categories_absent_is_none(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, _base_client())
+    assert get_client("acme", path).categories is None
+
+
+def test_categories_loads(tmp_path: Path) -> None:
+    client = _client_with_categories(
+        {
+            "terms": ["tuin", "keuken"],
+            "brick_category_map": {"10003865": "tuin"},
+            "overrides": {"08713195000123": "keuken"},
+        }
+    )
+    cfg = get_client("acme", _write_config(tmp_path, client))
+    assert cfg.categories is not None
+    assert cfg.categories.terms == ["tuin", "keuken"]
+    assert cfg.categories.brick_category_map == {"10003865": "tuin"}
+    assert cfg.categories.overrides == {"08713195000123": "keuken"}
+    assert cfg.categories.on_unmapped == "warn"
+    assert cfg.categories.require_terms_exist is True
+
+
+def test_categories_brick_map_value_outside_terms_raises(tmp_path: Path) -> None:
+    client = _client_with_categories(
+        {"terms": ["tuin"], "brick_category_map": {"10003865": "keuken"}}
+    )
+    path = _write_config(tmp_path, client)
+    with pytest.raises(ConfigError, match="keuken"):
+        load_clients(path)
+
+
+def test_categories_override_value_outside_terms_raises(tmp_path: Path) -> None:
+    client = _client_with_categories({"terms": ["tuin"], "overrides": {"08713195000123": "keuken"}})
+    path = _write_config(tmp_path, client)
+    with pytest.raises(ConfigError, match="keuken"):
+        load_clients(path)
+
+
+def test_categories_empty_terms_raises(tmp_path: Path) -> None:
+    # minItems in the schema rejects an empty terms list before the loader runs.
+    path = _write_config(tmp_path, _client_with_categories({"terms": []}))
+    with pytest.raises(ConfigError):
+        load_clients(path)
+
+
+def test_categories_duplicate_terms_raises(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, _client_with_categories({"terms": ["tuin", "tuin"]}))
+    with pytest.raises(ConfigError, match="unique"):
+        load_clients(path)
+
+
+def test_categories_unknown_key_rejected_by_schema(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, _client_with_categories({"terms": ["tuin"], "bogus": 1}))
+    with pytest.raises(ConfigError, match="invalid"):
+        load_clients(path)
+
+
+def test_example_config_categories_block_loads() -> None:
+    cfg = load_clients("clients.example.yml")["noviplast"]
+    assert cfg.categories is not None
+    assert "tuin" in cfg.categories.terms
+    assert cfg.categories.brick_category_map["10003865"] == "tuin"
 
 
 # --- Lazy secrets ------------------------------------------------------------

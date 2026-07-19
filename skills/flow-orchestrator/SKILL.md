@@ -8,12 +8,14 @@ parse → plan → present → confirm → execute → summarise.
 
 ## What this skill does
 
-Orchestrates the plan/confirm/execute pipeline for one client. It runs
-`scripts/run_plan.py` to classify each `(GTIN, language)`, presents the plan and collects
-the operator's confirmation in chat, writes a `ConfirmedPlan` to
-`output/{client}/plan.confirmed.json`, and invokes `scripts/run_execute.py` on the
-confirmed subset — then reports the outcome. Tone is **concise and business-like, not
-conversational** (§10.6): verbose text creates fatigue during batch runs.
+Orchestrates the generate/plan/confirm/execute pipeline for one client. For a client with a
+`generator` config it first fills and reviews the generated-copy cache (review gate 1), then runs
+`scripts/run_plan.py` to classify each `(GTIN, language)` — which merges that cache — and presents
+the plan (review gate 2), collects the operator's confirmation in chat, writes a `ConfirmedPlan` to
+`output/{client}/plan.confirmed.json`, and invokes `scripts/run_execute.py` on the confirmed subset
+— then reports the outcome. Generated copy is **never auto-published**: it is reviewed twice and
+executed draft-first. Tone is **concise and business-like, not conversational** (§10.6): verbose
+text creates fatigue during batch runs.
 
 For the pilot the flow is **create-only**: `run_plan.py` gates products through the
 website-status control file, so only GTINs that are already in GS1 and not yet on the
@@ -23,8 +25,11 @@ below stays dormant — it is implemented and ready for future product updates.
 ## Inputs
 
 - `client_id` (from the trigger phrase; ask if unclear).
-- `clients.yml` config for the client (languages, environment, `website_status`, `flow`).
+- `clients.yml` config for the client (languages, environment, `website_status`, `flow`,
+  `generator`).
 - Parsed products at `output/{client}/data/products.json` (run `parse_export` if absent).
+- For a client with a `generator` config, the generated-copy cache at
+  `output/{client}/data/generated_cache.json` (filled in step 3; `run_plan` reads it).
 
 ## Steps
 
@@ -37,9 +42,20 @@ below stays dormant — it is implemented and ready for future product updates.
    Client noviplast supports [nl, fr]. Which languages should this run cover?
    [all | nl | fr | nl,fr]
    ```
-   Default `all`. Remember the chosen subset for step 5.
+   Default `all`. Remember the chosen subset for step 6.
 
-3. **Plan.** Run `python -m scripts.run_plan {client}` and read
+3. **Generate copy & review (gate 1 of 2).** Skip this step for a client with no `generator`
+   config. Otherwise fill the generated-copy cache, then review it before planning — the tagline
+   and Eigenschappen are LLM-written, so they are reviewed *before* they can reach a page:
+   - **Cowork (no API key):** run `python -m scripts.run_generate {client} --emit`, then invoke the
+     `content-generator` skill to write the copy and `--ingest` it; that skill presents the review.
+   - **Headless:** run `python -m scripts.run_generate {client} --backend api` (needs the API key).
+   Then eyeball a sample of `output/{client}/data/generated_cache.json` (nl **and** fr) and the
+   `output/{client}/data/generated_issues.json` work list. **This pipeline fails silently — verify
+   the copy against the real product, not the "ingested N" count.** Generation never publishes; the
+   second gate is `plan.json` (step 5) and execute is draft-first.
+
+4. **Plan.** Run `python -m scripts.run_plan {client}` and read
    `output/{client}/plan.json`. run_plan omits any `(GTIN, language)` with a missing
    `product_name` and logs a `SKIPPED …` warning to stderr; for each such warning, present
    the **missing-field prompt (§10.6.5)** verbatim:
@@ -52,7 +68,7 @@ below stays dormant — it is implemented and ready for future product updates.
    - `fail-run` — abort before execute.
    Default `flow.on_missing_field: prompt`.
 
-4. **Plan summary (§10.6.1).** Present verbatim (the actionable total is NEW + CHANGED;
+5. **Plan summary (§10.6.1).** Present verbatim (the actionable total is NEW + CHANGED;
    UNCHANGED rows are never executed):
    ```
    Plan for noviplast (test env):
@@ -65,14 +81,25 @@ below stays dormant — it is implemented and ready for future product updates.
    ```
    - `all` — confirm every NEW and CHANGED row; execute.
    - `new-only` — confirm NEW rows only, skip CHANGED.
-   - `changed-review` — walk each CHANGED row's diff and confirm individually (step 5).
+   - `changed-review` — walk each CHANGED row's diff and confirm individually (step 6).
    - `cancel` — abort, write nothing.
    Off-menu reply → reply verbatim: `Please pick one of the listed options, or specify a
    filter (e.g. 'only GTIN 87123...').`
    When run_plan reported control-file exclusions, add one line beneath the counts, e.g.
    `Excluded (control file): 12 already on website, 3 not yet in GS1, 1 not in control file.`
+   When run_plan's stderr leads with the **state-reset warning** (E19 — prior state was
+   corrupt and has been reset), put it **above** the counts, not below, and say what it
+   means before offering the menu:
+   ```
+   WARNING: prior state was corrupt and has been reset (backup: output/noviplast/state.json.corrupt.20260713T031200Z).
+   Every row therefore re-plans as NEW. Re-running them is idempotent — pages are matched by
+   slug/meta.gtin and updated in place, not duplicated — but it will rewrite live pages and
+   resolver targets rather than skip them.
+   ```
+   Then present the counts as normal. Do not suppress or soften this: the counts alone read
+   as a routine first run, and `all` would rewrite the whole catalogue.
 
-5. **Build the confirmed subset.** From the plan rows and the menu choice, build
+6. **Build the confirmed subset.** From the plan rows and the menu choice, build
    `confirmed_gtins_by_lang`, then intersect it with the step-2 language subset:
    - `all` → every row with classification NEW or CHANGED.
    - `new-only` → NEW rows only.
@@ -89,12 +116,16 @@ below stays dormant — it is implemented and ready for future product updates.
      `show-full-diff` prints all fields, then re-prompts `[apply | skip]`. Confirm only the
      rows the operator `apply`s. Show only the fields present in the row's `diff`; never
      invent an "old" value (see Failure modes).
+     A CHANGED row's `diff` carries `title` and/or `target_url` — the fields `StateEntry`
+     records. When it is empty, the change is in the product body; say so plainly
+     (`Changes: product content (no title or URL change)`) rather than printing a bare
+     `Changes:` header.
 
-6. **Write the ConfirmedPlan.** Serialise `ConfirmedPlan{plan, confirmed_gtins_by_lang}`
+7. **Write the ConfirmedPlan.** Serialise `ConfirmedPlan{plan, confirmed_gtins_by_lang}`
    to `output/{client}/plan.confirmed.json`, with `confirmed_gtins_by_lang` as a list of
    `[gtin, language]` pairs (the shape `run_execute --confirmed` consumes).
 
-7. **Environment confirmation (§10.6.7).** If the client's resolved GS1 environment is
+8. **Environment confirmation (§10.6.7).** If the client's resolved GS1 environment is
    `production`, present verbatim and require a choice before executing:
    ```
    About to execute against PRODUCTION environment (gs1nl-api.gs1.nl).
@@ -105,16 +136,16 @@ below stays dormant — it is implemented and ready for future product updates.
    Mandatory and non-overridable; enforced here per run (not per session). `confirm` →
    proceed; `switch-to-test` → re-resolve to the test environment; `cancel` → abort.
 
-8. **Execute.** Invoke
+9. **Execute.** Invoke
    `python -m scripts.run_execute {client} --confirmed output/{client}/plan.confirmed.json`.
 
-9. **Progress (§10.6.3).** For runs over 20 rows, surface progress every 10 rows;
+10. **Progress (§10.6.3).** For runs over 20 rows, surface progress every 10 rows;
    otherwise only at the end. Not per-row (per-row detail goes to the JSONL log):
    ```
    Progress: 10/40 rows processed. 10 ok, 0 error, 0 skipped.
    ```
 
-10. **Post-execute summary (§10.6.4).** Read the run JSONL and present verbatim:
+11. **Post-execute summary (§10.6.4).** Read the run JSONL and present verbatim:
     ```
     Run finished for noviplast (test env, 2026-05-27T14:32:11Z).
       Ok:       38
@@ -145,13 +176,18 @@ wrappers are wired in Phase 8.
 - **Create-only, so no diffs in the pilot.** Every candidate row is NEW, so the
   `changed-review` / per-row diff path (§10.6.2) does not fire. It is implemented for
   future product updates.
-- **No fabricated "old" values.** `StateEntry` stores no prior product fields, so a CHANGED
-  row's `diff` carries only `target_url` (old `wp_url` → new) when the URL moved. A title
-  before/after is not recoverable — present the current title and only the fields actually
-  in `diff`; never invent an old value.
+- **No fabricated "old" values.** `StateEntry` records the prior `title` and `wp_url`, so a
+  CHANGED row's `diff` can show a real before/after for those two — and only those two.
+  `content_hash` proves the rest of the product changed but, being a digest, cannot say how.
+  Present only the fields actually in `diff`; never invent an old value. State written before
+  titles were persisted has `title: null`, and the title row is then omitted, not guessed.
 - **run_plan exits 2** (bad client id, unreadable products/state/control file, missing
   `slug_pattern`/`target_url_pattern`): surface the stderr `config error: …` and stop —
   do not attempt to execute against a missing or malformed plan.
+- **Corrupt state is not an exit-2** (E19). run_plan moves the bad file aside, starts fresh,
+  and exits 0 with the reset warning on stderr. The plan is valid and safe to execute; what
+  changes is its *meaning* — an incremental re-run has become a full rewrite. Surface it per
+  step 5 and let the operator decide. Never re-plan silently.
 - **Nothing to execute.** If the confirmed subset is empty (e.g. everything excluded by the
   control file, or the operator picked `new-only` with zero NEW rows), report it and skip
   the execute step rather than invoking `run_execute` with an empty plan.

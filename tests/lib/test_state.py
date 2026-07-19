@@ -1,8 +1,9 @@
-"""Unit tests for lib/state.py (IMPLEMENTATION_SPEC §4.8, §12 Phase 6).
+"""Unit tests for lib/state.py (IMPLEMENTATION_SPEC §4.8, §12 Phase 6/7).
 
 Covers the round-trip, the atomic-write / kill-mid-write no-corruption guarantee
-(the Phase 6 DoD atomicity item), content-hash determinism, and StateError on a
-corrupt file.
+(the Phase 6 DoD atomicity item), content-hash determinism, E19 corrupt-file recovery
+(quarantine + reset, vs. the raise an unreadable file still gets), and the change
+classification `run_plan` builds its plan from.
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ def _entry(page_id: int = 1) -> StateEntry:
         content_hash="c" * _HASH_LEN,
         gs1_link_set_hash="g" * _HASH_LEN,
         last_run=datetime(2026, 7, 12, 10, 0, tzinfo=UTC),
+        title="Rugsteun",
     )
 
 
@@ -74,14 +76,89 @@ def test_save_then_load_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert state_path("noviplast").is_file()
 
 
-def test_load_state_corrupt_file_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_state_without_title_is_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A state file written before titles were persisted still loads (title -> None)."""
+    monkeypatch.chdir(tmp_path)
+    legacy = _entry(7).model_dump(mode="json")
+    del legacy["title"]
+    path = state_path("noviplast")
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"client_id": "noviplast", "entries": {"08713195007359": {"nl": legacy}}}),
+        encoding="utf-8",
+    )
+
+    entry = load_state("noviplast").entries["08713195007359"]["nl"]
+
+    assert entry.title is None
+    assert entry.wp_page_id == 7
+
+
+def test_load_state_corrupt_file_is_quarantined_and_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """E19: a corrupt file is moved aside and the run starts fresh, rather than aborting."""
     monkeypatch.chdir(tmp_path)
     path = state_path("noviplast")
     path.parent.mkdir(parents=True)
     path.write_text("{ not valid json", encoding="utf-8")
 
-    with pytest.raises(StateError):
-        load_state("noviplast")
+    with caplog.at_level("ERROR", logger="lib.state"):
+        state = load_state("noviplast")
+
+    assert state.entries == {}
+    assert state.reset_from_corrupt is True  # the caller must surface this (§8.2 summary)
+    assert not path.exists()
+    # The bad file is preserved, never deleted — it is the only evidence of what went wrong.
+    backups = list(path.parent.glob("state.json.corrupt.*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "{ not valid json"
+    assert "starting fresh" in caplog.text
+
+
+def test_load_state_schema_violation_is_also_quarantined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Valid JSON that is not a valid State is corrupt too (e.g. an entry missing wp_url)."""
+    monkeypatch.chdir(tmp_path)
+    path = state_path("noviplast")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"client_id": "noviplast", "entries": "not-a-dict"}), "utf-8")
+
+    state = load_state("noviplast")
+
+    assert state.reset_from_corrupt is True
+    assert len(list(path.parent.glob("state.json.corrupt.*"))) == 1
+
+
+def test_load_state_unreadable_file_still_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable file is an environmental fault, not corruption — continuing would be wrong."""
+    monkeypatch.chdir(tmp_path)
+    path = state_path("noviplast")
+    path.parent.mkdir(parents=True)
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o000)
+
+    try:
+        with pytest.raises(StateError, match="cannot read state"):
+            load_state("noviplast")
+    finally:
+        path.chmod(0o600)
+
+
+def test_reset_flag_is_not_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``reset_from_corrupt`` describes a load, not the state — it must never be written."""
+    monkeypatch.chdir(tmp_path)
+    save_state(State(client_id="noviplast", entries={}, reset_from_corrupt=True))
+
+    written = json.loads(state_path("noviplast").read_text(encoding="utf-8"))
+
+    assert "reset_from_corrupt" not in written
+    assert load_state("noviplast").reset_from_corrupt is False
 
 
 # --- Atomicity / kill-mid-write (§12 Phase 6 DoD) ----------------------------
@@ -157,6 +234,13 @@ def test_content_hash_is_deterministic() -> None:
         ("fr", "https://noviplast.test/p/1", _product()),
         ("nl", "https://noviplast.test/p/2", _product()),
         ("nl", "https://noviplast.test/p/1", _product(brand="Other")),
+        # Generated content lives on the record, so filling it reclassifies the row (the
+        # merge step relies on this: newly generated copy must not read as UNCHANGED).
+        (
+            "nl",
+            "https://noviplast.test/p/1",
+            _product(generated_tagline=LocalisedText(values={"nl": "Slogan"})),
+        ),
     ],
 )
 def test_content_hash_sensitive_to_each_input(
@@ -188,7 +272,14 @@ def _row_for(rows: list[object], language: str) -> object:
     return next(r for r in rows if getattr(r, "language") == language)  # noqa: B009
 
 
-def _state_with(gtin: str, language: str, *, content_hash: str, wp_url: str) -> State:
+def _state_with(
+    gtin: str,
+    language: str,
+    *,
+    content_hash: str,
+    wp_url: str,
+    title: str | None = "Rugsteun",
+) -> State:
     entry = StateEntry(
         wp_page_id=1,
         wp_url=wp_url,
@@ -196,6 +287,7 @@ def _state_with(gtin: str, language: str, *, content_hash: str, wp_url: str) -> 
         content_hash=content_hash,
         gs1_link_set_hash="g" * _HASH_LEN,
         last_run=datetime(2026, 7, 12, 10, 0, tzinfo=UTC),
+        title=title,
     )
     return State(client_id="noviplast", entries={gtin: {language: entry}})
 
@@ -238,18 +330,106 @@ def test_diff_unchanged_when_hash_matches() -> None:
     assert rows[0].diff is None
 
 
-def test_diff_changed_with_no_url_move_has_no_diff() -> None:
+def _held_state(product: ProductRecord, baseline_hash: str, url: str, **down: object) -> State:
+    """State for a product whose content still matches but which was taken down."""
+    state = _state_with(product.gtin, "nl", content_hash=baseline_hash, wp_url=url)
+    entry = state.entries[product.gtin]["nl"]
+    state.entries[product.gtin]["nl"] = entry.model_copy(update=down)
+    return state
+
+
+@pytest.mark.parametrize(
+    ("down", "why"),
+    [
+        ({"wp_status": "draft"}, "pages drafted"),
+        # An interrupted run_unpublish: the resolver is retracted but the pages are still
+        # up. Held too — the next run must finish taking it down, not put it back.
+        ({"gs1_enabled": False}, "resolver retracted, pages still published"),
+        ({"wp_status": "draft", "gs1_enabled": False}, "fully unpublished"),
+    ],
+)
+def test_diff_held_when_product_was_unpublished(down: dict[str, object], why: str) -> None:
+    # The whole point: a held product's content hash still MATCHES, so without the held
+    # check this classifies UNCHANGED and the next confirmed run republishes it.
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
     )[0]
-    # Same URL, stale content hash -> CHANGED but no field-level diff (GTIN slug is stable).
+    state = _held_state(product, baseline.content_hash, baseline.target_url, **down)
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.HELD, why
+
+
+def test_diff_held_outranks_changed() -> None:
+    # Editing an unpublished product's content must not un-hold it: the operator's
+    # decision to take it down is about the product, not about that revision of it.
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _held_state(product, "stale", baseline.target_url, wp_status="draft")
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.HELD
+
+
+def test_legacy_state_without_status_fields_is_not_held() -> None:
+    # Back-compat: entries written before wp_status/gs1_enabled existed default to the
+    # published condition. If they defaulted the other way, every pre-existing product
+    # in every client's state would silently classify HELD and stop being updated.
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    legacy = _entry().model_dump(mode="json")
+    del legacy["wp_status"]
+    del legacy["gs1_enabled"]
+    legacy["content_hash"] = baseline.content_hash
+    legacy["wp_url"] = baseline.target_url
+    state = State(
+        client_id="noviplast",
+        entries={product.gtin: {"nl": StateEntry.model_validate(legacy)}},
+    )
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.UNCHANGED
+
+
+def test_diff_changed_in_body_only_has_no_diff() -> None:
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    # Title and URL both unmoved, stale content hash -> the change is in the product
+    # body, which state does not retain. CHANGED, but no field-level diff to show.
     state = _state_with(product.gtin, "nl", content_hash="stale", wp_url=baseline.target_url)
 
     rows = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.CHANGED
     assert rows[0].diff is None
+
+
+def test_diff_changed_surfaces_title_when_renamed() -> None:
+    # The Phase 7 exit-gate scenario (PROJECT_HANDOVER §8.2): rename a product, re-run,
+    # and the CHANGED prompt must say what changed. The slug is GTIN-derived, so the URL
+    # does not move and the title is the only thing to show.
+    renamed = _product(product_name=LocalisedText(values={"nl": "Rugsteun Pro"}))
+    baseline = diff_against_state(
+        [renamed], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _state_with(
+        renamed.gtin, "nl", content_hash="stale", wp_url=baseline.target_url, title="Rugsteun"
+    )
+
+    rows = diff_against_state([renamed], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.CHANGED
+    assert rows[0].diff == {"title": ("Rugsteun", "Rugsteun Pro")}
 
 
 def test_diff_changed_surfaces_target_url_when_moved() -> None:
@@ -262,6 +442,41 @@ def test_diff_changed_surfaces_target_url_when_moved() -> None:
     rows = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.CHANGED
+    assert rows[0].diff == {"target_url": ("https://old.test/x/", baseline.target_url)}
+
+
+def test_diff_changed_surfaces_title_and_target_url_together() -> None:
+    renamed = _product(product_name=LocalisedText(values={"nl": "Rugsteun Pro"}))
+    baseline = diff_against_state(
+        [renamed], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _state_with(
+        renamed.gtin, "nl", content_hash="stale", wp_url="https://old.test/x/", title="Rugsteun"
+    )
+
+    rows = diff_against_state([renamed], state, ["nl"], _wp())
+
+    # §10.6.2 presents title before target_url.
+    assert list(rows[0].diff or {}) == ["title", "target_url"]
+    assert rows[0].diff == {
+        "title": ("Rugsteun", "Rugsteun Pro"),
+        "target_url": ("https://old.test/x/", baseline.target_url),
+    }
+
+
+def test_diff_state_without_recorded_title_omits_title_diff() -> None:
+    # State written before titles were persisted: the title is unknown, so it is omitted
+    # rather than fabricated. The URL diff still works.
+    renamed = _product(product_name=LocalisedText(values={"nl": "Rugsteun Pro"}))
+    baseline = diff_against_state(
+        [renamed], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _state_with(
+        renamed.gtin, "nl", content_hash="stale", wp_url="https://old.test/x/", title=None
+    )
+
+    rows = diff_against_state([renamed], state, ["nl"], _wp())
+
     assert rows[0].diff == {"target_url": ("https://old.test/x/", baseline.target_url)}
 
 
