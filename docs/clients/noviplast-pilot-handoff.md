@@ -17,6 +17,9 @@ path (incl. git workflow) from here to release. DoD checkboxes stay authoritativ
 - Generation used the **Cowork-native producer** (no `ANTHROPIC_API_KEY`); the API backend is untested
   but optional. The pilot was driven by **calling scripts directly**, which bypassed the operator UX —
   that gap is Phase 9.8.
+- **Git: on `main`, clean, in sync with `origin/main`.** The Phase 9 status note + the 9.5/9.8 phases +
+  this runbook landed via **PR #5** (commit `b850176`, merge `a8463e6`); all session branches are deleted.
+  **A fresh session starts at Step 1** below — Step 0 is already done.
 
 ## Load-bearing invariants (do not relearn the hard way)
 
@@ -44,18 +47,11 @@ Commit/push only when the operator asks.
 
 ## Steps to completion
 
-### Step 0 — Land the current doc changes (do this first)
-The working tree has uncommitted edits to `IMPLEMENTATION_SPEC.md`, `ROADMAP.md`, and this new file, and
-the session is on the stale merged branch `phase-8-docs-followup`.
-```
-git fetch
-git stash                       # carry the 3 doc edits safely
-git switch -c docs/phase-9-pilot-status origin/main
-git stash pop
-git add docs/IMPLEMENTATION_SPEC.md docs/ROADMAP.md docs/clients/noviplast-pilot-handoff.md
-git commit -m "docs(spec): record Phase 9 execute+resolution proof; add Phase 9.5 media and 9.8 Cowork-flow phases"
-git push -u origin docs/phase-9-pilot-status     # then open a PR; docs-only, no DoD box ticked
-```
+### Step 0 — Land the doc changes — ✅ DONE (2026-07-19, PR #5)
+The Phase 9 status note, the new Phase 9.5/9.8 DoD blocks, and this runbook are merged to `main`
+(commit `b850176`, merge `a8463e6`); session branches deleted; workspace clean. **Start at Step 1.**
+(Retained only as the template for the per-step git flow: fetch → branch off `origin/main` → work →
+gates → commit → push → PR → merge → sync `main` → delete the branch.)
 
 ### Step 1 — Phase 9.5 Media (code) — branch `feat/phase-9.5-media`
 - **Images:** download each product's export `image_url` (public `.jpg` on GDSN blob storage) →
