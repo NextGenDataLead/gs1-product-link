@@ -3,9 +3,10 @@
 Usage:
     python -m scripts.run_generate CLIENT_ID [--products PATH] [--emit]
     python -m scripts.run_generate CLIENT_ID --ingest [--results PATH]
+    python -m scripts.run_generate CLIENT_ID --backend api
 
 The spine is producer-agnostic: it prepares the pending copy-generation gaps and moves them
-through the shared cache (``lib.generator``) without ever calling an LLM itself. It
+through the shared cache (``lib.generator``). It
 
 1. deterministically fills the cache for products whose feature/benefit copy (attr 1067) is
    short enough to use verbatim (``prefill_from_feed``) — no producer needed;
@@ -15,18 +16,19 @@ through the shared cache (``lib.generator``) without ever calling an LLM itself.
    - **emit / ingest** (default): ``--emit`` writes the pending requests to
      ``output/{client_id}/data/generation_requests.json`` for a Cowork session to fill, and
      ``--ingest`` reads that session's ``generation_results.json`` back into the cache.
-   - **an injected** :class:`~lib.generator.LLMClient` (the headless API backend and test
-     fakes) fills the cache directly through the same ``apply_result`` contract via
-     :func:`run_producer`. The CLI wiring for that backend lands in a later commit.
+   - **API backend** (``--backend api``): drives :class:`lib.llm.AnthropicClient` (the headless
+     Messages-API producer) over the gaps via :func:`run_producer`, filling the cache directly.
+     Requires an enabled ``generator`` config block and its API key.
 
 ``run_plan`` later only *reads* the cache. This pipeline fails silently — verify the emitted
 requests and the cache against real parsed data, not just green tests.
 
-Emits (--emit):   output/{client_id}/data/generation_requests.json
-Reads (--ingest): output/{client_id}/data/generation_results.json (writes the cache)
+Emits (--emit):       output/{client_id}/data/generation_requests.json
+Reads (--ingest):     output/{client_id}/data/generation_results.json (writes the cache)
+Writes (--backend api): output/{client_id}/data/generated_cache.json
 Exit codes:
     0  success
-    2  config error (bad client id, missing products/results file, malformed results file)
+    2  config error (bad client id, missing files, generator not enabled, missing key, API error)
 """
 
 from __future__ import annotations
@@ -41,8 +43,8 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from lib.config import get_client
-from lib.errors import ConfigError, GeneratorError
+from lib.config import ClientConfig, get_client
+from lib.errors import ConfigError, GeneratorError, LLMAPIError, MissingCredentialError
 from lib.generator import (
     DEFAULT_PROMPT_VERSION,
     MODE_TIGHTEN,
@@ -58,6 +60,7 @@ from lib.generator import (
     prefill_from_feed,
     save_cache,
 )
+from lib.llm import AnthropicClient, load_voice_template
 from lib.records import ProductRecord
 
 _log = logging.getLogger("scripts.run_generate")
@@ -152,7 +155,7 @@ def _load_results(path: Path, client_id: str) -> ResultsFile:
 
 
 def _prepare(
-    client_id: str, languages: list[str], products_path: Path, now: datetime
+    client_id: str, languages: list[str], products_path: Path, prompt_version: str, now: datetime
 ) -> tuple[GeneratedCache, list[GenerationRequest], list[ProductRecord]]:
     """Load products and cache, verbatim-prefill, and compute the pending gaps.
 
@@ -161,8 +164,8 @@ def _prepare(
     """
     products = _load_products(products_path)
     cache = load_cache(client_id)
-    prefill_from_feed(products, cache, languages, DEFAULT_PROMPT_VERSION, now=now)
-    requests = pending_requests(products, cache, languages, DEFAULT_PROMPT_VERSION)
+    prefill_from_feed(products, cache, languages, prompt_version, now=now)
+    requests = pending_requests(products, cache, languages, prompt_version)
     return cache, requests, products
 
 
@@ -201,7 +204,11 @@ def run_producer(
 
 
 def _emit(
-    client_id: str, cache: GeneratedCache, requests: list[GenerationRequest], now: datetime
+    client_id: str,
+    cache: GeneratedCache,
+    requests: list[GenerationRequest],
+    prompt_version: str,
+    now: datetime,
 ) -> Path:
     """Write the pending requests for a Cowork session and persist the verbatim prefill.
 
@@ -212,7 +219,7 @@ def _emit(
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = RequestsFile(
         client_id=client_id,
-        prompt_version=DEFAULT_PROMPT_VERSION,
+        prompt_version=prompt_version,
         generated_at=now,
         requests=requests,
     )
@@ -276,6 +283,36 @@ def _ingest(
     return applied, skipped
 
 
+# --- API backend -------------------------------------------------------------
+
+
+def _run_api_backend(
+    cfg: ClientConfig,
+    cache: GeneratedCache,
+    requests: list[GenerationRequest],
+    prompt_version: str,
+    now: datetime,
+) -> tuple[int, str]:
+    """Fill the cache directly via the Anthropic API backend, in place. Returns (filled, model).
+
+    Raises:
+        ConfigError: The client has no enabled ``generator`` block.
+        GeneratorError: The voice template for this prompt version is missing or empty.
+        MissingCredentialError: The configured API-key env var is unset.
+        LLMAPIError: A generation call failed or returned no usable result.
+    """
+    gen = cfg.generator
+    if gen is None or not gen.enabled:
+        raise ConfigError(
+            f"--backend api requires an enabled `generator` block for {cfg.client_id!r}"
+        )
+    voice = load_voice_template(cfg.client_id, prompt_version)
+    with AnthropicClient(gen, voice) as client:
+        filled = run_producer(cache, requests, client, provenance=f"api:{gen.model}", now=now)
+    save_cache(cache)
+    return filled, gen.model
+
+
 # --- Summaries ---------------------------------------------------------------
 
 
@@ -321,6 +358,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Read a session's results back into the cache",
     )
+    mode.add_argument(
+        "--backend",
+        choices=["api"],
+        help="Fill the cache directly via the API backend instead of emit/ingest",
+    )
     return parser.parse_args(argv)
 
 
@@ -335,10 +377,17 @@ def main(argv: list[str] | None = None) -> int:
         products_path = (
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
-        cache, requests, products = _prepare(cfg.client_id, languages, products_path, now)
+        prompt_version = cfg.generator.prompt_version if cfg.generator else DEFAULT_PROMPT_VERSION
+        cache, requests, products = _prepare(
+            cfg.client_id, languages, products_path, prompt_version, now
+        )
         total_units = len(products) * len(languages)
 
-        if args.ingest:
+        if args.backend == "api":
+            filled, api_model = _run_api_backend(cfg, cache, requests, prompt_version, now)
+            # Re-derive against the mutated cache so coverage reflects the post-run state.
+            requests = pending_requests(products, cache, languages, prompt_version)
+        elif args.ingest:
             results_path = (
                 Path(args.results) if args.results else _data_path(cfg.client_id, RESULTS_FILENAME)
             )
@@ -346,12 +395,14 @@ def main(argv: list[str] | None = None) -> int:
             applied, skipped = _ingest(cache, requests, results, now)
             # Re-derive against the mutated cache so coverage reflects the post-ingest state,
             # not the gaps we started with.
-            requests = pending_requests(products, cache, languages, DEFAULT_PROMPT_VERSION)
+            requests = pending_requests(products, cache, languages, prompt_version)
         else:
-            emit_path = _emit(cfg.client_id, cache, requests, now)
+            emit_path = _emit(cfg.client_id, cache, requests, prompt_version, now)
     except (
         ConfigError,
         GeneratorError,
+        MissingCredentialError,
+        LLMAPIError,
         FileNotFoundError,
         json.JSONDecodeError,
         ValidationError,
@@ -360,7 +411,9 @@ def main(argv: list[str] | None = None) -> int:
         return _EXIT_CONFIG_ERROR
 
     coverage = _coverage(total_units, requests)
-    if args.ingest:
+    if args.backend == "api":
+        print(f"generated {filled} via API ({api_model}); {coverage}", file=sys.stderr)
+    elif args.ingest:
         print(f"ingested {applied} result(s), skipped {skipped}; {coverage}", file=sys.stderr)
     else:
         _log.info("wrote %d request(s) to %s", len(requests), emit_path)

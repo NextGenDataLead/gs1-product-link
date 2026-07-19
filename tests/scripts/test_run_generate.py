@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pytest_httpx import HTTPXMock
 
-from lib.config import ClientConfig, ExportConfig, GS1Config, WordPressConfig
+from lib.config import ClientConfig, ExportConfig, GeneratorConfig, GS1Config, WordPressConfig
 from lib.generator import (
     ORIGIN_GENERATED,
     GeneratedCache,
@@ -37,7 +38,9 @@ _NOW = datetime(2026, 7, 18, tzinfo=UTC)
 # --- Builders ----------------------------------------------------------------
 
 
-def _make_config(languages: list[str] | None = None) -> ClientConfig:
+def _make_config(
+    languages: list[str] | None = None, generator: GeneratorConfig | None = None
+) -> ClientConfig:
     return ClientConfig(
         client_id="noviplast",
         display_name="Noviplast",
@@ -54,6 +57,7 @@ def _make_config(languages: list[str] | None = None) -> ClientConfig:
             default_language="nl",
             languages=languages or ["nl"],
         ),
+        generator=generator,
     )
 
 
@@ -302,6 +306,58 @@ def test_run_producer_fills_cache_via_fake_client() -> None:
     assert entry.usps == ["Tagline nl", "Bullet"]
     assert entry.origin == ORIGIN_GENERATED
     assert entry.provenance == "api:test"
+
+
+# --- API backend (--backend api) ---------------------------------------------
+
+
+def _tool_response(usps: list[str]) -> dict[str, Any]:
+    tool_use = {"type": "tool_use", "id": "t1", "name": "produce_copy", "input": {"usps": usps}}
+    return {"stop_reason": "tool_use", "content": [tool_use]}
+
+
+def _write_voice(prompt_version: str = "v1") -> None:
+    path = Path("prompts") / "noviplast" / f"generation.{prompt_version}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("<!-- prompt_version: v1 -->\nvoice", encoding="utf-8")
+
+
+def test_backend_api_without_generator_config_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())  # no generator block
+    _write_products("noviplast", [_product()])
+
+    code = run_generate.main(["noviplast", "--backend", "api"])
+
+    assert code == 2
+    assert "generator" in capsys.readouterr().err
+
+
+def test_backend_api_fills_cache_via_mocked_messages_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, httpx_mock: HTTPXMock
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEST_KEY", "sk-test")
+    cfg = _make_config(
+        generator=GeneratorConfig(
+            enabled=True, model="claude-sonnet-5", prompt_version="v1", api_key_env="TEST_KEY"
+        )
+    )
+    _patch_client(monkeypatch, cfg)
+    _write_products("noviplast", [_product()])  # 1 product, nl -> 1 generate request
+    _write_voice()
+    httpx_mock.add_response(json=_tool_response(["Tagline", "Bullet"]))
+
+    code = run_generate.main(["noviplast", "--backend", "api"])
+
+    assert code == 0
+    entry = load_cache("noviplast").get(GTIN_A, "nl")
+    assert entry is not None
+    assert entry.usps == ["Tagline", "Bullet"]
+    assert entry.provenance == "api:claude-sonnet-5"
+    assert entry.origin == ORIGIN_GENERATED
 
 
 # --- shared failure paths ----------------------------------------------------

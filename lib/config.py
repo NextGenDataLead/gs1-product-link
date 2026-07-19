@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from lib.errors import ConfigError, ExportParseError
 from lib.gdsn import GdsnSource
+from lib.generator import DEFAULT_PROMPT_VERSION
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import ResolverSettings
 from lib.records import ProductRecord, is_valid_target_path
@@ -268,6 +269,26 @@ class CategoryConfig(BaseModel):
         return self
 
 
+class GeneratorConfig(BaseModel):
+    """Content-generator (LLM copy) settings for one client (generator SPEC §"Config additions").
+
+    Governs the copy generator that writes the tagline + Eigenschappen. The headless API backend
+    (``scripts/run_generate.py --backend api`` via :class:`lib.llm.AnthropicClient`) is opt-in via
+    ``enabled``; the Cowork-native producer needs no key. Secrets are handled as elsewhere —
+    ``api_key_env`` names the env var holding the API key, never the key itself. ``prompt_version``
+    selects the frozen voice template (``prompts/{client}/generation.{prompt_version}.md``) and is
+    part of every cache fingerprint, so bumping it invalidates cached copy.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    model: str = "claude-sonnet-5"
+    prompt_version: str = DEFAULT_PROMPT_VERSION
+    api_key_env: str = "ANTHROPIC_API_KEY"
+    max_tokens: int = Field(default=1024, ge=1)
+
+
 class ClientConfig(BaseModel):
     """The full resolved configuration for one client (§2.4)."""
 
@@ -285,6 +306,7 @@ class ClientConfig(BaseModel):
     flow: FlowConfig | None = None
     website_status: WebsiteStatusConfig | None = None
     categories: CategoryConfig | None = None
+    generator: GeneratorConfig | None = None
 
 
 # --- Loading (§4.2) ----------------------------------------------------------

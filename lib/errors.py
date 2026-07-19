@@ -146,3 +146,22 @@ class GeneratorError(OrchestratorError):
     :class:`StateError`: the cache is a between-runs artifact, and a malformed one is a
     fault the operator must see rather than silently ignore.
     """
+
+
+class LLMAPIError(OrchestratorError):
+    """An Anthropic Messages API call failed or returned an unusable response.
+
+    Raised by ``lib.llm.AnthropicClient`` for a non-success HTTP status, a transport failure,
+    or a 200 whose body lacks the forced ``produce_copy`` tool call. The WordPress/GS1 sibling
+    for the copy-generation backend: the operator must see a producer failure, not have it
+    silently skip a product.
+
+    Attributes:
+        status_code: The HTTP status of the failing response, or ``0`` for a transport failure.
+        response_body: The raw response body (already sliced to a bounded length by the caller).
+    """
+
+    def __init__(self, status_code: int, response_body: str, message: str | None = None) -> None:
+        self.status_code = status_code
+        self.response_body = response_body
+        super().__init__(message or f"Anthropic API error {status_code}")

@@ -382,6 +382,34 @@
         }
       }
     },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Content-generator (LLM copy) settings. The API backend is opt-in via enabled; api_key_env names the env var holding the key, never the key. prompt_version selects the frozen voice template prompts/{client}/generation.{prompt_version}.md and is part of the cache fingerprint.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the API backend (run_generate --backend api) may run for this client. Defaults false; the Cowork-native producer needs no key."
+        },
+        "model": {
+          "type": "string",
+          "description": "Anthropic model id, e.g. claude-sonnet-5. Prefer a pinned snapshot for production."
+        },
+        "prompt_version": {
+          "type": "string",
+          "description": "Voice/prompt template version; selects prompts/{client}/generation.{prompt_version}.md and gates cache reuse."
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Name of the env var holding the Anthropic API key."
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Max output tokens per generation call."
+        }
+      }
+    },
     "multilingualPlugin": { "enum": ["none", "polylang", "wpml"] },
     "imageHandling": { "enum": ["url_in_export", "local_folder", "manual"] },
     "languages": {
@@ -411,7 +439,8 @@
         "qr": { "$ref": "#/$defs/qr" },
         "flow": { "$ref": "#/$defs/flow" },
         "website_status": { "$ref": "#/$defs/websiteStatus" },
-        "categories": { "$ref": "#/$defs/categories" }
+        "categories": { "$ref": "#/$defs/categories" },
+        "generator": { "$ref": "#/$defs/generator" }
       }
     }
   }

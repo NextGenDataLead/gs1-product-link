@@ -177,6 +177,22 @@ clients:
       in_gs1_column: "Al in Gs1"
       site_link_column: "Link naar site"
 
+    # Content generator (tagline + Eigenschappen copy). Two producers share one cache and
+    # contract: the Cowork-native `content-generator` skill (writes copy in-session, no API key)
+    # and the headless API backend (`python -m scripts.run_generate <id> --backend api`, which
+    # calls the Anthropic Messages API via lib/llm.py). `enabled: true` permits the API backend
+    # when the key env var is set; the Cowork path works without it. `prompt_version` selects the
+    # frozen voice template at prompts/{id}/generation.{prompt_version}.md and is part of the cache
+    # fingerprint, so bumping it invalidates cached copy. Omit this whole block to leave the
+    # generator un-configured (the API backend then refuses to run). See
+    # docs/clients/noviplast-generator-spec.md.
+    generator:
+      enabled: true
+      model: claude-sonnet-5      # prefer a pinned snapshot id in production
+      prompt_version: v1
+      api_key_env: ANTHROPIC_API_KEY
+      max_tokens: 1024
+
     # Phase 7.5: GPC brick -> site category. The GDSN feed carries a GPC brick
     # (gpc_brick_code, attr GpcCategoryCode) but not the client's marketing category, so
     # this maps one to the other. It is NOT derivable from the feed: bricks span categories
