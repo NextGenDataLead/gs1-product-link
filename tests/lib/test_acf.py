@@ -78,3 +78,44 @@ def test_extras_are_reachable_by_dotted_path() -> None:
 def test_empty_map_yields_empty_payload() -> None:
     """A client with no acf_map renders from the body template — nothing to assemble."""
     assert build_acf_payload(_product(), "nl", {}) == {}
+
+
+#: Noviplast's live acf_map (generator SPEC, commit 8): the tagline feeds two slots, the
+#: assembled description block feeds the third. Kept in sync with clients.yml / clients.example.yml.
+_GENERATOR_MAP = {
+    "product_title": "generated_tagline",
+    "product_header_video_text": "generated_tagline",
+    "product_description": "generated_description",
+}
+
+
+def test_generated_fields_resolve_to_acf_per_language() -> None:
+    """The generator's LocalisedText fields reach ACF by getattr — no acf.py change needed."""
+    product = _product(
+        generated_tagline=LocalisedText(values={"nl": "Frisse voegen", "fr": "Joints frais"}),
+        generated_description=LocalisedText(
+            values={"nl": "<p>NL blok</p>", "fr": "<p>Bloc FR</p>"}
+        ),
+    )
+
+    assert build_acf_payload(product, "nl", _GENERATOR_MAP) == {
+        "product_title": "Frisse voegen",
+        "product_header_video_text": "Frisse voegen",
+        "product_description": "<p>NL blok</p>",
+    }
+    assert build_acf_payload(product, "fr", _GENERATOR_MAP) == {
+        "product_title": "Joints frais",
+        "product_header_video_text": "Joints frais",
+        "product_description": "<p>Bloc FR</p>",
+    }
+
+
+def test_generated_gap_omits_field_so_page_still_publishes() -> None:
+    """A missing generated value drops only that ACF field, never blocks the write."""
+    product = _product(
+        generated_tagline=LocalisedText(values={"nl": "Alleen NL"})  # no fr, no description
+    )
+
+    assert build_acf_payload(product, "fr", _GENERATOR_MAP) == {}
+    nl = build_acf_payload(product, "nl", _GENERATOR_MAP)
+    assert nl == {"product_title": "Alleen NL", "product_header_video_text": "Alleen NL"}

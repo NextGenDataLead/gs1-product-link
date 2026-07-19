@@ -140,15 +140,18 @@ clients:
       # page (docs/clients/noviplast-page-adapter.md §3). Field names are the client's;
       # they live here rather than in lib/.
       #
-      # EMPTY on purpose. Both slots are the tagline (product_title is the sentence below
-      # the name; product_header_video_text is the banner — same value, verified live).
-      # Their source is generator-owned: 1083 when present, else the first generated USP —
-      # not a deterministic mapping. They were wired 1:1 to description_short (1083), which
-      # the pilot proved wrong. Pages carry the title (and image) only until the generator
-      # lands; the missing taglines are the generator's work list. See docs §4.1/§4.2.
-      # product_description (tagline + Eigenschappen + Technische details) also waits on
-      # the generator + H87 unit decoding (§4.1, §8).
-      acf_map: {}
+      # Wired to the GENERATOR's fields. The tagline (usps[0]) feeds both the sentence below
+      # the name (product_title) and the banner (product_header_video_text) — same value,
+      # verified live. product_description is the assembled three-part block (tagline +
+      # Eigenschappen + deterministic Technische details). merge_generated materialises these
+      # LocalisedText fields onto the record in run_plan; acf._resolve reads them by getattr and
+      # returns the per-language value (a gap omits the field so the page still publishes with
+      # its title/image). The values are ProductRecord field names, resolved by free getattr —
+      # reach into extras with extras.{name}. See docs §4.1/§4.2.
+      acf_map:
+        product_title: generated_tagline
+        product_header_video_text: generated_tagline
+        product_description: generated_description
       slug_pattern: "p-{gtin}"
       target_url_pattern: "{site_url}/{lang_segment}{post_type}/{slug}/"
 
