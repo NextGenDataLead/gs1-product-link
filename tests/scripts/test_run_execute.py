@@ -18,12 +18,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from lib.config import (
     ClientConfig,
     ExportConfig,
     GS1Config,
     GS1LinkConfig,
+    MediaConfig,
     QRConfig,
     TemplateConfig,
     WordPressConfig,
@@ -71,15 +73,16 @@ def _make_config(**overrides: Any) -> ClientConfig:
     return ClientConfig(**params)
 
 
-def _product(gtin: str = GTIN_A) -> ProductRecord:
+def _product(gtin: str = GTIN_A, *, image_url: str | None = None) -> ProductRecord:
     return ProductRecord(
         gtin=gtin,
         brand="Acme",
         product_name=LocalisedText(values={"nl": "Rugsteun", "fr": "Support"}),
+        image_url=image_url,
     )
 
 
-def _row(gtin: str = GTIN_A, language: str = "nl") -> PlanRow:
+def _row(gtin: str = GTIN_A, language: str = "nl", *, image_url: str | None = None) -> PlanRow:
     return PlanRow(
         gtin=gtin,
         language=language,
@@ -88,7 +91,7 @@ def _row(gtin: str = GTIN_A, language: str = "nl") -> PlanRow:
         slug=f"p-{gtin}",
         content_hash="hash-" + gtin,
         target_url=f"https://wp.test/product/p-{gtin}/",
-        product=_product(gtin),
+        product=_product(gtin, image_url=image_url),
     )
 
 
@@ -135,6 +138,8 @@ class _Recorder:
         self.gs1: list[dict[str, Any]] = []
         self.verified: list[str] = []
         self.translations: list[dict[str, int]] = []
+        self.downloaded: list[str] = []
+        self.uploaded: list[dict[str, Any]] = []
 
 
 def _install(
@@ -176,6 +181,19 @@ def _install(
 
         def link_translations(self, translations: dict[str, int]) -> None:
             rec.translations.append(translations)
+
+        def download_image(self, url: str) -> bytes | None:
+            rec.downloaded.append(url)
+            return None if url == "MISSING" else b"imgbytes:" + url.encode()
+
+        def upload_media(self, file_path: Any, title: str | None = None) -> int:
+            key = str(file_path)
+            mid = 5000 + int.from_bytes(hashlib.sha256(key.encode()).digest()[:2], "big")
+            rec.uploaded.append({"path": key, "title": title, "id": mid})
+            return mid
+
+        def media_source_url(self, media_id: int) -> str | None:
+            return f"https://wp.test/wp-content/uploads/{media_id}.jpg"
 
     class FakeGS1:
         def __init__(self, config: object) -> None:
@@ -540,3 +558,180 @@ def test_unknown_client_returns_config_error(
 def test_requires_plan_or_confirmed(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit):  # argparse mutually-exclusive group is required
         run_execute.main(["acme"])
+
+
+# --- Media (Phase 9.5) -------------------------------------------------------
+
+
+def _media_config(**media_kw: Any) -> ClientConfig:
+    return _make_config(media=MediaConfig(**media_kw))
+
+
+def _fake_convert(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the real Pillow convert with a stub that writes a stand-in JPEG at the dest."""
+
+    def convert(data: bytes, dest: Path, *, max_dim: int = 1600, quality: int = 85) -> Path:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"jpeg:" + data[:8])
+        return dest
+
+    monkeypatch.setattr(run_execute, "convert_image_for_web", convert)
+
+
+def _write_video_map(tmp_path: Path, entries: dict[str, list[dict[str, str]]]) -> Path:
+    path = tmp_path / "mapping.yml"
+    path.write_text(yaml.safe_dump(entries), encoding="utf-8")
+    return path
+
+
+def test_hero_image_downloaded_converted_uploaded_and_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    rec = _install(monkeypatch, cfg)
+    _fake_convert(monkeypatch)
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    assert rec.downloaded == ["https://cdn/x.jpg"]
+    assert len(rec.uploaded) == 1
+    hero_id = rec.uploaded[0]["id"]
+    kw = rec.wp[0]
+    assert kw["featured_media"] == hero_id
+    assert kw["acf"]["product_header_image"] == hero_id
+    assert kw["acf"]["product_regular_image"] == hero_id
+
+
+def test_image_write_shape_url_uses_source_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config(image_write_shape="url")
+    rec = _install(monkeypatch, cfg)
+    _fake_convert(monkeypatch)
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    hero_id = rec.uploaded[0]["id"]
+    kw = rec.wp[0]
+    # featured_media is always the attachment id; only the ACF image fields switch to a URL.
+    assert kw["featured_media"] == hero_id
+    assert kw["acf"]["product_header_image"] == f"https://wp.test/wp-content/uploads/{hero_id}.jpg"
+
+
+def test_missing_image_still_publishes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="MISSING")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    assert rec.uploaded == []  # nothing uploaded
+    kw = rec.wp[0]
+    assert kw["featured_media"] is None
+    assert "product_header_image" not in kw["acf"]
+    assert rec.verified  # the page was still created and verified (E7)
+
+
+def test_video_set_on_correct_language_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mapping = _write_video_map(
+        tmp_path,
+        {
+            "nl": [{"file": "vid_nl.mp4", "gtin": GTIN_A}],
+            "fr": [{"file": "vid_fr.mp4", "gtin": GTIN_A}],
+        },
+    )
+    cfg = _media_config(
+        video_folders={"nl": str(tmp_path / "vnl"), "fr": str(tmp_path / "vfr")},
+        video_map_path=str(mapping),
+        video_transcode=False,  # prepare_video returns the source path unchanged
+    )
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    acf_by_lang = {kw["language"]: kw["acf"] for kw in rec.wp}
+    nl_video = acf_by_lang["nl"]["product_header_video_file"]
+    fr_video = acf_by_lang["fr"]["product_header_video_file"]
+    assert nl_video != fr_video  # each language got its own video attachment
+    # the uploaded paths were the language-correct files
+    paths = {u["path"] for u in rec.uploaded}
+    assert any(p.endswith("vnl/vid_nl.mp4") for p in paths)
+    assert any(p.endswith("vfr/vid_fr.mp4") for p in paths)
+
+
+def test_no_matching_video_leaves_field_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mapping = _write_video_map(tmp_path, {"nl": [], "fr": []})
+    cfg = _media_config(
+        video_folders={"nl": str(tmp_path / "vnl")},
+        video_map_path=str(mapping),
+    )
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    assert "product_header_video_file" not in rec.wp[0]["acf"]
+
+
+def test_state_records_featured_media_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    rec = _install(monkeypatch, cfg)
+    _fake_convert(monkeypatch)
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    hero_id = rec.uploaded[0]["id"]
+    entry = load_state("acme").entries[GTIN_A]["nl"]
+    assert entry.wp_featured_media_id == hero_id
+
+
+def test_media_rerun_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    _fake_convert(monkeypatch)
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    rec1 = _install(monkeypatch, cfg)
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+    rec2 = _install(monkeypatch, cfg)
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    # deterministic converter + content-hash dedupe → the same attachment id both runs.
+    assert rec1.uploaded[0]["id"] == rec2.uploaded[0]["id"]
+    assert rec2.wp[0]["featured_media"] == rec1.uploaded[0]["id"]
+
+
+def test_dry_run_uploads_no_media(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--dry-run"]) == 0
+
+    assert rec.downloaded == []
+    assert rec.uploaded == []

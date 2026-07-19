@@ -410,6 +410,57 @@
         }
       }
     },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Phase 9.5 media: image convert/resize params, per-language video folders, the confirmed video mapping path, and the ACF field names media is written to (names in config, not code).",
+      "properties": {
+        "image_max_dim": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Longest-edge cap in pixels for the uploaded hero image."
+        },
+        "image_quality": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "JPEG quality (1-100) for the converted image."
+        },
+        "header_image_field": {
+          "type": "string",
+          "description": "ACF field name for the hero image."
+        },
+        "regular_image_field": {
+          "type": "string",
+          "description": "ACF field name for the main image (usually the same hero attachment)."
+        },
+        "video_file_field": {
+          "type": "string",
+          "description": "ACF field name for the product video attachment."
+        },
+        "image_write_shape": {
+          "enum": ["id", "url"],
+          "description": "Whether the image ACF fields take a WP attachment id or a URL string. Confirm live before trusting (page-adapter §3 write-shape trap)."
+        },
+        "video_folders": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Per-language folder of operator-supplied videos, e.g. {nl: path, fr: path}."
+        },
+        "video_map_path": {
+          "type": "string",
+          "description": "Path to the client-confirmed video name->GTIN mapping YAML."
+        },
+        "video_transcode": {
+          "type": "boolean",
+          "description": "Transcode source videos to H.264 MP4 via ffmpeg before upload (MPEG-1/2 will not play in-browser)."
+        },
+        "ffmpeg_bin": {
+          "type": "string",
+          "description": "ffmpeg executable name or path."
+        }
+      }
+    },
     "multilingualPlugin": { "enum": ["none", "polylang", "wpml"] },
     "imageHandling": { "enum": ["url_in_export", "local_folder", "manual"] },
     "languages": {
@@ -440,7 +491,8 @@
         "flow": { "$ref": "#/$defs/flow" },
         "website_status": { "$ref": "#/$defs/websiteStatus" },
         "categories": { "$ref": "#/$defs/categories" },
-        "generator": { "$ref": "#/$defs/generator" }
+        "generator": { "$ref": "#/$defs/generator" },
+        "media": { "$ref": "#/$defs/media" }
       }
     }
   }

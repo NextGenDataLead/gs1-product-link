@@ -289,6 +289,34 @@ class GeneratorConfig(BaseModel):
     max_tokens: int = Field(default=1024, ge=1)
 
 
+class MediaConfig(BaseModel):
+    """Image convert/resize params, video folders, and media ACF field names (Phase 9.5).
+
+    Media is written to WordPress imperatively at execute time (an attachment id is only known
+    after upload), not via the static ``acf_map`` — so the ACF field *names* live here, keeping
+    field names in config rather than hardcoded (page-adapter §8). ``image_write_shape`` records
+    whether the image ACF fields take an attachment id or a URL string; the read-back shape is not
+    the write shape (page-adapter §3 trap), so it is confirmed live and carried as config, meaning
+    a wrong guess is a config edit, not a code change. ``video_folders`` are the operator's
+    per-language folders; ``video_map_path`` is the client-confirmed name→GTIN mapping;
+    ``video_transcode`` selects the ffmpeg H.264/MP4 prepare step (the source ``.mpg`` will not
+    play in an HTML5 ``<video>``).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    image_max_dim: int = Field(default=1600, ge=1)
+    image_quality: int = Field(default=85, ge=1, le=100)
+    header_image_field: str = "product_header_image"
+    regular_image_field: str = "product_regular_image"
+    video_file_field: str = "product_header_video_file"
+    image_write_shape: Literal["id", "url"] = "id"
+    video_folders: dict[str, str] = Field(default_factory=dict)
+    video_map_path: str | None = None
+    video_transcode: bool = False
+    ffmpeg_bin: str = "ffmpeg"
+
+
 class ClientConfig(BaseModel):
     """The full resolved configuration for one client (§2.4)."""
 
@@ -307,6 +335,7 @@ class ClientConfig(BaseModel):
     website_status: WebsiteStatusConfig | None = None
     categories: CategoryConfig | None = None
     generator: GeneratorConfig | None = None
+    media: MediaConfig | None = None
 
 
 # --- Loading (§4.2) ----------------------------------------------------------

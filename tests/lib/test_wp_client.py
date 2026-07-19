@@ -718,6 +718,25 @@ def test_download_image_timeout_returns_none(httpx_mock: HTTPXMock) -> None:
     assert client.download_image("https://cdn.example.com/x.jpg") is None
 
 
+def test_media_source_url_returns_url(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{MEDIA_URL}/42?context=edit",
+        status_code=200,
+        json={"id": 42, "source_url": "https://wp.test/wp-content/uploads/hero.jpg"},
+    )
+
+    assert client.media_source_url(42) == "https://wp.test/wp-content/uploads/hero.jpg"
+
+
+def test_media_source_url_404_returns_none(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", url=f"{MEDIA_URL}/99?context=edit", status_code=404)
+
+    assert client.media_source_url(99) is None
+
+
 def test_e7_missing_image_still_creates_page(httpx_mock: HTTPXMock) -> None:
     # E7 end-to-end shape: download fails -> caller skips featured media -> page created.
     client, _ = make_client(httpx_mock)

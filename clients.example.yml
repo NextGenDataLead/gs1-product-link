@@ -217,3 +217,21 @@ clients:
       # on_unmapped: warn          # fixed; shown for documentation only
       # require_terms_exist: true  # resolved decision: require the WP term to pre-exist,
       #                            # warn on miss. Enforced at the future term-assignment step.
+
+    # Phase 9.5 media. Images come from the export image_url (converted TIFF/PNG -> web JPEG).
+    # Videos are NOT in the feed: operator supplies per-language folders, files named by product
+    # name; a client-confirmed name->GTIN mapping (video_map_path) resolves them. Attachment ids
+    # are set imperatively at execute time, so the ACF field NAMES live here (not in acf_map).
+    media:
+      image_max_dim: 1600
+      image_quality: 85
+      header_image_field: product_header_image
+      regular_image_field: product_regular_image
+      video_file_field: product_header_video_file
+      image_write_shape: id          # confirm the live write shape before trusting (page-adapter §3)
+      video_transcode: true          # .mpg/.mpeg won't play in-browser -> ffmpeg to H.264 MP4
+      # ffmpeg_bin: ffmpeg           # override if ffmpeg is not on PATH
+      video_folders:
+        nl: "input/noviplast/videos/nl"
+        fr: "input/noviplast/videos/fr"
+      video_map_path: "input/noviplast/videos/mapping.yml"

@@ -210,6 +210,84 @@ def test_example_config_categories_block_loads() -> None:
     assert cfg.categories.brick_category_map["10003865"] == "tuin"
 
 
+# --- Media (Phase 9.5) -------------------------------------------------------
+
+
+def _client_with_media(media: dict[str, Any]) -> dict[str, Any]:
+    client = _base_client()
+    client["media"] = media
+    return client
+
+
+def test_media_absent_is_none(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, _base_client())
+    assert get_client("acme", path).media is None
+
+
+def test_media_defaults_applied(tmp_path: Path) -> None:
+    cfg = get_client("acme", _write_config(tmp_path, _client_with_media({})))
+    assert cfg.media is not None
+    assert cfg.media.image_max_dim == 1600
+    assert cfg.media.image_quality == 85
+    assert cfg.media.header_image_field == "product_header_image"
+    assert cfg.media.video_file_field == "product_header_video_file"
+    assert cfg.media.image_write_shape == "id"
+    assert cfg.media.video_transcode is False
+
+
+def test_media_loads_full_block(tmp_path: Path) -> None:
+    cfg = get_client(
+        "acme",
+        _write_config(
+            tmp_path,
+            _client_with_media(
+                {
+                    "image_max_dim": 1200,
+                    "image_quality": 90,
+                    "header_image_field": "hero",
+                    "regular_image_field": "main",
+                    "video_file_field": "vid",
+                    "image_write_shape": "url",
+                    "video_folders": {"nl": "in/nl", "fr": "in/fr"},
+                    "video_map_path": "in/mapping.yml",
+                    "video_transcode": True,
+                    "ffmpeg_bin": "/opt/homebrew/bin/ffmpeg",
+                }
+            ),
+        ),
+    )
+    assert cfg.media is not None
+    assert cfg.media.image_max_dim == 1200
+    assert cfg.media.image_write_shape == "url"
+    assert cfg.media.video_folders == {"nl": "in/nl", "fr": "in/fr"}
+    assert cfg.media.video_transcode is True
+
+
+def test_media_invalid_write_shape_rejected_by_schema(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, _client_with_media({"image_write_shape": "bogus"}))
+    with pytest.raises(ConfigError, match="invalid"):
+        load_clients(path)
+
+
+def test_media_quality_out_of_range_rejected_by_schema(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, _client_with_media({"image_quality": 200}))
+    with pytest.raises(ConfigError, match="invalid"):
+        load_clients(path)
+
+
+def test_media_unknown_key_rejected_by_schema(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, _client_with_media({"bogus": 1}))
+    with pytest.raises(ConfigError, match="invalid"):
+        load_clients(path)
+
+
+def test_example_config_media_block_loads() -> None:
+    cfg = load_clients("clients.example.yml")["noviplast"]
+    assert cfg.media is not None
+    assert cfg.media.video_transcode is True
+    assert set(cfg.media.video_folders) == {"nl", "fr"}
+
+
 # --- Lazy secrets ------------------------------------------------------------
 
 
