@@ -1,7 +1,7 @@
 # Content Generator — implementation SPEC
 
-**Status:** in progress (see [`../ROADMAP.md`](../ROADMAP.md) for the commit tracker and how this
-fits the numbered phases). Supersedes the scoping questions in
+**Status:** **complete** (all 9 commits, 2026-07-19; see [`../ROADMAP.md`](../ROADMAP.md) for the
+commit tracker and how this fits the numbered phases). Supersedes the scoping questions in
 `docs/clients/noviplast-generator-handoff.md`. Grounded in a full read of the codebase and the
 real 127-product export. Written 2026-07-18.
 
@@ -249,10 +249,13 @@ for schemas, absolute imports. Tests: `.venv/bin/python -m pytest -q`.
    pipeline fails silently — verify against the real parsed data, not just green tests.**
 
 ## Progress
-Canonical commit tracker: [`../ROADMAP.md`](../ROADMAP.md). Summary: the deterministic core is done
-(commits 1–3 + the multivalue-1067 and 1067-routing refinements, `3b2ffb5`…`3fff444`); suite 381
-green. **Next: commit 4** (`scripts/run_generate.py` spine + `LLMClient` seam + `--emit`/`--ingest`),
-then 5 Cowork producer, 6 API backend, 7 `run_plan` merge, 8 `acf_map`, 9 docs — 6 left.
+Canonical commit tracker: [`../ROADMAP.md`](../ROADMAP.md). **Complete — all 9 commits landed
+(`3b2ffb5`…`2999201`), suite 414 green, ruff + `mypy --strict` clean.** The deterministic core
+(1–3 + the multivalue-1067 and 1067-routing refinements), the `run_generate` spine (4), both
+producers — Cowork-native skill (5) and the `--backend api` Anthropic client (6) — the `run_plan`
+merge (7), the wired `acf_map` (8), and the docs + flow-orchestrator gate (9) are all in. Next
+milestone is the **Phase 9 live pilot** (verify the WPML helper endpoint and a real published page
+against the live site first — the ACF pipeline fails silently).
 
 The page model was **corrected with the operator against the live page** partway through: tagline =
 first USP (not 1083); Technische details deterministic; 1067 routes verbatim/tighten/generate. Those
