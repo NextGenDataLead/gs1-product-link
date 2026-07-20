@@ -25,6 +25,8 @@ from lib.wp_client import (
     _PLL_LANGUAGES_PATH,
     _WPML_PROBE_PATH,
     WordPressClient,
+    _content_slug,
+    _media_slug,
 )
 
 APP_PASS_ENV = "TEST_WP_APP_PASS"
@@ -660,39 +662,61 @@ def test_delete_media_missing_is_noop(httpx_mock: HTTPXMock) -> None:
 # --- upload_media idempotency (§6.2) -----------------------------------------
 
 
-def test_upload_media_uploads_when_new(httpx_mock: HTTPXMock, tmp_path: Path) -> None:
+def test_content_slug_encodes_hash() -> None:
+    base = _media_slug("Hydro Jet", Path("x/Hydro Jet NL.mp4"))
+    assert base == "hydro-jet"
+    assert _content_slug(base, "abcdef1234567890deadbeef") == "hydro-jet-abcdef123456"
+
+
+def test_upload_media_uploads_with_content_addressed_slug(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
     img = tmp_path / "photo.png"
     img.write_bytes(b"PNGDATA")
     digest = hashlib.sha256(b"PNGDATA").hexdigest()
+    slug = f"photo-{digest[:12]}"
 
     client, _ = make_client(httpx_mock)
-    httpx_mock.add_response(method="GET", json=[])  # media slug lookup: empty
+    httpx_mock.add_response(method="GET", json=[])  # content-slug lookup: miss
     httpx_mock.add_response(method="POST", url=MEDIA_URL, status_code=201, json={"id": 5})
     httpx_mock.add_response(method="POST", url=f"{MEDIA_URL}/5", status_code=200, json={"id": 5})
 
     media_id = client.upload_media(img, title="Photo")
 
     assert media_id == 5
+    # the lookup queried the content-addressed slug, not the bare base
+    lookup = _business_requests(httpx_mock)[0]
+    assert lookup.method == "GET"
+    assert lookup.url.params["slug"] == slug
     creates = [
         r
         for r in _business_requests(httpx_mock)
         if r.method == "POST" and r.url.path == "/wp-json/wp/v2/media"
     ]
-    assert len(creates) == 1  # single multipart upload
+    assert len(creates) == 1
     assert creates[0].content == b"PNGDATA"
+    # the physical filename is content-addressed too, so re-uploads don't churn -N suffixes
+    assert f"{slug}.png" in creates[0].headers.get("content-disposition", "")
     finalise = next(r for r in httpx_mock.get_requests() if r.url.path == "/wp-json/wp/v2/media/5")
-    assert json.loads(finalise.content)["meta"] == {"content_sha256": digest}
+    body = json.loads(finalise.content)
+    assert body["slug"] == slug
+    assert body["meta"] == {"content_sha256": digest}  # hash still stored (diagnostics)
 
 
-def test_upload_media_reuses_when_hash_matches(httpx_mock: HTTPXMock, tmp_path: Path) -> None:
-    # §6.2: identical content + title -> slug lookup hits, no re-upload.
+def test_upload_media_reuses_on_content_slug_without_meta(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    # Dedup is now a pure slug match: the slug encodes the content hash, so a hit means the
+    # bytes are identical. Reuse happens even with NO content_sha256 meta on the item — so it
+    # does not depend on the attachment-meta REST enabler (the earlier live idempotency bug).
     img = tmp_path / "photo.png"
     img.write_bytes(b"PNGDATA")
     digest = hashlib.sha256(b"PNGDATA").hexdigest()
 
     client, _ = make_client(httpx_mock)
     httpx_mock.add_response(
-        method="GET", json=[{"id": 5, "slug": "photo", "meta": {"content_sha256": digest}}]
+        method="GET",
+        json=[{"id": 5, "slug": f"photo-{digest[:12]}"}],  # no meta at all
     )
 
     media_id = client.upload_media(img, title="Photo")
