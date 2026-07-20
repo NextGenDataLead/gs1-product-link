@@ -58,8 +58,11 @@ _WPML_PROBE_PATH: Final = "/wp-json/wpml/v1"
 
 #: Post ``meta`` key holding the GTIN — the idempotency key for ``upsert_page`` (§6.1).
 _GTIN_META_KEY: Final = "gtin"
-#: Media ``meta`` key holding the SHA-256 of the uploaded bytes (§6.2).
+#: Media ``meta`` key holding the SHA-256 of the uploaded bytes (§6.2). Still stored for
+#: diagnostics, but dedup no longer reads it back — see :func:`_content_slug`.
 _CONTENT_HASH_META_KEY: Final = "content_sha256"
+#: Hex chars of the content SHA-256 folded into a media slug (§6.2 idempotency).
+_SLUG_HASH_LEN: Final = 12
 
 # Retry policy (§5.1). 429 and 5xx use independent attempt budgets, matching the
 # GS1 client. A WordPress 401/403 is terminal (no token refresh to attempt).
@@ -338,12 +341,14 @@ class WordPressClient:
         return page
 
     def upload_media(self, file_path: str | Path, title: str | None = None) -> int:
-        """Upload a media file, idempotently by content hash + slug (§6.2).
+        """Upload a media file, idempotently by a content-addressed slug (§6.2).
 
-        Computes the SHA-256 of the file bytes and derives a deterministic slug from
-        ``title`` (or the filename). If a media item already exists at that slug with a
-        matching stored hash, its id is returned without re-uploading; otherwise the
-        bytes are uploaded and the id returned.
+        The slug folds the SHA-256 of the bytes into a base derived from ``title`` (or the
+        filename) — see :func:`_content_slug`. Dedup is then a pure slug lookup: a hit means
+        the bytes are identical, so the existing id is returned without re-uploading. This
+        needs no read-back of stored meta (so it does not depend on the attachment
+        ``content_sha256`` meta being exposed in REST) and cannot be defeated by a stale
+        same-base attachment squatting the base slug — the two failure modes seen live.
 
         Edge E7 (a source ``image_url`` that 404s or times out) is handled *before*
         this method by the run loop via :meth:`download_image`, which returns ``None``
@@ -362,11 +367,13 @@ class WordPressClient:
         path = Path(file_path)
         data = path.read_bytes()
         digest = hashlib.sha256(data).hexdigest()
-        slug = _media_slug(title, path)
+        slug = _content_slug(_media_slug(title, path), digest)
 
         existing = self._find_media_by_slug(slug)
-        if existing is not None and _media_hash(existing) == digest:
-            _log.info("WP media %r unchanged (sha256 match), reusing id %s", slug, existing["id"])
+        if existing is not None:
+            _log.info(
+                "WP media %r already uploaded (content match), reusing id %s", slug, existing["id"]
+            )
             return existing["id"]
         return self._create_media(path, data, title, slug, digest)
 
@@ -799,9 +806,12 @@ class WordPressClient:
     ) -> int:
         """Upload media bytes, then set its slug/title and content-hash meta (§6.2)."""
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        # Name the stored file after the content-addressed slug so re-uploads of the same
+        # bytes reuse (before reaching here) and the physical filename never churns -N suffixes.
+        filename = f"{slug}{path.suffix}"
         headers = {
             "Content-Type": mime,
-            "Content-Disposition": f'attachment; filename="{path.name}"',
+            "Content-Disposition": f'attachment; filename="{filename}"',
         }
         resp = self._request(
             "POST", _MEDIA_PATH, content=data, extra_headers=headers, label=f"upload media {slug}"
@@ -1009,17 +1019,19 @@ def _deleted_page(body: object) -> WordPressPage | None:
     return cast(WordPressPage, body)
 
 
-def _media_hash(media: WordPressMedia) -> str | None:
-    """Read the stored content SHA-256 from a media item's ``meta``, if present."""
-    meta = media.get("meta")
-    if not isinstance(meta, dict):
-        return None
-    value = meta.get(_CONTENT_HASH_META_KEY)
-    return str(value) if isinstance(value, str) and value else None
+def _content_slug(base: str, digest: str) -> str:
+    """A content-addressed media slug: the base slug plus a prefix of the content hash.
+
+    Folding the hash into the slug makes dedup a pure slug lookup — identical bytes always map
+    to the same slug and different bytes to a different one. So :meth:`WordPressClient.upload_media`
+    needs no read-back of the stored ``content_sha256`` meta (it works whether or not that meta is
+    exposed in REST), and a stale attachment sharing only the *base* slug cannot shadow the match.
+    """
+    return f"{base}-{digest[:_SLUG_HASH_LEN]}"
 
 
 def _media_slug(title: str | None, path: Path) -> str:
-    """Derive a deterministic media slug from the title (or filename) (§6.2)."""
+    """Derive a deterministic base media slug from the title (or filename) (§6.2)."""
     source = title if title else path.stem
     slug = re.sub(r"[^a-z0-9]+", "-", source.lower()).strip("-")
     return slug or "media"

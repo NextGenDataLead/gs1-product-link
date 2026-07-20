@@ -416,6 +416,23 @@ source — the filters survive updates to whatever registers them.
   (`product_title`, `product_description`, `product_gallery`, `product_header_image`,
   `product_regular_image`, `product_header_video`, `product_header_video_file`,
   `product_header_video_text`, `is_new_product`).
+- **`attachment` `content_sha256` meta in REST** — **done (2026-07-20), now optional.** Media dedup
+  (`upload_media`, §6.2) originally read back a `content_sha256` post-meta to decide whether to reuse
+  an attachment. But core silently discards *unregistered* meta on attachments too (the same
+  `custom-fields`/`register_post_meta` trap as `meta.gtin` above), so the hash was never stored, dedup
+  never matched, and **every media re-run created a duplicate attachment** — found live on the first
+  media publish. Fixed by registering it (`register_post_meta('attachment', 'content_sha256',
+  show_in_rest ⇒ true, auth_callback ⇒ upload_files)`, on `init`). **The tool then went further:**
+  `upload_media` now folds the hash into the media **slug** (`{base}-{sha12}`), so dedup is a pure slug
+  lookup that needs no meta read-back at all *and* is immune to a stale attachment squatting the base
+  slug (the second half of the same bug — the empty-hash base-slug attachment shadowed every lookup).
+  So the meta is now **diagnostic only** and the snippet is optional; keep it, it is harmless and
+  records the hash. **Live-proven:** two consecutive `run_execute` runs of `08713195007717` reuse the
+  same four attachments (image+video × nl/fr) — no duplicates.
+- **Image ACF write-shape = attachment id (confirmed live 2026-07-20).** The §3 write-shape trap is
+  resolved for images: `product_header_image`/`product_regular_image` are written as an **attachment
+  id** and Oxygen renders the `<img>`; `media.image_write_shape: id` (config default). Both shapes
+  stay wired (`wp_client.media_source_url` covers `url`), so a change is a config flip, not code.
 - **`noviplast-categories` taxonomy → `show_in_rest`** — **done** via `register_taxonomy_args`.
   (The earlier note that it "404s" was wrong: it returned **403 `rest_forbidden`**. That distinction
   is a useful diagnostic — core returns **404 `rest_taxonomy_invalid`** when a taxonomy does not

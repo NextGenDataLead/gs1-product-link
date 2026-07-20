@@ -53,18 +53,21 @@ The Phase 9 status note, the new Phase 9.5/9.8 DoD blocks, and this runbook are 
 (Retained only as the template for the per-step git flow: fetch → branch off `origin/main` → work →
 gates → commit → push → PR → merge → sync `main` → delete the branch.)
 
-### Step 1 — Phase 9.5 Media (code) — branch `feat/phase-9.5-media`
-- **Images:** download each product's export `image_url` (public `.jpg` on GDSN blob storage) →
-  `wp_client.upload_media` → set the image ACF field(s) (`product_header_image`/`product_regular_image`).
-  First confirm the ACF image **write-shape live** on page 1449 (attachment id vs URL — the §3 trap).
-  Add the field(s) to `clients.yml` `acf_map`.
-- **Videos:** operator supplies two local folders (nl, fr); files named **by product name, not GTIN**.
-  Build a **draft name→GTIN mapping** against the feed names and **get operator confirmation before any
-  upload** (names carry known brand-prefix typos). Then per language → `upload_media` → ACF
-  `product_header_video_file` (caption `product_header_video_text` already = tagline). Revise the
-  `{gtin}*.mp4` single-folder assumption in `noviplast-page-adapter.md` §3.
-- Replace `run_execute.py` `featured_media=None`; keep re-runs idempotent. TDD; gates; PR; merge.
-- Ticks the four §12 Phase 9.5 boxes.
+### Step 1 — Phase 9.5 Media — code DONE + proven live (2026-07-20); **open: client sign-off on the video mapping**
+- **DONE (merged PR #7):** `lib/media.py` (convert-all TIFF/PNG→web JPEG), `lib/media_video.py`
+  (operator-authored name→GTIN mapping + ffmpeg MP4 transcode), `scripts/build_video_map.py`
+  (draft/`--check`), `MediaConfig`, and `run_execute._row_media` (hero → `product_header_image`/
+  `_regular_image` + `featured_media`; video → `product_header_video_file`). Image write-shape confirmed
+  live = **attachment id** (`media.image_write_shape: id`). Media dedup made robust via a
+  **content-addressed slug** (`{base}-{sha12}`) after a live idempotency bug (see §7 / §12).
+- **PROVEN LIVE** on `08713195007717` (nl 1449 / fr 1450): image + correct video (Hydro Jet) render on
+  both; re-runs reuse the same 4 attachments. §12 boxes **2 and 4 checked**.
+- **OPEN (boxes 1, 3):** the name→GTIN mapping is drafted at `input/noviplast/videos/mapping.yml` (166
+  files; 26 strong pre-fills + `…7717` confirmed) but needs **client sign-off** on the rest; then
+  `build_video_map noviplast --check` must exit 0. Watch: `Seal Strip.mpg` is 0 bytes (re-copy);
+  filenames are **English marketing names**, mostly not in the feed, so most rows are a human call.
+- **WP-side (operator):** added `register_post_meta('attachment','content_sha256', …)` to the
+  "expose CPT to REST" snippet (now optional — dedup no longer needs it; see §7).
 
 ### Step 2 — Phase 9.8 Operator flow in Cowork (validation) — branch only if code gaps found
 - Drive the `flow-orchestrator` skill **end-to-end from a real Cowork chat session** on ≥1 GTIN,

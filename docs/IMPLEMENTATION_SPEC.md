@@ -1168,21 +1168,32 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 
 ### Phase 9.5 — Media (images + video)
 - [ ] Product-name → GTIN mapping for the video files built and **client-confirmed** (per language)
-- [ ] Product images downloaded from the export `image_url`s, uploaded to WP, and rendering on pilot pages
+- [x] Product images downloaded from the export `image_url`s, uploaded to WP, and rendering on pilot pages
 - [ ] NL + FR videos matched via the mapping, uploaded, and set on the correct-language page
-- [ ] Media wired into `run_execute` (replaces `featured_media=None`); re-runs stay idempotent
+- [x] Media wired into `run_execute` (replaces `featured_media=None`); re-runs stay idempotent
 
-> Split out of Phase 9 (2026-07-19). Today the execute path writes no media (`run_execute.py`
-> `featured_media=None`; the Noviplast `acf_map` maps only the 3 text slots), so pilot pages are
-> text-only. Two independent media sources: **images** come from the export `image_url` (a public
-> `.jpg` per product on GDSN blob storage) — download → `upload_media` → the image ACF fields
-> (`product_header_image`/`product_regular_image`; write-shape to confirm live). **Videos** are **not**
-> in the feed (all 375 feed media are `PRODUCT_IMAGE`); the operator supplies them in two local folders
-> (nl, fr), and the files are named by **product name, not GTIN**, so a name→GTIN mapping must be built
-> and **client-confirmed first** (names carry known typos — see the brand-typo note) before any upload.
-> Then per language → `upload_media` → ACF `product_header_video_file` (caption `product_header_video_text`
-> already = tagline). This revises the folder plan in `clients/noviplast-page-adapter.md` §3 (which
-> assumed one `{gtin}*.mp4` folder).
+> Built and merged (PR #7). Split out of Phase 9 (2026-07-19). **Images** come from the export
+> `image_url` — but 93 of 127 pilot files are 10–45 MB TIFF print masters WordPress rejects, so
+> `lib/media.convert_image_for_web` converts all (TIFF/PNG→web JPEG, ~1600px, deterministic).
+> **Videos** are **not** in the feed; the operator supplies two per-language folders whose files are
+> named by **English marketing name** (mostly absent from the feed → auto-matching is unreliable), so
+> the name→GTIN mapping is **operator-authored**: `scripts/build_video_map.py` emits a hint skeleton
+> (`--check` gates coverage); the `.mpg`/`.mpeg` sources are transcoded to H.264 MP4 via ffmpeg.
+> `run_execute._row_media` injects the hero (`product_header_image`/`product_regular_image` +
+> `featured_media`) and the language's video (`product_header_video_file`) into the ACF dict at
+> execute time; the hero id is persisted in state.
+>
+> **Proven live 2026-07-20** on `08713195007717` (nl 1449 / fr 1450): image renders on both, its
+> correct video (Hydro Jet) renders in a `<video>` on both, GS1 still resolves — so boxes 2 and 4 are
+> checked, and box 3's mechanism is proven per-language. **Two live findings** (both in
+> `clients/noviplast-page-adapter.md` §7 now): the image ACF write-shape is an **attachment id** (not a
+> URL); and media re-runs were **not** idempotent until fixed — the `content_sha256` dedup meta is
+> silently dropped on attachments unless registered in REST, and stale attachments squatted the base
+> slug. Both are addressed by making the media slug **content-addressed** (`{base}-{sha12}`, PR after
+> #7): dedup is a pure slug lookup, needing no meta and immune to squatting (two consecutive runs now
+> reuse the same 4 attachments). **Remaining (boxes 1, 3):** the full name→GTIN mapping is drafted (166
+> files, 26 strong pre-fills + `…7717` confirmed) but still needs **client sign-off**; scaling to the
+> ≥10 batch is Phase 9.
 
 ### Phase 9.8 — Operator flow in Cowork
 - [ ] `flow-orchestrator` driven end-to-end from a **real Cowork chat session** on ≥1 GTIN (draft-first)
