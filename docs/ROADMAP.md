@@ -30,7 +30,7 @@ does not. Last updated 2026-07-19.
 | 7.5 | GPC brick → category | **Done** (§12 [x], 2026-07-18) |
 | 8 | Skills | **Done except execute leg** — all 6 SKILL.md finalised; chat flow (parse→generate→plan→confirm) validated on real files; execute leg deferred to Phase 9 (§12) |
 | 9 | Pilot end-to-end (≥10 live, QR scans, no manual fixes) | **In progress — paused.** Execute + resolution **proven live** on the first real GTIN (`08713195007717`, nl+fr; QR resolves via `id.gs1.org`). ≥10 batch paused by operator choice; §12 boxes stay unchecked |
-| 9.5 | Media (images + video) | **New — not started.** Images from export `image_url`s; videos from operator's per-language folders, named by product name → needs a client-confirmed name→GTIN mapping. Split out of Phase 9 |
+| 9.5 | Media (images + video) | **Code merged (PR #7) + proven live (2026-07-20).** Image+video render on pilot 1449/1450; media idempotent (content-addressed slug). **Open:** the drafted name→GTIN mapping (166 files) needs **client sign-off** (§12 boxes 1/3) |
 | 9.8 | Operator flow in Cowork | **New — not started.** Drive `flow-orchestrator` end-to-end from a real Cowork chat session (all gates incl. execute), operator guided step-by-step. Ticks open Phase 8 box #4 |
 | 10 | Docs | Not started |
 | 11 | Release | Not started |
