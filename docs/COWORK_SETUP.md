@@ -39,26 +39,44 @@ used by this flow — no MCP wiring is needed for Cowork.
 - Python **≥ 3.11** available in the sandbox; `ffmpeg` optional (video transcode; the page still builds
   without it).
 
-## 2. Make the skills discoverable
+## 2. Install the six skills (one-time)
 
-The six skills under `skills/*/SKILL.md` now carry Agent-Skill YAML frontmatter (`name` +
-`description` with trigger phrases), so a Skills-aware surface can discover them. On first run,
-**confirm how Cowork loads them** and record the working method here:
+Cowork discovers skills from your **personal skill library** (shared with claude.ai) — not from the
+repo folder. The six `skills/*/SKILL.md` now carry Agent-Skill frontmatter (`name` + `description`),
+so upload each one once:
 
-- Most likely: copy or symlink the six skill folders into the skills directory Cowork scans (Cowork
-  shares Claude Code's architecture, which reads `~/.claude/skills/<name>/SKILL.md` and project
-  `.claude/skills/`). Alternatively, selecting the repo folder plus a short folder-instruction that
-  points at `skills/` may be enough.
-- Sanity check: ask Cowork *"which skills are available?"* — the six (`flow-orchestrator`,
-  `content-generator`, `gs1-export-parser`, `wordpress-product-page`, `gs1-digital-link`, `qr-render`)
-  should be listed, or `run for noviplast` should trigger `flow-orchestrator`.
+1. **Zip each skill folder** (so the zip contains `<name>/SKILL.md`):
+   ```bash
+   cd skills
+   for s in flow-orchestrator content-generator gs1-export-parser \
+            wordpress-product-page gs1-digital-link qr-render; do
+     zip -qr "$s.zip" "$s"
+   done
+   cd ..            # produces skills/<name>.zip × 6
+   ```
+   If the upload rejects this layout, re-zip with `SKILL.md` at the zip root instead
+   (`cd skills/<name> && zip -qr ../<name>.zip .`).
+2. In Claude, open **Customize** (left sidebar) → **Skills** → **Upload skill**, and upload each of
+   the six `.zip` files. (Requires a paid plan with **code execution** enabled; the menu may be
+   labelled **Settings → Capabilities → Upload skill**.) Skills uploaded here appear in **both**
+   Claude chat and Cowork.
+3. **Verify:** in a Cowork chat, type `/` (or click **+**) — the six skills
+   (`flow-orchestrator`, `content-generator`, `gs1-export-parser`, `wordpress-product-page`,
+   `gs1-digital-link`, `qr-render`) should be listed; or say `run for noviplast` and confirm
+   `flow-orchestrator` triggers.
+
+> Alternative for repeat installs: bundle the six into a single Cowork **plugin** and install that
+> once instead of uploading six zips (Customize → Plugins → upload a custom plugin). Not needed for
+> this pilot.
 
 ## 3. Grant file access + provide config
 
-- In Cowork, **select this repo folder** and grant read/write access.
-- Confirm the bridge exposes the gitignored `.env`, `clients.yml`, and `input/` to the sandbox (the
-  scripts read them from the working directory; `GS1_CLIENTS_FILE` can relocate `clients.yml` if
-  needed).
+1. In Cowork, **select this repo folder** and grant read/write access.
+2. Tell Cowork to **work from the repo root** — the scripts resolve `clients.yml`, `.env`, `input/`,
+   and `output/` relative to the current directory, so every command below assumes CWD = the repo
+   root. (`GS1_CLIENTS_FILE` can relocate `clients.yml` if you keep it elsewhere.)
+3. Confirm the bridge exposes the gitignored `.env`, `clients.yml`, and `input/` to the sandbox
+   (they live in the selected folder, so they should be visible).
 
 ## 4. Prepare the sandbox environment
 
@@ -98,26 +116,64 @@ Each rung proves one thing the sandbox must be able to do. Stop at the first fai
 
 ## 6. Wave-1 live via `flow-orchestrator` (the Phase 9.8 validation)
 
-Trigger `run for noviplast` and let Cowork drive the flow **one gate at a time** — present each gate,
-wait for the choice, then proceed; never batch or auto-confirm:
+In a Cowork chat, with the repo folder selected, say: **`run for noviplast`**
 
-1. **Language** → `all` (nl + fr; the GS1 record links both).
-2. **Review gate #1 (generated copy)** → the copy is already generated and reviewed; confirm.
-3. **Plan review gate #2** → restrict to the **wave-1 subset**: `08713195000862`, `08713195005409`,
-   `08713195007915` (rich-FR, minimal, and an inference-carrying product; avoids the two GTINs with the
-   benign cross-market title mismatch).
-4. **Production environment-confirmation** → `confirm` only when you intend live writes to
-   `www.noviplast.nl` + GS1.
-5. **Execute → progress → post-execute summary → retry.**
+Cowork then walks the gates **one at a time** — it presents each prompt, you reply, it proceeds;
+nothing is written until you confirm at the production gate. The prompts (verbatim) and exactly what
+to reply:
 
-**Verify each published GTIN** (the pipeline fails silently — a blank page still returns 200):
+1. **Language selection**
+   ```
+   Client noviplast supports [nl, fr]. Which languages should this run cover?
+   [all | nl | fr | nl,fr]
+   ```
+   → reply **`all`** (the GS1 record links nl + fr together).
 
-- Fetch the public page HTML and confirm the tagline + Eigenschappen are actually in it.
-- `curl -sSL -o /dev/null -w '%{http_code}' https://id.gs1.org/01/{gtin}` → **307 → page → 200** (GET).
+2. **Review gate #1 — generated copy** (copy is already generated + reviewed)
+   ```
+   [looks good — continue | regenerate GTIN … | cancel]
+   ```
+   → reply **`looks good — continue`**. (If the sandbox's cache is empty, gate 1 first runs the
+   Cowork-native `content-generator`; review the tagline + Eigenschappen it writes, then continue.)
 
-Then pause for go-ahead before the next wave. Remaining with-copy GTINs and `…0527` (the 10th; it has
-1083 copy in both languages and is video-mapped — republish the dirty draft cleanly) follow in later
-waves through the same flow, until ≥10 GTINs are live for the Phase 9 DoD.
+3. **Plan review gate #2** — restrict to the 3-GTIN wave using the off-menu filter
+   ```
+   Proceed with all 16 to execute?
+   [all | new-only | changed-review | cancel]
+   ```
+   → reply **`only GTIN 08713195000862, 08713195005409, 08713195007915`**
+   (rich-FR, minimal, and an inference-carrying product; avoids the two with the benign title mismatch.)
+
+4. **Production environment-confirmation** (mandatory — this is the first live write)
+   ```
+   About to execute against PRODUCTION environment (gs1nl-api.gs1.nl).
+   This will make live changes to https://www.noviplast.nl.
+   Continue?
+   [confirm | switch-to-test | cancel]
+   ```
+   → reply **`confirm`**.
+
+5. **Execute → progress → post-execute summary → retry** — if the summary lists any errored row,
+   reply **`yes`** to retry those; otherwise **`no`**.
+
+**Verify the 3 GTINs** (the pipeline fails silently — a blank page still returns 200, so check the
+actual HTML). From the repo root:
+```bash
+for g in 08713195000862 08713195005409 08713195007915; do
+  echo "== $g =="
+  # follows the resolver 307 to the live page; confirm the tagline/Eigenschappen text is present:
+  curl -sSL "https://id.gs1.org/01/$g" | grep -iE "eigenschappen|<title>" | head -2
+  # resolution status (GET, never HEAD — HEAD 404s even for a good record):
+  curl -sSL -o /dev/null -w "  resolve: %{http_code}\n" "https://id.gs1.org/01/$g"
+done
+```
+Then have the client do a **physical phone-scan of a printed QR sample** (the Phase 9 DoD's literal
+requirement), and **pause for go-ahead** before the next wave.
+
+Later waves (through the same flow) cover the remaining with-copy GTINs and **`…0527`** as the 10th
+— it has attr-1083 copy in both languages and is video-mapped, but is currently a dirty draft, so
+republish it cleanly (see `run_unpublish` / the unpublish mechanics) — until ≥10 GTINs are live for
+the Phase 9 DoD.
 
 ## Fallback — sandbox can't reach WP/GS1
 
