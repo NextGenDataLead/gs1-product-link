@@ -107,6 +107,9 @@ class ResultItem(BaseModel):
     usps: list[str] = Field(min_length=1)
     product_name: str | None = None
     input_fingerprint: str | None = None
+    #: Claims written beyond the literal feed text (attr 1083/1067), surfaced as
+    #: ``generation_inference`` findings for human verification before publishing.
+    inferences: list[str] = Field(default_factory=list)
 
 
 class ResultsFile(BaseModel):
@@ -271,7 +274,9 @@ def _ingest(
         apply_result(
             cache,
             request,
-            GenerationResult(usps=item.usps, product_name=item.product_name),
+            GenerationResult(
+                usps=item.usps, product_name=item.product_name, inferences=item.inferences
+            ),
             origin=_origin_for_mode(request.mode),
             provenance=_COWORK_PROVENANCE,
             now=now,

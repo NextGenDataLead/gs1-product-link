@@ -238,6 +238,7 @@ def diff_against_state(
     state: State,
     languages: list[str],
     wordpress: WordPressConfig,
+    require_generated_copy: bool = False,
 ) -> list[PlanRow]:
     """Classify each ``(GTIN, language)`` against prior state, building plan rows (§4.8, §8.2).
 
@@ -246,7 +247,12 @@ def diff_against_state(
     :class:`~lib.records.StateEntry`: no entry → NEW, equal hash → UNCHANGED, else
     CHANGED (carrying a ``title`` and/or ``target_url`` diff for whichever of those
     moved). A language with no ``product_name`` for a product is omitted with a warning
-    (edge E18) rather than emitting a row with a missing title.
+    (edge E18) rather than emitting a row with a missing title. Likewise, when
+    ``require_generated_copy`` is set, a language with no generated tagline is omitted
+    (edge E21) — the generator is configured but this unit has no copy yet (a held,
+    blank-1083 product), so publishing it would render a silently-blank page. The gap is
+    still reported upstream by ``merge_generated`` (``missing_generation_input``); this
+    skip only keeps it out of the actionable plan.
 
     Args:
         products: The products to plan.
@@ -254,6 +260,9 @@ def diff_against_state(
         languages: The languages to plan per product (``wordpress.languages``).
         wordpress: The client's WordPress config; supplies the slug/target-URL
             patterns, site URL, post type, and default language.
+        require_generated_copy: When True (the client has a generator configured), skip any
+            ``(GTIN, language)`` lacking a generated tagline so a copy-less product is never
+            published as a blank page (E21). Defaults to False for generator-less clients.
 
     Returns:
         One :class:`~lib.records.PlanRow` per planned ``(GTIN, language)``, in input
@@ -276,6 +285,14 @@ def diff_against_state(
             if language not in product.product_name.values:  # E18
                 _log.warning(
                     "SKIPPED %s (%s): missing product_name.%s", product.gtin, language, language
+                )
+                continue
+            tagline = product.generated_tagline
+            if require_generated_copy and not (tagline and tagline.values.get(language)):  # E21
+                _log.warning(
+                    "SKIPPED %s (%s): no generated copy (held for missing input)",
+                    product.gtin,
+                    language,
                 )
                 continue
             slug = slug_pattern.format(gtin=product.gtin, gtin14=product.gtin14)
