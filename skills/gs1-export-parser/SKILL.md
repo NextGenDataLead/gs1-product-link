@@ -1,3 +1,8 @@
+---
+name: gs1-export-parser
+description: "Parse a client's GS1 Data Source / GDSN datapool workbook into the normalised products.json the pipeline reads, surfacing source-data issues to fix in MyGS1. Use when the operator says 'parse the export for {client}' or drops an .xlsx in chat."
+---
+
 # GS1 Export Parser
 
 ## When to load
