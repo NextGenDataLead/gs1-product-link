@@ -1,3 +1,8 @@
+---
+name: qr-render
+description: "Produce scannable QR symbols for a client's GTINs, each encoding the product's GS1 Digital Link URI. Use when the operator says 'render QR for {client}' or 'generate the QR files for {client}'."
+---
+
 # QR Render
 
 ## When to load

@@ -1,3 +1,8 @@
+---
+name: flow-orchestrator
+description: "Drive a full client run end-to-end — generate copy, plan, confirm, then execute WordPress pages, GS1 Digital Link and QR, with step-by-step operator gates. Use when the operator says 'run for {client}' or 'process {client}'."
+---
+
 # Flow Orchestrator
 
 ## When to load

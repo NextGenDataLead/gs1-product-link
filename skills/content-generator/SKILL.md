@@ -1,3 +1,8 @@
+---
+name: content-generator
+description: "Write product tagline and Eigenschappen copy as the Cowork-native producer (no API key) for the (GTIN, language) units the generator flagged, then ingest them into the cache. Use when the operator says 'generate copy for {client}' or 'write product copy for {client}'."
+---
+
 # Content Generator
 
 ## When to load

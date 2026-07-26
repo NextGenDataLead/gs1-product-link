@@ -1,3 +1,8 @@
+---
+name: gs1-digital-link
+description: "Point a client's GTINs at their product pages in the GS1 NL resolver by building and upserting each Digital Link entry. Use when the operator says 'set resolver targets for {client}' or 'update the Digital Link for {client}'."
+---
+
 # GS1 Digital Link
 
 ## When to load

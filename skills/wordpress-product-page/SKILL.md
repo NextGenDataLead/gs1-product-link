@@ -1,3 +1,8 @@
+---
+name: wordpress-product-page
+description: "Render and idempotently upsert a client's WordPress product pages, one per (GTIN, language). Use when the operator says 'create product pages for {client}' or 'update {client} WordPress pages'."
+---
+
 # WordPress Product Page
 
 ## When to load
