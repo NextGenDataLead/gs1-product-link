@@ -29,7 +29,7 @@ does not. Last updated 2026-07-19.
 | — | **Page-adapter track** | Done — **generator complete** (all 9 commits, see below) |
 | 7.5 | GPC brick → category | **Done** (§12 [x], 2026-07-18) |
 | 8 | Skills | **Done except execute leg** — all 6 SKILL.md finalised; chat flow (parse→generate→plan→confirm) validated on real files; execute leg deferred to Phase 9 (§12) |
-| 9 | Pilot end-to-end (≥10 live, QR scans, no manual fixes) | **In progress — paused.** Execute + resolution **proven live** on the first real GTIN (`08713195007717`, nl+fr; QR resolves via `id.gs1.org`). ≥10 batch paused by operator choice; §12 boxes stay unchecked |
+| 9 | Pilot end-to-end (≥10 live, QR scans, no manual fixes) | **In progress.** Media proven live on `…7717`. Pilot frozen to 20 fully-mapped GTINs; **13-GTIN batch ready to publish** (5 already live, 2 present). **Blocker: generate + review copy for the 13** (they are `generate`-mode). Then publish + QR scan → tick §12 |
 | 9.5 | Media (images + video) | **Code merged (PR #7) + proven live (2026-07-20).** Image+video render on pilot 1449/1450; media idempotent (content-addressed slug). **Open:** the drafted name→GTIN mapping (166 files) needs **client sign-off** (§12 boxes 1/3) |
 | 9.8 | Operator flow in Cowork | **New — not started.** Drive `flow-orchestrator` end-to-end from a real Cowork chat session (all gates incl. execute), operator guided step-by-step. Ticks open Phase 8 box #4 |
 | 10 | Docs | Not started |

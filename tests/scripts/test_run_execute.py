@@ -723,6 +723,63 @@ def test_media_rerun_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert rec2.wp[0]["featured_media"] == rec1.uploaded[0]["id"]
 
 
+def _pilot_map(tmp_path: Path, both: list[str]) -> str:
+    """Write a mapping.yml confirming each GTIN in `both` in both nl and fr; return its path."""
+    entries = {
+        "nl": [{"file": f"{g}_nl.mp4", "gtin": g} for g in both],
+        "fr": [{"file": f"{g}_fr.mp4", "gtin": g} for g in both],
+    }
+    return str(_write_video_map(tmp_path, entries))
+
+
+def test_pilot_restrict_blocks_unmapped_gtin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config(
+        video_map_path=_pilot_map(tmp_path, [GTIN_A]),  # only GTIN_A mapped in both langs
+        restrict_to_mapped_gtins=True,
+    )
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(
+        tmp_path / "plan.json",
+        _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr"), _row(GTIN_B, "nl"), _row(GTIN_B, "fr")),
+    )
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    written = {kw["meta"]["gtin"] for kw in rec.wp}
+    assert written == {GTIN_A}  # GTIN_B never written — hard-blocked
+
+
+def test_pilot_restrict_off_processes_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config(
+        video_map_path=_pilot_map(tmp_path, [GTIN_A]), restrict_to_mapped_gtins=False
+    )
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_B, "nl")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    assert {kw["meta"]["gtin"] for kw in rec.wp} == {GTIN_A, GTIN_B}
+
+
+def test_pilot_restrict_all_blocked_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config(
+        video_map_path=_pilot_map(tmp_path, [GTIN_A]), restrict_to_mapped_gtins=True
+    )
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_B, "nl"), _row(GTIN_B, "fr")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    assert rec.wp == []  # nothing published
+
+
 def test_dry_run_uploads_no_media(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     cfg = _media_config()

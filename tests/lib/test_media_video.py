@@ -9,7 +9,9 @@ import pytest
 
 from lib.media_video import (
     VideoMap,
+    canon_gtin,
     check_video_map,
+    fully_mapped_gtins,
     list_video_files,
     load_video_map,
     normalize_video_name,
@@ -96,6 +98,37 @@ def test_rank_candidates_pure_miss_scores_low() -> None:
 
 def _map(data: dict[str, list[dict[str, str]]]) -> VideoMap:
     return VideoMap.model_validate({"by_language": data})
+
+
+def test_canon_gtin_pads_to_14_and_strips_nondigits() -> None:
+    assert canon_gtin("8713195007717") == "08713195007717"
+    assert canon_gtin("08713195007717") == "08713195007717"
+    assert canon_gtin(" 8713195007717 ") == "08713195007717"
+
+
+def test_resolve_matches_across_gtin_digit_forms() -> None:
+    # mapping keyed 13-digit; pipeline queries 14-digit — must still match (the live bug).
+    vmap = _map({"nl": [{"file": "DrainSticks_NL.mpeg", "gtin": "8713195001234"}]})
+    assert vmap.resolve("08713195001234", "nl") == "DrainSticks_NL.mpeg"
+    assert vmap.resolve("8713195001234", "nl") == "DrainSticks_NL.mpeg"
+
+
+def test_fully_mapped_gtins_requires_all_languages() -> None:
+    vmap = _map(
+        {
+            "nl": [
+                {"file": "a_nl.mp4", "gtin": "8713195000001"},
+                {"file": "b_nl.mp4", "gtin": "8713195000002"},  # nl-only
+                {"file": "c_nl.mp4", "gtin": "skip"},
+            ],
+            "fr": [
+                {"file": "a_fr.mp4", "gtin": "8713195000001"},
+                {"file": "d_fr.mp4", "gtin": ""},  # blank
+            ],
+        }
+    )
+    both = fully_mapped_gtins(vmap, ["nl", "fr"])
+    assert both == frozenset({"08713195000001"})  # canonical 14-digit; only the both-mapped one
 
 
 def test_resolve_returns_confirmed_filename() -> None:

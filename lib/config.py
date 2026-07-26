@@ -315,6 +315,9 @@ class MediaConfig(BaseModel):
     video_map_path: str | None = None
     video_transcode: bool = False
     ffmpeg_bin: str = "ffmpeg"
+    # When true, run_plan and run_execute restrict to GTINs with a client-confirmed video in every
+    # language (see lib.media_video.fully_mapped_gtins) — every other GTIN is blocked from runs.
+    restrict_to_mapped_gtins: bool = False
 
 
 class ClientConfig(BaseModel):

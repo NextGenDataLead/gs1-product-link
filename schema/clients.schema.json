@@ -458,6 +458,10 @@
         "ffmpeg_bin": {
           "type": "string",
           "description": "ffmpeg executable name or path."
+        },
+        "restrict_to_mapped_gtins": {
+          "type": "boolean",
+          "description": "When true, run_plan/run_execute process only GTINs with a client-confirmed video in every language; every other GTIN is blocked."
         }
       }
     },

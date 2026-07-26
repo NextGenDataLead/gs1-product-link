@@ -263,6 +263,17 @@ def test_media_loads_full_block(tmp_path: Path) -> None:
     assert cfg.media.video_transcode is True
 
 
+def test_media_restrict_flag_defaults_false_and_parses(tmp_path: Path) -> None:
+    default = get_client("acme", _write_config(tmp_path, _client_with_media({})))
+    assert default.media is not None
+    assert default.media.restrict_to_mapped_gtins is False
+    on = get_client(
+        "acme", _write_config(tmp_path, _client_with_media({"restrict_to_mapped_gtins": True}))
+    )
+    assert on.media is not None
+    assert on.media.restrict_to_mapped_gtins is True
+
+
 def test_media_invalid_write_shape_rejected_by_schema(tmp_path: Path) -> None:
     path = _write_config(tmp_path, _client_with_media({"image_write_shape": "bogus"}))
     with pytest.raises(ConfigError, match="invalid"):

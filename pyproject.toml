@@ -35,6 +35,10 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "PL"]
+# PLR0917 (too-many-positional-args, added in ruff 0.16) fires on the orchestration functions that
+# already carry a deliberate `# noqa: PLR0913` — one explicit collaborator per step reads clearer than
+# bundling them into a context object. It is the same design decision, so ignore it project-wide.
+ignore = ["PLR0917"]
 
 [tool.ruff.lint.per-file-ignores]
 # Literal HTTP status codes and counts in assertions are clearer inline than as

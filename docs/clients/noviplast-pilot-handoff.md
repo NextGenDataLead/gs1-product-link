@@ -3,23 +3,33 @@
 **Read this first after a context clear.** It carries the live state of the Phase 9 pilot and the exact
 path (incl. git workflow) from here to release. DoD checkboxes stay authoritative in
 [`../IMPLEMENTATION_SPEC.md` §12](../IMPLEMENTATION_SPEC.md); the phase map is in
-[`../ROADMAP.md`](../ROADMAP.md). Last updated 2026-07-19.
+[`../ROADMAP.md`](../ROADMAP.md). Last updated 2026-07-26.
 
-## Where we are
+## Where we are (2026-07-26)
 
-- **Phase 9 execute + resolution is PROVEN live, then PAUSED by operator choice.** One real GTIN,
-  `08713195007717` (Hogedrukreiniger / Nettoyeur haute pression), is published: WP pages **1449 (nl) /
-  1450 (fr)**, both render their ACF text, GS1 **production** record enabled (`gs1:pip` nl+fr), QR
-  resolves (`GET https://id.gs1.org/01/08713195007717` → 307 → nl page → 200). Leave it live.
-- **Only 1 of ≥10 products is live**, so Phase 9's three §12 boxes stay **unchecked**. Pages are
-  **text-only** (media deferred). One QR resolves only to the **nl** default.
-- `08713195000527` is a **dirty prior test artifact** (pages 1447/1448 draft, GS1 disabled) — never reuse.
-- Generation used the **Cowork-native producer** (no `ANTHROPIC_API_KEY`); the API backend is untested
-  but optional. The pilot was driven by **calling scripts directly**, which bypassed the operator UX —
-  that gap is Phase 9.8.
-- **Git: on `main`, clean, in sync with `origin/main`.** The Phase 9 status note + the 9.5/9.8 phases +
-  this runbook landed via **PR #5** (commit `b850176`, merge `a8463e6`); all session branches are deleted.
-  **A fresh session starts at Step 1** below — Step 0 is already done.
+- **Phase 9.5 media is DONE and proven live.** Images (convert-all TIFF/PNG→web JPEG) and videos
+  (operator name→GTIN mapping → ffmpeg H.264 MP4) publish through `run_execute._row_media`; media
+  idempotency is robust via a **content-addressed media slug** (`{base}-{sha12}`). Proven on
+  `08713195007717` (nl **1449** / fr **1450**): image + the correct Hydro Jet video render on both,
+  GS1 resolves. §12 Phase 9.5 boxes **2 & 4 checked**.
+- **The pilot is frozen to the fully-mapped GTINs.** `media.restrict_to_mapped_gtins: true` —
+  `run_execute` **hard-blocks** any GTIN without a client-confirmed video in *every* language (even via
+  `--plan`); `run_plan` additionally drops already-present GTINs. The allowlist is derived live from
+  `input/noviplast/videos/mapping.yml` (`lib.media_video.fully_mapped_gtins`).
+- **The numbers:** **20** GTINs are video-mapped in both nl+fr = the allowlist. Of those, **5 are
+  already live** on the site (`…0473, …1739, …3948, …5676, …7359`, per `website_status`), **2 are
+  already present** (`…7717` published, `…0527` dirty draft) → **13 are the runnable batch**. 13 +
+  `…7717` = 14 live, past the ≥10 DoD.
+- **The immediate blocker is COPY.** All 13 have title + image + video (both languages) but **no
+  generated tagline/description yet** — they are `generate`-mode. Next = generate copy → review →
+  publish. **This is Step 3 below; media Step 1 is done.**
+- `08713195000527` stays a **dirty artifact** (pages 1447/1448 draft, GS1 disabled) — decide: set its
+  `mapping.yml` rows to `skip` (drops it from the allowlist), or republish cleanly. Never silently reuse.
+- Client is **done mapping**; the ~140 unmapped video rows are left to the client. A **GTIN-format bug**
+  (the mapping is 13-digit, the pipeline 14-digit) is fixed via `canon_gtin` (zfill-14).
+- **Git:** media landed via **PR #7** + a content-slug/docs PR; the pilot-allowlist + this handoff
+  update land in **PR `feat/pilot-gtin-allowlist`**. Once merged, `main` is current and a fresh session
+  starts at **Step 3**.
 
 ## Load-bearing invariants (do not relearn the hard way)
 
@@ -68,6 +78,8 @@ gates → commit → push → PR → merge → sync `main` → delete the branch
   filenames are **English marketing names**, mostly not in the feed, so most rows are a human call.
 - **WP-side (operator):** added `register_post_meta('attachment','content_sha256', …)` to the
   "expose CPT to REST" snippet (now optional — dedup no longer needs it; see §7).
+- **Pilot-gate DONE** (PR `feat/pilot-gtin-allowlist`): `media.restrict_to_mapped_gtins` blocks every
+  non-fully-mapped GTIN from runs, plus the 13/14-digit `canon_gtin` fix. See "Where we are".
 
 ### Step 2 — Phase 9.8 Operator flow in Cowork (validation) — branch only if code gaps found
 - Drive the `flow-orchestrator` skill **end-to-end from a real Cowork chat session** on ≥1 GTIN,
@@ -77,18 +89,26 @@ gates → commit → push → PR → merge → sync `main` → delete the branch
 - If gaps surface, fix on a branch (TDD/gates/PR). Otherwise tick §12 Phase 9.8 + the open Phase 8 box #4
   with a docs commit.
 
-### Step 3 — Finish Phase 9: scale to ≥10 — branch `feat/phase-9-batch` if code, else docs
-- Decide the **fr-QR strategy** (recommended: keep bare QR→nl + WPML switcher; alt: separate fr QR direct
-  to `/fr/` URL). Code only if a separate fr QR is chosen.
-- For ~9 more GTINs from the shortlist (raamwisser `08713195000862`, onkruidborstel `...000961`,
-  zuignaphaak `...003139`, vliegenverjager `...003474`, grondpen `...004358`, bureaulamp `...004488`,
-  afvoerzeef `...004778`, papiermes `...004839`, ledstrip `...005829`, Tafellamp `...005898`): generate
-  copy (Cowork-native; these are `mode: generate` so bullets are LLM-written — **review gate #1 matters**),
-  `run_generate --ingest`, re-run `run_plan`, then publish **through the validated flow-orchestrator**
-  (Phase 9.8), not raw scripts.
-- Verify each: public page renders the copy; `GET id.gs1.org/01/{gtin}` resolves (307→page→200). Client
-  does a **physical phone scan** on printed QR samples (the DoD's literal requirement).
-- Tick the three §12 Phase 9 boxes + update `ROADMAP.md`. Docs commit.
+### Step 3 — Finish Phase 9: publish the 13-GTIN batch — **THE ACTIVE STEP**
+The pilot-gate has already scoped the runnable batch. `run_plan noviplast` writes the 13 GTINs (26
+rows) to `output/noviplast/plan.json`. Readiness (checked 2026-07-26): all 13 have title + image +
+video (both langs); **none have generated copy yet** — that is the blocker.
+1. **Generate copy for the 13** — Cowork-native `content-generator` (no API key). They are
+   `generate`-mode, so the LLM writes tagline + **Eigenschappen** bullets from the marketing message +
+   net content + dims/material (Technische details stay deterministic). Write `generation_results.json`.
+2. **Review Gate #1** — a human/client approves each product's tagline + bullets (live marketing copy).
+3. `run_generate noviplast --ingest` → `run_plan noviplast` (merges copy). Re-check readiness — all green.
+4. **Dry-run:** `run_execute noviplast --plan <13-batch> --dry-run` (26 rows, nothing blocked).
+5. **Publish staged (LIVE, per-wave operator go-ahead):** a first wave of 2–3, fully verified, then the
+   rest. Each sets page (title + copy + image + video), links nl/fr, GS1 record, QR. The pilot-gate
+   guarantees no non-mapped GTIN is written.
+6. **Verify each:** public page renders copy + image + video (fetch the HTML, not just 200);
+   `GET id.gs1.org/01/{gtin}` → 307 → page → 200 (GET, never HEAD). Client does a **physical phone scan**
+   on printed QR samples (the DoD's literal requirement).
+7. Decide **`…0527`** (skip in mapping, or republish clean) and the **fr-QR strategy** (recommended:
+   bare QR→nl + WPML switcher). Tick the three §12 Phase 9 boxes + update `ROADMAP.md`. Docs commit.
+- Phase 9.8 (Cowork operator-flow validation, Step 2) can run alongside — the batch mechanics are proven
+  via scripts, so it is not a hard blocker for going live.
 
 ### Step 4 — Phase 10 Docs — branch `docs/phase-10`
 Setup steps run by an unfamiliar person; docstring coverage on every skill/script; `troubleshooting.md`

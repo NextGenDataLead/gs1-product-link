@@ -16,6 +16,7 @@ from typing import Any
 
 import openpyxl
 import pytest
+import yaml
 
 from lib.config import (
     CategoryConfig,
@@ -23,6 +24,7 @@ from lib.config import (
     ExportConfig,
     GeneratorConfig,
     GS1Config,
+    MediaConfig,
     WebsiteStatusConfig,
     WordPressConfig,
 )
@@ -152,6 +154,80 @@ def test_default_products_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
     assert run_plan.main(["acme"]) == 0
     assert _read_plan().total == 1
+
+
+# --- Pilot gate (§9.5) -------------------------------------------------------
+
+
+def _bilingual_config(media: MediaConfig) -> ClientConfig:
+    return _make_config(
+        media=media,
+        wordpress=WordPressConfig(
+            site_url="https://wp.test",
+            username="bot",
+            app_password_env="WP_PASS",
+            post_type="product",
+            default_language="nl",
+            languages=["nl", "fr"],
+            slug_pattern="p-{gtin}",
+            target_url_pattern="{site_url}/{lang_segment}{post_type}/{slug}/",
+        ),
+    )
+
+
+def _write_video_map(tmp_path: Path, both: list[str], nl_only: list[str] | None = None) -> str:
+    entries = {
+        "nl": [{"file": f"{g}_nl.mp4", "gtin": g} for g in [*both, *(nl_only or [])]],
+        "fr": [{"file": f"{g}_fr.mp4", "gtin": g} for g in both],
+    }
+    path = tmp_path / "mapping.yml"
+    path.write_text(yaml.safe_dump(entries), encoding="utf-8")
+    return str(path)
+
+
+def _present_state(*gtins: str) -> None:
+    entry = StateEntry(
+        wp_page_id=1,
+        wp_url="https://wp.test/x",
+        wp_featured_media_id=None,
+        content_hash="h",
+        gs1_link_set_hash="h",
+        last_run=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    save_state(State(client_id="acme", entries={g: {"nl": entry} for g in gtins}))
+
+
+def test_pilot_gate_restricts_to_mapped_and_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A, GTIN_C], nl_only=[GTIN_B])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    _present_state(GTIN_C)  # C is fully mapped but already has a page
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(g) for g in (GTIN_A, GTIN_B, GTIN_C)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+
+    # Only A survives: B lacks an fr video (not_mapped), C already present.
+    assert {r.gtin for r in _read_plan().rows} == {GTIN_A}
+    err = capsys.readouterr().err
+    assert "pilot-excluded" in err
+    assert "1 no confirmed video in every language" in err
+    assert "1 already have a page" in err
+
+
+def test_pilot_gate_noop_when_flag_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=False, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A), _product(GTIN_B)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    assert {r.gtin for r in _read_plan().rows} == {GTIN_A, GTIN_B}  # unrestricted
 
 
 # --- Website-status gate -----------------------------------------------------

@@ -48,6 +48,19 @@ _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 #: Sentinel gtin value meaning "this video intentionally maps to no product" (not a gap).
 _SKIP = "skip"
+#: Canonical GTIN width — GTIN-14, the zero-padded form (matches ``ProductRecord.gtin14``).
+_GTIN_WIDTH = 14
+
+
+def canon_gtin(gtin: str) -> str:
+    """Canonicalise a GTIN to its 14-digit form for comparison.
+
+    The mapping file is often keyed with 13-digit GTINs (no indicator digit) while the pipeline
+    carries 14-digit GTINs, so a raw ``==`` silently misses. Stripping non-digits and left-padding
+    to 14 makes the two forms compare equal — the same canonicalisation the ``website_status`` gate
+    uses via :attr:`lib.records.ProductRecord.gtin14`.
+    """
+    return re.sub(r"\D", "", gtin).zfill(_GTIN_WIDTH)
 
 
 def normalize_video_name(filename: str) -> str:
@@ -160,14 +173,32 @@ class VideoMap(BaseModel):
         ``None`` when the pair is absent, the GTIN is blank/``skip``, or the GTIN is
         confirmed to more than one file in that language (ambiguous — reported elsewhere).
         """
+        target = canon_gtin(gtin)
         matches = [
             e.file
             for e in self.by_language.get(language, [])
-            if e.gtin and e.gtin.lower() != _SKIP and e.gtin == gtin
+            if e.gtin and e.gtin.lower() != _SKIP and canon_gtin(e.gtin) == target
         ]
         if len(matches) == 1:
             return matches[0]
         return None
+
+
+def _confirmed_gtins(entries: list[VideoMapEntry]) -> set[str]:
+    """Canonical GTIN-14 set of the confirmed (non-blank, non-``skip``) entries in one language."""
+    return {canon_gtin(e.gtin) for e in entries if e.gtin and e.gtin.lower() != _SKIP}
+
+
+def fully_mapped_gtins(vmap: VideoMap, languages: list[str]) -> frozenset[str]:
+    """Canonical GTIN-14 set of GTINs confirmed in **every** language in ``languages``.
+
+    This is the pilot allowlist: a product is runnable only once it has a client-confirmed video
+    in each language, so the page can be published complete in all languages at once.
+    """
+    per_language = [_confirmed_gtins(vmap.by_language.get(lang, [])) for lang in languages]
+    if not per_language:
+        return frozenset()
+    return frozenset(set.intersection(*per_language))
 
 
 def load_video_map(path: Path) -> VideoMap:
