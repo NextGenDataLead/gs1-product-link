@@ -181,8 +181,11 @@ If rung 3 fails, publish from **Claude Code** (the proven path that put `…7717
 
 ```bash
 set -a; source .env; set +a
-python -m scripts.run_execute noviplast --plan <wave-slice.json>
+python -m scripts.run_execute noviplast --plan <wave-slice.json> --i-understand-production
 ```
+
+(`--i-understand-production` is required for a live production run — a bare `run_execute` against
+the production GS1 environment is refused. Omit it and add `--dry-run` to preview instead.)
 
 Still use Cowork to walk the operator gates up to (but not through) execute, so the UX is exercised;
 tick the Phase 9.8 execute box once the sandbox egress is sorted.
