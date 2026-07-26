@@ -41,7 +41,8 @@ from lib.categories import resolve_category
 from lib.config import ClientConfig, get_client
 from lib.errors import ConfigError, GeneratorError, StateError, WebsiteStatusError
 from lib.generator import load_cache, merge_generated
-from lib.records import Plan, PlanClassification, ProductRecord, SourceIssue
+from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
+from lib.records import Plan, PlanClassification, ProductRecord, SourceIssue, State
 from lib.state import diff_against_state, load_state
 from lib.website_status import WebsiteStatus, load_website_status
 
@@ -94,6 +95,40 @@ def _gate(
         else:
             eligible.append(product)
     return eligible, excluded
+
+
+def _pilot_gate(
+    cfg: ClientConfig,
+    products: list[ProductRecord],
+    state: State,
+    excluded: dict[str, int],
+) -> tuple[list[ProductRecord], dict[str, int]]:
+    """Restrict to fully-mapped GTINs, dropping already-present ones (§9.5).
+
+    A no-op unless ``media.restrict_to_mapped_gtins``. Otherwise keeps only products whose GTIN
+    has a client-confirmed video in **every** language *and* has no page yet in state — so the
+    plan targets the remaining pilot work and every other GTIN is excluded. Extends the tally with
+    ``not_mapped`` (no confirmed video in every language) and ``already_present`` (mapped, but a
+    page already exists). ``run_execute`` hard-enforces the mapped-only half independently, so a
+    ``--plan`` slice can still update an already-present pilot GTIN.
+    """
+    excluded = {**excluded, "not_mapped": 0, "already_present": 0}
+    media = cfg.media
+    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
+        return products, excluded
+
+    allow = fully_mapped_gtins(load_video_map(Path(media.video_map_path)), cfg.wordpress.languages)
+    present = {canon_gtin(gtin) for gtin in state.entries}
+    kept: list[ProductRecord] = []
+    for product in products:
+        gtin = product.gtin14
+        if gtin not in allow:
+            excluded["not_mapped"] += 1
+        elif gtin in present:
+            excluded["already_present"] += 1
+        else:
+            kept.append(product)
+    return kept, excluded
 
 
 def _assign_categories(
@@ -189,10 +224,12 @@ def _build_plan(
     else:
         candidates, excluded = products, {"on_website": 0, "not_in_gs1": 0, "unknown": 0}
 
+    state = load_state(cfg.client_id)
+    candidates, excluded = _pilot_gate(cfg, candidates, state, excluded)
+
     candidates, category_issues = _assign_categories(cfg, candidates)
     candidates, generated_issues = _generate_content(cfg, candidates)
 
-    state = load_state(cfg.client_id)
     rows = diff_against_state(candidates, state, cfg.wordpress.languages, cfg.wordpress)
     counts = {c: sum(1 for row in rows if row.classification is c) for c in PlanClassification}
     plan = Plan(
@@ -235,13 +272,20 @@ def _summary(
     held = plan.counts[PlanClassification.HELD]
     if held:
         line += f", {held} held (unpublished; run_execute skips these without --revive)"
-    gated = sum(excluded.values())
+    gated = excluded["on_website"] + excluded["not_in_gs1"] + excluded["unknown"]
     if gated:
         line += (
             f"; {gated} excluded ("
             f"{excluded['on_website']} already on website, "
             f"{excluded['not_in_gs1']} not yet in GS1, "
             f"{excluded['unknown']} not in control file)"
+        )
+    pilot_blocked = excluded.get("not_mapped", 0) + excluded.get("already_present", 0)
+    if pilot_blocked:
+        line += (
+            f"; {pilot_blocked} pilot-excluded ("
+            f"{excluded['not_mapped']} no confirmed video in every language, "
+            f"{excluded['already_present']} already have a page)"
         )
     if unmapped_categories:
         line += f"; {unmapped_categories} product(s) with unmapped category (left unset)"

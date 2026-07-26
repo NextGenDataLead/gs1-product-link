@@ -53,7 +53,7 @@ from lib.errors import ConfigError, StateError
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
 from lib.media import convert_image_for_web
-from lib.media_video import load_video_map, prepare_video
+from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map, prepare_video
 from lib.qr import render_qr
 from lib.records import (
     ConfirmedPlan,
@@ -564,6 +564,47 @@ def _drop_held(rows: list[PlanRow], *, revive: bool) -> list[PlanRow]:
     return [row for row in rows if row.gtin not in held]
 
 
+def _pilot_allowlist(cfg: ClientConfig) -> frozenset[str] | None:
+    """The canonical GTINs a run may touch, or ``None`` when unrestricted (§9.5).
+
+    ``None`` unless the client sets ``media.restrict_to_mapped_gtins``. Otherwise the set of GTINs
+    with a client-confirmed video in every language, read live from the mapping file. If the
+    mapping cannot be loaded the set is **empty** (block everything) — failing safe, since a run
+    that cannot determine the allowlist must not publish anything.
+    """
+    media = cfg.media
+    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
+        return None
+    try:
+        vmap = load_video_map(Path(media.video_map_path))
+    except (OSError, ValueError) as exc:
+        _log.error(
+            "cannot load video map %s for the pilot allowlist: %r — blocking every GTIN",
+            media.video_map_path,
+            exc,
+        )
+        return frozenset()
+    return fully_mapped_gtins(vmap, cfg.wordpress.languages)
+
+
+def _restrict_to_pilot(rows: list[PlanRow], allowlist: frozenset[str] | None) -> list[PlanRow]:
+    """Drop rows for GTINs outside the pilot allowlist so no other GTIN is ever written (§9.5).
+
+    A hard safety gate applied to every run: even a plan passed with ``--plan`` cannot publish a
+    GTIN that lacks a client-confirmed video in each language. ``None`` means unrestricted.
+    """
+    if allowlist is None:
+        return rows
+    blocked = sorted({row.gtin for row in rows if canon_gtin(row.gtin) not in allowlist})
+    if blocked:
+        _log.warning(
+            "pilot restriction: blocking %d GTIN(s) with no confirmed video in every language: %s",
+            len(blocked),
+            ", ".join(blocked),
+        )
+    return [row for row in rows if canon_gtin(row.gtin) in allowlist]
+
+
 def _write_log(log_path: Path, outcomes: list[RunOutcome]) -> None:
     """Append each outcome as one JSON line to the run log."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -581,7 +622,9 @@ def _run(
     revive: bool,
 ) -> int:
     """Execute (or preview) the confirmed plan; return the process exit code."""
-    rows = _drop_held(_confirmed_rows(confirmed), revive=revive)
+    rows = _restrict_to_pilot(
+        _drop_held(_confirmed_rows(confirmed), revive=revive), _pilot_allowlist(cfg)
+    )
     engine = TemplateEngine(cfg.client_id, cfg.template)
     ts = datetime.now(UTC)
     log_path = Path("output") / cfg.client_id / "runs" / f"{ts.strftime(_TS_FORMAT)}.jsonl"
