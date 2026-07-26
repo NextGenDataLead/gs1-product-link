@@ -792,3 +792,59 @@ def test_dry_run_uploads_no_media(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     assert rec.downloaded == []
     assert rec.uploaded == []
+
+
+# --- Production write guard --------------------------------------------------
+
+
+def _prod_config() -> ClientConfig:
+    return _make_config(
+        gs1=GS1Config(
+            account_number_test="8720796420906",
+            client_id_env_test="GS1_CID",
+            client_secret_env_test="GS1_SEC",
+            account_number_production="8719965024137",
+            client_id_env_production="GS1_CID",
+            client_secret_env_production="GS1_SEC",
+            environment="production",
+            digital_link_url_pattern="https://id.gs1.org/01/{gtin14}",
+        )
+    )
+
+
+def test_production_run_refuses_without_ack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _prod_config())
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(), _row(language="fr")))
+
+    code = run_execute.main(["acme", "--plan", str(plan)])
+
+    assert code == 2
+    assert rec.wp == [] and rec.gs1 == []  # nothing was written
+    err = capsys.readouterr().err.lower()
+    assert "production" in err
+    assert "--i-understand-production" in err
+
+
+def test_production_run_proceeds_with_ack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _prod_config())
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(), _row(language="fr")))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--i-understand-production"])
+
+    assert code == 0
+    assert rec.wp  # pages were written
+
+
+def test_dry_run_bypasses_production_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _prod_config())
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--dry-run"])
+
+    assert code == 0
+    assert rec.wp == [] and rec.gs1 == []  # dry-run writes nothing; ack not required
