@@ -2,7 +2,7 @@
 
 Usage:
     python -m scripts.run_execute CLIENT_ID (--plan PATH | --confirmed PATH)
-                                 [--dry-run] [--revive]
+                                 [--dry-run] [--revive] [--i-understand-production]
 
 Work is grouped by GTIN and runs in two phases, because some of it is per language and
 some of it is per *product*:
@@ -28,10 +28,17 @@ the same confirmed plan yields the same final state.
 ``--dry-run`` (§5.4 Level B) walks the plan and logs the intended WordPress/GS1
 mutations without performing them — no HTTP writes, no QR files, no state update.
 
+**Production guard.** A real run (not ``--dry-run``) against a client whose ``gs1.environment``
+is ``production`` is refused unless ``--i-understand-production`` is passed. This makes the live
+write a deliberate, explicit act rather than a bare ``--plan`` invocation — the interactive
+review gates otherwise live only in the ``flow-orchestrator`` skill, not in this script. The
+pilot allowlist, HELD-drop, and E21 still apply on top.
+
 Exit codes:
     0  every confirmed row succeeded
     1  one or more rows errored (state still saved for the rows that succeeded)
-    2  config/setup error (bad client id, unreadable/invalid plan, missing GS1 creds)
+    2  config/setup error (bad client id, unreadable/invalid plan, missing GS1 creds),
+       or a production run without --i-understand-production
 """
 
 from __future__ import annotations
@@ -667,6 +674,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Also publish GTINs that run_unpublish took down (skipped by default)",
     )
+    parser.add_argument(
+        "--i-understand-production",
+        action="store_true",
+        help=(
+            "Required to execute a real run when gs1.environment is 'production' — guards live "
+            "writes to WordPress and permanent GS1 records. Not needed with --dry-run."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -677,6 +692,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = get_client(args.client_id)
         confirmed = _load_confirmed(args)
+        if (
+            not args.dry_run
+            and cfg.gs1.environment == "production"
+            and not args.i_understand_production
+        ):
+            print(
+                "refusing to write to PRODUCTION: gs1.environment is 'production', so this run "
+                f"would publish live pages to {cfg.wordpress.site_url} and register permanent GS1 "
+                "records (GS1 v2 has no delete — records can only be disabled). Re-run with "
+                "--i-understand-production to proceed, or --dry-run to preview without writing.",
+                file=sys.stderr,
+            )
+            return _EXIT_CONFIG_ERROR
         resolved_gs1 = None if args.dry_run else cfg.gs1.resolve()
     except (
         ConfigError,
