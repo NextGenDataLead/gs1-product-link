@@ -110,6 +110,10 @@ class GenerationResult(BaseModel):
 
     usps: list[str] = Field(min_length=1)
     product_name: str | None = None
+    #: Claims the producer wrote that go *beyond* the literal feed text (e.g. "snoerloos"
+    #: inferred from "batterie rechargeable"). Reported as ``generation_inference`` findings
+    #: so a human verifies each before publishing. Never participates in the fingerprint.
+    inferences: list[str] = Field(default_factory=list)
 
 
 class GenerationRequest(BaseModel):
@@ -161,6 +165,9 @@ class CacheEntry(BaseModel):
     provenance: str
     source_input: str
     generated_at: datetime
+    #: Claims written beyond the literal feed text, surfaced as ``generation_inference``
+    #: findings in the generated-content report. Never participates in the fingerprint.
+    inferences: list[str] = Field(default_factory=list)
 
 
 class GeneratedCache(BaseModel):
@@ -453,6 +460,7 @@ def apply_result(  # noqa: PLR0913 — a validated write needs its result, prove
         provenance=provenance,
         source_input=source_input,
         generated_at=now,
+        inferences=list(result.inferences),
     )
     cache.entries.setdefault(request.gtin, {})[request.language] = entry
 
@@ -606,6 +614,30 @@ def _content_issue(gtin: str, language: str, entry: CacheEntry) -> SourceIssue |
     )
 
 
+def _inference_issues(gtin: str, language: str, entry: CacheEntry) -> list[SourceIssue]:
+    """One :class:`SourceIssue` per claim the producer inferred beyond the feed text.
+
+    Inferences are honest-but-derived claims (e.g. "snoerloos" from "batterie rechargeable"):
+    plausible, but not literally in attr 1083/1067. Each is surfaced so a human confirms it is
+    true for this product before the copy goes live — a claim that turns out false is a defect
+    to fix at source, exactly like the other generated-content findings.
+    """
+    return [
+        SourceIssue(
+            gtin=gtin,
+            field=f"generated_description.{language}",
+            source="inferred beyond feed copy (attr 1083/1067)",
+            issue="generation_inference",
+            value=claim,
+            detail=(
+                f"'{claim}' was inferred for {language} beyond the literal feed copy; "
+                "verify it is true for this product before publishing."
+            ),
+        )
+        for claim in entry.inferences
+    ]
+
+
 def merge_generated(
     products: list[ProductRecord],
     cache: GeneratedCache,
@@ -665,6 +697,7 @@ def merge_generated(
                 issue = _content_issue(product.gtin, language, entry)
                 if issue is not None:
                     issues.append(issue)
+                issues.extend(_inference_issues(product.gtin, language, entry))
 
         update: dict[str, object] = {}
         if product.product_name is None or names != product.product_name.values:

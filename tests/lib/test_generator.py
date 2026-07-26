@@ -51,8 +51,10 @@ def _product(**overrides: object) -> ProductRecord:
     return ProductRecord(**base)
 
 
-def _result(*usps: str, product_name: str | None = None) -> GenerationResult:
-    return GenerationResult(usps=list(usps), product_name=product_name)
+def _result(
+    *usps: str, product_name: str | None = None, inferences: list[str] | None = None
+) -> GenerationResult:
+    return GenerationResult(usps=list(usps), product_name=product_name, inferences=inferences or [])
 
 
 # --- title combiner ----------------------------------------------------------
@@ -138,6 +140,37 @@ def test_apply_result_rejects_empty_usps() -> None:
         )
 
 
+def test_apply_result_stores_inferences() -> None:
+    cache = GeneratedCache(client_id="noviplast")
+    request = next(r for r in pending_requests([_product()], cache, ["nl"], "v1"))
+
+    apply_result(
+        cache,
+        request,
+        _result("Tagline", "Bullet", inferences=["snoerloos"]),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_NOW,
+    )
+
+    entry = cache.get("08713195007359", "nl")
+    assert entry is not None
+    assert entry.inferences == ["snoerloos"]
+
+
+def test_apply_result_defaults_inferences_to_empty() -> None:
+    cache = GeneratedCache(client_id="noviplast")
+    request = next(r for r in pending_requests([_product()], cache, ["nl"], "v1"))
+
+    apply_result(
+        cache, request, _result("Tagline"), origin=ORIGIN_GENERATED, provenance="cowork", now=_NOW
+    )
+
+    entry = cache.get("08713195007359", "nl")
+    assert entry is not None
+    assert entry.inferences == []
+
+
 # --- merge_generated ---------------------------------------------------------
 
 
@@ -193,6 +226,45 @@ def test_merge_reports_one_generated_issue_with_source_input() -> None:
     assert len(generated) == 1
     assert generated[0].field == "generated_description.nl"
     assert generated[0].value == "Water voor je planten"  # the source-language input
+
+
+def test_merge_reports_one_generation_inference_per_claim() -> None:
+    cache = GeneratedCache(client_id="noviplast")
+    product = _product()
+    request = next(r for r in pending_requests([product], cache, ["nl"], "v1"))
+    apply_result(
+        cache,
+        request,
+        _result("Tagline", "Bullet", inferences=["snoerloos", "oplaadbaar"]),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_NOW,
+    )
+
+    _, issues = merge_generated([product], cache, ["nl"], "nl", "v1")
+
+    inferred = [i for i in issues if i.issue == "generation_inference"]
+    assert len(inferred) == 2
+    assert {i.value for i in inferred} == {"snoerloos", "oplaadbaar"}
+    assert all(i.field == "generated_description.nl" for i in inferred)
+
+
+def test_merge_reports_no_inference_issue_when_none_declared() -> None:
+    cache = GeneratedCache(client_id="noviplast")
+    product = _product()
+    request = next(r for r in pending_requests([product], cache, ["nl"], "v1"))
+    apply_result(
+        cache,
+        request,
+        _result("Tagline", "Bullet"),
+        origin=ORIGIN_GENERATED,
+        provenance="cowork",
+        now=_NOW,
+    )
+
+    _, issues = merge_generated([product], cache, ["nl"], "nl", "v1")
+
+    assert [i for i in issues if i.issue == "generation_inference"] == []
 
 
 def test_merge_ignores_stale_entry_when_feed_changed() -> None:

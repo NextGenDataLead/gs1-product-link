@@ -551,16 +551,22 @@ def _bilingual_wp() -> WordPressConfig:
 
 def _cache_with(gtin: str, language: str, **result: Any) -> None:
     """Build and persist a generated_cache.json with one fresh entry for (gtin, language)."""
+    _cache_multi(gtin, {language: result})
+
+
+def _cache_multi(gtin: str, entries: dict[str, dict[str, Any]]) -> None:
+    """Persist a cache with one fresh entry per language (lang -> GenerationResult kwargs)."""
     cache = GeneratedCache(client_id="acme")
-    request = pending_requests([_product(gtin)], cache, [language], "v1")[0]
-    apply_result(
-        cache,
-        request,
-        GenerationResult(**result),
-        origin=ORIGIN_GENERATED,
-        provenance="cowork",
-        now=_GEN_NOW,
-    )
+    for language, result in entries.items():
+        request = pending_requests([_product(gtin)], cache, [language], "v1")[0]
+        apply_result(
+            cache,
+            request,
+            GenerationResult(**result),
+            origin=ORIGIN_GENERATED,
+            provenance="cowork",
+            now=_GEN_NOW,
+        )
     save_cache(cache)
 
 
@@ -572,15 +578,16 @@ def test_generated_content_reclassifies_changed(
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])
 
-    # Baseline: plan once with no cache, then record state so the row would be UNCHANGED.
+    # Baseline: copy is present (E21 requires it), plan once, record state as UNCHANGED.
+    _cache_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
     run_plan.main(["acme", "--products", str(products)])
     row = next(r for r in _read_plan().rows if r.gtin == GTIN_A)
     save_state(
         State(client_id="acme", entries={GTIN_A: {"nl": _entry(row.content_hash, row.target_url)}})
     )
 
-    # Now generated copy lands in the cache — it enters the hash and reclassifies the row.
-    _cache_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
+    # The generated copy changes — it enters the hash and reclassifies the row.
+    _cache_with(GTIN_A, "nl", usps=["A sharper tagline", "Bullet"])
     run_plan.main(["acme", "--products", str(products)])
 
     row = next(r for r in _read_plan().rows if r.gtin == GTIN_A)
@@ -593,7 +600,14 @@ def test_e18_cached_french_name_is_planned(tmp_path: Path, monkeypatch: pytest.M
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])  # nl name only
-    _cache_with(GTIN_A, "fr", usps=["Slogan"], product_name="Nom FR")  # French fill
+    # fr fill (name + copy) lifts E18; nl needs its own copy to survive E21.
+    _cache_multi(
+        GTIN_A,
+        {
+            "nl": {"usps": ["Slogan NL"]},
+            "fr": {"usps": ["Slogan"], "product_name": "Nom FR"},
+        },
+    )
 
     run_plan.main(["acme", "--products", str(products)])
 
@@ -609,7 +623,8 @@ def test_e18_without_cache_still_skips_french(
     cfg = _make_config(wordpress=_bilingual_wp(), generator=GeneratorConfig(enabled=True))
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
-    _write_products(products, [_product(GTIN_A)])  # nl name only, no cache
+    _write_products(products, [_product(GTIN_A)])  # nl name only, no fr name/fill
+    _cache_with(GTIN_A, "nl", usps=["Slogan NL"])  # nl copy so it survives E21
 
     run_plan.main(["acme", "--products", str(products)])
 

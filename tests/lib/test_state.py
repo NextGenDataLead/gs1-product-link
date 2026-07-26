@@ -502,6 +502,49 @@ def test_diff_missing_product_name_for_language_is_omitted(
     assert "missing product_name.fr" in caplog.text
 
 
+def test_diff_skips_row_without_generated_copy_when_required(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # E21: generator enabled but this product has no generated tagline → held, not published.
+    product = _product()  # no generated_tagline
+
+    with caplog.at_level("WARNING", logger="lib.state"):
+        rows = diff_against_state(
+            [product],
+            State(client_id="noviplast", entries={}),
+            ["nl", "fr"],
+            _wp(),
+            require_generated_copy=True,
+        )
+
+    assert rows == []
+    assert "no generated copy" in caplog.text
+
+
+def test_diff_keeps_row_without_generated_copy_when_not_required() -> None:
+    # Default (no generator configured): copy-less rows are planned as before.
+    product = _product()
+
+    rows = diff_against_state([product], State(client_id="noviplast", entries={}), ["nl"], _wp())
+
+    assert [r.language for r in rows] == ["nl"]
+
+
+def test_diff_keeps_row_with_generated_copy_when_required() -> None:
+    product = _product(generated_tagline=LocalisedText(values={"nl": "Slogan"}))
+
+    rows = diff_against_state(
+        [product],
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        require_generated_copy=True,
+    )
+
+    # nl has copy → kept; fr lacks copy → skipped.
+    assert [r.language for r in rows] == ["nl"]
+
+
 def test_diff_empty_products_yields_no_rows() -> None:
     rows = diff_against_state([], State(client_id="noviplast", entries={}), ["nl"], _wp())
     assert rows == []

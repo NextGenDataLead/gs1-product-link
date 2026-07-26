@@ -230,7 +230,13 @@ def _build_plan(
     candidates, category_issues = _assign_categories(cfg, candidates)
     candidates, generated_issues = _generate_content(cfg, candidates)
 
-    rows = diff_against_state(candidates, state, cfg.wordpress.languages, cfg.wordpress)
+    rows = diff_against_state(
+        candidates,
+        state,
+        cfg.wordpress.languages,
+        cfg.wordpress,
+        require_generated_copy=cfg.generator is not None,
+    )
     counts = {c: sum(1 for row in rows if row.classification is c) for c in PlanClassification}
     plan = Plan(
         client_id=cfg.client_id,
