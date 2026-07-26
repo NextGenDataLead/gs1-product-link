@@ -125,7 +125,8 @@ MCP registry entry; draft announcement. Tick §12 Phase 11.
    `generated_tagline`/`generated_description` merge into `plan.json`.
 2. Slice the wanted rows from `output/noviplast/plan.json` into a minimal Plan
    (`{client_id, generated_at, total, counts, rows}`) and run
-   `run_execute noviplast --plan <file>` (treats every row as confirmed) — or drive it via
+   `run_execute noviplast --plan <file>` (treats every row as confirmed; add
+   `--i-understand-production` for a live prod run — it is refused without it) — or drive it via
    flow-orchestrator once Phase 9.8 is validated. `--dry-run` previews with no writes.
 3. Verify render + resolution (see invariants). Rollback if wrong: `set_page_status(draft)`/`delete_page`
    + `gs1.retract`.

@@ -690,12 +690,18 @@ Behaviour:
 
 ```
 Usage: python -m scripts.run_execute CLIENT_ID [--plan PATH] [--confirmed PATH]
+                                     [--dry-run] [--revive] [--i-understand-production]
 
 If --confirmed given: use as ConfirmedPlan; else --plan with all rows confirmed.
 
+Production guard: a real run (not --dry-run) whose gs1.environment is 'production' is
+refused unless --i-understand-production is passed (exit 2). Keeps a bare --plan from
+publishing live pages / permanent GS1 records; flow-orchestrator passes it after its
+step-8 environment confirmation.
+
 Emits:  output/{client_id}/runs/{ts}.jsonl (RunOutcome per row)
         output/{client_id}/state.json (updated)
-Exit codes: 0 all ok, 1 any errors, 2 config/setup error
+Exit codes: 0 all ok, 1 any errors, 2 config/setup error (incl. refused production run)
 ```
 
 Per-row: try/except around each step (WP upsert, verify, GS1 upsert, QR render). State updated per successful row. JSONL log entry per row regardless. Full skeleton in `PROJECT_HANDOVER.md` §10.5.

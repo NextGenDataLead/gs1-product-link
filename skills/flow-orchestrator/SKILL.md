@@ -143,6 +143,9 @@ below stays dormant — it is implemented and ready for future product updates.
 
 9. **Execute.** Invoke
    `python -m scripts.run_execute {client} --confirmed output/{client}/plan.confirmed.json`.
+   When the resolved environment is `production`, **append `--i-understand-production`** — the
+   step-8 confirmation *is* that acknowledgment. Without the flag, `run_execute` refuses a live
+   production run (exit 2), so a production execute that omits it will not proceed.
 
 10. **Progress (§10.6.3).** For runs over 20 rows, surface progress every 10 rows;
    otherwise only at the end. Not per-row (per-row detail goes to the JSONL log):
