@@ -55,8 +55,8 @@ all LLM spend isolated in the opt-in `run_generate` step that only writes the ca
 ### Representation on the record
 Add two fields to `ProductRecord` (`lib/records.py:91-117`):
 ```python
-generated_tagline: LocalisedText | None = None       # -> product_title, product_header_video_text
-generated_description: LocalisedText | None = None    # -> product_description (three-part HTML blob)
+generated_tagline: LocalisedText | None = None  # -> product_title, product_header_video_text
+generated_description: LocalisedText | None = None  # -> product_description (three-part HTML blob)
 ```
 - **Enters the hash** automatically — `compute_content_hash` dumps the whole record
   (`lib/state.py:176-186`); generated changes reclassify CHANGED, same reason `_assign_categories`

@@ -991,6 +991,7 @@ Original email at [[GS1_NL_EMAIL]].
 Per row: WP upsert → verify 200 → GS1 set redirect → render QR.
 Idempotent. Resumable. Each row's outcome appended to a JSONL log.
 """
+
 import json
 import sys
 from pathlib import Path
@@ -1012,14 +1013,13 @@ def main(client_id: str, plan_path: Path) -> int:
     wp = WordPressClient(cfg.wordpress)
     gs1 = GS1DigitalLinkClient(cfg.gs1)
 
-    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = Path(f"output/{client_id}/runs/{ts}.jsonl")
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     for row in plan["confirmed"]:
         gtin, lang = row["gtin"], row["language"]
-        outcome = {"gtin": gtin, "language": lang,
-                   "ts": datetime.now(timezone.utc).isoformat()}
+        outcome = {"gtin": gtin, "language": lang, "ts": datetime.now(timezone.utc).isoformat()}
         try:
             html = render_template(cfg, row)
             page = wp.upsert_page(
@@ -1039,9 +1039,7 @@ def main(client_id: str, plan_path: Path) -> int:
 
             gs1.upsert_link(
                 gtin=gtin,
-                digital_link_url=cfg.gs1.digital_link_url_pattern.format(
-                    gtin14=gtin.zfill(14)
-                ),
+                digital_link_url=cfg.gs1.digital_link_url_pattern.format(gtin14=gtin.zfill(14)),
                 link_type="gs1:pip",  # a GS1 Web Vocabulary CURIE; bare "pip" is unrecognised
                 language=lang,
                 target_url=page.url,

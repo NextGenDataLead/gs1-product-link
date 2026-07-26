@@ -105,11 +105,13 @@ The internal normalised shape produced by `parse_export.py` and consumed by ever
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
+
 class LocalisedText(BaseModel):
     """A text value that varies per language.
 
     Keys are ISO 639-1 codes (nl, en, fr, de, ...).
     """
+
     model_config = ConfigDict(frozen=True)
     values: dict[str, str]
 
@@ -124,6 +126,7 @@ class ProductRecord(BaseModel):
     this. `parse_export.py` produces it from the client's Excel; the column-mapping
     layer in §3 handles the client-specific variation.
     """
+
     model_config = ConfigDict(frozen=True)
 
     gtin: str = Field(..., pattern=r"^\d{8,14}$")
@@ -150,6 +153,7 @@ class ProductRecord(BaseModel):
 
 ```python
 from enum import Enum
+
 
 class PlanClassification(str, Enum):
     NEW = "new"
@@ -379,12 +383,14 @@ def upsert(
     Raises: GS1APIError on non-2xx.
     """
 
+
 def upsert_bulk(self, entries: list[BulkEntry]) -> BulkResult:
     """POST /digitallinkv2/v2/digitallinks.
 
     Body is a JSON array of CreateOrUpdateRequest bodies, same shape as single
     upsert. Batches automatically into groups of self.config.batch_size (default 50).
     """
+
 
 def get(self, gtin: str) -> DigitalLinkRecord | None:
     """GET https://{host}/digitallinkv2/v2/digitalLink/01/{gtin14}
@@ -409,6 +415,7 @@ def get(self, gtin: str) -> DigitalLinkRecord | None:
         Other 4xx/5xx → raise GS1APIError.
     """
 
+
 def set_enabled(self, gtin: str, is_enabled: bool) -> None:
     """PATCH https://{host}/digitallinkv2/v2/digitalLink/01/{gtin14}/activationStatus
 
@@ -423,6 +430,7 @@ def set_enabled(self, gtin: str, is_enabled: bool) -> None:
     Not exposed as an MCP tool in v0.1.0 (client method only). Add MCP wrapper
     in v0.2 if a workflow needs it.
     """
+
 
 def validate_draft(
     self,
@@ -451,7 +459,7 @@ def _mint_token(self) -> str:
     # POST https://{host}/authorization/token with lowercase client_id /
     # client_secret headers -> {"access_token", "token_type", "expires_in"}.
     headers = {
-        "client_id": os.environ[self.config.client_id_env],       # MissingCredentialError
+        "client_id": os.environ[self.config.client_id_env],  # MissingCredentialError
         "client_secret": os.environ[self.config.client_secret_env],
     }
     resp = self._http.request("POST", self._base_url + "/authorization/token", headers=headers)
@@ -462,6 +470,7 @@ def _mint_token(self) -> str:
     self._token = data["access_token"]
     self._token_expiry = time.monotonic() + float(data.get("expires_in", 3600))
     return self._token
+
 
 def _auth_header(self) -> dict[str, str]:
     return {"Authorization": f"Bearer {self._get_token()}"}
