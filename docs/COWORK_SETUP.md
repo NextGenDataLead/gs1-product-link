@@ -103,26 +103,28 @@ needed — copy is written in-session.)
   this project.
 - `.claude/settings.json` (in the repo) — ⚠️ **NOT gitignored**. Never put secrets here.
 
-The values already live in the repo's gitignored `.env`, so copy them across in code (no
-paste, no printing) and lock the file down:
+The values already live in the repo's gitignored `.env`, so you never need to retype or paste
+a secret. Two ways to get them into the `env` key:
+
+**Easiest — ask Claude to do it** (in this repo via Claude Code, or in the connected Cowork
+chat):
+
+> "Back up `~/.claude/settings.json`, `chmod 600` it, then merge `NOVIPLAST_WP_APP_PASS`,
+> `NOVIPLAST_GS1_CLIENT_ID`, and `NOVIPLAST_GS1_CLIENT_SECRET` from `.env` into its `env` key.
+> Print only the key names, never the values."
+
+It reads the values straight from `.env` and writes them into the file — nothing is printed to
+the terminal or the chat.
+
+**Or do it yourself** — paste this as a **single line** (multi-line/heredoc snippets get
+mangled by some terminals' paste, which corrupts the command):
 
 ```bash
-cp ~/.claude/settings.json ~/.claude/settings.json.bak      # reversible
-chmod 600 ~/.claude/settings.json ~/.claude/settings.json.bak
-set -a; source .env; set +a
-python3 - <<'PY'
-import json, os
-p = os.path.expanduser('~/.claude/settings.json')
-d = json.load(open(p))
-d.setdefault('env', {}).update({k: os.environ[k] for k in (
-    'NOVIPLAST_WP_APP_PASS', 'NOVIPLAST_GS1_CLIENT_ID', 'NOVIPLAST_GS1_CLIENT_SECRET')})
-json.dump(d, open(p, 'w'), indent=2)
-print('env keys:', list(d['env'].keys()))
-PY
-python3 -m json.tool ~/.claude/settings.json >/dev/null && echo "JSON valid"
+cp ~/.claude/settings.json ~/.claude/settings.json.bak && chmod 600 ~/.claude/settings.json ~/.claude/settings.json.bak && set -a && source .env && set +a && python3 -c "import json,os;p=os.path.expanduser('~/.claude/settings.json');d=json.load(open(p));d.setdefault('env',{}).update({k:os.environ[k] for k in ('NOVIPLAST_WP_APP_PASS','NOVIPLAST_GS1_CLIENT_ID','NOVIPLAST_GS1_CLIENT_SECRET')});json.dump(d,open(p,'w'),indent=2);print('env keys:',list(d['env'].keys()))" && python3 -m json.tool ~/.claude/settings.json >/dev/null && echo "JSON valid"
 ```
 
-Secrets sit in plaintext at rest (as in `.env`) — protected by file permissions, not
+Run it **from the repo root** (that's where `.env` is). Either way, secrets sit in plaintext
+at rest (as in `.env`) — protected by file permissions, not
 encrypted. If a key is ever exposed, rotate it (WP: regenerate the app password; GS1: reissue
 the client secret in MyGS1). The repo's `.env` keeps the same values for the Claude Code
 fallback path.
