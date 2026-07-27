@@ -234,6 +234,7 @@ def test_source_issues_report_is_written_with_the_findings(
         "issue": "brand_prefix_mismatch",
         "value": "Rugsteun NL",
         "detail": issues[0]["detail"],  # wording asserted below
+        "market_values": [],  # populated only for cross-market inconsistencies
     }
     assert "resembles but does not match" in issues[0]["detail"]
     # And the operator is pointed at the file, with the count.

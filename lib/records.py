@@ -221,6 +221,10 @@ class SourceIssue(BaseModel):
         issue: Machine-readable kind, e.g. ``brand_prefix_mismatch``.
         value: The current source value, verbatim.
         detail: One human-readable sentence: what is wrong and what to do.
+        market_values: For ``value_inconsistent_across_markets`` only — the (market, value)
+            pairs the field carries across GS1 target markets, highest-ranked first (so the
+            first pair is the one copied into ``value``). Lets a reader compare the conflicting
+            texts on the spot. Empty for every other issue kind.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -231,6 +235,7 @@ class SourceIssue(BaseModel):
     issue: str
     value: str
     detail: str
+    market_values: tuple[tuple[str, str], ...] = ()
 
 
 class StateEntry(BaseModel):

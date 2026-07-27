@@ -17,10 +17,24 @@ _FRESH = {
 }
 
 
-def _issue(
-    gtin: str, issue: str, *, field: str = "f", value: str = "", source: str = ""
+def _issue(  # noqa: PLR0913 — a test factory mirroring every SourceIssue field
+    gtin: str,
+    issue: str,
+    *,
+    field: str = "f",
+    value: str = "",
+    source: str = "",
+    market_values: tuple[tuple[str, str], ...] = (),
 ) -> SourceIssue:
-    return SourceIssue(gtin=gtin, field=field, source=source, issue=issue, value=value, detail="d")
+    return SourceIssue(
+        gtin=gtin,
+        field=field,
+        source=source,
+        issue=issue,
+        value=value,
+        detail="d",
+        market_values=market_values,
+    )
 
 
 def _products(*gtins: str) -> dict[str, ProductRecord]:
@@ -73,6 +87,59 @@ def test_inferences_are_listed_for_verification() -> None:
     md = _render(generated_issues=gen, products=_products("08713195007915"))
 
     assert "Bevestig hem op elke metalen ondergrond" in md
+
+
+def test_blank_title_blocks_publish() -> None:
+    src = [
+        _issue(
+            "08713195007649",
+            "value_blank",
+            field="product_name.fr",
+            source="TradeItemDescription attr 3301",
+        )
+    ]
+    md = _render(source_issues=src, products=_products("08713195007649"))
+
+    # A blank title is a publish blocker: it lands in section 1, not the source-fix section.
+    section_1, _, rest = md.partition("## 2.")
+    assert "08713195007649" in section_1
+    assert "title" in section_1.lower()
+    assert "Blank title / image" in md  # summary row, marked a blocker
+
+
+def test_blank_net_content_is_degrade_only() -> None:
+    src = [
+        _issue(
+            "08713195000794",
+            "value_blank",
+            field="net_content",
+            source="TradeItemMeasurements attr 3510",
+        )
+    ]
+    md = _render(source_issues=src, products=_products("08713195000794"))
+
+    # net_content degrades but does not block: it belongs under source fixes, not section 1.
+    section_1, _, after = md.partition("## 2.")
+    assert "08713195000794" not in section_1
+    assert "08713195000794" in after
+    assert "Blank non-critical fields" in md
+
+
+def test_cross_market_values_shown_side_by_side() -> None:
+    src = [
+        _issue(
+            "08713195007496",
+            "value_inconsistent_across_markets",
+            field="product_name.fr",
+            value="Désherbant",
+            market_values=(("528", "Désherbant"), ("056", "Desherbant")),
+        )
+    ]
+    md = _render(source_issues=src, products=_products("08713195007496"))
+
+    # both conflicting market texts are visible, with the chosen (highest-ranked) marked
+    assert "528=`Désherbant` ✓" in md
+    assert "056=`Desherbant`" in md
 
 
 def test_summary_counts_each_area() -> None:
