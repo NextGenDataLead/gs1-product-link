@@ -4,7 +4,7 @@ The generator writes the copy WordPress shows for a product — the tagline and 
 ``Eigenschappen`` benefit bullets — while everything else on the page stays deterministic
 assembly. This module is **producer-agnostic and network-free**: it defines the cache that
 stores generated copy between runs, the :class:`GenerationRequest`/:class:`GenerationResult`
-contract both producers (the Cowork-native session and the headless API backend) fill, and
+contract both producers (the in-session producer and the headless API backend) fill, and
 the pure :func:`merge_generated` step that folds cached copy onto :class:`ProductRecord`
 before classification (mirroring ``run_plan._assign_categories``). See
 ``docs/clients/noviplast-generator-spec.md``.
@@ -256,8 +256,8 @@ def _fingerprint(inputs: GenerationInputs, language: str, prompt_version: str) -
     """Return a stable SHA-256 over the inputs, language, and prompt version.
 
     Canonical (sorted keys, fixed separators) like ``lib.state.compute_content_hash``, so it is
-    deterministic across runs. The producer/model is deliberately excluded: the Cowork and API
-    backends are interchangeable producers of the same logical copy, so switching between them
+    deterministic across runs. The producer/model is deliberately excluded: the in-session and
+    API backends are interchangeable producers of the same logical copy, so switching between them
     must not invalidate the cache.
     """
     canonical = json.dumps(
@@ -435,7 +435,7 @@ def apply_result(  # noqa: PLR0913 — a validated write needs its result, prove
         origin: How the copy came to be — :data:`ORIGIN_TIGHTENED` (shortened from 1067) or
             :data:`ORIGIN_GENERATED` (written from 1083). :data:`ORIGIN_FEED` is set by
             :func:`prefill_from_feed`, not here.
-        provenance: Which producer made it, e.g. ``"api:claude-sonnet-5"`` or ``"cowork"``.
+        provenance: Which producer made it, e.g. ``"api:claude-sonnet-5"`` or ``"in-session"``.
         now: The generation timestamp (injected for determinism).
 
     Raises:

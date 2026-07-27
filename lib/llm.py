@@ -3,7 +3,7 @@
 :class:`AnthropicClient` implements the :class:`lib.generator.LLMClient` protocol over the Messages
 API using **sync httpx** (IMPLEMENTATION_SPEC §1: sync httpx only — no ``anthropic`` SDK), so
 ``scripts/run_generate.py --backend api`` can fill the cache unattended. It shares the cache and
-contract seam with the Cowork-native producer: same :class:`~lib.generator.GenerationRequest` in,
+contract seam with the in-session producer: same :class:`~lib.generator.GenerationRequest` in,
 same :class:`~lib.generator.GenerationResult` out, same versioned voice template
 (``prompts/{client}/generation.{prompt_version}.md``). Determinism comes from ``temperature=0``, a
 pinned model, and the versioned prompt; the cache fingerprint excludes the model, so the two

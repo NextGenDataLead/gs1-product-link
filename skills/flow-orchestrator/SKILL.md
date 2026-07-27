@@ -52,7 +52,7 @@ below stays dormant — it is implemented and ready for future product updates.
 3. **Generate copy & review (gate 1 of 2).** Skip this step for a client with no `generator`
    config. Otherwise fill the generated-copy cache, then review it before planning — the tagline
    and Eigenschappen are LLM-written, so they are reviewed *before* they can reach a page:
-   - **Cowork (no API key):** run `python -m scripts.run_generate {client} --emit`, then invoke the
+   - **In-session (no API key):** run `python -m scripts.run_generate {client} --emit`, then invoke the
      `content-generator` skill to write the copy and `--ingest` it; that skill presents the review.
    - **Headless:** run `python -m scripts.run_generate {client} --backend api` (needs the API key).
    Then eyeball a sample of `output/{client}/data/generated_cache.json` (nl **and** fr) and the

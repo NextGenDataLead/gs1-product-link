@@ -389,7 +389,7 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Whether the API backend (run_generate --backend api) may run for this client. Defaults false; the Cowork-native producer needs no key."
+          "description": "Whether the API backend (run_generate --backend api) may run for this client. Defaults false; the in-session producer needs no key."
         },
         "model": {
           "type": "string",

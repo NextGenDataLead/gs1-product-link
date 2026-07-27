@@ -564,7 +564,7 @@ def _cache_multi(gtin: str, entries: dict[str, dict[str, Any]]) -> None:
             request,
             GenerationResult(**result),
             origin=ORIGIN_GENERATED,
-            provenance="cowork",
+            provenance="in-session",
             now=_GEN_NOW,
         )
     save_cache(cache)

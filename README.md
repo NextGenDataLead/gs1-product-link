@@ -5,7 +5,7 @@ QR codes (a *QR code powered by GS1*, encoding a GS1 Digital Link URI) whose
 resolver target points at the supplier's own website — and provision the
 destination WordPress pages along the way.
 
-The tool runs inside **Claude Cowork**: deterministic Python scripts do the
+The tool runs inside **Claude Code**: deterministic Python scripts do the
 per-row work, while Claude handles planning, user interaction, and exception
 cases. It is **multi-tenant by design** — every user supplies their own
 credentials via a gitignored config file. There are **no central services** and

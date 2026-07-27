@@ -19,7 +19,7 @@ data; the generator owns the handful of slots that require *writing* copy.
 - **Copy producer: BOTH, with the cache as the seam.** `generated_cache.json` is filled by either
   producer and read identically downstream (`merge_generated`, `run_plan`, ACF, hash are
   producer-agnostic):
-  - **Cowork-native** — Claude in the operator's Cowork session reads the pending gaps and writes the
+  - **In-session** — Claude in the operator's Claude Code session reads the pending gaps and writes the
     copy through a validated helper. No API key, no separate billing; generation happens in-session.
   - **API backend** — headless `scripts/run_generate.py --backend api` calls the Sonnet 5 Messages API
     for unattended / CI / cron runs. Needs an API key.
@@ -107,12 +107,12 @@ contract; test fakes and the API client both implement it.
 **Producers:**
 - **`scripts/run_generate.py CLIENT_ID`** — the spine. `--backend api` calls the API client and fills
   the cache directly. Default/`--emit` writes `output/{client}/data/generation_requests.json` (the
-  pending gaps + inputs + voice) for a Cowork session to fill; `--ingest` validates a
+  pending gaps + inputs + voice) for an in-session producer to fill; `--ingest` validates a
   `generation_results.json` back into the cache via `apply_result`. Prints coverage.
 - **`lib/llm.py`** (API backend) — sync `AnthropicClient` over the Messages API (sync `httpx`) + the
   `LLMClient` Protocol. Credential via a config-named env var, lazily read, raising
   `MissingCredentialError`.
-- **Cowork-native producer** — a generation skill (or flow-orchestrator step): read
+- **In-session producer** — a generation skill (or flow-orchestrator step): read
   `generation_requests.json`, generate per-language copy in the few-shot voice, hand results to
   `run_generate --ingest`. No API key.
 
@@ -120,7 +120,7 @@ contract; test fakes and the API client both implement it.
 `_assign_categories`, before `diff_against_state`, **cache-only**. Gaps with no valid cache entry
 become "needs generation" `SourceIssue`s and fall to the E18 backstop.
 
-Operator flow: `parse_export` → **`run_generate`** (API fills the cache, or emit→Cowork generates→ingest;
+Operator flow: `parse_export` → **`run_generate`** (API fills the cache, or emit→in-session generates→ingest;
 first copy review) → `run_plan` (merges cache, classifies, second review in `plan.json`) → confirm →
 `run_execute` (draft-first).
 
@@ -211,9 +211,9 @@ name, `max_tokens`. Typed, validated at load.
    `GenerationRequest`/`GenerationResult`, `pending_requests`, `apply_result` (fingerprint +
    provenance + validation), title combiner, tagline resolver, three-part HTML assembler,
    `merge_generated` + `SourceIssue`; full unit tests, no network.
-4. **`scripts/run_generate.py` spine** — gap listing, `--emit`/`--ingest` (Cowork path), coverage
+4. **`scripts/run_generate.py` spine** — gap listing, `--emit`/`--ingest` (in-session path), coverage
    summary; `LLMClient` Protocol seam. Tests with a fake `LLMClient` + emit/ingest round-trip.
-5. **Cowork-native producer** — a generation skill (or flow-orchestrator step) + prompt/voice template
+5. **In-session producer** — a generation skill (or flow-orchestrator step) + prompt/voice template
    that fills `generation_requests.json` and calls `--ingest`. Validate against real `products.json`.
 6. **API backend** — `lib/llm.py` (sync `AnthropicClient`, `MissingCredentialError`) + `GeneratorConfig`
    + `--backend api`; `pytest-httpx` tests; schema update. Load `claude-api` to pin `claude-sonnet-5`.
@@ -239,7 +239,7 @@ for schemas, absolute imports. Tests: `.venv/bin/python -m pytest -q`.
    present → cache ignored (supersession); title dedup cases; per-language materialisation; one
    `SourceIssue` per generated value with its source input.
 2. **Producers** — API backend: `pytest-httpx` asserts request shape (model, `temperature=0`, auth
-   header), parses a canned tool-result, HTTP error → typed error. Cowork path: `--emit`/`--ingest`
+   header), parses a canned tool-result, HTTP error → typed error. In-session path: `--emit`/`--ingest`
    round-trip validates via `apply_result` (bad-shape result rejected; good result lands in cache).
 3. **Integration** — `test_run_plan.py`: generated content reclassifies CHANGED; E18 row with cached
    fr plans; E18 row with no cache still SKIPs.
@@ -252,7 +252,7 @@ for schemas, absolute imports. Tests: `.venv/bin/python -m pytest -q`.
 Canonical commit tracker: [`../ROADMAP.md`](../ROADMAP.md). **Complete — all 9 commits landed
 (`3b2ffb5`…`2999201`), suite 414 green, ruff + `mypy --strict` clean.** The deterministic core
 (1–3 + the multivalue-1067 and 1067-routing refinements), the `run_generate` spine (4), both
-producers — Cowork-native skill (5) and the `--backend api` Anthropic client (6) — the `run_plan`
+producers — in-session skill (5) and the `--backend api` Anthropic client (6) — the `run_plan`
 merge (7), the wired `acf_map` (8), and the docs + flow-orchestrator gate (9) are all in. Next
 milestone is the **Phase 9 live pilot** (verify the WPML helper endpoint and a real published page
 against the live site first — the ACF pipeline fails silently).

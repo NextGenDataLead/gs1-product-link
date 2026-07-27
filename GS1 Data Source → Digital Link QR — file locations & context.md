@@ -6,7 +6,7 @@ Hub-notitie voor het GS1 Digital Link Orchestrator project. Bewaar deze in `MDP/
 
 ## Wat is dit project
 
-Open-source tool die Nederlandse leveranciers van GS1 Data Source Excel-export → gepubliceerde WordPress-productpagina + geconfigureerde GS1-resolver-redirect + geprinte QR-code brengt. Draait in Claude Cowork; deterministische Python voor het werk, Claude voor planning en interactie. Multi-tenant via `clients.yml`. Zelf-gehost, geen centrale infra.
+Open-source tool die Nederlandse leveranciers van GS1 Data Source Excel-export → gepubliceerde WordPress-productpagina + geconfigureerde GS1-resolver-redirect + geprinte QR-code brengt. Draait in Claude Code; deterministische Python voor het werk, Claude voor planning en interactie. Multi-tenant via `clients.yml`. Zelf-gehost, geen centrale infra.
 
 **Status:** klaar om te bouwen. Alle blokkerende vragen aan GS1 NL zijn beantwoord.
 
@@ -52,7 +52,7 @@ Deze prompt geef je aan Claude Code (in de terminal, of via de UI van Claude Cod
 ---
 
 ```
-I'm building an open-source tool called "gs1-digital-link-orchestrator" — a Python + TypeScript project that helps Dutch suppliers turn GS1 Data Source Excel exports into WordPress product pages with QR codes powered by GS1. The tool runs in Claude Cowork; deterministic Python does the work, Claude handles planning and user interaction. It's multi-tenant, open-source, self-hosted.
+I'm building an open-source tool called "gs1-digital-link-orchestrator" — a Python + TypeScript project that helps Dutch suppliers turn GS1 Data Source Excel exports into WordPress product pages with QR codes powered by GS1. The tool runs in Claude Code; deterministic Python does the work, Claude handles planning and user interaction. It's multi-tenant, open-source, self-hosted.
 
 I have two authoritative documents that fully specify this project. Please read both in full before doing anything else:
 

@@ -181,10 +181,10 @@ clients:
       site_link_column: "Link naar site"
 
     # Content generator (tagline + Eigenschappen copy). Two producers share one cache and
-    # contract: the Cowork-native `content-generator` skill (writes copy in-session, no API key)
+    # contract: the in-session `content-generator` skill (writes copy in-session, no API key)
     # and the headless API backend (`python -m scripts.run_generate <id> --backend api`, which
     # calls the Anthropic Messages API via lib/llm.py). `enabled: true` permits the API backend
-    # when the key env var is set; the Cowork path works without it. `prompt_version` selects the
+    # when the key env var is set; the in-session path works without it. `prompt_version` selects the
     # frozen voice template at prompts/{id}/generation.{prompt_version}.md and is part of the cache
     # fingerprint, so bumping it invalidates cached copy. Omit this whole block to leave the
     # generator un-configured (the API backend then refuses to run). See
@@ -233,6 +233,7 @@ clients:
       restrict_to_mapped_gtins: true # only GTINs with a confirmed video in every language may run
       # ffmpeg_bin: ffmpeg           # override if ffmpeg is not on PATH
       video_folders:
-        nl: "input/noviplast/videos/nl"
-        fr: "input/noviplast/videos/fr"
+        # Paths are case-sensitive on Linux — match the folders on disk exactly.
+        nl: "input/noviplast/videos/NL"
+        fr: "input/noviplast/videos/FR"
       video_map_path: "input/noviplast/videos/mapping.yml"
