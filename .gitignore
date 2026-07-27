@@ -9,6 +9,9 @@ clients.yml
 credentials.json
 secrets.*
 
+# === Skill upload artifacts (built from skills/<name>/ for Cowork upload) ===
+skills/*.zip
+
 # === Tool inputs/outputs ===
 input/
 output/

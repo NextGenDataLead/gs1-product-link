@@ -233,6 +233,7 @@ clients:
       restrict_to_mapped_gtins: true # only GTINs with a confirmed video in every language may run
       # ffmpeg_bin: ffmpeg           # override if ffmpeg is not on PATH
       video_folders:
-        nl: "input/noviplast/videos/nl"
-        fr: "input/noviplast/videos/fr"
+        # Paths are case-sensitive on the Cowork Linux sandbox — match the folders on disk exactly.
+        nl: "input/noviplast/videos/NL"
+        fr: "input/noviplast/videos/FR"
       video_map_path: "input/noviplast/videos/mapping.yml"
