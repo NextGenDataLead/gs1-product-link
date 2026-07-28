@@ -173,6 +173,16 @@ below stays dormant — it is implemented and ready for future product updates.
     - `no` — done.
     - `detail` — read the JSONL entries and explain each.
 
+12. **Record observations.** Review your own run (copy, plan, execution, verification) and write
+    any qualitative "worth a glance" flags — the same heads-ups you'd give the operator in chat —
+    to `output/{client}/data/observations.json` as `{"notes": ["…", "…"]}`, then regenerate the
+    report: `python -m scripts.report_quality {client}`. They render in the report's
+    **Observations** section, so they persist beyond the chat. This is deliberately *not*
+    deterministic — the pipeline's own checks already run; this captures what only your review
+    would notice (e.g. "a French title reads Dutch", "a GTIN 404'd once then resolved — GS1
+    propagation lag, not a failure"). Write the observations in addition to your chat summary,
+    not instead of it. Omit the file (or an empty `notes`) when there is genuinely nothing to flag.
+
 ## MCP tools used
 
 None directly. This skill drives `scripts/run_plan.py` and `scripts/run_execute.py` (and

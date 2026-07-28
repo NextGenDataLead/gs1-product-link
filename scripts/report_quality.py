@@ -66,6 +66,22 @@ def _load_products(path: Path) -> dict[str, ProductRecord]:
     return {product.gtin14: product for product in products}
 
 
+def _load_observations(path: Path) -> list[str]:
+    """Read the in-session review notes (``observations.json``); absent yields ``[]``.
+
+    Contract: ``{"notes": ["...", "..."]}`` — free-text flags the assistant wrote while
+    reviewing a run, so they land in the report as well as the chat. Non-string entries are
+    coerced; a malformed file yields no notes rather than failing the report.
+    """
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [str(note) for note in data.get("notes", [])]
+    except (json.JSONDecodeError, AttributeError):
+        return []
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render the consolidated data-quality report.")
     parser.add_argument("client_id")
@@ -102,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         products=_load_products(data_dir / "products.json"),
         snapshot=datetime.now(UTC).strftime("%Y-%m-%d"),
         freshness=freshness,
+        observations=_load_observations(data_dir / "observations.json"),
     )
 
     out = Path(args.out) if args.out else Path("output") / args.client_id / "data-quality-report.md"

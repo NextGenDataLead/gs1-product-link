@@ -314,6 +314,29 @@ def _category_lines(category_issues: list[SourceIssue]) -> list[str]:
     return ["## 5. Categories", "", body, ""]
 
 
+def _observations_lines(observations: list[str]) -> list[str]:
+    """Free-text, in-session review notes — the assistant's own 'worth a glance' flags.
+
+    Unlike every other section (deterministic renders of the pipeline's issue files), these are
+    qualitative judgements the in-session producer wrote while reviewing a run — the same
+    heads-ups it would give the user in chat, captured here so they persist beyond the chat.
+    """
+    body = (
+        [f"- {note}" for note in observations]
+        if observations
+        else ["_None recorded for this run._"]
+    )
+    return [
+        "## Observations (this run)",
+        "",
+        "Qualitative flags the in-session assistant noted while reviewing this run — not "
+        "deterministic checks. Skim and act if relevant.",
+        "",
+        *body,
+        "",
+    ]
+
+
 def render_quality_report(  # noqa: PLR0913 — a document renderer needs each source plus its metadata
     *,
     client_id: str,
@@ -324,6 +347,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     products: dict[str, ProductRecord],
     snapshot: str,
     freshness: dict[str, str],
+    observations: list[str] | None = None,
 ) -> str:
     """Render the consolidated data-quality report as markdown.
 
@@ -337,6 +361,8 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
         snapshot: The report date (injected, so the output is deterministic).
         freshness: Last-updated date per source, keyed ``generated``/``source``/``video_map``/
             ``category`` — each source has its own producer run, so they can differ.
+        observations: Free-text, in-session review notes (``observations.json``) — the
+            assistant's own qualitative flags for this run. ``None``/empty renders a placeholder.
 
     Returns:
         The full markdown document.
@@ -353,6 +379,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     lines = [
         *_header_lines(client_id, snapshot, freshness),
         *_summary_lines(generated_issues, source_issues, video_map_issues, category_issues),
+        *_observations_lines(observations or []),
         *_blocking_lines(held, blocking_blanks, products),
         *_review_lines(inferences, generated_count, products, client_id),
         *_source_lines(degrade_blanks, inconsistent, wrong_lang, products),
