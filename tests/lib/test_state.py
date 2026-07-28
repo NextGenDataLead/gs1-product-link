@@ -545,6 +545,48 @@ def test_diff_keeps_row_with_generated_copy_when_required() -> None:
     assert [r.language for r in rows] == ["nl"]
 
 
+def test_diff_holds_gtin_with_blank_image_when_required(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # E22: require_hero_image set + blank source image → the whole GTIN is held, not published.
+    product = _product(image_url=None)
+
+    with caplog.at_level("WARNING", logger="lib.state"):
+        rows = diff_against_state(
+            [product],
+            State(client_id="noviplast", entries={}),
+            ["nl", "fr"],
+            _wp(),
+            require_hero_image=True,
+        )
+
+    assert rows == []
+    assert "blank source image" in caplog.text
+
+
+def test_diff_keeps_gtin_with_blank_image_when_not_required() -> None:
+    # Default: a blank image degrades gracefully at execute (E7), so the plan still includes it.
+    product = _product(image_url=None)
+
+    rows = diff_against_state([product], State(client_id="noviplast", entries={}), ["nl"], _wp())
+
+    assert [r.language for r in rows] == ["nl"]
+
+
+def test_diff_keeps_gtin_with_hero_image_when_required() -> None:
+    product = _product(image_url="https://example.test/hero.jpg")
+
+    rows = diff_against_state(
+        [product],
+        State(client_id="noviplast", entries={}),
+        ["nl"],
+        _wp(),
+        require_hero_image=True,
+    )
+
+    assert [r.language for r in rows] == ["nl"]
+
+
 def test_diff_empty_products_yields_no_rows() -> None:
     rows = diff_against_state([], State(client_id="noviplast", entries={}), ["nl"], _wp())
     assert rows == []
