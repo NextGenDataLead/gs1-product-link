@@ -26,6 +26,7 @@ _GENERATED = "content_generated"
 #: Issue kinds emitted by the export parser (``source_issues.json``).
 _BLANK = "value_blank"
 _INCONSISTENT = "value_inconsistent_across_markets"
+_WRONG_LANG = "value_wrong_language"
 
 #: Base fields whose blank makes a published page broken/degraded enough to block it: the
 #: page title (``product_name``) and the hero image (``image_url``). A blank in any other
@@ -162,6 +163,13 @@ def _summary_lines(
             "No — but review",
         ],
         [
+            "Source",
+            "Possible wrong-language values",
+            str(len([i for i in source_issues if i.issue == _WRONG_LANG])),
+            "Client (MyGS1)",
+            "Worth a glance",
+        ],
+        [
             "Media",
             "Videos not yet mapped to a GTIN",
             str(len(video_map_issues)),
@@ -242,10 +250,12 @@ def _review_lines(
 def _source_lines(
     degrade_blanks: list[SourceIssue],
     inconsistent: list[SourceIssue],
+    wrong_lang: list[SourceIssue],
     products: dict[str, ProductRecord],
 ) -> list[str]:
     blank_rows = [[_label(products, i.gtin), i.field, _cell(i.source)] for i in degrade_blanks]
     inc_rows = [[_label(products, i.gtin), i.field, _market_cell(i)] for i in inconsistent]
+    lang_rows = [[_label(products, i.gtin), i.field, _cell(i.value)] for i in wrong_lang]
     return [
         "## 3. Source-data fixes in MyGS1 (do not block publish)",
         "",
@@ -263,6 +273,14 @@ def _source_lines(
         "texts are shown so you can compare on the spot and align the authoritative one in MyGS1.",
         "",
         *_table(["GTIN", "Field", "Value per market (✓ = used)"], inc_rows),
+        "",
+        "### 3c. Possible wrong-language values (worth a glance)",
+        "",
+        "Heuristic: a localised value carrying letter patterns that belong to the *other* language "
+        "(e.g. a French title still reading `Schoonmaakdoek`). Not a blocker — skim and fix the "
+        "translation at source if the flag is right.",
+        "",
+        *_table(["GTIN", "Field", "Value (reads like the wrong language)"], lang_rows),
         "",
     ]
 
@@ -330,13 +348,14 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     blocking_blanks = [i for i in blanks if _blocks_publish(i.field)]
     degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
     inconsistent = [i for i in source_issues if i.issue == _INCONSISTENT]
+    wrong_lang = [i for i in source_issues if i.issue == _WRONG_LANG]
 
     lines = [
         *_header_lines(client_id, snapshot, freshness),
         *_summary_lines(generated_issues, source_issues, video_map_issues, category_issues),
         *_blocking_lines(held, blocking_blanks, products),
         *_review_lines(inferences, generated_count, products, client_id),
-        *_source_lines(degrade_blanks, inconsistent, products),
+        *_source_lines(degrade_blanks, inconsistent, wrong_lang, products),
         *_video_lines(video_map_issues, client_id),
         *_category_lines(category_issues),
     ]

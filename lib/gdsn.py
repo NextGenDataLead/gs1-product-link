@@ -494,6 +494,12 @@ def build_records(  # noqa: PLR0913 — each argument is a distinct input; bundl
         if not product_name or default_language not in product_name:
             errors.append(f"GTIN {gtin}: missing product_name.{default_language}")  # E5
             continue
+        if "product_name" in gdsn_map:
+            issues.extend(
+                _check_field_language(
+                    product_name, "product_name", _source_label(gdsn_map["product_name"]), gtin
+                )
+            )
         try:
             records.append(
                 build_product_record(
@@ -633,6 +639,57 @@ def _check_length(value: str, limit: int, where: _Where, acc: _Accumulator) -> s
 def _source_label(src: GdsnSource) -> str:
     """Name a field the way the *source system* does, for the report (§SourceIssue)."""
     return f"{src.sheet} attr {src.attribute}" if src.attribute else src.sheet
+
+
+#: Letter patterns near-absent from the *other* language, so their presence in a value declared
+#: for one language is a strong hint the source carries the wrong-language text. Deliberately
+#: conservative (few, unambiguous patterns) to keep this a low-noise "worth a glance" signal
+#: rather than a real language detector: Dutch ``aa``/``uu``/``ij`` essentially never occur in
+#: French, and the French cedilla/grave/circumflex essentially never occur in native Dutch.
+_DUTCH_HALLMARKS: Final = ("aa", "uu", "ij")
+_FRENCH_HALLMARKS: Final = ("ç", "è", "ê", "à", "â", "ù", "û", "œ")
+
+
+def _suspect_language(value: str, lang: str) -> str | None:
+    """Return the language ``value`` looks like when it isn't ``lang`` (else ``None``)."""
+    folded = value.casefold()
+    if lang == "fr" and any(h in folded for h in _DUTCH_HALLMARKS):
+        return "Dutch"
+    if lang == "nl" and any(h in folded for h in _FRENCH_HALLMARKS):
+        return "French"
+    return None
+
+
+def _check_field_language(
+    values: dict[str, str], field_base: str, source: str, gtin: str
+) -> list[SourceIssue]:
+    """Flag a localised value carrying hallmarks of a *different* language (heuristic; §4.2).
+
+    A "worth a glance" observation — the value is passed through unchanged, like every other
+    source finding. Catches the common case of a translation slot left in the source language
+    (e.g. a French ``product_name`` that still reads ``Schoonmaakdoek``). Only ``nl`` and ``fr``
+    exist for this client; other languages are skipped.
+    """
+    issues: list[SourceIssue] = []
+    for lang, value in values.items():
+        suspect = _suspect_language(value, lang)
+        if suspect is None:
+            continue
+        detail = (
+            f"the {lang} value {value!r} reads like {suspect} — the source may carry "
+            f"{suspect} text in the {lang} slot; check the translation at the source"
+        )
+        issues.append(
+            SourceIssue(
+                gtin=gtin,
+                field=f"{field_base}.{lang}",
+                source=source,
+                issue="value_wrong_language",
+                value=value,
+                detail=detail,
+            )
+        )
+    return issues
 
 
 def _apply_checks(value: str, src: GdsnSource, field: str, gtin: str, acc: _Accumulator) -> str:

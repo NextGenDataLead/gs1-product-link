@@ -287,6 +287,21 @@ def test_strip_prefix_removes_the_brand_from_the_name(tmp_path: Path) -> None:
     assert rec.brand == "Noviplast"  # brand is its own field, unaffected
 
 
+def test_build_records_flags_wrong_language_product_name(tmp_path: Path) -> None:
+    # a French title still reading a Dutch word ('aa' hallmark) is flagged for a glance
+    result = _build_named(tmp_path, "microvezeldoek", "Schoonmaakdoek")
+
+    wrong = [i for i in result.issues if i.issue == "value_wrong_language"]
+    assert [i.field for i in wrong] == ["product_name.fr"]
+    assert wrong[0].value == "Schoonmaakdoek"
+
+
+def test_build_records_does_not_flag_proper_translations(tmp_path: Path) -> None:
+    result = _build_named(tmp_path, "microvezeldoek", "Chiffon microfibre")
+
+    assert not any(i.issue == "value_wrong_language" for i in result.issues)
+
+
 def test_strip_prefix_leaves_genuinely_unprefixed_names_alone(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
