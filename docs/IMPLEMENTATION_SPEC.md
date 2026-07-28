@@ -1075,13 +1075,13 @@ tests/
 - [x] Change classification correctness tested for all edge cases
 - [x] Chat-format diff readable and unambiguous, matches §10.6
 
-> **Moved to Phase 8:** "Full re-run flow tested in fresh Cowork session" was a Phase 7 item, but
+> **Moved to Phase 8:** "Full re-run flow tested in fresh Claude Code session" was a Phase 7 item, but
 > it duplicates Phase 8's own exit gate and cannot be met before it. When it was moved, only
 > `flow-orchestrator` and `content-generator` had a SKILL.md; the other four skills were empty
-> stubs, and step 1 of the flow delegates parsing to `gs1-export-parser`. A Cowork test in Phase 7
+> stubs, and step 1 of the flow delegates parsing to `gs1-export-parser`. A Claude Code test in Phase 7
 > would have exercised one-fifth of the surface it is meant to validate. (All six SKILL.md are now
 > finalised as of Phase 8, 2026-07-19.) Tracked below as Phase 8's "Full re-run flow (plan → diff →
-> confirm → execute) in a fresh Cowork session".
+> confirm → execute) in a fresh Claude Code session".
 
 ### Page adapter (Noviplast pilot) — mapping, data quality, lifecycle
 Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered gate. Detail in
@@ -1100,7 +1100,7 @@ Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered 
 - [x] Feature/benefit + tagline **generator** (LLM) — **done 2026-07-19 (generator commits 1–9,
       merged to `main` via PR #2).** `lib/generator.py` (fingerprint cache, request/result contract,
       `merge_generated`), the `run_generate` spine, both producers behind one cache seam — the
-      Cowork-native `content-generator` skill and the headless `--backend api` (`lib/llm.py`, Sonnet
+      in-session `content-generator` skill and the headless `--backend api` (`lib/llm.py`, Sonnet
       5) — the `run_plan` merge, the wired `acf_map`, and `generated_issues.json`. Owns the 3301(+3332)
       title combination, the tagline = `usps[0]` (NOT 1083) choice, and the USP bullets. Design +
       tracker: `docs/clients/noviplast-generator-spec.md`, `docs/ROADMAP.md`.
@@ -1141,7 +1141,7 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 - [x] Each SKILL.md finalised per §10
 - [x] Full flow via chat instruction works end-to-end
 - [x] Skills load when expected trigger phrases used
-- [ ] Full re-run flow (plan → diff → confirm → execute) in a fresh Cowork session *(moved from
+- [ ] Full re-run flow (plan → diff → confirm → execute) in a fresh Claude Code session *(moved from
       Phase 7; see the note there)*. The plan half is already exercisable on real data — both
       operator files are in `input/{client_id}/` — so this gate is about the chat surface and the
       execute leg, not the data. **The chat surface (parse → generate → plan → confirm) is
@@ -1153,7 +1153,7 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > documentation wrapper over code that already works (`scripts/`, `lib/`, `mcps/`), grounded in the
 > real flags, output paths, and exit codes of what it wraps.
 >
-> The end-to-end chat flow was driven in a Cowork session on the real Noviplast operator files
+> The end-to-end chat flow was driven in a Claude Code session on the real Noviplast operator files
 > (`input/noviplast/products.xlsx` + `website_status.xlsx`): `parse_export` (127 products, 11
 > warnings) → `run_generate --emit` (246 pending) → `content-generator` write + `--ingest` (review
 > gate 1) → `run_plan` (72 new, 2 held, 90 excluded — review gate 2) → confirm gate. Every §10.6
@@ -1211,23 +1211,23 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > files, 26 strong pre-fills + `…7717` confirmed) but still needs **client sign-off**; scaling to the
 > ≥10 batch is Phase 9.
 
-### Phase 9.8 — Operator flow in Cowork
-- [ ] `flow-orchestrator` driven end-to-end from a **real Cowork chat session** on ≥1 GTIN (draft-first)
+### Phase 9.8 — Operator flow validated under Claude Code
+- [ ] `flow-orchestrator` driven end-to-end from a **fresh Claude Code session** on ≥1 GTIN (draft-first)
 - [ ] Every operator gate exercised and confirmed correct: language select → review gate #1 (generated
       copy) → plan-review gate #2 → **production environment-confirmation gate** (`[confirm | switch-to-test
       | cancel]`) → execute → progress → post-execute summary → retry
 - [ ] Operator **guided step-by-step** at each gate — each verbatim prompt presented and its off-menu reply
       handled; the operator confirms at every gate, nothing auto-proceeds
 - [ ] Ticks the open **Phase 8 DoD box #4** (full re-run flow plan → diff → confirm → execute in a fresh
-      Cowork session)
+      Claude Code session)
 
 > Split out 2026-07-19 to make explicit what Phase 9's smoke did NOT cover. The execute leg was proven by
 > invoking `scripts/run_execute.py` **directly**, which bypasses the entire operator UX: the language
 > prompt, both review gates, the mandatory production environment-confirmation gate, progress lines, the
 > post-execute summary, and the retry prompt. This phase validates that whole experience through the
-> `flow-orchestrator` skill in Cowork — and the operator is to be **walked through each gate one step at a
+> `flow-orchestrator` skill under Claude Code — and the operator is to be **walked through each gate one step at a
 > time** (present the gate, wait for the operator's choice, then proceed), never batching or auto-confirming.
-> Generation stays on the Cowork-native producer (no API key required). Placed at 9.8 (after media, before
+> Generation stays on the in-session producer (no API key required). Placed at 9.8 (after media, before
 > the ≥10 batch) so the batch is driven through the validated operator flow, not raw scripts.
 
 ### Phase 10 — Docs

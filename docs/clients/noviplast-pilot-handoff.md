@@ -81,8 +81,8 @@ gates → commit → push → PR → merge → sync `main` → delete the branch
 - **Pilot-gate DONE** (PR `feat/pilot-gtin-allowlist`): `media.restrict_to_mapped_gtins` blocks every
   non-fully-mapped GTIN from runs, plus the 13/14-digit `canon_gtin` fix. See "Where we are".
 
-### Step 2 — Phase 9.8 Operator flow in Cowork (validation) — branch only if code gaps found
-- Drive the `flow-orchestrator` skill **end-to-end from a real Cowork chat session** on ≥1 GTIN,
+### Step 2 — Phase 9.8 Operator flow under Claude Code (validation) — branch only if code gaps found
+- Drive the `flow-orchestrator` skill **end-to-end from a fresh Claude Code session** on ≥1 GTIN,
   draft-first, **guiding the operator step-by-step**: present each gate, wait for the choice, then proceed
   — language select → review gate #1 → plan review gate #2 → **production env-confirmation gate** →
   execute → progress → post-execute summary → retry. Never batch or auto-confirm.
@@ -93,7 +93,7 @@ gates → commit → push → PR → merge → sync `main` → delete the branch
 The pilot-gate has already scoped the runnable batch. `run_plan noviplast` writes the 13 GTINs (26
 rows) to `output/noviplast/plan.json`. Readiness (checked 2026-07-26): all 13 have title + image +
 video (both langs); **none have generated copy yet** — that is the blocker.
-1. **Generate copy for the 13** — Cowork-native `content-generator` (no API key). They are
+1. **Generate copy for the 13** — in-session `content-generator` (no API key). They are
    `generate`-mode, so the LLM writes tagline + **Eigenschappen** bullets from the marketing message +
    net content + dims/material (Technische details stay deterministic). Write `generation_results.json`.
 2. **Review Gate #1** — a human/client approves each product's tagline + bullets (live marketing copy).
@@ -107,7 +107,7 @@ video (both langs); **none have generated copy yet** — that is the blocker.
    on printed QR samples (the DoD's literal requirement).
 7. Decide **`…0527`** (skip in mapping, or republish clean) and the **fr-QR strategy** (recommended:
    bare QR→nl + WPML switcher). Tick the three §12 Phase 9 boxes + update `ROADMAP.md`. Docs commit.
-- Phase 9.8 (Cowork operator-flow validation, Step 2) can run alongside — the batch mechanics are proven
+- Phase 9.8 (Claude Code operator-flow validation, Step 2) can run alongside — the batch mechanics are proven
   via scripts, so it is not a hard blocker for going live.
 
 ### Step 4 — Phase 10 Docs — branch `docs/phase-10`
@@ -138,5 +138,4 @@ MCP registry entry; draft announcement. Tick §12 Phase 11.
 - Operator flow: `skills/flow-orchestrator/SKILL.md`.
 - **What's live:** [`noviplast-live-log.md`](noviplast-live-log.md) — committed audit trail of every
   page/GS1 record published to the live site (machine source: gitignored `output/noviplast/state.json`).
-- Cowork setup + validation ladder: [`../COWORK_SETUP.md`](../COWORK_SETUP.md).
 - Auto-memory: `phase9-resolution-proven.md` (this pilot's live state + gotchas).

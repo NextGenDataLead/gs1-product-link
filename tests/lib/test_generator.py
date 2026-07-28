@@ -94,7 +94,7 @@ def test_pending_requests_skips_when_fingerprint_matches() -> None:
         request,
         _result("Tagline", "Bullet"),
         origin=ORIGIN_GENERATED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 
@@ -120,14 +120,14 @@ def test_apply_result_stores_entry() -> None:
         request,
         _result("Tagline", "Bullet"),
         origin=ORIGIN_GENERATED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 
     entry = cache.get("08713195007359", "nl")
     assert entry is not None
     assert entry.usps == ["Tagline", "Bullet"]
-    assert entry.provenance == "cowork"
+    assert entry.provenance == "in-session"
 
 
 def test_apply_result_rejects_empty_usps() -> None:
@@ -136,7 +136,12 @@ def test_apply_result_rejects_empty_usps() -> None:
 
     with pytest.raises(GeneratorError, match="empty generation result"):
         apply_result(
-            cache, request, _result("   "), origin=ORIGIN_GENERATED, provenance="cowork", now=_NOW
+            cache,
+            request,
+            _result("   "),
+            origin=ORIGIN_GENERATED,
+            provenance="in-session",
+            now=_NOW,
         )
 
 
@@ -149,7 +154,7 @@ def test_apply_result_stores_inferences() -> None:
         request,
         _result("Tagline", "Bullet", inferences=["snoerloos"]),
         origin=ORIGIN_GENERATED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 
@@ -163,7 +168,12 @@ def test_apply_result_defaults_inferences_to_empty() -> None:
     request = next(r for r in pending_requests([_product()], cache, ["nl"], "v1"))
 
     apply_result(
-        cache, request, _result("Tagline"), origin=ORIGIN_GENERATED, provenance="cowork", now=_NOW
+        cache,
+        request,
+        _result("Tagline"),
+        origin=ORIGIN_GENERATED,
+        provenance="in-session",
+        now=_NOW,
     )
 
     entry = cache.get("08713195007359", "nl")
@@ -179,7 +189,7 @@ def _merge_one(product: ProductRecord, *usps: str, **kw: object) -> ProductRecor
     cache = GeneratedCache(client_id="noviplast")
     request = next(r for r in pending_requests([product], cache, ["nl"], "v1"))
     apply_result(
-        cache, request, _result(*usps), origin=ORIGIN_GENERATED, provenance="cowork", now=_NOW
+        cache, request, _result(*usps), origin=ORIGIN_GENERATED, provenance="in-session", now=_NOW
     )
     merged, _ = merge_generated([product], cache, ["nl"], "nl", "v1")
     return merged[0]
@@ -216,7 +226,7 @@ def test_merge_reports_one_generated_issue_with_source_input() -> None:
         request,
         _result("Tagline", "Bullet"),
         origin=ORIGIN_GENERATED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 
@@ -237,7 +247,7 @@ def test_merge_reports_one_generation_inference_per_claim() -> None:
         request,
         _result("Tagline", "Bullet", inferences=["snoerloos", "oplaadbaar"]),
         origin=ORIGIN_GENERATED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 
@@ -258,7 +268,7 @@ def test_merge_reports_no_inference_issue_when_none_declared() -> None:
         request,
         _result("Tagline", "Bullet"),
         origin=ORIGIN_GENERATED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 
@@ -277,7 +287,7 @@ def test_merge_ignores_stale_entry_when_feed_changed() -> None:
         request,
         _result("Tagline", "Bullet"),
         origin=ORIGIN_GENERATED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 
@@ -319,7 +329,7 @@ def test_merge_fills_missing_french_name_from_cache() -> None:
         request,
         _result("Slogan", "Puce", product_name="Pic d'arrosage"),
         origin=ORIGIN_GENERATED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 
@@ -391,7 +401,7 @@ def test_tightened_copy_is_reported_as_adjusted() -> None:
         request,
         _result("Kort", "Bullet"),
         origin=ORIGIN_TIGHTENED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 
@@ -413,7 +423,7 @@ def test_cache_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
         request,
         _result("Tagline", "Bullet"),
         origin=ORIGIN_GENERATED,
-        provenance="cowork",
+        provenance="in-session",
         now=_NOW,
     )
 

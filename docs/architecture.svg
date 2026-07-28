@@ -1,6 +1,6 @@
 <svg width="680" height="460" viewBox="0 0 680 460" xmlns="http://www.w3.org/2000/svg" role="img">
   <title>End-to-end flow from GS1 Data Source to QR code on packaging</title>
-  <desc>A human enriches product data in GS1 Data Source and exports it. A Claude Cowork session runs an orchestrator that, per GTIN per language, creates a WordPress page, sets the GS1 Digital Link redirect, and renders a QR symbol. Three outputs: live page, configured resolver, ready-to-print QR file.</desc>
+  <desc>A human enriches product data in GS1 Data Source and exports it. A Claude Code session runs an orchestrator that, per GTIN per language, creates a WordPress page, sets the GS1 Digital Link redirect, and renders a QR symbol. Three outputs: live page, configured resolver, ready-to-print QR file.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -27,7 +27,7 @@
   <text x="354" y="115" class="arrow-label">Export .xlsx</text>
 
   <rect x="170" y="142" width="340" height="64" rx="8" class="box purple"/>
-  <text x="340" y="166" text-anchor="middle" dominant-baseline="central" class="title-text">Claude Cowork session</text>
+  <text x="340" y="166" text-anchor="middle" dominant-baseline="central" class="title-text">Claude Code session</text>
   <text x="340" y="186" text-anchor="middle" dominant-baseline="central" class="subtitle-text">Flow orchestrator + skills + MCPs</text>
 
   <line x1="340" y1="206" x2="340" y2="256" class="arrow-line" marker-end="url(#arrow)"/>

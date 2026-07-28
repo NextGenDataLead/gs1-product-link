@@ -6,7 +6,7 @@
 > change-detection / flow-orchestrator), which stands unchanged underneath it.
 >
 > The tool-side work in §8 is now built: the GDSN parser inputs, the **content generator** (both
-> producers — the Cowork-native `content-generator` skill and the headless `run_generate --backend
+> producers — the in-session `content-generator` skill and the headless `run_generate --backend
 > api`, sharing one cache/contract seam), the `run_plan` merge, and the wired `acf_map` (generator
 > commits 1–8; see [`../ROADMAP.md`](../ROADMAP.md) and
 > [`noviplast-generator-spec.md`](noviplast-generator-spec.md)). `run_execute` renders ACF via
@@ -197,7 +197,7 @@ that comes from the feed instead of a model is one fewer line in the upstream re
 `(gtin, language)` — `usps[0]` is the tagline (all three slots above), `usps[1:]` the Eigenschappen
 bullets, Technische details stay deterministic. `lib/generator.py` owns the fingerprint-keyed cache
 and the pure `merge_generated` assembly; `scripts/run_generate.py` fills the cache through one
-contract from either producer (Cowork emit→ingest, or `--backend api` via `lib/llm.py`);
+contract from either producer (in-session emit→ingest, or `--backend api` via `lib/llm.py`);
 `run_plan` merges the cache before `diff_against_state` so generated copy enters the content hash;
 and `acf_map` feeds `product_title`/`product_header_video_text` ← `generated_tagline` and
 `product_description` ← `generated_description`. Full design and 1067 verbatim/tighten/generate
@@ -517,7 +517,7 @@ source — the filters survive updates to whatever registers them.
 - ~~New **feature/benefit generator** (LLM) with a deterministic cache + human-approval gate.~~
   **Done (generator commits 1–8, 2026-07-19).** `lib/generator.py` (fingerprint-keyed
   `generated_cache.json`, request/result contract, `merge_generated`), two producers behind one
-  seam — the Cowork-native `content-generator` skill (emit→ingest, no key) and `run_generate
+  seam — the in-session `content-generator` skill (emit→ingest, no key) and `run_generate
   --backend api` (`lib/llm.py`, Sonnet 5) — and the `run_plan` merge. **Filling missing French** is
   covered: the feed value always supersedes generated (fingerprint miss re-flags a stale one), and
   the merge fills a missing `product_name.fr` from the cache. Generated values are distinguishable

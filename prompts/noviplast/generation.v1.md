@@ -2,7 +2,7 @@
 # Noviplast product-copy voice & contract (v1)
 
 The frozen brand-voice template for generating Noviplast product copy. It is loaded by the
-producer — Claude in a Cowork session (the `content-generator` skill) now, and the headless API
+producer — Claude in a Claude Code session (the `content-generator` skill) now, and the headless API
 backend later — for one `(gtin, language)` at a time. The few-shot examples below **are** the `v1`
 voice: changing them is a new voice and requires bumping `prompt_version` (which re-fingerprints and
 invalidates the cache). Keep this file and `lib.generator.DEFAULT_PROMPT_VERSION` in step.

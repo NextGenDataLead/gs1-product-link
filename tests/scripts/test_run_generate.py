@@ -189,7 +189,7 @@ def test_ingest_applies_results_into_cache(
     assert entry is not None
     assert entry.usps == ["Slogan", "Punt"]
     assert entry.origin == ORIGIN_GENERATED
-    assert entry.provenance == "cowork"
+    assert entry.provenance == "in-session"
     # coverage reflects the post-ingest state: the one gap is now cached
     assert "ingested 1 result(s), skipped 0; 1/1 units cached; 0 pending" in capsys.readouterr().err
 

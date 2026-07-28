@@ -14,8 +14,9 @@ through the shared cache (``lib.generator``). It
 3. hands those gaps to a producer by one of two paths that write identical cache entries:
 
    - **emit / ingest** (default): ``--emit`` writes the pending requests to
-     ``output/{client_id}/data/generation_requests.json`` for a Cowork session to fill, and
-     ``--ingest`` reads that session's ``generation_results.json`` back into the cache.
+     ``output/{client_id}/data/generation_requests.json`` for an in-session (Claude Code)
+     producer to fill, and ``--ingest`` reads that session's ``generation_results.json`` back
+     into the cache.
    - **API backend** (``--backend api``): drives :class:`lib.llm.AnthropicClient` (the headless
      Messages-API producer) over the gaps via :func:`run_producer`, filling the cache directly.
      Requires an enabled ``generator`` config block and its API key.
@@ -68,8 +69,8 @@ _log = logging.getLogger("scripts.run_generate")
 REQUESTS_FILENAME: Final = "generation_requests.json"
 RESULTS_FILENAME: Final = "generation_results.json"
 
-#: Provenance recorded for cache entries filled from a Cowork session's results file.
-_COWORK_PROVENANCE: Final = "cowork"
+#: Provenance recorded for cache entries filled from an in-session producer's results file.
+_INSESSION_PROVENANCE: Final = "in-session"
 
 _EXIT_OK = 0
 _EXIT_CONFIG_ERROR = 2
@@ -79,7 +80,7 @@ _EXIT_CONFIG_ERROR = 2
 
 
 class RequestsFile(BaseModel):
-    """The emitted pending gaps for a Cowork session to fill (``--emit`` output).
+    """The emitted pending gaps for an in-session producer to fill (``--emit`` output).
 
     Carries the ``prompt_version`` and fingerprints so a session can echo them back in its
     results, letting ``--ingest`` reject copy generated against inputs that have since changed.
@@ -113,7 +114,7 @@ class ResultItem(BaseModel):
 
 
 class ResultsFile(BaseModel):
-    """A Cowork session's generated copy, read back by ``--ingest``."""
+    """An in-session producer's generated copy, read back by ``--ingest``."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -141,7 +142,7 @@ def _load_products(path: Path) -> list[ProductRecord]:
 
 
 def _load_results(path: Path, client_id: str) -> ResultsFile:
-    """Read and validate a Cowork session's results file.
+    """Read and validate an in-session producer's results file.
 
     Raises:
         GeneratorError: If the file names a different client than the run.
@@ -211,7 +212,7 @@ def _emit(
     prompt_version: str,
     now: datetime,
 ) -> Path:
-    """Write the pending requests for a Cowork session and persist the verbatim prefill.
+    """Write the pending requests for an in-session producer and persist the verbatim prefill.
 
     Written **always**, even with no pending requests, so an empty ``requests`` list means
     "nothing to generate" rather than "no run has looked".
@@ -278,7 +279,7 @@ def _ingest(
                 usps=item.usps, product_name=item.product_name, inferences=item.inferences
             ),
             origin=_origin_for_mode(request.mode),
-            provenance=_COWORK_PROVENANCE,
+            provenance=_INSESSION_PROVENANCE,
             now=now,
         )
         applied += 1
@@ -353,7 +354,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     mode.add_argument(
         "--emit",
         action="store_true",
-        help="Write pending requests for a Cowork session (default)",
+        help="Write pending requests for an in-session producer (default)",
     )
     mode.add_argument(
         "--ingest",

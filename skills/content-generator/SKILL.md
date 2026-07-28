@@ -1,6 +1,6 @@
 ---
 name: content-generator
-description: "Write product tagline and Eigenschappen copy as the Cowork-native producer (no API key) for the (GTIN, language) units the generator flagged, then ingest them into the cache. Use when the operator says 'generate copy for {client}' or 'write product copy for {client}'."
+description: "Write product tagline and Eigenschappen copy as the in-session producer (no API key) for the (GTIN, language) units the generator flagged, then ingest them into the cache. Use when the operator says 'generate copy for {client}' or 'write product copy for {client}'."
 ---
 
 # Content Generator
@@ -8,7 +8,7 @@ description: "Write product tagline and Eigenschappen copy as the Cowork-native 
 ## When to load
 
 Trigger phrases: **"generate copy for {client}"**, **"write product copy for {client}"** — e.g.
-"generate copy for noviplast". Load this skill to act as the Cowork-native copy producer: read the
+"generate copy for noviplast". Load this skill to act as the in-session copy producer: read the
 pending generation requests, write the tagline + Eigenschappen copy in the client's brand voice, and
 ingest the results into the generated-copy cache. No API key — generation happens in this session.
 

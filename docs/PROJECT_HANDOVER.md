@@ -12,7 +12,7 @@
 
 We are building an open-source orchestration tool that helps Dutch suppliers go from compliant product data in **GS1 Data Source** to a printable, GS1-compliant QR code (a *QR code powered by GS1*, encoding a GS1 Digital Link URI) with the resolver target pointing at the supplier's own website. The tool also provisions the destination web pages on the supplier's WordPress site.
 
-The system runs inside **Claude Cowork**, with deterministic Python scripts doing the heavy lifting and Claude handling planning, user interaction, and exception cases. It is **multi-tenant by design** — every user supplies their own credentials via a gitignored config file. There are **no central services**.
+The system runs inside **Claude Code**, with deterministic Python scripts doing the heavy lifting and Claude handling planning, user interaction, and exception cases. It is **multi-tenant by design** — every user supplies their own credentials via a gitignored config file. There are **no central services**.
 
 **Data path:** Product data enters the tool as an **Excel/CSV export from MyGS1** (the free, standard route). Programmatic reads via GS1 Data Link are explicitly out of scope for v0.1.0.
 
@@ -138,7 +138,7 @@ Reconsider if: (a) GS1 NL introduces a cheaper own-data-only read tier, (b) a pa
 ### 3.9 No central infrastructure
 **Context:** Could be hosted SaaS or self-hosted.
 **Decision:** Self-hosted only.
-**Implication:** Each user runs the tool in their own Cowork session or local environment. All state and credentials stay with the user.
+**Implication:** Each user runs the tool in their own Claude Code session or local environment. All state and credentials stay with the user.
 
 ### 3.10 Cost transparency for end users
 **Context:** Open-source users will reasonably want to know what they'll have to pay GS1 NL.
@@ -445,7 +445,7 @@ Library: **`qrcode`** (Python, with `pillow`).
 
 **Content hash** covers: title, content body, featured-media reference, GS1 `targetUrl`, GS1 `linkTitle`. Changes trigger a "changed" diff in `run_plan.py`.
 
-**Cowork ephemerality:** State written to `/mnt/user-data/outputs/{client_id}/state.json`, synced to the user's local clone per session.
+**State persistence:** State written to local files under `output/{client_id}/state.json` in the repo working tree.
 
 ---
 
@@ -745,7 +745,7 @@ gs1-digital-link-orchestrator/
 | 6 | `lib/`, scripts, and state | 2 | 3–4 d | `run_execute.py` completes for 1 GTIN |
 | 7 | Re-run & change detection | 1 | 2 d | Re-run with change triggers chat prompt |
 | 7.5 | GPC brick → category mapping | 1 | 1–2 d | Every export brick maps to a category; overrides signed off |
-| 8 | Skills & flow orchestrator | 1 | 2 d | End-to-end via Cowork chat works |
+| 8 | Skills & flow orchestrator | 1 | 2 d | End-to-end via Claude Code chat works |
 | 9 | Pilot client end-to-end | 2 | 1 wk | 10+ real products, no manual fixes |
 | 10 | Docs | 1.5 | 2 d | Fresh user can onboard from docs alone |
 | 11 | Production cut + 0.1.0 release | 0.5 | 1 d | Tagged release; MCP registry entry |
@@ -767,11 +767,11 @@ gs1-digital-link-orchestrator/
 
 **Phase 6 — lib, scripts, state:** `lib/state.py`, `lib/config.py`. `scripts/run_execute.py` per §10.5 skeleton. Unit tests for `lib/` with mocked HTTP. Exit gate: `python scripts/run_execute.py {client} plan.json` completes for 1 GTIN.
 
-**Phase 7 — Re-run & change detection:** `scripts/run_plan.py` — hash per (GTIN, language); classify new/unchanged/changed. `flow-orchestrator` skill — format diff for chat, collect decisions, emit `plan.confirmed.json`, invoke execute. Test: change one product name, re-run, confirm prompt appears. Exit gate: full re-run flow works in Cowork chat.
+**Phase 7 — Re-run & change detection:** `scripts/run_plan.py` — hash per (GTIN, language); classify new/unchanged/changed. `flow-orchestrator` skill — format diff for chat, collect decisions, emit `plan.confirmed.json`, invoke execute. Test: change one product name, re-run, confirm prompt appears. Exit gate: full re-run flow works in Claude Code chat.
 
 **Phase 7.5 — GPC brick → category mapping:** Derive each product's site category from its GPC brick, using the **GS1 DIY sector datamodel** as the classification source — **the operator supplies the DIY datamodel at the start of the phase** (as with the export and control file; it is not sourced by the tool). A straight brick→category map is not sufficient: bricks span marketing categories (e.g. brick `10003865` holds both garden tools and a nutcracker) and the client's own categorisation is not purely semantic (a shower head filed under *keuken*). So the phase produces a `brick_category_map` **plus a per-GTIN override list** in `clients.yml`, reviewed and signed off by the client. ~70 distinct bricks across the 127-product pilot export. Exit gate: every brick in the export maps to a category, overrides cover the exceptions, and `run_plan` assigns the category for every planned product (unmapped bricks warn, never guess). Detail in `docs/clients/noviplast-page-adapter.md` §5.7.
 
-**Phase 8 — Skills & flow orchestrator polish:** Finalise SKILL.md files. Test in fresh Cowork session: user uploads export, says "run for {client} in test". Exit gate: end-to-end flow works from a single chat instruction.
+**Phase 8 — Skills & flow orchestrator polish:** Finalise SKILL.md files. Test in fresh Claude Code session: user uploads export, says "run for {client} in test". Exit gate: end-to-end flow works from a single chat instruction.
 
 **Phase 9 — Pilot client end-to-end:** Run end-to-end against pilot's test environment. Iterate on edge cases. Run first 10 real products through to production. Capture client-specific quirks in `docs/clients/{client_id}.md`. Exit gate: live pages, live redirects, ready-to-print QRs for ≥10 products with no manual corrections.
 
@@ -801,7 +801,7 @@ Phases 2–5 can run in parallel with multiple developers; with one developer, s
 | R1 | WordPress MCP ecosystem too immature; build from scratch | Medium | Medium | Time-boxed survey in Phase 4; budget contingency |
 | R2 | Per-client template variation explodes | Low at 5 clients; high at 50 | Medium | Document patterns; consider `templates/_shared/` partials |
 | R3 | Polylang/WPML differences balloon scope | Medium | Medium | v0.1.0 = Polylang only (Noviplast uses it); WPML in 0.2 |
-| R4 | Cowork ephemerality vs. state persistence | High | Medium | State to `/mnt/user-data/outputs/`; user syncs per session |
+| R4 | State persistence across sessions | High | Medium | State to local files under `output/` in the repo working tree |
 | R5 | Idempotency edge cases | High | Low–Medium | Each step does a lookup before action |
 | R6 | Wrong `digitalLinkUrl` baked into printed QRs | Low (caught Phase 5) | High | Real print + scan test before any client uses production |
 | R7 | Secret leakage via Claude chat history | Medium | High | All secrets in env vars; documented prominently in setup.md |
@@ -962,7 +962,7 @@ NOVIPLAST_WP_APP_PASS=
 
 ### 10.3 System architecture diagram
 
-See [[architecture]] (inline SVG) and `docs/architecture.svg` (canonical file). Top: GS1 Data Source (manual enrichment). Excel export flows into a Claude Cowork session. Orchestrator runs WordPress upsert → verify 200 → GS1 redirect set → QR render, per GTIN per language. Outputs: live WP page, configured resolver redirect, QR file.
+See [[architecture]] (inline SVG) and `docs/architecture.svg` (canonical file). Top: GS1 Data Source (manual enrichment). Excel export flows into a Claude Code session. Orchestrator runs WordPress upsert → verify 200 → GS1 redirect set → QR render, per GTIN per language. Outputs: live WP page, configured resolver redirect, QR file.
 
 ### 10.4 Email to GS1 NL (resolved reference)
 
@@ -1111,7 +1111,6 @@ Source: `https://www.gs1.nl/producten-services/data-exchange/tarieven/`.
 | **QR code powered by GS1** | A standard QR symbol whose payload is a GS1 Digital Link URI. |
 | **Sunrise 2027** | GS1's deadline for retailers to accept 2D barcodes at point-of-sale. |
 | **MCP** | Model Context Protocol — connects tools/services to AI agents like Claude. |
-| **Cowork** | Anthropic product offering a Linux sandbox where Claude runs code and calls MCPs. |
 | **Skill** | A reusable instruction set Claude loads when relevant. |
 | **Application Password** | WordPress core feature for non-interactive REST API automation. |
 | **Polylang / WPML** | The two dominant WordPress multilingual plugins. |
