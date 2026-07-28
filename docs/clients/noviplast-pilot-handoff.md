@@ -23,8 +23,9 @@ path (incl. git workflow) from here to release. DoD checkboxes stay authoritativ
 - **The immediate blocker is COPY.** All 13 have title + image + video (both languages) but **no
   generated tagline/description yet** — they are `generate`-mode. Next = generate copy → review →
   publish. **This is Step 3 below; media Step 1 is done.**
-- `08713195000527` stays a **dirty artifact** (pages 1447/1448 draft, GS1 disabled) — decide: set its
-  `mapping.yml` rows to `skip` (drops it from the allowlist), or republish cleanly. Never silently reuse.
+- `08713195000527` — **RESOLVED 2026-07-28: republished cleanly** (`run_execute --revive`, copy
+  generated in-session first) and now live nl+fr as the 10th GTIN. Pages 1447/1448 are `publish`,
+  GS1 re-enabled. It was held for *missing generated copy*, not a blank feed.
 - Client is **done mapping**; the ~140 unmapped video rows are left to the client. A **GTIN-format bug**
   (the mapping is 13-digit, the pipeline 14-digit) is fixed via `canon_gtin` (zfill-14).
 - **Git:** media landed via **PR #7** + a content-slug/docs PR; the pilot-allowlist + this handoff
@@ -105,8 +106,10 @@ video (both langs); **none have generated copy yet** — that is the blocker.
 6. **Verify each:** public page renders copy + image + video (fetch the HTML, not just 200);
    `GET id.gs1.org/01/{gtin}` → 307 → page → 200 (GET, never HEAD). Client does a **physical phone scan**
    on printed QR samples (the DoD's literal requirement).
-7. Decide **`…0527`** (skip in mapping, or republish clean) and the **fr-QR strategy** (recommended:
-   bare QR→nl + WPML switcher). Tick the three §12 Phase 9 boxes + update `ROADMAP.md`. Docs commit.
+7. **DONE 2026-07-28:** `…0527` republished as the 10th GTIN; **fr-QR strategy decided — keep
+   as-is** (bare QR → nl default page; fr reached via the site language switcher). §12 Phase 9
+   boxes: ≥10-live and no-manual-corrections **ticked**; the physical printed-QR phone-scan stays
+   open with the client.
 - Phase 9.8 (Claude Code operator-flow validation, Step 2) can run alongside — the batch mechanics are proven
   via scripts, so it is not a hard blocker for going live.
 
