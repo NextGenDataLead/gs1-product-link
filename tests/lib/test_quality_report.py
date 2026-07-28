@@ -142,6 +142,22 @@ def test_cross_market_values_shown_side_by_side() -> None:
     assert "056=`Desherbant`" in md
 
 
+def test_wrong_language_values_are_listed() -> None:
+    src = [
+        _issue(
+            "08713195000527",
+            "value_wrong_language",
+            field="product_name.fr",
+            value="Schoonmaakdoek",
+        )
+    ]
+    md = _render(source_issues=src, products=_products("08713195000527"))
+
+    assert "Possible wrong-language values" in md  # summary + §3c heading
+    assert "3c." in md
+    assert "Schoonmaakdoek" in md
+
+
 def test_summary_counts_each_area() -> None:
     md = _render(
         generated_issues=[
