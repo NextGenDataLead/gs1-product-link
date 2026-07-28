@@ -616,6 +616,7 @@ Tool implements **Level A + B** for v0.1.0. Level C documented for future.
 | E19 | State file corrupt / invalid JSON | Backup as `state.json.corrupt.{ts}`, start fresh, log ERROR, **and surface the reset in the plan summary** (see below) | `state.load_state` + `run_plan.py` |
 | E20 | Two `run_execute.py` interleave for same client | Not supported. Document risk in troubleshooting.md. No lockfile in v0.1 | doc only |
 | E21 | Generator configured but a `(GTIN, language)` has no generated tagline (held, blank-1083 product) | Row SKIPPED from the plan so it can never publish a blank page; the gap is still reported via `missing_generation_input` | `state.diff_against_state` + `run_plan.py` |
+| E22 | `media.require_hero_image` set but a GTIN's source `image_url` is blank | GTIN held out of the plan so a hero-less page can never publish; still reported via `value_blank`. A runtime image fetch failure is unaffected (degrades per E7) | `state.diff_against_state` + `run_plan.py` |
 
 **E19 — why recovery is safe, and why it must still be loud.** State is a *cache* of what the
 tool believes it already did, derivable from the live systems, so rebuilding it is safe: every

@@ -207,9 +207,9 @@ def _blocking_lines(
         "### 1b. Blank required page fields — title / image",
         "",
         "A blank **title** (`product_name`) leaves the page with no headline; a blank hero "
-        "**image** (`image_url`) renders it without media. Fix at source in MyGS1 before these "
-        "GTINs are published. _(Not yet auto-enforced by the pipeline — until it is, do not "
-        "publish a GTIN listed here.)_",
+        "**image** (`image_url`) renders it without media. Fix at source in MyGS1. _The pipeline "
+        "holds these out of the plan automatically: a blank title always (E18), a blank image "
+        "when `media.require_hero_image` is set (E22)._",
         "",
         *_table(["GTIN", "Field", "Source attribute"], blank_rows),
         "",
