@@ -36,12 +36,19 @@ Pages serving on `www.noviplast.nl` with an **enabled** GS1 Digital Link record.
 | `08713195006178` | stofzuiger / aspirateur et souffleur | fr | 1566 | https://www.noviplast.nl/fr/noviplast/p-08713195006178/ | enabled | 2026-07-28 | 2 (2026-07-28) |
 | `08713195007496` | onkruidverwijderaar / Désherbant | nl | 1571 | https://www.noviplast.nl/noviplast/p-08713195007496/ | enabled | 2026-07-28 | 2 (2026-07-28) |
 | `08713195007496` | onkruidverwijderaar / Désherbant | fr | 1576 | https://www.noviplast.nl/fr/noviplast/p-08713195007496/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195000527` | microvezeldoek / Schoonmaakdoek | nl | 1447 | https://www.noviplast.nl/noviplast/p-08713195000527/ | enabled | 2026-07-28 | republish (2026-07-28) |
+| `08713195000527` | microvezeldoek / Schoonmaakdoek | fr | 1448 | https://www.noviplast.nl/fr/noviplast/p-08713195000527/ | enabled | 2026-07-28 | republish (2026-07-28) |
 
-**Live GTIN count (via this pipeline): 9** (`…7717` + the 8-GTIN batch of 2026-07-28). The Phase 9
-DoD needs ≥10 — one short. The 5 blank-1083 GTINs are held (see the data-quality report §1),
-and `…0527` (below) is the candidate 10th once republished cleanly. All 9 verified 2026-07-28:
-`GET id.gs1.org/01/<gtin>` → 307 → 200, and both nl + fr pages render copy. **Physical phone-scan
-of a printed QR (Phase 9 DoD) still pending with the client.**
+**Live GTIN count (via this pipeline): 10** (`…7717` + the 8-GTIN batch + `…0527`, all 2026-07-28).
+**The Phase 9 ≥10-live DoD is met.** `…0527` was republished cleanly via `run_execute --revive`
+(copy generated in-session first — it was held for missing generated copy, not a blank feed). The
+5 blank-1083 GTINs remain held (see data-quality report §1). All 10 verified 2026-07-28:
+`GET id.gs1.org/01/<gtin>` → 307 → 200, both nl + fr pages render copy. **The remaining Phase 9
+item is the physical phone-scan of a printed QR — pending with the client.**
+
+**QR language routing (decided 2026-07-28): keep as-is.** A single printed QR encodes the bare
+Digital Link and resolves to the **nl** default page; there is no per-language QR. French buyers
+reach the fr page via the site's language switcher. Accepted for v0.1.
 
 Verify any row with a GET (never HEAD — the resolver 404s to HEAD):
 `curl -sSL -o /dev/null -w '%{http_code}\n' https://id.gs1.org/01/<gtin>` → expect `200` after the 307.
@@ -50,10 +57,7 @@ Verify any row with a GET (never HEAD — the resolver 404s to HEAD):
 
 Pages that exist but are **not** serving (draft), and/or GS1 records that were created then disabled.
 
-| GTIN | Product (nl / fr) | Lang | WP page | WP status | GS1 record | Note |
-|---|---|---|---|---|---|---|
-| `08713195000527` | microvezeldoek / Schoonmaakdoek | nl | 1447 | draft | disabled | "dirty draft"; decide: republish clean (it has 1083 copy + video → candidate 10th GTIN) or leave down. GS1 record persists disabled. |
-| `08713195000527` | microvezeldoek / Schoonmaakdoek | fr | 1448 | draft | disabled | as above |
+_None — `…0527` was republished cleanly on 2026-07-28 and is now in **Currently live** above._
 
 ## Not published by this pipeline
 
