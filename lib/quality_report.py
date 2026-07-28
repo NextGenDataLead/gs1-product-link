@@ -27,7 +27,31 @@ _GENERATED = "content_generated"
 _BLANK = "value_blank"
 _INCONSISTENT = "value_inconsistent_across_markets"
 
-_MAX_SOURCE_SNIPPET = 90
+#: Base fields whose blank makes a published page broken/degraded enough to block it: the
+#: page title (``product_name``) and the hero image (``image_url``). A blank in any other
+#: field (e.g. ``net_content``) only degrades a detail line, so it is a source fix, not a block.
+_BLOCKING_BLANK_FIELDS = frozenset({"product_name", "image_url"})
+
+
+def _blocks_publish(field: str) -> bool:
+    """True when a blank in ``field`` should hold the GTIN out of publishing (title/image)."""
+    return field.split(".", 1)[0] in _BLOCKING_BLANK_FIELDS
+
+
+def _market_cell(issue: SourceIssue) -> str:
+    """All target-market values for a cross-market conflict, chosen (highest-ranked) marked ✓.
+
+    Shows the conflicting texts side by side so a reader can compare on the spot instead of
+    seeing only the winning value. Falls back to the bare value for legacy issues that predate
+    the structured ``market_values`` breakdown.
+    """
+    if not issue.market_values:
+        return _cell(issue.value)
+    parts = [
+        f"{market}=`{_cell(value)}`" + (" ✓" if idx == 0 else "")
+        for idx, (market, value) in enumerate(issue.market_values)
+    ]
+    return " · ".join(parts)
 
 
 def _name(products: dict[str, ProductRecord], gtin: str) -> str:
@@ -71,12 +95,6 @@ def _table(header: list[str], rows: list[list[str]]) -> list[str]:
     return out
 
 
-def _snippet(value: str) -> str:
-    """Escaped, length-capped source text for the generated-copy table."""
-    escaped = _cell(value)
-    return escaped[:_MAX_SOURCE_SNIPPET] + ("…" if len(escaped) > _MAX_SOURCE_SNIPPET else "")
-
-
 def _header_lines(client_id: str, snapshot: str, freshness: dict[str, str]) -> list[str]:
     def f(key: str) -> str:
         return freshness.get(key, "—")
@@ -104,6 +122,8 @@ def _summary_lines(
     by_kind = Counter(i.issue for i in generated_issues)
     held = {i.gtin for i in generated_issues if i.issue == _HELD}
     blanks = [i for i in source_issues if i.issue == _BLANK]
+    blocking_blanks = [i for i in blanks if _blocks_publish(i.field)]
+    degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
     inconsistent = [i for i in source_issues if i.issue == _INCONSISTENT]
     rows = [
         [
@@ -114,26 +134,32 @@ def _summary_lines(
             "**Yes**",
         ],
         [
+            "Source",
+            "Blank title / image",
+            str(len(blocking_blanks)),
+            "Client (MyGS1)",
+            "**Yes**",
+        ],
+        [
             "Copy",
             "Inferred claims to verify",
             str(by_kind[_INFERENCE]),
             "Operator/Client",
             "Review",
         ],
-        ["Copy", "Generated copy to review", str(by_kind[_GENERATED]), "Operator/Client", "Review"],
         [
             "Source",
-            "Blank required fields",
-            str(len(blanks)),
+            "Blank non-critical fields",
+            str(len(degrade_blanks)),
             "Client (MyGS1)",
-            "If in a target GTIN",
+            "Degrade only",
         ],
         [
             "Source",
             "Cross-market inconsistencies",
             str(len(inconsistent)),
             "Client (MyGS1)",
-            "No (cosmetic)",
+            "No — but review",
         ],
         [
             "Media",
@@ -161,70 +187,82 @@ def _summary_lines(
     ]
 
 
-def _held_lines(held: list[str], products: dict[str, ProductRecord]) -> list[str]:
-    rows = [[_label(products, gtin), "Fill attr 1083 in nl + fr"] for gtin in held]
+def _blocking_lines(
+    held: list[str], blocking_blanks: list[SourceIssue], products: dict[str, ProductRecord]
+) -> list[str]:
+    held_rows = [[_label(products, gtin), "Fill attr 1083 in nl + fr"] for gtin in held]
+    blank_rows = [[_label(products, i.gtin), i.field, _cell(i.source)] for i in blocking_blanks]
     return [
-        "## 1. Held — no marketing copy (BLOCKS publish)",
+        "## 1. Blocks publish — fix before these GTINs go live",
         "",
-        "These GTINs have a blank marketing message (attr **1083**) and no feature bullets "
-        "(**1067**), so there is nothing to write honest copy from. They stay in the pilot "
-        "allowlist (so they keep showing up here) but are **excluded from publishing** until copy "
-        "exists. **Action: client fills attr 1083 (nl + fr) in MyGS1**, then re-run generation.",
+        "### 1a. Held — no marketing copy (attr 1083)",
         "",
-        *_table(["GTIN", "Fix"], rows),
+        "Blank marketing message (attr **1083**) and no feature bullets (**1067**) — nothing to "
+        "write honest copy from. These stay in the pilot allowlist (so they keep showing up here) "
+        "but are **held out of publishing** until copy exists. **Action: client fills attr 1083 "
+        "(nl + fr) in MyGS1**, then re-run generation.",
+        "",
+        *_table(["GTIN", "Fix"], held_rows),
+        "",
+        "### 1b. Blank required page fields — title / image",
+        "",
+        "A blank **title** (`product_name`) leaves the page with no headline; a blank hero "
+        "**image** (`image_url`) renders it without media. Fix at source in MyGS1 before these "
+        "GTINs are published. _(Not yet auto-enforced by the pipeline — until it is, do not "
+        "publish a GTIN listed here.)_",
+        "",
+        *_table(["GTIN", "Field", "Source attribute"], blank_rows),
         "",
     ]
 
 
 def _review_lines(
     inferences: list[SourceIssue],
-    generated: list[SourceIssue],
+    generated_count: int,
     products: dict[str, ProductRecord],
     client_id: str,
 ) -> list[str]:
     inf_rows = [[_label(products, i.gtin), _lang(i.field), _cell(i.value)] for i in inferences]
-    gen_rows = [[_label(products, i.gtin), _lang(i.field), _snippet(i.value)] for i in generated]
     return [
-        "## 2. Review before publish",
-        "",
-        "### 2a. Inferred claims — verify each is true",
+        "## 2. Review before publish — inferred claims",
         "",
         "Claims the copy makes that go **beyond the literal feed text** (plausible, but derived). "
-        "Confirm each holds for the real product before it goes live.",
+        "Confirm each holds for the real product before it goes live — this is the actionable "
+        "slice of copy review.",
         "",
         *_table(["GTIN", "Lang", "Claim to verify"], inf_rows),
         "",
-        "### 2b. Generated copy — review against source",
-        "",
-        "Every tagline + Eigenschappen block was LLM-written and should be reviewed. The "
-        "*Source (1083)* column is the marketing text it was written from. Full copy: "
-        f"`output/{client_id}/data/generated_cache.json`.",
-        "",
-        *_table(["GTIN", "Lang", "Source (1083) it was written from"], gen_rows),
+        f"_The full {generated_count} generated-copy row(s) are reviewed in context at the "
+        "operator gate (Review Gate #1); raw text in "
+        f"`output/{client_id}/data/generated_cache.json`._",
         "",
     ]
 
 
 def _source_lines(
-    blanks: list[SourceIssue],
+    degrade_blanks: list[SourceIssue],
     inconsistent: list[SourceIssue],
     products: dict[str, ProductRecord],
 ) -> list[str]:
-    blank_rows = [[_label(products, i.gtin), i.field, _cell(i.source)] for i in blanks]
-    inc_rows = [[_label(products, i.gtin), i.field, _cell(i.value)] for i in inconsistent]
+    blank_rows = [[_label(products, i.gtin), i.field, _cell(i.source)] for i in degrade_blanks]
+    inc_rows = [[_label(products, i.gtin), i.field, _market_cell(i)] for i in inconsistent]
     return [
-        "## 3. Source-data fixes in MyGS1",
+        "## 3. Source-data fixes in MyGS1 (do not block publish)",
         "",
-        "### 3a. Blank required fields",
+        "### 3a. Blank non-critical fields",
+        "",
+        "These degrade the page (e.g. a missing spec line in Technische details) but don't break "
+        "it, so they don't hold the GTIN. Worth filling at source.",
         "",
         *_table(["GTIN", "Field", "Source attribute"], blank_rows),
         "",
-        "### 3b. Values inconsistent across markets (nl vs fr)",
+        "### 3b. Values inconsistent across markets",
         "",
-        "Cosmetic — the visible page headline is the tagline, not this field — but worth aligning "
-        "in MyGS1.",
+        "The same field carries different text across GS1 target markets (priority "
+        "`528 > 056 > 276 > 442`); the tool used the highest-ranked (marked ✓). Both/all market "
+        "texts are shown so you can compare on the spot and align the authoritative one in MyGS1.",
         "",
-        *_table(["GTIN", "Field", "Current value"], inc_rows),
+        *_table(["GTIN", "Field", "Value per market (✓ = used)"], inc_rows),
         "",
     ]
 
@@ -287,18 +325,18 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     """
     held = sorted({i.gtin for i in generated_issues if i.issue == _HELD})
     inferences = [i for i in generated_issues if i.issue == _INFERENCE]
-    generated = sorted(
-        (i for i in generated_issues if i.issue == _GENERATED), key=lambda i: (i.gtin, i.field)
-    )
+    generated_count = sum(1 for i in generated_issues if i.issue == _GENERATED)
     blanks = [i for i in source_issues if i.issue == _BLANK]
+    blocking_blanks = [i for i in blanks if _blocks_publish(i.field)]
+    degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
     inconsistent = [i for i in source_issues if i.issue == _INCONSISTENT]
 
     lines = [
         *_header_lines(client_id, snapshot, freshness),
         *_summary_lines(generated_issues, source_issues, video_map_issues, category_issues),
-        *_held_lines(held, products),
-        *_review_lines(inferences, generated, products, client_id),
-        *_source_lines(blanks, inconsistent, products),
+        *_blocking_lines(held, blocking_blanks, products),
+        *_review_lines(inferences, generated_count, products, client_id),
+        *_source_lines(degrade_blanks, inconsistent, products),
         *_video_lines(video_map_issues, client_id),
         *_category_lines(category_issues),
     ]

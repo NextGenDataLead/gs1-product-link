@@ -726,6 +726,7 @@ def _report_inconsistency(per_market: dict[str, str], where: _Where, acc: _Accum
             issue="value_inconsistent_across_markets",
             value=chosen,
             detail=detail,
+            market_values=tuple(per_market.items()),
         )
     )
     _log.warning("%s for %s %s", where.field, where.gtin, detail)
