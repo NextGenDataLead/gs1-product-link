@@ -179,6 +179,24 @@ def test_categories_clean_line_when_no_issues() -> None:
     assert "No unmapped GPC bricks" in _render()
 
 
+def test_observations_section_renders_notes() -> None:
+    md = _render(
+        observations=[
+            "…0527's French title reads Dutch (Schoonmaakdoek).",
+            "…7496 resolved only after a brief propagation lag — re-check.",
+        ]
+    )
+    assert "## Observations (this run)" in md
+    assert "Schoonmaakdoek" in md
+    assert "propagation lag" in md
+
+
+def test_observations_section_placeholder_when_empty() -> None:
+    md = _render()
+    assert "## Observations (this run)" in md
+    assert "None recorded for this run" in md
+
+
 def test_render_is_deterministic() -> None:
     args = {
         "generated_issues": [_issue("08713195000001", "content_generated", value="src")],
