@@ -174,9 +174,30 @@ def test_render_is_deterministic() -> None:
 def test_pipe_in_value_is_escaped_for_markdown_table() -> None:
     gen = [
         _issue(
-            "08713195000001", "content_generated", field="generated_description.nl", value="a | b"
+            "08713195000001",
+            "generation_inference",
+            field="generated_description.nl",
+            value="a | b",
         )
     ]
     md = _render(generated_issues=gen, products=_products("08713195000001"))
     # the raw pipe must be escaped so it does not break the table column
     assert "a \\| b" in md
+
+
+def test_generated_copy_is_a_pointer_not_a_per_row_dump() -> None:
+    # 2b used to list every generated row; now only a count + pointer, no per-row source text.
+    gen = [
+        _issue(
+            "08713195000001", "content_generated", field="generated_description.nl", value="src"
+        ),
+        _issue(
+            "08713195000002", "content_generated", field="generated_description.fr", value="txt"
+        ),
+    ]
+    md = _render(generated_issues=gen, products=_products("08713195000001", "08713195000002"))
+
+    assert "2 generated-copy row(s) are reviewed" in md  # count-based pointer
+    assert "generated_cache.json" in md
+    assert "src" not in md and "txt" not in md  # no per-row source dump
+    assert "2b." not in md  # the old subsection is gone

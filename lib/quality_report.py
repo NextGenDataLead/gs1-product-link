@@ -27,8 +27,6 @@ _GENERATED = "content_generated"
 _BLANK = "value_blank"
 _INCONSISTENT = "value_inconsistent_across_markets"
 
-_MAX_SOURCE_SNIPPET = 90
-
 #: Base fields whose blank makes a published page broken/degraded enough to block it: the
 #: page title (``product_name``) and the hero image (``image_url``). A blank in any other
 #: field (e.g. ``net_content``) only degrades a detail line, so it is a source fix, not a block.
@@ -97,12 +95,6 @@ def _table(header: list[str], rows: list[list[str]]) -> list[str]:
     return out
 
 
-def _snippet(value: str) -> str:
-    """Escaped, length-capped source text for the generated-copy table."""
-    escaped = _cell(value)
-    return escaped[:_MAX_SOURCE_SNIPPET] + ("…" if len(escaped) > _MAX_SOURCE_SNIPPET else "")
-
-
 def _header_lines(client_id: str, snapshot: str, freshness: dict[str, str]) -> list[str]:
     def f(key: str) -> str:
         return freshness.get(key, "—")
@@ -155,7 +147,6 @@ def _summary_lines(
             "Operator/Client",
             "Review",
         ],
-        ["Copy", "Generated copy to review", str(by_kind[_GENERATED]), "Operator/Client", "Review"],
         [
             "Source",
             "Blank non-critical fields",
@@ -227,29 +218,23 @@ def _blocking_lines(
 
 def _review_lines(
     inferences: list[SourceIssue],
-    generated: list[SourceIssue],
+    generated_count: int,
     products: dict[str, ProductRecord],
     client_id: str,
 ) -> list[str]:
     inf_rows = [[_label(products, i.gtin), _lang(i.field), _cell(i.value)] for i in inferences]
-    gen_rows = [[_label(products, i.gtin), _lang(i.field), _snippet(i.value)] for i in generated]
     return [
-        "## 2. Review before publish",
-        "",
-        "### 2a. Inferred claims — verify each is true",
+        "## 2. Review before publish — inferred claims",
         "",
         "Claims the copy makes that go **beyond the literal feed text** (plausible, but derived). "
-        "Confirm each holds for the real product before it goes live.",
+        "Confirm each holds for the real product before it goes live — this is the actionable "
+        "slice of copy review.",
         "",
         *_table(["GTIN", "Lang", "Claim to verify"], inf_rows),
         "",
-        "### 2b. Generated copy — review against source",
-        "",
-        "Every tagline + Eigenschappen block was LLM-written and should be reviewed. The "
-        "*Source (1083)* column is the marketing text it was written from. Full copy: "
-        f"`output/{client_id}/data/generated_cache.json`.",
-        "",
-        *_table(["GTIN", "Lang", "Source (1083) it was written from"], gen_rows),
+        f"_The full {generated_count} generated-copy row(s) are reviewed in context at the "
+        "operator gate (Review Gate #1); raw text in "
+        f"`output/{client_id}/data/generated_cache.json`._",
         "",
     ]
 
@@ -340,9 +325,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     """
     held = sorted({i.gtin for i in generated_issues if i.issue == _HELD})
     inferences = [i for i in generated_issues if i.issue == _INFERENCE]
-    generated = sorted(
-        (i for i in generated_issues if i.issue == _GENERATED), key=lambda i: (i.gtin, i.field)
-    )
+    generated_count = sum(1 for i in generated_issues if i.issue == _GENERATED)
     blanks = [i for i in source_issues if i.issue == _BLANK]
     blocking_blanks = [i for i in blanks if _blocks_publish(i.field)]
     degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
@@ -352,7 +335,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
         *_header_lines(client_id, snapshot, freshness),
         *_summary_lines(generated_issues, source_issues, video_map_issues, category_issues),
         *_blocking_lines(held, blocking_blanks, products),
-        *_review_lines(inferences, generated, products, client_id),
+        *_review_lines(inferences, generated_count, products, client_id),
         *_source_lines(degrade_blanks, inconsistent, products),
         *_video_lines(video_map_issues, client_id),
         *_category_lines(category_issues),
