@@ -1170,7 +1170,7 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 
 ### Phase 9 — Pilot end-to-end
 - [x] ≥10 real products live on pilot WP staging → production _(10 live 2026-07-28: `…7717` + 8-GTIN batch + `…0527`; see `docs/clients/noviplast-live-log.md`)_
-- [ ] Every printed QR sample scans and resolves correctly _(resolves ✓ — all 10 `GET id.gs1.org/01/<gtin>` → 307 → 200; physical phone-scan of a printed sample still pending with the client)_
+- [x] Every printed QR sample scans and resolves correctly _(all 10 resolve `GET id.gs1.org/01/<gtin>` → 307 → 200; physical phone-scan of a printed sample confirmed working 2026-07-28)_
 - [x] No manual corrections needed during the run _(both waves + the `…0527` republish ran 0-error; verification was read-only)_
 
 > Status (2026-07-19): the deferred **execute + resolution leg is proven**. The first real GTIN

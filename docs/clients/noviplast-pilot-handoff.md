@@ -108,8 +108,8 @@ video (both langs); **none have generated copy yet** — that is the blocker.
    on printed QR samples (the DoD's literal requirement).
 7. **DONE 2026-07-28:** `…0527` republished as the 10th GTIN; **fr-QR strategy decided — keep
    as-is** (bare QR → nl default page; fr reached via the site language switcher). §12 Phase 9
-   boxes: ≥10-live and no-manual-corrections **ticked**; the physical printed-QR phone-scan stays
-   open with the client.
+   boxes: all three **ticked** — ≥10-live, no-manual-corrections, and the physical printed-QR
+   phone-scan (confirmed working 2026-07-28). **Phase 9 is complete.**
 - Phase 9.8 (Claude Code operator-flow validation, Step 2) can run alongside — the batch mechanics are proven
   via scripts, so it is not a hard blocker for going live.
 

@@ -43,8 +43,8 @@ Pages serving on `www.noviplast.nl` with an **enabled** GS1 Digital Link record.
 **The Phase 9 ≥10-live DoD is met.** `…0527` was republished cleanly via `run_execute --revive`
 (copy generated in-session first — it was held for missing generated copy, not a blank feed). The
 5 blank-1083 GTINs remain held (see data-quality report §1). All 10 verified 2026-07-28:
-`GET id.gs1.org/01/<gtin>` → 307 → 200, both nl + fr pages render copy. **The remaining Phase 9
-item is the physical phone-scan of a printed QR — pending with the client.**
+`GET id.gs1.org/01/<gtin>` → 307 → 200, both nl + fr pages render copy. **Physical phone-scan of a
+printed QR confirmed working 2026-07-28 — Phase 9 is complete (all three §12 DoD boxes met).**
 
 **QR language routing (decided 2026-07-28): keep as-is.** A single printed QR encodes the bare
 Digital Link and resolves to the **nl** default page; there is no per-language QR. French buyers
