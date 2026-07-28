@@ -231,6 +231,8 @@ clients:
       image_write_shape: id          # confirm the live write shape before trusting (page-adapter §3)
       video_transcode: true          # .mpg/.mpeg won't play in-browser -> ffmpeg to H.264 MP4
       restrict_to_mapped_gtins: true # only GTINs with a confirmed video in every language may run
+      require_hero_image: true       # hold any GTIN whose source image_url is blank (E22); a
+                                     # runtime fetch failure still degrades gracefully (E7)
       # ffmpeg_bin: ffmpeg           # override if ffmpeg is not on PATH
       video_folders:
         # Paths are case-sensitive on Linux — match the folders on disk exactly.

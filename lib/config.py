@@ -318,6 +318,11 @@ class MediaConfig(BaseModel):
     # When true, run_plan and run_execute restrict to GTINs with a client-confirmed video in every
     # language (see lib.media_video.fully_mapped_gtins) — every other GTIN is blocked from runs.
     restrict_to_mapped_gtins: bool = False
+    # When true, a GTIN whose SOURCE image_url is blank is held out of the plan (E22) — a hero
+    # image is treated as required, not optional. Off by default so text-only/imageless clients
+    # are unaffected. This is a plan-time source-completeness gate; a runtime image fetch failure
+    # (404, undecodable) still degrades gracefully and publishes the page (E7) regardless.
+    require_hero_image: bool = False
 
 
 class ClientConfig(BaseModel):

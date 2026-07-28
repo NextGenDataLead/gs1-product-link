@@ -233,12 +233,13 @@ def _classify(
     return PlanClassification.CHANGED, diff or None
 
 
-def diff_against_state(
+def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseline, and each policy flag
     products: list[ProductRecord],
     state: State,
     languages: list[str],
     wordpress: WordPressConfig,
     require_generated_copy: bool = False,
+    require_hero_image: bool = False,
 ) -> list[PlanRow]:
     """Classify each ``(GTIN, language)`` against prior state, building plan rows (§4.8, §8.2).
 
@@ -263,6 +264,9 @@ def diff_against_state(
         require_generated_copy: When True (the client has a generator configured), skip any
             ``(GTIN, language)`` lacking a generated tagline so a copy-less product is never
             published as a blank page (E21). Defaults to False for generator-less clients.
+        require_hero_image: When True (``media.require_hero_image``), hold any GTIN whose source
+            ``image_url`` is blank so a hero-less page is never published (E22). Off by default; a
+            runtime image fetch failure still degrades gracefully and publishes (E7).
 
     Returns:
         One :class:`~lib.records.PlanRow` per planned ``(GTIN, language)``, in input
@@ -281,6 +285,9 @@ def diff_against_state(
 
     rows: list[PlanRow] = []
     for product in products:
+        if require_hero_image and not (product.image_url or "").strip():  # E22
+            _log.warning("SKIPPED %s: blank source image (held; require_hero_image)", product.gtin)
+            continue
         for language in languages:
             if language not in product.product_name.values:  # E18
                 _log.warning(

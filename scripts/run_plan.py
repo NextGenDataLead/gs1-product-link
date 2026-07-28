@@ -236,6 +236,7 @@ def _build_plan(
         cfg.wordpress.languages,
         cfg.wordpress,
         require_generated_copy=cfg.generator is not None,
+        require_hero_image=cfg.media is not None and cfg.media.require_hero_image,
     )
     counts = {c: sum(1 for row in rows if row.classification is c) for c in PlanClassification}
     plan = Plan(
