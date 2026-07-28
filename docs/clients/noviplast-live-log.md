@@ -20,8 +20,28 @@ Pages serving on `www.noviplast.nl` with an **enabled** GS1 Digital Link record.
 |---|---|---|---|---|---|---|---|
 | `08713195007717` | Hogedrukreiniger / Nettoyeur haute pression | nl | 1449 | https://www.noviplast.nl/noviplast/p-08713195007717/ | enabled | 2026-07-19 | pilot proof |
 | `08713195007717` | Hogedrukreiniger / Nettoyeur haute pression | fr | 1450 | https://www.noviplast.nl/fr/noviplast/p-08713195007717/ | enabled | 2026-07-19 | pilot proof |
+| `08713195000862` | raamwisser / Raclette | nl | 1501 | https://www.noviplast.nl/noviplast/p-08713195000862/ | enabled | 2026-07-28 | 1 (2026-07-28) |
+| `08713195000862` | raamwisser / Raclette | fr | 1506 | https://www.noviplast.nl/fr/noviplast/p-08713195000862/ | enabled | 2026-07-28 | 1 (2026-07-28) |
+| `08713195005409` | siliconenbak / plateau en silicone | nl | 1511 | https://www.noviplast.nl/noviplast/p-08713195005409/ | enabled | 2026-07-28 | 1 (2026-07-28) |
+| `08713195005409` | siliconenbak / plateau en silicone | fr | 1516 | https://www.noviplast.nl/fr/noviplast/p-08713195005409/ | enabled | 2026-07-28 | 1 (2026-07-28) |
+| `08713195007915` | lamp / Lampe | nl | 1521 | https://www.noviplast.nl/noviplast/p-08713195007915/ | enabled | 2026-07-28 | 1 (2026-07-28) |
+| `08713195007915` | lamp / Lampe | fr | 1526 | https://www.noviplast.nl/fr/noviplast/p-08713195007915/ | enabled | 2026-07-28 | 1 (2026-07-28) |
+| `08713195004181` | onkruidborstel / Set desherbant | nl | 1531 | https://www.noviplast.nl/noviplast/p-08713195004181/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195004181` | onkruidborstel / Set desherbant | fr | 1536 | https://www.noviplast.nl/fr/noviplast/p-08713195004181/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195004778` | afvoerzeef / Drain saver | nl | 1541 | https://www.noviplast.nl/noviplast/p-08713195004778/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195004778` | afvoerzeef / Drain saver | fr | 1546 | https://www.noviplast.nl/fr/noviplast/p-08713195004778/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195005546` | groefborstel / Brosse à rainures | nl | 1551 | https://www.noviplast.nl/noviplast/p-08713195005546/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195005546` | groefborstel / Brosse à rainures | fr | 1556 | https://www.noviplast.nl/fr/noviplast/p-08713195005546/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195006178` | stofzuiger / aspirateur et souffleur | nl | 1561 | https://www.noviplast.nl/noviplast/p-08713195006178/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195006178` | stofzuiger / aspirateur et souffleur | fr | 1566 | https://www.noviplast.nl/fr/noviplast/p-08713195006178/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195007496` | onkruidverwijderaar / Désherbant | nl | 1571 | https://www.noviplast.nl/noviplast/p-08713195007496/ | enabled | 2026-07-28 | 2 (2026-07-28) |
+| `08713195007496` | onkruidverwijderaar / Désherbant | fr | 1576 | https://www.noviplast.nl/fr/noviplast/p-08713195007496/ | enabled | 2026-07-28 | 2 (2026-07-28) |
 
-**Live GTIN count (via this pipeline): 1.** (The Phase 9 DoD needs ≥10.)
+**Live GTIN count (via this pipeline): 9** (`…7717` + the 8-GTIN batch of 2026-07-28). The Phase 9
+DoD needs ≥10 — one short. The 5 blank-1083 GTINs are held (see the data-quality report §1),
+and `…0527` (below) is the candidate 10th once republished cleanly. All 9 verified 2026-07-28:
+`GET id.gs1.org/01/<gtin>` → 307 → 200, and both nl + fr pages render copy. **Physical phone-scan
+of a printed QR (Phase 9 DoD) still pending with the client.**
 
 Verify any row with a GET (never HEAD — the resolver 404s to HEAD):
 `curl -sSL -o /dev/null -w '%{http_code}\n' https://id.gs1.org/01/<gtin>` → expect `200` after the 307.
