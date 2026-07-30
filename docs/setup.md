@@ -125,7 +125,8 @@ Nine scripts, all invoked as modules. Every one takes the `client_id` — the ke
 `clients.yml` — as its first positional argument, except `inspect_export`, which takes a file path.
 
 Exit codes are uniform: **0** success, **1** errors in the work itself, **2** configuration or usage
-error. Run any of them with `--help` for the authoritative flag list.
+error. Run any of them with `--help` for the authoritative flag list — `inspect_export` takes a bare
+path and no flags, so its `--help` just prints its one-line usage.
 
 ### Read-only steps — safe to run any time, no credentials
 

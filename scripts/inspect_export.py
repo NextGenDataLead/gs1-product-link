@@ -15,9 +15,12 @@ import sys
 from typing import NamedTuple
 
 import yaml
+from openpyxl.utils.exceptions import InvalidFileException
 
 from lib.gdsn import GdsnColumn, GdsnSheet, read_workbook
 from lib.records import _coerce_cell
+
+_USAGE = "usage: python -m scripts.inspect_export EXCEL_PATH"
 
 _KEY_SEGMENTS = frozenset(
     {
@@ -154,12 +157,18 @@ def _print_report(sheets: dict[str, GdsnSheet]) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns the process exit code."""
     args = argv if argv is not None else sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print(_USAGE)
+        return 0
     if len(args) != 1:
-        print("usage: python -m scripts.inspect_export EXCEL_PATH", file=sys.stderr)
+        print(_USAGE, file=sys.stderr)
         return 2
     try:
         sheets = read_workbook(args[0])
-    except (FileNotFoundError, OSError) as exc:
+    except (FileNotFoundError, OSError, InvalidFileException) as exc:
+        # InvalidFileException is openpyxl's own and does NOT subclass OSError, so
+        # without it a non-.xlsx argument (a typo, a .xls, or a stray flag) escapes
+        # as an unhandled traceback instead of this message.
         print(f"cannot read export: {exc}", file=sys.stderr)
         return 1
 
