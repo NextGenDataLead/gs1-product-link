@@ -14,20 +14,14 @@ Derived from `lib/gs1_dl_client.py` and `lib/config.py`.
 | OAuth2 **client id + client secret**, per environment | How the tool authenticates. Issued via MyGS1 / the developer portal. | Yes |
 | The **account number**, per environment | Digital Links are created under it. | Yes |
 
-> **The Digital Link contract is the one that gets missed.** Without it, every write returns
-> `400 21011 "No valid contract found."` — with perfectly valid credentials. It is a GS1-side
-> provisioning matter: no code change or config change fixes it, the account needs the contract
-> added. It is a *different* contract from the Data Source one that gave you your GTINs. During this
-> project's own build, a sandbox account had working credentials and no Digital Link contract, and
-> that blocked the phase until GS1 provisioned it.
+> **The Digital Link contract is the one that gets missed.** Without it, every write returns `400 21011 "No valid contract found."` — with perfectly valid credentials. It is a GS1-side provisioning matter: no code change or config change fixes it, the account needs the contract added. It is a *different* contract from the Data Source one that gave you your GTINs. During this project's own build, a sandbox account had working credentials and no Digital Link contract, and that blocked the phase until GS1 provisioned it.
 
 **Cost:** the Digital Link API this tool automates is **free**, as is the MyGS1 Excel export. The only
 GS1 cost is the Data Source contract you already have. See [`costs.md`](costs.md).
 
 ## Authentication: OAuth2 client-credentials
 
-The API uses **OAuth2 client-credentials with a short-lived JWT** — not a static API token. (Early
-planning documents assumed a static token; they were wrong, and the code is the authority.)
+The API uses **OAuth2 client-credentials with a short-lived JWT** — not a static API token.
 
 ```
 POST https://{host}/authorization/token
@@ -35,12 +29,9 @@ POST https://{host}/authorization/token
   -> {"access_token": "...", "token_type": "...", "expires_in": 3600}
 ```
 
-The client mints the token on first use, caches it, and re-mints **60 s before expiry**. If the
-response omits `expires_in`, it assumes 3600 s. The token is then sent as a `Bearer` header on every
-call. The `accountNumber` claim inside the token is the account the entry is created under.
+The client mints the token on first use, caches it, and re-mints **60 s before expiry**. If the response omits `expires_in`, it assumes 3600 s. The token is then sent as a `Bearer` header on every call. The `accountNumber` claim inside the token is the account the entry is created under.
 
-**A 4xx from the token endpoint raises `ConfigError`, not `GS1APIError`** — rejected credentials are a
-configuration fault, not an API outage. Errors are logged with the body scrubbed.
+**A 4xx from the token endpoint raises `ConfigError`, not `GS1APIError`** — rejected credentials are a configuration fault, not an API outage. Errors are logged with the body scrubbed.
 
 ## Hosts and paths
 
@@ -76,8 +67,7 @@ gs1:
     resolver_domain_name: null
 ```
 
-These are env var **names**. The values belong in `.env` and nowhere else. `lib/config.py` is the
-authoritative field list including defaults.
+These are env var **names**. The values belong in `.env` and nowhere else. `lib/config.py` is the authoritative field list including defaults.
 
 Link entries are declared separately, one per link type:
 
@@ -105,10 +95,7 @@ Also confirm in MyGS1 that the entry is **enabled** and carries the expected lin
 
 ### One QR, one default language
 
-A bare `https://id.gs1.org/01/{gtin14}` resolves to the **default** language target only. There is no
-robust way to make a single printed QR route by the scanner's language — so a multilingual site
-should send the QR to the default language and let visitors switch languages on the site. The pilot
-made exactly this call.
+A bare `https://id.gs1.org/01/{gtin14}` resolves to the **default** language target only. There is no robust way to make a single printed QR route by the scanner's language — so a multilingual site should send the QR to the default language and let visitors switch languages on the site. The pilot made exactly this call.
 
 ## Deactivating an entry
 
@@ -119,31 +106,19 @@ python -m scripts.run_unpublish {client_id} --gtin {gtin} --dry-run   # preview
 python -m scripts.run_unpublish {client_id} --gtin {gtin}
 ```
 
-`retract` PATCHes `isEnabled` to `false` — the API equivalent of clearing MyGS1's *"Activeer GS1
-Digital Link"* checkbox. It **deliberately leaves the links intact**: deactivating already stops the
-entry resolving, so wiping the link/language/title configuration would buy nothing and cost the
-configuration a later reactivation would have to re-enter by hand.
+`retract` PATCHes `isEnabled` to `false` — the API equivalent of clearing MyGS1's *"Activeer GS1 Digital Link"* checkbox. It **deliberately leaves the links intact**: deactivating already stops the entry resolving, so wiping the link/language/title configuration would buy nothing and cost the configuration a later reactivation would have to re-enter by hand.
 
-Retracting a GTIN that has no entry returns `False` without writing, so it is safe in a teardown, and
-retracting twice re-sends the same end state.
+Retracting a GTIN that has no entry returns `False` without writing, so it is safe in a teardown, and retracting twice re-sends the same end state.
 
 **The consequence:** a deactivated, linkless record stays on the account **forever**. Therefore:
 
-> Never point a smoke test at a real product's GTIN. Use a disposable GTIN in your company prefix and
-> nothing else. The staging tests in this repo enforce that twice — the GTIN must sit in an
-> allowlisted prefix, **and** a pre-flight aborts if a page exists that the tests did not create.
-> Neither guard is sufficient alone: a real product's GTIN passes the prefix check, and the tests
-> would then overwrite its live page with every ownership guard correctly passing.
+> Never point a smoke test at a real product's GTIN. Use a disposable GTIN in your company prefix and nothing else. The staging tests in this repo enforce that twice — the GTIN must sit in an allowlisted prefix, **and** a pre-flight aborts if a page exists that the tests did not create. Neither guard is sufficient alone: a real product's GTIN passes the prefix check, and the tests would then overwrite its live page with every ownership guard correctly passing.
 
 ## Safety guards
 
-- **`OverwriteError`** — `safe_upsert` reads before it writes and refuses to replace an existing
-  Digital Link unless `overwrite=True`, returning the prior snapshot for rollback. Mandatory for any
-  production run.
-- **The production guard** — a real `run_execute` against `environment: production` is refused with
-  exit 2 unless `--i-understand-production` is passed.
-- **Retry budgets** — 429 retries up to 5 times, 5xx and timeouts up to 3, both with exponential
-  backoff. 400/401/403 are terminal and never retried.
+- **`OverwriteError`** — `safe_upsert` reads before it writes and refuses to replace an existing Digital Link unless `overwrite=True`, returning the prior snapshot for rollback. Mandatory for any production run.
+- **The production guard** — a real `run_execute` against `environment: production` is refused with exit 2 unless `--i-understand-production` is passed.
+- **Retry budgets** — 429 retries up to 5 times, 5xx and timeouts up to 3, both with exponential backoff. 400/401/403 are terminal and never retried.
 
 ## Errors
 
@@ -156,9 +131,7 @@ retracting twice re-sends the same end state.
 | `GS1APIError` with `status_code == 0` | Transport failure below HTTP, not a server response. |
 | `OverwriteError` | The GTIN already has a live entry. Confirm you mean to replace it. |
 
-`GS1APIError` carries `error_results` (the parsed v2 `ErrorResult[]` when the body follows that
-shape), `response_body` (raw fallback), and `request_id`. **Quote the `request_id` when reporting
-anything to GS1.** Full reference: [`troubleshooting.md`](troubleshooting.md).
+`GS1APIError` carries `error_results` (the parsed v2 `ErrorResult[]` when the body follows that shape), `response_body` (raw fallback), and `request_id`. **Quote the `request_id` when reporting anything to GS1.** Full reference: [`troubleshooting.md`](troubleshooting.md).
 
 ## See also
 
