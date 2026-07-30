@@ -63,25 +63,37 @@ NOVIPLAST_WP_APP_PASS=abcd EFGH ijkl MNOP qrst UVWX     # BROKEN — silently em
 ```
 
 Unquoted, `source .env` stops at the first space and the variable loads as `abcd`. The symptom is a
-confusing `401` even though the password is right. Keep the quotes. (The same applies to a JSON `env`
-block — paste the whole value including its spaces.)
+confusing `401` even though the password is right. `python-dotenv` — which the scripts use — parses the
+unquoted form correctly, so this bites only when you source `.env` by hand, as the staging tests
+require. Keep the quotes and both paths work.
 
 ### `MissingCredentialError` when you expected the credentials to be there
 
-**Nothing in the code loads `.env`** — there is no `python-dotenv` dependency and no `load_dotenv()`
-call. Secrets are read with a bare `os.environ[...]` lookup, so the variable has to already be in the
-environment of whatever runs the script. Two ways it gets there:
+`python -m scripts.<name>` loads `.env` for you — `load_env()` in `lib/env.py`, called from each
+script's `if __name__ == "__main__":` block. So if a credential is missing, work through this order:
 
-- **Claude Code's `env` block** (`~/.claude/settings.json` or `.claude/settings.json`) — injected into
-  every command Claude Code runs. This is how the project normally operates, and why runs from chat
-  "just work" with nothing sourced. If the credentials are here, check for a typo in the variable
-  **name**: it must match the name in `clients.yml` exactly.
-- **Your shell** — then you must export them yourself, *in the same command*:
-  ```bash
-  set -a; source .env; set +a && python -m scripts.run_plan {client_id}
-  ```
-  **Environment variables do not survive between separate Claude Code tool calls**, so sourcing in one
-  call and running the script in the next loses them silently. Keep both in one command.
+1. **Is the variable in `.env`, at the repository root?** That file is the single source of truth
+   (OD-1). `lib/env.py` resolves it relative to the repo, not your working directory, so *where* you
+   run from does not matter.
+2. **Does the name match `clients.yml` exactly?** `clients.yml` stores env var **names**, not values;
+   a typo in either place produces this error with everything apparently present.
+3. **Is the value non-empty?** A bare `NAME=` in `.env` sets the variable to an empty string, which
+   reads as present but fails at the API. Watch for the unquoted-password trap above.
+4. **Is something already exporting that name?** `load_env()` uses `override=False`, so a variable
+   already in your environment wins over `.env` — deliberately, so CI and one-off overrides work. An
+   empty or stale export therefore beats a correct `.env`. `unset NAME` and retry.
+
+**Two places `.env` is *not* loaded**, by design:
+
+- **The test suite.** `load_env()` sits in the `__main__` block rather than in `main()`, and the tests
+  call `main()` directly. `.env` holds all four variables the staging guards gate on, so loading it in
+  the test path would arm tests that write to live WordPress and GS1 production. To run those
+  deliberately: `set -a; source .env; set +a && pytest -m staging`.
+- **`lib/` at import time.** A library must not have import side effects.
+
+If you are sourcing manually, note that **environment variables do not survive between separate Claude
+Code tool calls** — sourcing in one call and running in the next loses them silently. Keep both in one
+command with `&&`.
 
 ### A real production run is refused with exit 2
 
@@ -175,8 +187,8 @@ An environment variable named in `clients.yml` is unset. Resolution is **lazy**,
 the first API call, not at startup (**E15**).
 
 **Fix:** see [the section above](#missingcredentialerror-when-you-expected-the-credentials-to-be-there)
-— either the Claude Code `env` block or `set -a; source .env; set +a &&` in the same command. Remember
-`clients.yml` holds env var *names*; the values live elsewhere.
+for the checklist. In short: the value belongs in `.env`, which scripts load automatically; remember
+`clients.yml` holds env var *names*, never values.
 
 ### `ExportParseError`
 

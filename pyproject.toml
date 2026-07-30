@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gs1-digital-link-orchestrator"
-version = "0.0.1"
+version = "0.1.0"
 description = "Turn GS1 Data Source exports into GS1 Digital Link QR codes and WordPress product pages."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -17,6 +17,7 @@ dependencies = [
     "qrcode[pil]>=7.4",
     "pystache>=0.6",
     "jsonschema>=4.21",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

@@ -46,6 +46,7 @@ from datetime import UTC, datetime
 from pydantic import ValidationError
 
 from lib.config import ClientConfig, get_client
+from lib.env import load_env
 from lib.errors import ConfigError, StateError
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient
@@ -192,4 +193,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    load_env()
     raise SystemExit(main())

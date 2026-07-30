@@ -1376,11 +1376,22 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > tariffs points at the GS1 NL price page, which should be re-checked at release.
 
 ### Phase 11 — Release
-- [ ] Version bumped in `pyproject.toml` and `package.json`
-- [ ] `CHANGELOG.md` populated
-- [ ] Git tag `v0.1.0` pushed
-- [ ] MCP registry entry submitted
-- [ ] Announcement drafted
+- [x] Version bumped in `pyproject.toml` and `package.json` — `0.0.1` → `0.1.0`, also applied to
+      the three `mcps/*/package.json` workspace members and `package-lock.json`.
+- [x] `CHANGELOG.md` populated — `[Unreleased]` was 92 commits stale (last touched 2026-07-18), so
+      Phases 8, 9, 9.5, 9.8, 10 and the generator were reconstructed from the log and the section
+      promoted to `[0.1.0]`. The footer `[0.0.1]` link pointed at a release tag that never existed;
+      it now points at the commit that set the version.
+- [x] Git tag `v0.1.0` pushed
+- [ ] ~~MCP registry entry submitted~~ — **deferred, see [OD-2](OPEN_DECISIONS.md#od-2--publish-the-three-mcp-servers-to-npm-or-keep-them-private).**
+      Submission requires the npm packages to be published and publicly resolvable (ownership is
+      verified by reading the published `package.json` for an `mcpName` matching `server.json`).
+      All three are `"private": true`. The `server.json` files are **written and committed** at
+      `mcps/*/server.json`; only the publish-and-submit step is outstanding, and it is a decision
+      rather than a task.
+- [x] Announcement drafted — `docs/announcement-v0.1.0.md`. Drafted only; **not published**, and
+      it carries a pre-publication checklist (rotate the exposed password, confirm the client is
+      willing to be named, re-check the tariff claims).
 
 ---
 

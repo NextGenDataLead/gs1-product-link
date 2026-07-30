@@ -9,10 +9,41 @@ through here with the outcome.
 
 ---
 
-## OD-1 — Where credentials live: Claude Code `settings.json` vs `.env`
+## ~~OD-1 — Where credentials live: Claude Code `settings.json` vs `.env`~~ — RESOLVED
 
-**Status:** open · **Raised:** 2026-07-30 (Phase 10 doc review) · **Owner:** operator ·
-**Blocks:** nothing, but touches the credential path, so resolve it before Phase 11 release.
+**Status:** **resolved 2026-07-30 — option B adopted** · **Raised:** 2026-07-30 (Phase 10 doc review) ·
+**Owner:** operator
+
+> **Outcome.** `.env` at the repository root is now the single source of truth. `python-dotenv` is a
+> dependency; `lib/env.py` exposes `load_env()` (`override=False`); each of the nine `scripts/*.py`
+> calls it from its `if __name__ == "__main__":` block. The `env` block was deleted from
+> `~/.claude/settings.json` (backup: `~/.claude/settings.json.bak-od1-20260730`, which still contains
+> the pre-rotation secrets — delete it once rotation is done). `.env` is now `chmod 600`.
+>
+> **Two corrections to the evidence below, found while implementing it:**
+>
+> 1. **The divergence table was wrong.** `.env` already contained `NOVIPLAST_GS1_CLIENT_ID` and
+>    `NOVIPLAST_GS1_CLIENT_SECRET`, populated — plus the sandbox pair and `GS1_PROD_ACCOUNT`. The
+>    `settings.json` block held only **three** keys, all three also in `.env`, and a SHA-256 comparison
+>    confirmed all three values were **identical**. So nothing had to be moved and no value was at risk
+>    of being lost; `.env` was already a strict superset. The claim that "a script run from a plain
+>    terminal cannot reach GS1 at all" was therefore false — the file was complete, just unread.
+> 2. **The recommended call site was wrong, and dangerously so.** The sketch said to call `load_env()`
+>    from each script's `main()`. But nine test modules under `tests/scripts/` call `main()` directly,
+>    so that placement loads `.env` — production credentials and all four staging-guard variables —
+>    into the pytest process on every plain `pytest` run. It reproduces the exact hazard the
+>    "never in `conftest.py`" rule exists to prevent, by a route the rule did not name. The correct
+>    site is the `if __name__ == "__main__":` block: `python -m scripts.x` loads `.env`, `main()` under
+>    test does not.
+>
+> **Verified:** full suite passes in a `env -i` clean environment (522 passed, 2 skipped, 5 deselected);
+> after running all 116 `tests/scripts` tests there, none of `NOVIPLAST_WP_APP_PASS`,
+> `NOVIPLAST_GS1_CLIENT_ID`, `WP_STAGING_URL`, `STAGING_GTIN` is present in the process environment;
+> and `runpy` of `scripts.run_plan` as `__main__` in that same clean environment *does* populate them.
+> The MCP caveat below was checked and is moot: global and project `mcpServers` are both empty and
+> there is no `.mcp.json`, so no server depended on the injected block.
+
+*The original analysis is preserved below.*
 
 ### Origin
 
@@ -137,17 +168,70 @@ launch config.
 
 ### Follow-up actions (independent of which option is chosen)
 
-- [ ] **Rotate `NOVIPLAST_WP_APP_PASS`** — it was printed in clear text in a chat transcript on
-      2026-07-30. WP Admin → Users → `automation-bot` → Application Passwords → revoke, reissue, and
-      update **both** stores until the split is resolved. GS1 secrets were **not** exposed.
-- [ ] **`chmod 600 .env`** — currently `0644`, world-readable on the machine. Worth doing regardless.
-- [ ] **Consider branch protection on `main`.** The repository is **public**; the only collaborator is
-      the owner, so outsiders cannot push — but `main` has **no protection**, so anything holding the
-      owner's token (including an assistant session) can push directly or force-push over history.
-      Requiring a PR plus the `Lint, type-check, and test` check would close that. Owner's call.
+- [ ] **Rotate `NOVIPLAST_WP_APP_PASS`** — **STILL OUTSTANDING.** It was printed in clear text in a chat
+      transcript on 2026-07-30. WP Admin → Users → `automation-bot` → Application Passwords → revoke and
+      reissue. Now that OD-1 is resolved this is a **one-file edit** (`.env`); afterwards delete
+      `~/.claude/settings.json.bak-od1-20260730`, which still holds the old value. GS1 secrets were
+      **not** exposed.
+- [x] **`chmod 600 .env`** — done 2026-07-30 (was `0644`).
+- [x] **Branch protection on `main`** — enabled 2026-07-30.
+
+---
+
+## OD-2 — Publish the three MCP servers to npm, or keep them private?
+
+**Status:** open · **Raised:** 2026-07-30 (Phase 11 release) · **Owner:** operator ·
+**Blocks:** the §12 Phase 11 box *"MCP registry entry submitted"* — and nothing else.
+
+### Origin
+
+Phase 11's DoD includes submitting an MCP registry entry. Preparing it surfaced a prerequisite the
+DoD does not mention: **all three packages are `"private": true`** (`mcps/gs1-nl`,
+`mcps/wordpress`, `mcps/qr-render`) and none has ever been published.
+
+### What submission actually requires
+
+Confirmed against the registry documentation on 2026-07-30:
+
+1. A `server.json` per server against the current schema — **written and committed** at
+   `mcps/*/server.json`, names `io.github.NextGenDataLead/{gs1-nl,wordpress,qr-render}`.
+2. **The npm package must be published and publicly resolvable**, because ownership is verified by
+   reading the *published* `package.json`.
+3. That published `package.json` must carry an **`mcpName`** field exactly matching the `name` in
+   `server.json`. It is not there yet, and adding it only matters at publish time.
+
+So the entry cannot be submitted while the packages are private. The committed `server.json` files
+are drafts in their final location — they do nothing on their own, since publishing is an explicit
+`mcp-publisher` invocation.
+
+### Options
+
+**A. Keep them private. ← recommended for now**
+The servers exist to serve this repository's own pipeline, which invokes the Python library
+directly; nothing outside consumes them. Neither is registered in any MCP client today (global and
+project `mcpServers` are both empty, there is no `.mcp.json`). Publishing creates a permanent
+public artifact and an implied support surface for code whose only proven use is one pilot.
+
+**B. Publish all three and submit.**
+Makes them installable by anyone and completes the DoD box. Costs: an npm org or scope, a public
+name that is awkward to withdraw, and a versioning commitment. `qr-render` is the most plausible
+standalone (it has no credentials and no config); `wordpress` and `gs1-nl` both resolve config from
+a `clients.yml` shaped for this project, so they are less useful in isolation than they look.
+
+**C. Publish `qr-render` only.**
+The one genuinely general-purpose server, with the smallest surface and no credential handling.
+
+### Recommendation
+
+**Option A for v0.1.0.** Ship the release without the registry entry, with the box explicitly
+deferred and the reason recorded here rather than left looking unfinished. Revisit if someone
+actually wants to consume a server, or if the `clients.yml` coupling in `gs1-nl` / `wordpress` is
+ever loosened into plain configuration.
 
 ---
 
 ## Resolved
 
-_(none yet)_
+- **OD-1 — where credentials live** → **option B, 2026-07-30.** `.env` is the single source of truth,
+  loaded by `lib/env.py` `load_env()` from each script's `__main__` block; the `~/.claude/settings.json`
+  `env` block is gone. Full write-up above, including two corrections to its own original evidence.

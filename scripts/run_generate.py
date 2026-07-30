@@ -45,6 +45,7 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from lib.config import ClientConfig, get_client
+from lib.env import load_env
 from lib.errors import ConfigError, GeneratorError, LLMAPIError, MissingCredentialError
 from lib.generator import (
     DEFAULT_PROMPT_VERSION,
@@ -425,4 +426,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    load_env()
     raise SystemExit(main())

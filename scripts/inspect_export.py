@@ -17,6 +17,7 @@ from typing import NamedTuple
 import yaml
 from openpyxl.utils.exceptions import InvalidFileException
 
+from lib.env import load_env
 from lib.gdsn import GdsnColumn, GdsnSheet, read_workbook
 from lib.records import _coerce_cell
 
@@ -184,4 +185,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    load_env()
     raise SystemExit(main())
