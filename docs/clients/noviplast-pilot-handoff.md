@@ -82,13 +82,18 @@ gates → commit → push → PR → merge → sync `main` → delete the branch
 - **Pilot-gate DONE** (PR `feat/pilot-gtin-allowlist`): `media.restrict_to_mapped_gtins` blocks every
   non-fully-mapped GTIN from runs, plus the 13/14-digit `canon_gtin` fix. See "Where we are".
 
-### Step 2 — Phase 9.8 Operator flow under Claude Code (validation) — branch only if code gaps found
-- Drive the `flow-orchestrator` skill **end-to-end from a fresh Claude Code session** on ≥1 GTIN,
-  draft-first, **guiding the operator step-by-step**: present each gate, wait for the choice, then proceed
-  — language select → review gate #1 → plan review gate #2 → **production env-confirmation gate** →
-  execute → progress → post-execute summary → retry. Never batch or auto-confirm.
-- If gaps surface, fix on a branch (TDD/gates/PR). Otherwise tick §12 Phase 9.8 + the open Phase 8 box #4
-  with a docs commit.
+### Step 2 — Phase 9.8 Operator flow under Claude Code (validation) — ✅ DONE (2026-07-30)
+- Drove `flow-orchestrator` **end-to-end in a Claude Code chat**, operator answering each gate: language
+  select (`all`) → review gate #1 (`approve`) → plan review gate #2 (`changed-review`) → per-row diff gate
+  §10.6.2 (`apply`) → production env-confirmation (`confirm`) → execute (`--dry-run`) → progress →
+  post-execute summary (`no`). No code gaps — all gates rendered verbatim and behaved correctly.
+- The pilot is exhausted (0 actionable rows), so a **reversible dry-run harness** supplied the rows
+  (gitignored `clients.yml`: `post_status: draft` + `restrict_to_mapped_gtins: false`; one live GTIN's
+  state staled to force a CHANGED diff). `--dry-run` writes nothing (no WP/GS1/state); harness torn down,
+  `state.json` verified byte-identical, `run_plan` back to 0 rows. Details: `../IMPLEMENTATION_SPEC.md` §12
+  Phase 9.8 status.
+- §12 Phase 9.8 (×4) + the open Phase 8 box #4 are ticked. **Not live-fired** (documented + code-covered):
+  off-menu-reply branch, retry `yes` path, missing-field prompt §10.6.5.
 
 ### Step 3 — Finish Phase 9: publish the 13-GTIN batch — **THE ACTIVE STEP**
 The pilot-gate has already scoped the runnable batch. `run_plan noviplast` writes the 13 GTINs (26
