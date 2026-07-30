@@ -95,6 +95,64 @@ If you are sourcing manually, note that **environment variables do not survive b
 Code tool calls** — sourcing in one call and running in the next loses them silently. Keep both in one
 command with `&&`.
 
+### Checking a WordPress credential without publishing anything
+
+Answers "is this password actually good?" with a read-only request, so you never have to find out
+mid-publish. Use it after editing `.env`, after a rotation, or whenever a `401` is confusing you:
+
+```bash
+python - <<'PY'
+import os, httpx
+os.environ.pop("NOVIPLAST_WP_APP_PASS", None)   # ignore any stale exported value
+from lib.env import load_env; load_env()        # read .env only
+pw = os.environ["NOVIPLAST_WP_APP_PASS"]
+print("groups:", len(pw.split()))               # expect 6
+r = httpx.get("https://www.noviplast.nl/wp-json/wp/v2/users/me?context=edit",
+              auth=("automation-bot", pw), timeout=20, follow_redirects=True)
+print("HTTP", r.status_code)
+d = r.json() if r.status_code == 200 else {}
+print("user:", d.get("slug"), "| roles:", d.get("roles"))
+PY
+```
+
+Expect `HTTP 200`, the bot's slug, and `roles: ['editor']`. Substitute the site URL, username and
+variable name from your client's `wordpress` block in `clients.yml`. It never prints the password.
+
+Three details carry the weight:
+
+- **`?context=edit` rather than a bare `users/me`.** The bare route returns `200` for any credential
+  that authenticates, and omits `roles` entirely. `context=edit` additionally requires edit
+  capability — so it distinguishes "the password works" from "the password works *and* the account
+  can still publish". A demoted or capability-stripped bot passes the naive check and then fails
+  mid-run.
+- **`os.environ.pop(...)` before `load_env()`.** `load_env()` uses `override=False`, so anything
+  already exported beats `.env`. Without the pop you may be testing a stale value rather than the
+  file you just edited — and getting a pass or a fail that says nothing about `.env`.
+- **`len(pw.split())`.** A WordPress application password is six groups. Anything less usually means
+  the value lost its quotes in `.env` and was truncated at the first space (see the trap above).
+
+For GS1 there is no equivalent read-only probe — the cheapest check is minting a token, which
+`docs/gs1-nl-onboarding.md` covers.
+
+### Rotating the WordPress application password
+
+WP Admin → **Users** → the bot user → **Application Passwords**. Order matters:
+
+1. **Add the new password first, leaving the old one live.** WordPress shows the value once, as six
+   space-separated groups. No downtime, and no way to lock yourself out halfway.
+2. **Update `.env`** — single-quoted, on one line. It is the only file to change; `clients.yml` holds
+   the variable *name*, never the value.
+3. **Verify with the snippet above**, which reads `.env` and ignores stale exports.
+4. **Only then revoke the old password.** Re-running the snippet against the old value should give
+   `401` — worth doing, since a revocation that did not take is invisible otherwise.
+5. If any copy of the old value exists outside `.env` — a backup, a settings file, a password
+   manager entry — delete or update it now.
+
+**The trap:** a shell (or a Claude Code session) started before the rotation still holds the old
+value in its environment, and `override=False` means it **wins over your corrected `.env`**. The
+symptom is a `401` with a `.env` you have just checked by eye. Start a fresh session, or `unset` the
+variable.
+
 ### A real production run is refused with exit 2
 
 ```
