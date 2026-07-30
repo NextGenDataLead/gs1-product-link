@@ -168,11 +168,12 @@ launch config.
 
 ### Follow-up actions (independent of which option is chosen)
 
-- [ ] **Rotate `NOVIPLAST_WP_APP_PASS`** — **STILL OUTSTANDING.** It was printed in clear text in a chat
-      transcript on 2026-07-30. WP Admin → Users → `automation-bot` → Application Passwords → revoke and
-      reissue. Now that OD-1 is resolved this is a **one-file edit** (`.env`); afterwards delete
-      `~/.claude/settings.json.bak-od1-20260730`, which still holds the old value. GS1 secrets were
-      **not** exposed.
+- [x] **Rotate `NOVIPLAST_WP_APP_PASS`** — **done 2026-07-30.** It had been printed in clear text in a
+      chat transcript that day. A new application password was issued for `automation-bot` and `.env`
+      updated; the old one was revoked. Verified both ways: the new credential returns `200` from
+      `GET /wp-json/wp/v2/users/me?context=edit` as `automation-bot` with role `editor`, and the old
+      one now returns `401`. The `~/.claude/settings.json` backup holding the old value was deleted.
+      GS1 secrets were never exposed and were not rotated.
 - [x] **`chmod 600 .env`** — done 2026-07-30 (was `0644`).
 - [x] **Branch protection on `main`** — enabled 2026-07-30.
 
