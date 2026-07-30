@@ -118,9 +118,21 @@ video (both langs); **none have generated copy yet** — that is the blocker.
 - Phase 9.8 (Claude Code operator-flow validation, Step 2) can run alongside — the batch mechanics are proven
   via scripts, so it is not a hard blocker for going live.
 
-### Step 4 — Phase 10 Docs — branch `docs/phase-10`
-Setup steps run by an unfamiliar person; docstring coverage on every skill/script; `troubleshooting.md`
-covers each §4.1 error type. Tick §12 Phase 10. PR; merge.
+### Step 4 — Phase 10 Docs — branch `docs/phase-10` — **DONE 2026-07-30**
+All three §12 boxes ticked. The seven docs named in `PROJECT_HANDOVER.md` §8.2 are written
+(`setup.md`, `troubleshooting.md`, `gs1-nl-onboarding.md`, `wordpress-onboarding.md`,
+`data-source-export-schema.md`, `template-variables.md`, `costs.md`), `README.md` rewritten, and
+doc-vs-code drift corrected in §4.1 / §4.5 / §8 and `PREPARATION.md` §3.18. Everything derived from
+the code at HEAD rather than the planning docs.
+
+Box 1 proven by **executing `setup.md` verbatim from a fresh clone** (clean venv → install → ruff →
+format → mypy → pytest → config load → `--help` on all nine scripts → `inspect_export` /
+`parse_export --dry-run` on the real export → production-guard refusal at exit 2). That run exposed a
+real defect — `inspect_export --help` crashed with an unhandled `InvalidFileException` — which was
+fixed with tests rather than documented around.
+
+**Start here when onboarding anyone new, or a second client:** [`../setup.md`](../setup.md), then
+[`../troubleshooting.md`](../troubleshooting.md).
 
 ### Step 5 — Phase 11 Release — branch `release/v0.1.0`
 Version bump (`pyproject.toml`, `package.json`); populate `CHANGELOG.md`; push git tag `v0.1.0`; submit

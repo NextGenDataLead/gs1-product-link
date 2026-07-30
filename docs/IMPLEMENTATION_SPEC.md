@@ -1335,9 +1335,45 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > the ≥10 batch) so the batch is driven through the validated operator flow, not raw scripts.
 
 ### Phase 10 — Docs
-- [ ] Setup steps executed by unfamiliar person succeed
-- [ ] Every skill and script has a docstring
-- [ ] `troubleshooting.md` covers each error type in §4.1
+- [x] Setup steps executed by unfamiliar person succeed _(executed verbatim from a fresh clone,
+      2026-07-30 — see status below)_
+- [x] Every skill and script has a docstring _(31 modules, 0 gaps; all 6 SKILL.md carry
+      `name` + `description`)_
+- [x] `troubleshooting.md` covers each error type in §4.1 _(all **13** `lib/errors.py` classes — the 8
+      §4.1 names plus the 5 added since — the E1–E22 inventory, and the live-pilot traps)_
+
+> **Status (2026-07-30): complete.** The seven documents `PROJECT_HANDOVER.md` §8.2 assigns to this
+> phase now exist in `docs/`: `setup.md`, `troubleshooting.md`, `gs1-nl-onboarding.md`,
+> `wordpress-onboarding.md`, `data-source-export-schema.md`, `template-variables.md`, `costs.md`.
+> `README.md` was rewritten — it had been announcing *"v0.0.1 — Phase 1 (repository skeleton). Not yet
+> functional"* while 10 products were live.
+>
+> **Everything is derived from the code at HEAD, not from the planning documents** — the modules, each
+> script's `_parse_args`, the `lib/config.py` Pydantic models, `.env.example`, and `ci.yml`. Where a
+> spec section contradicted the code, the code won and the spec was corrected: §8.4 specified
+> `scripts/verify_run.py`, which does not exist (verification lives in `run_execute` via
+> `wp_client.verify_url`) and §8 had no contract for the five scripts that were built instead (now
+> §8.4a); §4.5 called `WPMLAdapter` a *"stub raises `NotImplementedError`, v0.2"* when it is
+> implemented and has been publishing live nl+fr pages, and `PREPARATION.md` §3.18 still said to
+> install Polylang; §4.1 listed 8 exception classes when there are 13.
+>
+> **Box 1 was proven by execution, not inspection.** `docs/setup.md` was run verbatim from a fresh
+> clone in a clean venv: `pip install -e ".[dev]"` → `ruff check` → `ruff format --check` →
+> `mypy --strict lib` → `pytest` (522 passed, 2 skipped, 5 deselected), then
+> `clients.example.yml` loading unedited, `--help` on all nine documented scripts, and the read-only
+> onboarding leg (`inspect_export` → `parse_export --dry-run`, 127 products / 11 warnings) against the
+> real export. The safety claims were exercised too: a real run against `environment: production` is
+> **refused with exit 2**, and `--dry-run` bypasses the guard as documented.
+>
+> That run found a real defect and it was fixed rather than documented around: `setup.md` tells
+> operators every script answers `--help`, but `inspect_export` takes a bare path with no argparse, so
+> `--help` reached openpyxl and raised `InvalidFileException` — which is **not** an `OSError`, so the
+> existing handler missed it and the script died with an unhandled traceback (the same for any typo'd
+> path or a real `.xls`). Now handled, with tests.
+>
+> **Deferred:** nothing in this phase. The five other docs named in `PROJECT_HANDOVER.md` §7's tree
+> (`docs/setup.md` etc.) are all present; the handover's separate `costs.md` cross-reference to GS1
+> tariffs points at the GS1 NL price page, which should be re-checked at release.
 
 ### Phase 11 — Release
 - [ ] Version bumped in `pyproject.toml` and `package.json`
