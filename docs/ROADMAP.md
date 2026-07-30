@@ -90,10 +90,22 @@ proven live; only the client sign-off on the video mapping is open) → ~~**fini
 QR scans confirmed, fr-QR strategy decided) → ~~**Phase 9.8 operator flow**~~ (`flow-orchestrator`
 driven end-to-end under Claude Code through every gate).
 
-~~**Phase 10 docs**~~ **done** (2026-07-30). **Remaining: → Phase 11 release, and that is the last one.**
+~~**Phase 10 docs**~~ **done** (2026-07-30) → ~~**Phase 11 release**~~ **done (2026-07-30) — every
+numbered phase is now complete.**
 
-Phase 11 is version bump (`pyproject.toml` still says `0.0.1`, `package.json`), `CHANGELOG.md`, the
-`v0.1.0` tag, the MCP registry entry, and the announcement.
+Phase 11 shipped `v0.1.0`: version bumped to `0.1.0` across `pyproject.toml`, `package.json`, the
+three `mcps/*/package.json` and the lockfile; `CHANGELOG.md` reconstructed from 92 unrecorded
+commits and promoted to `[0.1.0]`; the `v0.1.0` tag and GitHub release published; the announcement
+drafted at `docs/announcement-v0.1.0.md` (**not** published). The **MCP registry entry is
+deferred** — it requires publishing the three npm packages, which are `private: true`; the
+`server.json` files are committed and the choice is recorded as
+[OD-2](OPEN_DECISIONS.md#od-2--publish-the-three-mcp-servers-to-npm-or-keep-them-private).
+
+Also resolved alongside the release: [OD-1](OPEN_DECISIONS.md) — `.env` is now the single source of
+truth for credentials, and the ambient `~/.claude/settings.json` `env` block is gone.
+
+**Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows), and
+**rotating the exposed WordPress application password**, which remains outstanding.
 
 Two standing invariants, both learned the hard way and neither closed by a phase:
 

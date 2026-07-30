@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-30
+
+First working release. The tool turns a GS1 Data Source (GDSN) export into GS1 Digital Link QR
+codes and multilingual WordPress product pages, and it has been proven end to end on a live
+pilot: 10 GTINs published to a production site in Dutch and French, each with an enabled GS1
+production record whose QR resolves to the right page, and one confirmed scanning from a printed
+label. `0.0.1` was a repository skeleton; everything below is what filled it in.
+
 ### Added
 - `lib/errors.py` — typed exception hierarchy (`OrchestratorError` base plus
   `GS1APIError`, `ConfigError`, `MissingCredentialError`, and others) per
@@ -248,6 +256,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   net_content stays language-agnostic on the record; the decoder is reusable by the future
   Technische-details generator. All 125 pilot products (all H87) now render words. Tests in
   `tests/lib/test_units.py` and `tests/lib/test_templates.py`.
+- **Content generator.** `lib/generator.py` turns feed attributes into page copy through a
+  deterministic core (cache, contract, merge) with two interchangeable producers behind one
+  seam: an **in-session** producer (the `content-generator` skill writes copy in the chat,
+  no API key) and a **headless API** backend (`run_generate --backend api` via `lib/llm.py`).
+  Routing is per product — `verbatim` / `tighten` / `generate` — driven by attribute 1067
+  (the ranked USP source, captured multivalue by `lib/gdsn.py`); `ProductRecord` gains
+  `generated_tagline` and `generated_description`, `run_plan` merges the cache before
+  classification, and `acf_map` is wired to the generated fields. Producers may declare a
+  `generation_inference` — a claim written beyond the literal feed text — which flows to
+  `generated_issues.json` for a human to verify before publishing. Spec:
+  `docs/clients/noviplast-generator-spec.md`; voice: `prompts/noviplast/generation.v1.md`.
+- **Phase 8 — Skills.** All six `skills/*/SKILL.md` finalised: `flow-orchestrator`,
+  `content-generator`, `gs1-export-parser`, `gs1-digital-link`, `qr-render`, and
+  `wordpress-product-page`. Each carries Agent-Skill YAML frontmatter (name + description with
+  trigger phrases) so a Skills-aware surface can discover it. `flow-orchestrator` gained a
+  two-gate review flow: generate copy → **review gate 1** → plan → **review gate 2** → execute,
+  draft-first.
+- **Phase 9 — Live pilot.** The first real GTIN (`08713195007717`) published live in nl+fr and
+  validated end to end: WordPress pages render ACF, the GS1 production record is enabled, and
+  `GET id.gs1.org/01/{gtin}` → 307 → page → 200. Scaled to **10 live GTINs**, every QR
+  resolving, no manual corrections, and a printed QR confirmed scanning from a phone.
+  `docs/clients/noviplast-live-log.md` is the committed audit trail of what is live (the
+  machine source, `output/{client}/state.json`, is gitignored).
+- **Phase 9.5 — Media.** Images and video now publish with the page. `lib/media.py` decodes
+  TIFF/PNG/JPEG, flattens alpha, downscales and writes a deterministic baseline JPEG — 93 of
+  127 pilot products ship multi-MB TIFF print masters that WordPress rejects outright.
+  `lib/media_video.py` resolves videos from per-language folders through a client-confirmed
+  name→GTIN mapping and transcodes to H.264/MP4 with ffmpeg, because the source `.mpg`/`.mpeg`
+  files are MPEG-1/2 and will not play in an HTML5 `<video>`. `MediaConfig` carries the block;
+  `scripts/build_video_map.py` drafts the mapping and `--check` gates coverage. Uploads are
+  **content-addressed** (`{base}-{sha12}` slug), so re-runs dedupe on identical bytes without a
+  meta read-back. Every media failure still degrades to a published page (E7).
+- **Phase 9.8 — Operator flow validated.** `flow-orchestrator` driven end to end in a Claude
+  Code session with the operator answering every gate: language select → review gate 1 →
+  plan-review gate 2 → per-row diff gate → production environment confirmation → execute →
+  post-execute summary. Since the pilot was exhausted (0 actionable rows), a reversible dry-run
+  harness supplied one CHANGED and one NEW row; `--dry-run` wrote nothing and the harness was
+  torn down with `state.json` verified byte-identical.
+- **Phase 10 — Operator documentation.** Seven documents in `docs/`, each derived from the code
+  at HEAD rather than from the planning documents: `setup.md` (the entry point),
+  `troubleshooting.md` (all 13 `lib/errors.py` classes, the E1–E22 inventory, and the traps
+  already paid for live), `gs1-nl-onboarding.md`, `wordpress-onboarding.md`,
+  `data-source-export-schema.md`, `template-variables.md`, and `costs.md`. Plus
+  `OPEN_DECISIONS.md`, which records identified-but-unmade decisions with evidence and a
+  recommendation. `setup.md` was proven by executing it verbatim from a fresh clone in a clean
+  venv — which is how the `inspect_export --help` crash below was found.
+- **Data-quality report.** `python -m scripts.report_quality {client}` folds four issue files
+  into one actionable worklist at `output/{client}/data-quality-report.md`, grouped by owner and
+  action (blocks-publish / review / fix-in-MyGS1). `lib/quality_report.py` is a pure,
+  deterministic renderer. Sections cover severity-ranked blank fields (§1b separates a blank
+  title or hero image, which block publishing, from a blank `net_content`, which only degrades a
+  detail line), per-market value comparison (§3b, which surfaced real content disagreements
+  rather than cosmetic ones), possible wrong-language values (§3c — flags exactly one real slip
+  across all 127 pilot products with no false positives), generation inferences, and free-text
+  Observations captured during in-session review.
+- **`scripts/run_unpublish.py`** — retract a published product: draft the WordPress pages and
+  disable the GS1 record, with HELD classification so it cannot silently republish.
+- **`scripts/build_brick_map.py`** — draft and check the GPC brick → category mapping.
+- **`.env` is the single source of truth for credentials** (OD-1). `lib/env.py` `load_env()`
+  wraps `load_dotenv(override=False)`, called from each script's `if __name__ == "__main__":`
+  block — deliberately not from `main()`, which the tests call directly. See *Security* below.
+
+### Fixed
+- **`inspect_export` crashed on `--help` and on any non-workbook path.** The script takes a bare
+  positional path with no argparse, so `--help` was read as a filename and reached openpyxl,
+  which raises `InvalidFileException` — not an `OSError`, so the existing handler missed it and
+  the script died with an unhandled traceback. Now prints usage and exits 0 for `-h`/`--help`,
+  and reports "cannot read export" (exit 1) for anything unreadable.
+- **Video mapping never matched.** `mapping.yml` is keyed with 13-digit GTINs while the pipeline
+  carries 14-digit ones, so `VideoMap.resolve` silently returned `None` for every GTIN and no
+  video was ever attached. Added `canon_gtin` (strip non-digits, `zfill(14)`) and normalise both
+  sides.
+- **Media idempotency, found live.** Two distinct failures made every run create duplicate
+  attachments: the `content_sha256` meta was silently dropped unless registered in REST, so the
+  hash was never readable; and a stale attachment sharing only the base slug squatted it and
+  shadowed the match. Fixed by the content-addressed slug above.
+- **`ruff format --check` drift** and **PLR0917** (new in ruff 0.16, which CI installs): ignored
+  project-wide, matching the existing deliberate `# noqa: PLR0913`.
+
+### Removed
+- **Claude Cowork support.** Publishing from its cloud sandbox would have put live production
+  WordPress and GS1 credentials on a remote host every wave, and its egress to the live services
+  was never proven. **Claude Code is the operating surface**; Claude.ai and Claude Desktop are
+  out of scope. `docs/COWORK_SETUP.md` deleted and every "Cowork-native" label re-pointed to
+  "in-session (Claude Code)". The pipeline itself was already tool-agnostic.
+- **§2b generated-copy dump** from the data-quality report — it reprinted the source text of
+  every generated row, never shrank, and named no defect or action.
+
+### Security
+- **Production write guard.** A real `run_execute` (not `--dry-run`) against a client whose
+  `gs1.environment` is `production` is **refused with exit 2** unless `--i-understand-production`
+  is passed. Before this, a bare `run_execute --plan …` published live pages and registered
+  permanent GS1 records with no confirmation — the review gates existed only in the
+  `flow-orchestrator` skill, so any invocation outside it bypassed them entirely.
+- **Credentials consolidated into `.env`** (OD-1, `docs/OPEN_DECISIONS.md`). They had been
+  reaching the code from an `env` block in `~/.claude/settings.json` — residue from the removed
+  Cowork experiment — which is injected into *every* command in *every* project on the machine.
+  That block is now deleted and `.env` is `chmod 600`. The blast radius is the point: while the
+  variable was ambient, a diagnostic command echoed a live WordPress application password in
+  clear text into a chat transcript.
+  **`load_env()` is called from each script's `__main__` block, never from `main()`.** Nine test
+  modules call `main()` directly, so the other placement would load production credentials — and
+  all four variables the staging guards gate on — into the pytest process on every plain
+  `pytest` run, arming tests that write to live WordPress and the GS1 production resolver.
+  `tests/lib/test_env.py` enforces both halves of the invariant with an AST check.
+- **Pilot allowlist.** `media.restrict_to_mapped_gtins` hard-blocks `run_execute` from writing
+  any GTIN without a client-confirmed video in every language, even when passed explicitly via
+  `--plan`.
+- **E21 / E22 publish holds.** `run_plan` skips any (GTIN, language) with no generated tagline,
+  so a product held for blank source copy can never publish as a silently-blank page; the opt-in
+  `media.require_hero_image` does the same for a blank source `image_url`. Scoped to the source
+  field only — a runtime image fetch failure still degrades gracefully and publishes (E7).
 
 ### Changed
 - **GS1 GET/PATCH path corrected** (confirmed against the live API): the path segment
@@ -265,6 +385,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry per-environment `client_id_env_*`/`client_secret_env_*` and
   `account_number_*` (the account differs per environment). Docs updated
   (PROJECT_HANDOVER §4.1–4.2, IMPLEMENTATION_SPEC §4.3, §13.2).
+- **Specification corrected to match what was built.** Phase 10 audited the documents against
+  the modules and found three divergences, each verified in the code first:
+  - **`scripts/verify_run.py` does not exist and is not planned.** §8.4 specified it;
+    post-run verification lives inside `run_execute` via `wp_client.verify_url`. §8.4 is marked
+    superseded and a new **§8.4a** documents the five scripts that were built instead
+    (`run_generate`, `run_unpublish`, `build_brick_map`, `build_video_map`, `report_quality`).
+  - **`WPMLAdapter` is implemented and in production.** §4.5 called it a stub raising
+    `NotImplementedError`, slated for v0.2, and `PREPARATION.md` §3.18 said to install Polylang.
+    The pilot has been publishing live nl+fr pages through WPML plus a site-side helper route.
+    Polylang must **not** be installed on the pilot site.
+  - **`lib/errors.py` has 13 exception classes**, not the 8 listed in §4.1.
+- **`README.md`** no longer describes the project as "Phase 1 (repository skeleton). Not yet
+  functional"; it now carries a quickstart, a status block, and a safety section.
+- **`product_name` maps to GDSN attribute 3301**, not 3318 (which carries material and colour
+  noise) or 3297 (an internal logistics string) — verified against the live site.
+- **`market_priority` replaced the 1:1 `market_language` mapping**, which cost coverage and
+  could not resolve products whose markets disagree. Every market row carries every language, so
+  the parser walks the priority order and takes the first non-blank value per
+  product/field/language.
 
 ## [0.0.1] - 2026-07-09
 
@@ -280,5 +419,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI: `ruff check`, `ruff format --check`, `mypy --strict lib`,
   and `pytest` on push and pull request.
 
-[Unreleased]: https://github.com/NextGenDataLead/gs1-product-link/compare/v0.0.1...HEAD
-[0.0.1]: https://github.com/NextGenDataLead/gs1-product-link/releases/tag/v0.0.1
+[Unreleased]: https://github.com/NextGenDataLead/gs1-product-link/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/NextGenDataLead/gs1-product-link/releases/tag/v0.1.0
+<!-- 0.0.1 was never tagged; it links to the commit that set the version. -->
+[0.0.1]: https://github.com/NextGenDataLead/gs1-product-link/commit/728ae92

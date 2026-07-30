@@ -1,6 +1,6 @@
 {
   "name": "gs1-digital-link-orchestrator-mcps",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "MCP servers for the GS1 Digital Link Orchestrator (built in Phases 2 and 4).",
   "license": "MIT",

@@ -178,6 +178,58 @@ launch config.
 
 ---
 
+## OD-2 — Publish the three MCP servers to npm, or keep them private?
+
+**Status:** open · **Raised:** 2026-07-30 (Phase 11 release) · **Owner:** operator ·
+**Blocks:** the §12 Phase 11 box *"MCP registry entry submitted"* — and nothing else.
+
+### Origin
+
+Phase 11's DoD includes submitting an MCP registry entry. Preparing it surfaced a prerequisite the
+DoD does not mention: **all three packages are `"private": true`** (`mcps/gs1-nl`,
+`mcps/wordpress`, `mcps/qr-render`) and none has ever been published.
+
+### What submission actually requires
+
+Confirmed against the registry documentation on 2026-07-30:
+
+1. A `server.json` per server against the current schema — **written and committed** at
+   `mcps/*/server.json`, names `io.github.NextGenDataLead/{gs1-nl,wordpress,qr-render}`.
+2. **The npm package must be published and publicly resolvable**, because ownership is verified by
+   reading the *published* `package.json`.
+3. That published `package.json` must carry an **`mcpName`** field exactly matching the `name` in
+   `server.json`. It is not there yet, and adding it only matters at publish time.
+
+So the entry cannot be submitted while the packages are private. The committed `server.json` files
+are drafts in their final location — they do nothing on their own, since publishing is an explicit
+`mcp-publisher` invocation.
+
+### Options
+
+**A. Keep them private. ← recommended for now**
+The servers exist to serve this repository's own pipeline, which invokes the Python library
+directly; nothing outside consumes them. Neither is registered in any MCP client today (global and
+project `mcpServers` are both empty, there is no `.mcp.json`). Publishing creates a permanent
+public artifact and an implied support surface for code whose only proven use is one pilot.
+
+**B. Publish all three and submit.**
+Makes them installable by anyone and completes the DoD box. Costs: an npm org or scope, a public
+name that is awkward to withdraw, and a versioning commitment. `qr-render` is the most plausible
+standalone (it has no credentials and no config); `wordpress` and `gs1-nl` both resolve config from
+a `clients.yml` shaped for this project, so they are less useful in isolation than they look.
+
+**C. Publish `qr-render` only.**
+The one genuinely general-purpose server, with the smallest surface and no credential handling.
+
+### Recommendation
+
+**Option A for v0.1.0.** Ship the release without the registry entry, with the box explicitly
+deferred and the reason recorded here rather than left looking unfinished. Revisit if someone
+actually wants to consume a server, or if the `clients.yml` coupling in `gs1-nl` / `wordpress` is
+ever loosened into plain configuration.
+
+---
+
 ## Resolved
 
 - **OD-1 — where credentials live** → **option B, 2026-07-30.** `.env` is the single source of truth,
