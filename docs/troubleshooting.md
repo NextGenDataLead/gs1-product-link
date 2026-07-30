@@ -63,10 +63,25 @@ NOVIPLAST_WP_APP_PASS=abcd EFGH ijkl MNOP qrst UVWX     # BROKEN — silently em
 ```
 
 Unquoted, `source .env` stops at the first space and the variable loads as `abcd`. The symptom is a
-confusing `401` even though the password is right. Keep the quotes.
+confusing `401` even though the password is right. Keep the quotes. (The same applies to a JSON `env`
+block — paste the whole value including its spaces.)
 
-Also: **nothing auto-loads `.env`.** Run `set -a; source .env; set +a` before any command that needs
-credentials, or you will see `MissingCredentialError`.
+### `MissingCredentialError` when you expected the credentials to be there
+
+**Nothing in the code loads `.env`** — there is no `python-dotenv` dependency and no `load_dotenv()`
+call. Secrets are read with a bare `os.environ[...]` lookup, so the variable has to already be in the
+environment of whatever runs the script. Two ways it gets there:
+
+- **Claude Code's `env` block** (`~/.claude/settings.json` or `.claude/settings.json`) — injected into
+  every command Claude Code runs. This is how the project normally operates, and why runs from chat
+  "just work" with nothing sourced. If the credentials are here, check for a typo in the variable
+  **name**: it must match the name in `clients.yml` exactly.
+- **Your shell** — then you must export them yourself, *in the same command*:
+  ```bash
+  set -a; source .env; set +a && python -m scripts.run_plan {client_id}
+  ```
+  **Environment variables do not survive between separate Claude Code tool calls**, so sourcing in one
+  call and running the script in the next loses them silently. Keep both in one command.
 
 ### A real production run is refused with exit 2
 
@@ -159,8 +174,9 @@ load_clients('clients.yml')"`.
 An environment variable named in `clients.yml` is unset. Resolution is **lazy**, so this surfaces at
 the first API call, not at startup (**E15**).
 
-**Fix:** `set -a; source .env; set +a`. Remember `clients.yml` holds env var *names*; values live
-only in `.env`.
+**Fix:** see [the section above](#missingcredentialerror-when-you-expected-the-credentials-to-be-there)
+— either the Claude Code `env` block or `set -a; source .env; set +a &&` in the same command. Remember
+`clients.yml` holds env var *names*; the values live elsewhere.
 
 ### `ExportParseError`
 

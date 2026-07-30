@@ -45,20 +45,22 @@ cp clients.example.yml clients.yml   # per-client config (gitignored)
 cp .env.example .env                 # secrets only    (gitignored)
 ```
 
-Then, per client — the read-only steps first:
+Then **run it from Claude Code** — that is the operating surface, not an alternative to
+the command line:
 
-```bash
-python -m scripts.inspect_export input/{client_id}/products.xlsx   # what's in the export?
-python -m scripts.parse_export   {client_id} --dry-run             # validate the mapping
-python -m scripts.report_quality {client_id}                       # source-data problems
-python -m scripts.run_plan       {client_id}                       # what would change
-python -m scripts.run_execute    {client_id} --plan output/{client_id}/plan.json --dry-run
+```
+run for {client_id}
 ```
 
-Drop `--dry-run` only once a dry run looks right. A real run against a `production` GS1
-client is refused unless you pass `--i-understand-production`. Better still, drive it from
-chat — say *"run for {client_id}"* to load the `flow-orchestrator` skill, which walks you
-through every gate.
+This loads the `flow-orchestrator` skill, which drives the pipeline and stops at every
+operator gate: language selection → copy review → plan review → per-row diff → a mandatory
+production environment-confirmation → execute → summary. Nothing proceeds without your
+answer. **Claude.ai, Claude Desktop, and Claude Cowork are out of scope** — Cowork was
+removed because it runs in a remote sandbox that would need your production credentials.
+
+The Python scripts underneath (`inspect_export`, `parse_export`, `report_quality`,
+`run_plan`, `run_execute`, …) are what Claude Code invokes for you. You run them directly
+for install verification and when mapping a new client's export, not to publish.
 
 **Full walkthrough, including onboarding a new client: [`docs/setup.md`](docs/setup.md).**
 
