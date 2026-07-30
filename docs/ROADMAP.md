@@ -104,8 +104,8 @@ deferred** — it requires publishing the three npm packages, which are `private
 Also resolved alongside the release: [OD-1](OPEN_DECISIONS.md) — `.env` is now the single source of
 truth for credentials, and the ambient `~/.claude/settings.json` `env` block is gone.
 
-**Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows), and
-**rotating the exposed WordPress application password**, which remains outstanding.
+**Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows). The
+exposed WordPress application password was **rotated on 2026-07-30** and the old one revoked.
 
 Two standing invariants, both learned the hard way and neither closed by a phase:
 

@@ -72,8 +72,8 @@ mileage, not a finished product.
 
 ## Before publishing this — check
 
-- [ ] **Rotate the WordPress application password first.** It was exposed in a transcript and is
-      still outstanding (`OPEN_DECISIONS.md`).
+- [x] **Rotate the WordPress application password first.** Done 2026-07-30 — reissued, `.env`
+      updated, old one revoked and verified dead (`OPEN_DECISIONS.md`).
 - [ ] Confirm the pilot client is happy to be named. This draft deliberately does not name them.
 - [ ] Re-check `docs/costs.md` against the current GS1 NL tariff page — pricing claims age badly.
 - [ ] Decide OD-2 (publish the MCP servers or not) if the announcement mentions them. It currently
