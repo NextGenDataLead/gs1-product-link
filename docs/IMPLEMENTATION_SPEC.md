@@ -1142,11 +1142,13 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 - [x] Each SKILL.md finalised per §10
 - [x] Full flow via chat instruction works end-to-end
 - [x] Skills load when expected trigger phrases used
-- [ ] Full re-run flow (plan → diff → confirm → execute) in a fresh Claude Code session *(moved from
+- [x] Full re-run flow (plan → diff → confirm → execute) in a fresh Claude Code session *(moved from
       Phase 7; see the note there)*. The plan half is already exercisable on real data — both
       operator files are in `input/{client_id}/` — so this gate is about the chat surface and the
       execute leg, not the data. **The chat surface (parse → generate → plan → confirm) is
-      validated; the execute leg is deferred to the Phase 9 pilot — see status below.**
+      validated; the execute leg was proven in the Phase 9 pilot. The full plan → diff → confirm →
+      execute loop — including the per-row diff gate (§10.6.2) — was walked end-to-end via
+      `flow-orchestrator` in the Phase 9.8 validation (2026-07-30); see Phase 9.8 status below.**
 
 > **Status (2026-07-19):** All 6 skills finalised. The four former `.gitkeep` stubs
 > (`gs1-export-parser`, `gs1-digital-link`, `qr-render`, `wordpress-product-page`) now have full
@@ -1213,15 +1215,30 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > ≥10 batch is Phase 9.
 
 ### Phase 9.8 — Operator flow validated under Claude Code
-- [ ] `flow-orchestrator` driven end-to-end from a **fresh Claude Code session** on ≥1 GTIN (draft-first)
-- [ ] Every operator gate exercised and confirmed correct: language select → review gate #1 (generated
+- [x] `flow-orchestrator` driven end-to-end from a **fresh Claude Code session** on ≥1 GTIN (draft-first)
+- [x] Every operator gate exercised and confirmed correct: language select → review gate #1 (generated
       copy) → plan-review gate #2 → **production environment-confirmation gate** (`[confirm | switch-to-test
       | cancel]`) → execute → progress → post-execute summary → retry
-- [ ] Operator **guided step-by-step** at each gate — each verbatim prompt presented and its off-menu reply
+- [x] Operator **guided step-by-step** at each gate — each verbatim prompt presented and its off-menu reply
       handled; the operator confirms at every gate, nothing auto-proceeds
-- [ ] Ticks the open **Phase 8 DoD box #4** (full re-run flow plan → diff → confirm → execute in a fresh
+- [x] Ticks the open **Phase 8 DoD box #4** (full re-run flow plan → diff → confirm → execute in a fresh
       Claude Code session)
 
+> **Status (2026-07-30): validated.** `flow-orchestrator` was driven end-to-end in a Claude Code chat with
+> the operator answering each gate. Because the pilot is complete (0 actionable rows — all 10 live GTINs are
+> dropped as "already have a page"), a **reversible dry-run harness** supplied the rows: in the gitignored
+> `clients.yml`, `post_status: draft` + `restrict_to_mapped_gtins: false`; one live GTIN's state entry
+> (`…7717` nl) had its `content_hash`/`title` staled to force a **CHANGED** classification with a real
+> title diff. `run_plan` then yielded 1 NEW (`…7649` fr) + 1 CHANGED + 19 UNCHANGED. Every gate rendered
+> verbatim and was confirmed by the operator: language select (`all`) → review gate #1 (`approve`) →
+> plan-review gate #2 (`changed-review`) → **per-row diff gate §10.6.2** (`…7717` nl, `apply`) → production
+> env-confirmation (`confirm`) → execute (`--dry-run`, 2 rows, 0 errors, draft shape) → end-of-run progress
+> → post-execute summary (`no`, nothing to retry). Nothing was written to WordPress or GS1 (`--dry-run`
+> loads/saves no state and does not resolve GS1); the harness was torn down and `state.json` verified
+> byte-identical to backup, `run_plan` back to 0 rows. **Not live-fired** (nothing triggered them, all
+> documented + code-covered): the off-menu-reply branch (operator picked valid options throughout), the
+> retry `yes` path (dry-run had 0 failures), and the missing-field prompt §10.6.5 (no missing `product_name`).
+>
 > Split out 2026-07-19 to make explicit what Phase 9's smoke did NOT cover. The execute leg was proven by
 > invoking `scripts/run_execute.py` **directly**, which bypasses the entire operator UX: the language
 > prompt, both review gates, the mandatory production environment-confirmation gate, progress lines, the
