@@ -111,34 +111,26 @@ Delete or replace the `noviplast:` block before you configure your own client. N
 
 ### Secrets
 
-`clients.yml` holds only the **names** of environment variables — never a value. The values must be present in the environment of whatever runs the scripts. There are two ways that happens, and **which one you use changes what you have to do**:
+`clients.yml` holds only the **names** of environment variables — never a value. The values live in **`.env` at the repository root, which is the single source of truth** (decided in [`OPEN_DECISIONS.md` → OD-1](OPEN_DECISIONS.md#od-1--where-credentials-live-claude-code-settingsjson-vs-env)). `.env.example` documents every variable; copy it, fill it in, and keep it `chmod 600`. It is gitignored.
 
-> **This is an open decision, not a settled design.** Which of the two mechanisms below should be the
-> single source of truth is analysed in [`OPEN_DECISIONS.md` → OD-1](OPEN_DECISIONS.md#od-1--where-credentials-live-claude-code-settingsjson-vs-env),
-> including why the current split exists and what to do about it. Read that before changing anything
-> here.
-
-**a) Claude Code's `env` block — how this project actually runs.** `~/.claude/settings.json` (or the project's `.claude/settings.json`) can carry an `env` map, and Claude Code injects those variables into every command it runs. Set the credentials there once and the scripts simply have them; there is nothing to source, and this is why a run "just works" from chat:
-
-```jsonc
-// ~/.claude/settings.json
-{ "env": { "CLIENT_WP_APP_PASS": "…", "CLIENT_GS1_CLIENT_ID": "…", "CLIENT_GS1_CLIENT_SECRET": "…" } }
-```
-
-> ⚠️ **That file stores secrets in plain text and applies to every project on your machine**, not just
-> this one. Keep its permissions tight, keep it out of any repo and out of backups you share, and
-> rotate anything that leaks. It is a second home for your credentials alongside `.env` — know that
-> both exist.
-
-**b) `.env` + your shell — for running scripts outside Claude Code.** `.env.example` documents every variable. **Nothing in the code loads `.env`** — there is no `python-dotenv` dependency and no `load_dotenv()` call; secrets are read with a bare `os.environ[...]` lookup. So if you are running a script from a plain terminal you must export them yourself:
+Each script loads it for you. `python -m scripts.<name>` calls `load_env()` (`lib/env.py`) at process start, which reads `.env` with `override=False` — so a variable already exported in your shell still wins, and CI, which has no `.env`, is unaffected:
 
 ```bash
-set -a; source .env; set +a && python -m scripts.run_plan {client_id}
+python -m scripts.run_plan {client_id}      # .env is loaded automatically
 ```
 
-Note the `&&` — **environment variables do not survive between separate Claude Code tool calls**, so sourcing in one command and running the script in the next silently loses them. Keep both in one command, or use option (a).
+> **`.env` is plain text.** Keep it `chmod 600`, out of any shared backup, and rotate anything that
+> leaks. A WordPress application password is revoked and reissued in seconds from
+> Users → Application Passwords.
 
-Either way, one trap is the same: **quote the WordPress application password.** WordPress issues it as six space-separated groups, and unquoted, `source .env` stops at the first space and the variable loads empty — producing a baffling `401` with a password you know is correct.
+Two things this deliberately does **not** do:
+
+- **The test suite never loads `.env`.** `load_env()` is called from each script's `if __name__ == "__main__":` block, not from `main()` — and the nine test modules under `tests/scripts/` call `main()` directly. `.env` carries all four variables the staging guards gate on, so loading it anywhere in the test path would arm tests that write to the live WordPress site and the GS1 production resolver. Running those tests stays a deliberate act: `set -a; source .env; set +a && pytest -m staging`.
+- **It is not imported by `lib/`.** A library must not have import side effects, so nothing is loaded merely by importing the package.
+
+One trap survives: **quote the WordPress application password.** WordPress issues it as six space-separated groups. `python-dotenv` parses the unquoted value correctly, but `source .env` — which you still need for the staging tests — stops at the first space and loads the variable empty, producing a baffling `401` with a password you know is correct. Keep the quotes.
+
+Note also that **environment variables do not survive between separate Claude Code tool calls**, so any manual `source .env` must be joined to the command that needs it with `&&`, in one call.
 
 **Most steps need no credentials at all.** Parse, plan, report, and the map builders are entirely local; only `run_execute` and `run_unpublish` talk to WordPress and GS1. You can get a long way before credentials matter.
 
@@ -241,7 +233,7 @@ Writes are idempotent: re-running the same input converges on the same state rat
 
 Read-only until the final step. This is the one workflow where working hands-on with the scripts is expected: mapping an unfamiliar export is iterative, and you want to see each result before deciding the next change.
 
-1. **Add the client** to `clients.yml`. Copy the example block and change `client_id`, `display_name`, `export.path`, and the `wordpress` / `gs1` blocks — then remove the leftover `noviplast:` example so your live config describes only your own clients. Add the credential env vars wherever your setup keeps them (see [Secrets](#secrets)); `clients.yml` gets the **names** only.
+1. **Add the client** to `clients.yml`. Copy the example block and change `client_id`, `display_name`, `export.path`, and the `wordpress` / `gs1` blocks — then remove the leftover `noviplast:` example so your live config describes only your own clients. Add the credential env vars to `.env` (see [Secrets](#secrets)); `clients.yml` gets the **names** only.
 
 2. **Drop the export** at `input/{client_id}/products.xlsx`. `input/` and `output/` are gitignored, so client data never enters the repository. Create the directory if it does not exist.
 
@@ -286,7 +278,7 @@ Read-only until the final step. This is the one workflow where working hands-on 
 - Never `pytest -m staging` casually — it writes to live WordPress and GS1 production.
 - A GS1 Digital Link record **cannot be deleted**. `run_unpublish` deactivates it; the disabled record stays on the account permanently. Never point a smoke test at a real product's GTIN.
 - `clients.yml`, `.env`, `input/`, `output/` are gitignored. Keep it that way, and keep secrets out of `clients.yml` — it holds env var *names*. **The repository is public**, so anything committed is world-readable permanently.
-- If you keep credentials in a Claude Code `settings.json` `env` block, remember that file is plain text and machine-wide. Rotate anything that leaks — a WordPress application password is revoked and reissued in seconds from Users → Application Passwords.
+- Keep credentials in `.env` and nowhere else. A Claude Code `settings.json` `env` block also works, but it is machine-wide — those secrets end up in the environment of *every* command in *every* project, which is how a password once got echoed into a chat transcript. Rotate anything that leaks; a WordPress application password is revoked and reissued in seconds from Users → Application Passwords.
 - Verify rendered HTML, never just a status code.
 
 ## Next

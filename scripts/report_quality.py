@@ -27,6 +27,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from lib.env import load_env
 from lib.quality_report import render_quality_report
 from lib.records import ProductRecord, SourceIssue
 
@@ -131,4 +132,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    load_env()
     raise SystemExit(main())

@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 
 from lib.config import ClientConfig, get_client
+from lib.env import load_env
 from lib.errors import ConfigError
 from lib.media_video import (
     check_video_map,
@@ -157,4 +158,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    load_env()
     raise SystemExit(main())

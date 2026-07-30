@@ -39,6 +39,7 @@ from pydantic import ValidationError
 
 from lib.categories import resolve_category
 from lib.config import ClientConfig, get_client
+from lib.env import load_env
 from lib.errors import ConfigError, GeneratorError, StateError, WebsiteStatusError
 from lib.generator import load_cache, merge_generated
 from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
@@ -352,4 +353,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    load_env()
     raise SystemExit(main())

@@ -127,7 +127,7 @@ Retracting a GTIN that has no entry returns `False` without writing, so it is sa
 | `400 21011 "No valid contract found."` on a **write** | No Digital Link contract on the account. GS1-side. |
 | The same 400 on a **GET** | Interpreted as "no entry exists"; `get()` returns `None`. Not an error. |
 | `ConfigError: GS1 authorization rejected the credentials` | Wrong or expired client id/secret, or the wrong environment's pair. |
-| `MissingCredentialError` | The env var named in `clients.yml` is not in the environment. See [`troubleshooting.md`](troubleshooting.md#missingcredentialerror-when-you-expected-the-credentials-to-be-there) — nothing loads `.env` automatically. |
+| `MissingCredentialError` | The env var named in `clients.yml` is not in the environment. Scripts load `.env` automatically, so check the value is there, non-empty, and spelled as `clients.yml` names it — see [`troubleshooting.md`](troubleshooting.md#missingcredentialerror-when-you-expected-the-credentials-to-be-there). |
 | `GS1APIError` with `status_code == 0` | Transport failure below HTTP, not a server response. |
 | `OverwriteError` | The GTIN already has a live entry. Confirm you mean to replace it. |
 

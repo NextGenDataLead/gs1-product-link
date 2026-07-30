@@ -1,0 +1,105 @@
+"""Unit tests for ``.env`` loading (OD-1: ``.env`` is the single source of truth).
+
+Every test points ``lib.env.ENV_PATH`` at a temporary file. None of them may read the real
+repository ``.env`` — that file holds production credentials and all four variables the
+staging guards gate on.
+"""
+
+from __future__ import annotations
+
+import ast
+import os
+from pathlib import Path
+
+import pytest
+
+from lib import env as env_module
+from lib.env import load_env
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def test_returns_false_when_no_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(env_module, "ENV_PATH", tmp_path / "absent.env")
+    assert load_env() is False
+
+
+def test_loads_values_from_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("TEST_OD1_TOKEN=from-file\n", encoding="utf-8")
+    monkeypatch.setattr(env_module, "ENV_PATH", env_file)
+    monkeypatch.delenv("TEST_OD1_TOKEN", raising=False)
+
+    assert load_env() is True
+    assert os.environ["TEST_OD1_TOKEN"] == "from-file"
+
+
+def test_does_not_override_an_existing_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``override=False`` keeps CI and deliberate one-off overrides working."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("TEST_OD1_TOKEN=from-file\n", encoding="utf-8")
+    monkeypatch.setattr(env_module, "ENV_PATH", env_file)
+    monkeypatch.setenv("TEST_OD1_TOKEN", "from-environment")
+
+    load_env()
+    assert os.environ["TEST_OD1_TOKEN"] == "from-environment"
+
+
+def test_env_path_resolves_to_the_repository_root() -> None:
+    """Resolved from the module's own location, so the working directory is irrelevant."""
+    assert env_module.ENV_PATH == _REPO_ROOT / ".env"
+
+
+# --- the constraint that makes this safe -------------------------------------
+
+
+def test_no_test_module_or_conftest_loads_env() -> None:
+    """``.env`` must never reach the test path — it would arm the live-writing staging tests."""
+    offenders = [
+        str(path.relative_to(_REPO_ROOT))
+        for path in [*(_REPO_ROOT / "tests").rglob("*.py"), *_REPO_ROOT.glob("conftest.py")]
+        if path.name != "test_env.py" and "load_env" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+
+
+def test_scripts_call_load_env_from_main_block_not_from_main() -> None:
+    """Tests call ``main()`` directly, so a call sited there would load ``.env`` under pytest.
+
+    Asserts the call is a direct statement of the module-level ``if __name__ == "__main__":``
+    block, and that no function body anywhere in the module calls it.
+    """
+    scripts = sorted(p for p in (_REPO_ROOT / "scripts").glob("*.py") if p.name != "__init__.py")
+    assert scripts, "expected script entry points to exist"
+
+    for path in scripts:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        in_main_block = any(
+            isinstance(node, ast.If)
+            and any(
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Call)
+                and isinstance(stmt.value.func, ast.Name)
+                and stmt.value.func.id == "load_env"
+                for stmt in node.body
+            )
+            for node in tree.body
+        )
+        assert in_main_block, f"{path.name}: load_env() is not called in the __main__ block"
+
+        for func in ast.walk(tree):
+            if not isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            calls_load_env = any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "load_env"
+                for node in ast.walk(func)
+            )
+            assert not calls_load_env, (
+                f"{path.name}: load_env() is called inside {func.name}() — tests call main() "
+                "directly, so this would load production credentials into the pytest process"
+            )
