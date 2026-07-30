@@ -167,3 +167,23 @@ def test_missing_file_returns_error(capsys: pytest.CaptureFixture[str]) -> None:
 def test_wrong_arg_count_returns_usage(capsys: pytest.CaptureFixture[str]) -> None:
     assert inspect_export.main([]) == 2
     assert "usage:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_help_flag_prints_usage_and_succeeds(flag: str, capsys: pytest.CaptureFixture[str]) -> None:
+    # docs/setup.md tells operators every script answers --help. This script takes a bare
+    # path, so without an explicit branch the flag was read as a filename and crashed.
+    assert inspect_export.main([flag]) == 0
+    assert "usage:" in capsys.readouterr().out
+
+
+def test_non_xlsx_file_reports_cleanly(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # openpyxl raises InvalidFileException, which is NOT an OSError — before it was
+    # caught, a typo'd path or a .xls escaped as an unhandled traceback.
+    not_a_workbook = tmp_path / "products.xls"
+    not_a_workbook.write_text("this is not a spreadsheet")
+
+    code = inspect_export.main([str(not_a_workbook)])
+
+    assert code == 1
+    assert "cannot read export" in capsys.readouterr().err
