@@ -241,11 +241,35 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
 - **Fix:** create missing terms manually (v0.1.0 does not auto-create; deferred to v0.2).
 - **Blocks:** Phase 9 (pilot run).
 
-### 3.18 Polylang configured
+### 3.18 Multilingual plugin configured — **the pilot runs WPML, not Polylang**
 
-- **What:** install Polylang (if not already), configure NL + FR, NL default, subdirectory URL structure (`/fr/`), mark `noviplast` post type as translatable.
-- **Verify:** `curl https://{staging}/wp-json/pll/v1/languages` returns 200 with both languages.
+> **Superseded (2026-07-30).** This step originally said "install Polylang". The pilot site already ran
+> **WPML**, so that is what was built against and what has been publishing live nl+fr pages.
+> `PolylangAdapter` still exists and is supported for sites that use Polylang — but do **not** install
+> Polylang onto a WPML site to satisfy this checklist.
+
+**If the site runs WPML (the pilot):**
+
+- **What:** configure NL + FR with NL default and a `/fr/` subdirectory structure, and mark the
+  `noviplast` post type as translatable. Then **install the helper route** — WPML publishes no core
+  REST route for assigning a post's language or linking a translation group, so the site must host a
+  small Code Snippet / mu-plugin exposing one endpoint at `wordpress.wpml_helper_path` (default
+  `/wp-json/gs1dl/v1/translations`; the pilot uses `/wp-json/noviplast/v1/translations`). Source and
+  live verification: [`clients/noviplast-page-adapter.md`](clients/noviplast-page-adapter.md) §7.
+- **Verify:** `curl https://{site}/wp-json/wpml/v1` returns 200, **and** the helper route accepts a
+  POST and echoes back the translation group it actually wrote (a group that differs from the one sent
+  is rejected by the client as a 409 — that assertion is the whole point of the helper's response).
+- **Set in `clients.yml`:** `multilingual_plugin: wpml`, `default_language`, `languages`, and
+  `wpml_helper_path`. Set it **explicitly** — an explicit value beats plugin detection deliberately,
+  because a failed probe would otherwise substitute `NoOpAdapter` and every page would publish, report
+  `ok`, and never be linked to its translation.
+
+**If the site runs Polylang:** configure it as above and verify
+`curl https://{site}/wp-json/pll/v1/languages` returns 200 with both languages. No helper needed.
+
 - **Blocks:** Phase 4 completion (multilingual detection test).
+- **See:** [`wordpress-onboarding.md`](wordpress-onboarding.md) for the operator-facing version of this
+  step, and `IMPLEMENTATION_SPEC.md` §4.5 for the adapter contract.
 
 ### 3.19 Media library upload limits raised
 

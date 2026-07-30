@@ -344,6 +344,18 @@ unchanged: inspect → draft `gdsn_map` → `--dry-run` → iterate to zero warn
 
 Typed exceptions: `OrchestratorError` (base), `ConfigError`, `MissingCredentialError`, `ExportParseError`, `GS1APIError(status_code, response_body, error_results: list[dict] | None = None, request_id: str | None = None)`, `WordPressAPIError(status_code, response_body)`, `TemplateError`, `StateError`.
 
+**Five more were added as later phases needed them — `lib/errors.py` now carries 13 classes, not the 8 above.** Every one still derives from `OrchestratorError`, so `except OrchestratorError` remains the catch-all:
+
+| Added | Raised by | Purpose |
+|---|---|---|
+| `OverwriteError(gtin, existing)` | `gs1_dl_client.safe_upsert` | GET-before-write guard: refuses to replace an existing Digital Link without `overwrite=True`. Carries the prior snapshot for rollback. |
+| `GtinMismatchError(gtin, existing_gtin, wp_page_id)` | `wp_client.upsert_page` | E8 — a page at the target slug belongs to a different GTIN. Distinct from `WordPressAPIError` so callers **log and skip the row** rather than treating it as a transport failure. |
+| `WebsiteStatusError` | `website_status.load_website_status` | The operator control file is missing/unreadable/missing a column. Treated like `ConfigError` (exit 2) — it gates eligibility. |
+| `GeneratorError` | `lib.generator` | Corrupt/unwritable `generated_cache.json`, or a producer result that fails validation. |
+| `LLMAPIError(status_code, response_body, message=None)` | `lib.llm.AnthropicClient` | API failure, transport failure (`status_code == 0`), or a 200 lacking the forced `produce_copy` tool call. Only reachable via `run_generate --backend api`. |
+
+Operator-facing reference for all 13, with symptoms and fixes: `docs/troubleshooting.md`.
+
 `GS1APIError.error_results` carries the parsed 400 body when the response follows the standard v2 ErrorResult shape (`[{identifier, errors: [{code, message}]}]`); falls back to raw `response_body` when the body isn't in that shape (e.g. 5xx with plain text, or a non-standard error format). See §5.1 for parsing rules.
 
 ### 4.2 `lib/config.py`
@@ -504,7 +516,18 @@ def _auth_header(self) -> dict[str, str]:
 
 ### 4.5 `lib/multilingual.py`
 
-`MultilingualAdapter` base with `link_translations(wp, translations: dict[str, int])`. Concrete: `PolylangAdapter` (uses `/wp-json/pll/v1/` endpoints), `WPMLAdapter` (stub raises `NotImplementedError`, v0.2), `NoOpAdapter` for `multilingual_plugin: none`.
+`MultilingualAdapter` base with `link_translations(wp, translations: dict[str, int])`. Concrete: `PolylangAdapter` (uses `/wp-json/pll/v1/` endpoints), `WPMLAdapter`, `NoOpAdapter` for `multilingual_plugin: none`. Built by `make_adapter(plugin, *, wpml_helper_path, source_language)`.
+
+> **`WPMLAdapter` is implemented and in production — this section previously described it as a "stub raises `NotImplementedError`, v0.2". That was the plan; the pilot needed it, so it was built.** WPML publishes no core REST route for assigning a post's language or linking a translation group (both need its PHP API), so the adapter POSTs to a small **site-side helper** — a Code Snippet / mu-plugin — at `wordpress.wpml_helper_path` (default `/wp-json/gs1dl/v1/translations`; the pilot overrides it to `/wp-json/noviplast/v1/translations`). The route is deliberately shaped like Polylang's so both adapters stay symmetric:
+>
+> ```
+> POST {helper_path}  {"translations": {"nl": 123, "fr": 456}, "source_language": "nl"}
+> ->                  {"ok": true, "trid": 42, "translations": {"nl": 123, "fr": 456}}
+> ```
+>
+> The helper reads `translations` back from WPML's own tables rather than echoing the request, and `_assert_linked` **verifies it matches what was sent**, raising `WordPressAPIError` (409) otherwise — so a silent no-op, the failure this integration is most prone to, surfaces as an error rather than as a page that looks published but is unreachable in its own language. `ConfigError` if `source_language` is absent from the linked set (WPML needs a source to hang the `trid` off), or if `wpml` is configured without both `wpml_helper_path` and `default_language`. Fewer than two languages is a no-op.
+>
+> **Plugin selection: an explicit config value beats detection, deliberately.** `wp_client._resolve_plugin` probes Polylang's `/wp-json/pll/v1/languages` then WPML's `/wp-json/wpml/v1`, but only *uses* the probe when config says `none`; a configured value wins and a mismatch merely warns. Letting a failed probe override a configured `wpml` would substitute `NoOpAdapter`, whose `link_translations` does nothing and raises nothing — every page would publish, report `ok`, and never be linked. Helper source and live verification: `docs/clients/noviplast-page-adapter.md` §7; operator-facing guide: `docs/wordpress-onboarding.md`.
 
 ### 4.6 `lib/templates.py`
 
@@ -707,18 +730,81 @@ Exit codes: 0 all ok, 1 any errors, 2 config/setup error (incl. refused producti
 
 Per-row: try/except around each step (WP upsert, verify, GS1 upsert, QR render). State updated per successful row. JSONL log entry per row regardless. Full skeleton in `PROJECT_HANDOVER.md` §10.5.
 
-### 8.4 `scripts/verify_run.py`
+### 8.4 `scripts/verify_run.py` — **NOT BUILT; superseded**
+
+Originally specified as a post-run sweep (`python -m scripts.verify_run CLIENT_ID [--run PATH]`)
+that would HEAD the `wp_url` of every `RunOutcome` with `status == "ok"`. **This script does not
+exist**, and it is not planned: verification moved *into* the execute loop instead. `run_execute`
+calls `lib.wp_client.WordPressClient.verify_url` on each page immediately after upserting it
+(`scripts/run_execute.py` → `_publish_page`), so a page that fails to serve is caught and recorded on
+that row's `RunOutcome` during the run rather than in a separate pass afterwards. A row that was
+created and *then* failed verification still reports its id and URL, so nothing is lost.
+
+> **`verify_url` uses HEAD, and that is correct here** — it checks a WordPress page URL. Do **not**
+> generalise it to Digital Link resolution: `id.gs1.org` **404s to HEAD and 307s to GET**, so resolver
+> checks must use GET. See §12 Phase 9 and `docs/troubleshooting.md`.
+>
+> **A 2xx does not prove the page renders its content.** The ACF write path fails silently, so
+> `verify_url` confirms the page is *served*, not that it is *correct*. Verifying a wave means
+> fetching the HTML and inspecting it — see `docs/wordpress-onboarding.md`.
+
+### 8.4a Scripts built beyond the original §8 set
+
+These exist and are in active use but were never given §8 contracts. Flags below are transcribed
+from each script's `_parse_args`; run any of them with `--help` for the authoritative list. Exit
+codes are uniform — **0** success, **1** errors in the work, **2** config/usage error.
 
 ```
-Usage: python -m scripts.verify_run CLIENT_ID [--run PATH]
+Usage: python -m scripts.run_generate  CLIENT_ID [--products PATH] [--results PATH]
+                                       [--emit | --ingest | --backend api]
 
---run:  path to a run JSONL; default latest in output/{client_id}/runs/
+--emit      Write pending requests for an in-session producer (default)
+--ingest    Read a session's results back into the cache
+--backend api   Fill the cache directly via the Anthropic API backend (lib/llm.py)
 
-Emits: report to stdout
-Exit codes: 0 all URLs live, 1 any dead
+Emits:  output/{client_id}/data/generated_cache.json, generated_issues.json
+        --emit also writes the pending-request file the content-generator skill consumes
 ```
 
-For each `RunOutcome` with status=="ok", HEAD the `wp_url`, check 2xx.
+`--emit`/`--ingest` and `--backend api` are mutually exclusive and share one cache and contract seam.
+The in-session path needs no API key. Re-run `run_plan` after `--ingest` so the copy merges into the
+plan.
+
+```
+Usage: python -m scripts.run_unpublish CLIENT_ID --gtin GTIN [--gtin GTIN ...] [--dry-run]
+
+Retracts each GTIN's Digital Link (PATCH isEnabled=false; links left intact) and drafts its
+WordPress pages, then classifies the GTIN as HELD so a later run cannot republish it.
+--revive on run_execute is the deliberate opt-in to publish held GTINs again.
+```
+
+```
+Usage: python -m scripts.build_brick_map CLIENT_ID [--datamodel FILE.xlsx] [--code-column COL]
+                                         [--category-column COL] [--sheet SHEET]
+                                         [--products PATH] [--check]
+
+Drafts a client's GPC brick → category map from the GS1 DIY sector datamodel (operator-supplied).
+--check is a coverage gate: exit 1 if any brick in the export is unmapped. Unmapped bricks warn;
+the tool never guesses a category. Per-GTIN exceptions go in categories.overrides.
+```
+
+```
+Usage: python -m scripts.build_video_map CLIENT_ID [--products PATH] [--check]
+
+Emits a hint skeleton for the operator-authored video filename → GTIN mapping (videos are not in
+the feed; files are named by marketing name). --check exits 1 if any file is unmapped.
+The mapping requires client sign-off — see §12 Phase 9.5.
+```
+
+```
+Usage: python -m scripts.report_quality CLIENT_ID [--out PATH]
+
+Emits: output/{client_id}/data-quality-report.md   (pure renderer: lib/quality_report.py)
+```
+
+Run `report_quality` after `parse_export`, `run_plan`, or `build_video_map` — it renders whatever
+those steps last wrote. It is the surface for finding source-data problems to fix in MyGS1 rather
+than working around downstream.
 
 ### 8.5 `scripts/inspect_export.py`
 

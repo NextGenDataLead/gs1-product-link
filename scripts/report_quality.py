@@ -92,6 +92,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point. Returns the process exit code."""
     args = _parse_args(argv)
     data_dir = Path("output") / args.client_id / "data"
     if not data_dir.is_dir():
