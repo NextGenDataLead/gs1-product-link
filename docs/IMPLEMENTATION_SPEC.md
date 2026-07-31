@@ -714,21 +714,37 @@ Behaviour:
 
 ```
 Usage: python -m scripts.run_execute CLIENT_ID [--plan PATH] [--confirmed PATH]
-                                     [--dry-run] [--revive] [--i-understand-production]
+                                     [--only {pages,links}] [--dry-run] [--revive]
+                                     [--i-understand-production]
 
 If --confirmed given: use as ConfirmedPlan; else --plan with all rows confirmed.
 
+--only selects one leg; omitting it does both (the pre-existing behaviour).
+  pages  WordPress pages + translation linking. No GS1 record, no QR. Reversible.
+  links  GS1 records + QR only, aimed at pages that already exist. Permanent.
+Backs the /gs1-pages, /gs1-links and /gs1-publish skills, which supply it after gate 0;
+operators do not type it.
+
+--only links precondition: each target is resolved from state.json, else a slug lookup,
+else the plan row's target_url, and must serve 2xx/3xx (wp_client.verify_url) before the
+resolver is written. Any GTIN with an unverifiable target gets no GS1 write. In code,
+not in skill prose: a GS1 record cannot be deleted, so a permanent target on a 404 is
+unrecoverable, and prose can be skipped.
+
 Production guard: a real run (not --dry-run) whose gs1.environment is 'production' is
-refused unless --i-understand-production is passed (exit 2). Keeps a bare --plan from
-publishing live pages / permanent GS1 records; flow-orchestrator passes it after its
-step-8 environment confirmation.
+refused unless --i-understand-production is passed (exit 2), in every mode. Keeps a bare
+--plan from publishing live pages / permanent GS1 records; flow-orchestrator passes it
+after its step-8 environment confirmation (gate 0 in pages mode, where step 8 is skipped).
+The refusal message names only what the selected leg actually does.
 
 Emits:  output/{client_id}/runs/{ts}.jsonl (RunOutcome per row)
         output/{client_id}/state.json (updated)
 Exit codes: 0 all ok, 1 any errors, 2 config/setup error (incl. refused production run)
 ```
 
-Per-row: try/except around each step (WP upsert, verify, GS1 upsert, QR render). State updated per successful row. JSONL log entry per row regardless. Full skeleton in `PROJECT_HANDOVER.md` §10.5.
+Per-row: try/except around each step (WP upsert, verify, GS1 upsert, QR render). JSONL log entry per row regardless. Full skeleton in `PROJECT_HANDOVER.md` §10.5.
+
+State is committed per GTIN once every selected leg has succeeded, not per step — a resolver write that fails after the pages were upserted must leave no state, or the next run reads a fresh `content_hash` and never retries the link. A `--only pages` run stores `gs1_link_set_hash: ""`, which `lib.state._classify` reads as "page published, resolver link never written" and reports CHANGED; without it the follow-up links run would find every row UNCHANGED and publish nothing. A `--only links` run against a page this tool does not manage writes the resolver record but **no** state entry, since claiming a `content_hash` for content it never wrote would make the next run skip creating the page.
 
 ### 8.4 `scripts/verify_run.py` — **NOT BUILT; superseded**
 

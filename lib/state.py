@@ -202,6 +202,16 @@ def _is_held(prior: StateEntry) -> bool:
     return prior.wp_status != _PUBLISHED_STATUS or not prior.gs1_enabled
 
 
+def _has_no_resolver_link(prior: StateEntry) -> bool:
+    """Whether this entry's page was published but its resolver link never written.
+
+    An empty ``gs1_link_set_hash`` is what a ``run_execute --only pages`` run leaves
+    behind: the page is live, but no Digital Link points at it. Every state file written
+    before ``--only`` existed carries a real hash, so this never fires on old state.
+    """
+    return not prior.gs1_link_set_hash
+
+
 def _classify(
     prior: StateEntry | None, content_hash: str, title: str, target_url: str
 ) -> tuple[PlanClassification, dict[str, tuple[str, str]] | None]:
@@ -218,11 +228,19 @@ def _classify(
     still matches the content it was published with — that is what makes it invisible.
     Comparing content first would classify it UNCHANGED and let the next confirmed run put
     it straight back up.
+
+    A page published without its resolver link (``run_execute --only pages``) is tested
+    before the hash for the same reason and reported CHANGED: its content hash matches too,
+    so on the hash alone a ``/gs1-pages`` run followed by ``/gs1-links`` would find every
+    row UNCHANGED and silently publish nothing. HELD still outranks it — a product somebody
+    took down does not become actionable just because half of it was never written.
     """
     if prior is None:
         return PlanClassification.NEW, None
     if _is_held(prior):
         return PlanClassification.HELD, None
+    if _has_no_resolver_link(prior):
+        return PlanClassification.CHANGED, {"gs1_link": ("not written", "will be written")}
     if prior.content_hash == content_hash:
         return PlanClassification.UNCHANGED, None
     diff: dict[str, tuple[str, str]] = {}
@@ -247,7 +265,9 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     content hash, then compares the hash to the persisted
     :class:`~lib.records.StateEntry`: no entry → NEW, equal hash → UNCHANGED, else
     CHANGED (carrying a ``title`` and/or ``target_url`` diff for whichever of those
-    moved). A language with no ``product_name`` for a product is omitted with a warning
+    moved). An entry whose page was published without a resolver link is CHANGED whatever
+    its hash says, and one that was deliberately taken down is HELD — see
+    :func:`_classify`. A language with no ``product_name`` for a product is omitted with a warning
     (edge E18) rather than emitting a row with a missing title. Likewise, when
     ``require_generated_copy`` is set, a language with no generated tagline is omitted
     (edge E21) — the generator is configured but this unit has no copy yet (a held,

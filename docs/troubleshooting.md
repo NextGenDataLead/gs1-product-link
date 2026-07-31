@@ -164,6 +164,43 @@ Working as designed. A live run against a `production` GS1 client requires
 GS1 records. Either pass the flag deliberately, add `--dry-run`, or switch the client to `test`.
 `flow-orchestrator` appends the flag itself, but only after its environment-confirmation gate.
 
+### A links-only run refuses a GTIN: "refusing to point a permanent GS1 record at it"
+
+```
+gtin 08713195007359 failed its per-product writes: RuntimeError('target URL for language nl
+does not serve: https://www.noviplast.nl/noviplast/p-08713195007359/ (...) — refusing to
+point a permanent GS1 record at it')
+```
+
+**Working as designed, and the one refusal you must not route around.** `/gs1-links` (i.e.
+`run_execute --only links`) aims resolver records at pages it did not create, so it HEADs every
+target before writing. A GS1 record **cannot be deleted** — a QR printed against a wrong URL is
+permanent — so a target that does not serve stops that GTIN. The rest of the batch still publishes,
+and the run exits 1.
+
+The message means the page is not where the plan thinks it is. In order of likelihood:
+
+1. **The slug does not match `wordpress.slug_pattern`.** Pre-existing pages rarely do. The target
+   then falls back to `wordpress.target_url_pattern`, which builds a URL nothing lives at. Fix the
+   pattern to match the real site, re-run `run_plan`, then re-run.
+2. **The page is drafted or in the trash.** `verify_url` is unauthenticated, so a draft 404s.
+3. **The URL is right but the site 405s on HEAD.** Rare; check with
+   `curl -sS -o /dev/null -w '%{http_code}' -I {url}` against `-L` on a GET.
+
+Check what the run actually tried: the resolution order is `state.json` → a slug lookup on the site
+→ the plan row's `target_url`, and the run logs a warning naming which one it fell back to.
+
+### A `pages` run leaves every row CHANGED
+
+Expected. `run_execute --only pages` stores an **empty** `gs1_link_set_hash`, which means "page
+published, resolver link never written". `lib/state.py` reports such a row CHANGED with a
+`gs1_link` diff, so `/gs1-links` still has something to plan.
+
+Without it the row's content hash would match, the next plan would say UNCHANGED, and a follow-up
+`/gs1-links` would find nothing to publish while reporting success — the product would sit live on
+the site with no QR resolving to it, and nothing would say so. Run `/gs1-links` to finish the
+publish; the rows go UNCHANGED after that.
+
 ### A page returns 200 but shows no content
 
 **The ACF write path fails silently.** A `200` from WordPress means the post exists — it does not

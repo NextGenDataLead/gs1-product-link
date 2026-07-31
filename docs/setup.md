@@ -39,7 +39,7 @@ For a real publishing run, **drive it from chat** — see [Running it](#4-runnin
 | Python | **3.11 or newer** | `requires-python = ">=3.11"` in `pyproject.toml`. CI pins 3.11; the suite also passes on 3.14. |
 | Node.js | 20 or newer | Only needed to build the MCP servers in `mcps/`. The Python pipeline does not need it. |
 | Git | any recent | |
-| `ffmpeg` | needed for video | See [Why media gets converted](#why-media-gets-converted). Only consulted when a client sets `media.video_transcode: true`, but the pilot needs it. |
+| `ffmpeg` | **video only** — images use Pillow, already installed | Only consulted when a client sets `media.video_transcode: true`, but the pilot needs it. Image conversion has no external dependency; see [Why media gets converted](#why-media-gets-converted) for the two separate problems. |
 | GS1 | a Data Source contract **and** a Digital Link contract | See [`gs1-nl-onboarding.md`](gs1-nl-onboarding.md). Without the Digital Link contract every write fails `400 21011`. |
 | WordPress | 5.6+, REST reachable over HTTPS | See [`wordpress-onboarding.md`](wordpress-onboarding.md). |
 
@@ -157,13 +157,33 @@ Note also that **environment variables do not survive between separate Claude Co
 
 ## 4. Running it
 
+### Which flow do you need?
+
+Three commands, one gated sequence. Pick by what you want written:
+
+| Command | Writes | Reversibility |
+|---|---|---|
+| `/gs1-pages` | WordPress product pages only. No resolver record, no QR. | **Reversible** — edit or delete the page |
+| `/gs1-links` | GS1 Digital Link records and QR only, pointing at pages that **already exist**. Touches no page. | **PERMANENT** |
+| `/gs1-publish` | Both: pages first, then links pointing at them. The normal full publish. | **PERMANENT** |
+
+Plain language works too — *"publish noviplast to GS1"*, *"just set the Digital Links for noviplast"* — and lands in the same place: `flow-orchestrator` classifies which mode you meant and confirms it at gate 0 before anything runs. The slash commands only skip the guessing.
+
+> **`/gs1-links` is the one to be careful with.** Its targets are not pages the tool just created and verified — they come from `state.json`, a slug lookup, or `wordpress.target_url_pattern`. A GS1 record **can never be deleted**, so a QR printed against a wrong URL is permanent.
+>
+> `run_execute` therefore HEADs every target before it writes, and refuses any GTIN whose target does not serve. That refusal is in the script, not in the skill's instructions — so it happens even on a manual invocation. If you see `refusing to point a permanent GS1 record at it`, the page is not where the plan thinks it is: fix `target_url_pattern` or publish the page, then re-run. Do not route around it.
+
+> **After `/gs1-pages`, the rows keep planning as CHANGED** until `/gs1-links` finishes them. That is deliberate: a page published without its resolver link is not done, and the plan says so rather than reporting the product complete.
+
 **Say what you want in Claude Code:**
 
 ```
 publish {client_id} to GS1
 ```
 
-That loads the `flow-orchestrator` skill, which drives the whole pipeline and stops at each operator gate: language selection → the generated-copy review gate → the plan review gate → a per-row diff gate for changed rows → a **mandatory production environment-confirmation gate** → execute → progress → post-run summary → retry. Nothing proceeds without your answer, and the skill passes `--i-understand-production` only *after* you confirm at that gate.
+That loads the `flow-orchestrator` skill, which drives the whole pipeline and stops at each operator gate: **intent confirmation (gate 0)** → language selection → the generated-copy review gate → the plan review gate → a per-row diff gate for changed rows → a **mandatory production environment-confirmation gate** → execute → progress → post-run summary → retry. Nothing proceeds without your answer, and the skill passes `--i-understand-production` only *after* you confirm at a gate.
+
+Gate 0 states the mode, cross-checks the export file against `clients.yml`, gives the product count and environment, and — for anything that writes to GS1 — warns that the records are permanent. In `pages` mode it also stands in for the production environment gate, since nothing irreversible follows.
 
 > **Say "GS1", not just "run".** *"run for {client_id}"* and *"process {client_id}"* still work and
 > stay documented, but a bare "run" is one of the most overloaded words in a coding session — it
@@ -235,7 +255,7 @@ python -m scripts.run_generate --backend api   # fill the cache directly via the
 python -m scripts.run_execute --plan output/{client_id}/plan.json --dry-run
 
 # Real run.
-python -m scripts.run_execute --plan PATH [--revive] [--i-understand-production]
+python -m scripts.run_execute --plan PATH [--only {pages,links}] [--revive] [--i-understand-production]
 python -m scripts.run_execute --confirmed PATH   # a reviewed ConfirmedPlan
 
 # Take a product down: retract its Digital Link and draft its pages.
@@ -244,6 +264,11 @@ python -m scripts.run_unpublish --gtin GTIN [--gtin GTIN ...] [--dry-run]
 
 `--plan` treats every row as confirmed; `--confirmed` consumes a `ConfirmedPlan` that has been
 through review. They are mutually exclusive and one is required.
+
+`--only` is what backs the three flows above: `pages` runs the WordPress leg and stops, `links` runs
+the GS1 leg against pages that already exist, and omitting it does both. **You do not type this
+either** — the skills supply it after gate 0, the same way `--i-understand-production` is supplied
+after the environment gate. It is documented here so you recognise it in a log or a `--help`.
 
 > **The production guard.** A real run — not `--dry-run` — against a client whose `gs1.environment` is `production` is **refused with exit 2** unless you pass `--i-understand-production`. This exists so a bare `--plan` cannot publish live pages and create permanent GS1 records. `--dry-run` never needs it.
 

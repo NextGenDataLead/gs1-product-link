@@ -2,7 +2,8 @@
 
 Usage:
     python -m scripts.run_execute CLIENT_ID (--plan PATH | --confirmed PATH)
-                                 [--dry-run] [--revive] [--i-understand-production]
+                                 [--only {pages,links}] [--dry-run] [--revive]
+                                 [--i-understand-production]
 
 Work is grouped by GTIN and runs in two phases, because some of it is per language and
 some of it is per *product*:
@@ -25,8 +26,25 @@ Each row's :class:`~lib.records.RunOutcome` is appended to
 ``output/{client_id}/state.json``. The run is idempotent (§6.5) and resumable: re-running
 the same confirmed plan yields the same final state.
 
+``--only`` runs one leg instead of both. ``pages`` writes the WordPress pages and links
+them as translations, and stops — nothing permanent happens, so the run is reversible by
+editing or deleting the pages. ``links`` writes only the Digital Link records and the QR,
+pointing them at pages that already exist. Omitting the flag does both, which is the
+behaviour every existing invocation gets. Operators do not type this: the ``/gs1-pages``,
+``/gs1-links`` and ``/gs1-publish`` skills supply it after their intent gate, exactly as
+``--i-understand-production`` is supplied after the environment gate.
+
+**``--only links`` verifies before it writes.** Its targets do not come from a page this
+run just created, so each one is resolved (from ``state.json``, else a slug lookup, else
+the plan row's ``target_url``) and must serve 2xx/3xx before the resolver is touched. A
+GTIN with any unverifiable target gets no GS1 write at all. This lives here rather than in
+the skill because a GS1 record can never be deleted: a permanent QR target pointing at a
+404 is not recoverable, and prose in a skill can be skipped.
+
 ``--dry-run`` (§5.4 Level B) walks the plan and logs the intended WordPress/GS1
-mutations without performing them — no HTTP writes, no QR files, no state update.
+mutations without performing them — no HTTP writes, no QR files, no state update. It builds
+no clients and so needs no credentials, which is also why a dry-run ``--only links`` lists
+its intended targets without verifying them; the refusal above happens at execute time.
 
 **Production guard.** A real run (not ``--dry-run``) against a client whose ``gs1.environment``
 is ``production`` is refused unless ``--i-understand-production`` is passed. This makes the live
@@ -49,6 +67,7 @@ import json
 import logging
 import sys
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple
 
@@ -57,7 +76,7 @@ from pydantic import ValidationError
 from lib.acf import build_acf_payload
 from lib.config import ClientConfig, GS1LinkConfig, MediaConfig, get_client
 from lib.env import load_env
-from lib.errors import ConfigError, StateError
+from lib.errors import ConfigError, StateError, WordPressAPIError
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
 from lib.media import convert_image_for_web
@@ -91,6 +110,28 @@ _DEFAULT_LINK_TYPE = "gs1:pip"
 _TS_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
+class _Mode(StrEnum):
+    """Which leg of the publish a run performs (``--only``).
+
+    ``BOTH`` is not a spelling of the flag — it is what omitting the flag means, so every
+    invocation written before ``--only`` existed keeps its behaviour untouched.
+    """
+
+    PAGES = "pages"
+    LINKS = "links"
+    BOTH = "both"
+
+    @property
+    def writes_pages(self) -> bool:
+        """Whether this mode renders and upserts WordPress pages."""
+        return self is not _Mode.LINKS
+
+    @property
+    def writes_links(self) -> bool:
+        """Whether this mode writes GS1 resolver records (and the QR that encodes them)."""
+        return self is not _Mode.PAGES
+
+
 # --- Plan loading ------------------------------------------------------------
 
 
@@ -121,9 +162,15 @@ def _client_meta(cfg: ClientConfig) -> dict[str, str]:
 
 
 class _Page(NamedTuple):
-    """One language's live page: what the per-GTIN phase needs to know about it."""
+    """One language's live page: what the per-GTIN phase needs to know about it.
 
-    page_id: int
+    ``page_id`` is ``None`` only on the ``--only links`` path, for a page this tool does not
+    manage and could not find by slug — the URL is then the plan row's ``target_url``. The
+    resolver can still point at it (once verified), but nothing that needs an id may run,
+    and no state is recorded for it.
+    """
+
+    page_id: int | None
     url: str
     title: str
     featured_media_id: int | None = None
@@ -148,6 +195,96 @@ def _known_pages(gtin: str, fresh: dict[str, _Page], state: State) -> dict[str, 
                 entry.wp_page_id, entry.wp_url, entry.title or "", entry.wp_featured_media_id
             )
     return known
+
+
+def _find_page(cfg: ClientConfig, row: PlanRow, wp: WordPressClient) -> _Page:
+    """Locate a page for a row this run is not writing: by slug, else by its planned URL.
+
+    ``--only links`` exists to point resolver records at pages that already exist, so for a
+    language with no state entry the page was made by somebody other than this tool. The id
+    is looked up by slug (a read, no write); when even that misses — a site whose pages do
+    not follow ``slug_pattern``, which is the ordinary case for pre-existing content — the
+    row's planned ``target_url`` is used with no id at all.
+
+    Neither branch is trusted on its own: :func:`_verify_targets` still has to see the URL
+    serve before anything permanent is written.
+    """
+    try:
+        found = wp.find_by_slug(cfg.wordpress.post_type, row.slug, row.language)
+    except WordPressAPIError as exc:
+        _log.warning(
+            "slug lookup for %s/%s failed (%r); falling back to the planned URL",
+            row.gtin,
+            row.language,
+            exc,
+        )
+        found = None
+    if found is not None:
+        return _Page(found["id"], found["link"], row.title)
+    _log.warning(
+        "gtin %s (%s): no state entry and no %s with slug %r — the resolver will point at "
+        "the planned URL %s, and no state will be recorded for it",
+        row.gtin,
+        row.language,
+        cfg.wordpress.post_type,
+        row.slug,
+        row.target_url,
+    )
+    return _Page(None, row.target_url, row.title)
+
+
+def _pages_for_links(  # noqa: PLR0913 — three sources of pages, plus what to look the rest up with
+    cfg: ClientConfig,
+    gtin: str,
+    rows: list[PlanRow],
+    fresh: dict[str, _Page],
+    wp: WordPressClient,
+    state: State,
+) -> dict[str, _Page]:
+    """Every language's page this GTIN's resolver link set must span.
+
+    Starts from :func:`_known_pages` — this run's pages plus state's — for the reason that
+    function exists: the GS1 link array **replaces**, so a language left out is deleted from
+    the record. Any confirmed language still unaccounted for is then located live, which is
+    the ``--only links`` case where state has never heard of the product.
+    """
+    pages = _known_pages(gtin, fresh, state)
+    for row in rows:
+        if row.language not in pages:
+            pages[row.language] = _find_page(cfg, row, wp)
+    return pages
+
+
+def _verify_targets(wp: WordPressClient, pages: dict[str, _Page], verified: set[str]) -> None:
+    """Raise unless every target not already verified this run serves 2xx/3xx.
+
+    A GS1 record can never be deleted, so a resolver target pointing at a 404 is permanent —
+    which makes this the one precondition that cannot live in skill prose, because prose can
+    be skipped and a manual invocation would then burn a real GTIN.
+
+    ``verified`` is the set of URLs :func:`_upsert_row` already checked immediately after
+    writing them, so on the both-flow this covers only the languages :func:`_known_pages`
+    rebuilt from state — which until now were used unverified, on nothing but the age of the
+    state file. On ``--only links`` it covers all of them.
+
+    ``verify_url`` returns ``True`` or raises; both outcomes are handled, since a caller that
+    trusted only the return value would sail straight past the raise.
+    """
+    for language, page in sorted(pages.items()):
+        if page.url in verified:
+            continue
+        try:
+            ok = wp.verify_url(page.url)
+        except WordPressAPIError as exc:
+            raise RuntimeError(
+                f"target URL for language {language} does not serve: {page.url} ({exc!r}) — "
+                f"refusing to point a permanent GS1 record at it"
+            ) from exc
+        if not ok:
+            raise RuntimeError(
+                f"target URL for language {language} does not serve: {page.url} — "
+                f"refusing to point a permanent GS1 record at it"
+            )
 
 
 def _link_title(
@@ -385,28 +522,69 @@ def _block_gtin(gtin: str, rows: list[PlanRow], outcomes: dict[str, RunOutcome])
         _log.error("row %s/%s blocked by failed sibling(s) %s", gtin, row.language, failed)
 
 
-def _finish_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them only hides them
-    cfg: ClientConfig,
+def _finish_pages(  # noqa: PLR0913 — one collaborator per step; bundling them only hides them
     gtin: str,
     rows: list[PlanRow],
     fresh: dict[str, _Page],
     wp: WordPressClient,
-    gs1: GS1DigitalLinkClient,
     state: State,
     ts: datetime,
-    outcomes: dict[str, RunOutcome],
-) -> None:
-    """Phase 2: the writes that belong to the product rather than to one language."""
+) -> dict[str, StateEntry]:
+    """Phase 2, WordPress half: link the languages as translations; build their state.
+
+    Returns the state entries rather than writing them — see :func:`_commit_state` for why
+    a GTIN's state has to land all at once or not at all.
+
+    ``gs1_link_set_hash`` carries the prior value, or ``""`` when there is none. That empty
+    string is the record of "page published, resolver link never written": ``lib.state``
+    reads it and reports the row CHANGED, so a ``--only pages`` run followed by ``--only
+    links`` still has something to plan. Preserving a *prior* hash rather than blanking it
+    matters just as much — re-running pages over a fully published product must not make it
+    look like its resolver link vanished.
+    """
     pages = _known_pages(gtin, fresh, state)
     rebuilt = sorted(set(pages) - set(fresh))
     if rebuilt:
         _log.warning(
-            "gtin %s: language(s) %s were not written this run; their resolver links and "
-            "translation ids come from state, not from a page verified just now",
+            "gtin %s: language(s) %s were not written this run; their translation ids come "
+            "from state, not from a page verified just now",
             gtin,
             rebuilt,
         )
-    wp.link_translations({lang: page.page_id for lang, page in pages.items()})
+    wp.link_translations(
+        {lang: page.page_id for lang, page in pages.items() if page.page_id is not None}
+    )
+    entries: dict[str, StateEntry] = {}
+    for row in rows:
+        prior = state.entries.get(gtin, {}).get(row.language)
+        page = fresh[row.language]
+        if page.page_id is None:  # every page in ``fresh`` came from an upsert that returned one
+            raise RuntimeError(f"page for {gtin}/{row.language} has no id after its upsert")
+        entries[row.language] = StateEntry(
+            wp_page_id=page.page_id,
+            wp_url=page.url,
+            wp_featured_media_id=page.featured_media_id,
+            content_hash=row.content_hash,
+            gs1_link_set_hash=prior.gs1_link_set_hash if prior else "",
+            last_run=ts,
+            title=row.title,  # the next run diffs against this (§10.6.2)
+        )
+    return entries
+
+
+def _finish_links(  # noqa: PLR0913 — one collaborator per step; bundling them only hides them
+    cfg: ClientConfig,
+    gtin: str,
+    rows: list[PlanRow],
+    pages: dict[str, _Page],
+    gs1: GS1DigitalLinkClient,
+    outcomes: dict[str, RunOutcome],
+) -> str:
+    """Phase 2, GS1 half: one resolver write for the whole GTIN, then its QR.
+
+    Returns the link-set hash for :func:`_commit_state`. One write carrying every language,
+    never one per language: CreateOrUpdate replaces the ``links`` array wholesale.
+    """
     links = _build_links(cfg, rows[0].product, pages)
     gs1.safe_upsert(
         gtin=gtin,
@@ -416,21 +594,46 @@ def _finish_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them 
         overwrite=True,  # the plan is operator-confirmed; re-runs update in place (§6.5)
     )
     qr_paths = [str(p) for p in _render_qr_for(cfg, rows[0])]
-    link_hash = _link_set_hash(links)
     for row in rows:
-        outcome = outcomes[row.language]
-        outcome.gs1_set = True
-        outcome.qr_paths = qr_paths
-        outcome.status = "ok"
-        state.entries.setdefault(gtin, {})[row.language] = StateEntry(
-            wp_page_id=fresh[row.language].page_id,
-            wp_url=fresh[row.language].url,
-            wp_featured_media_id=fresh[row.language].featured_media_id,
-            content_hash=row.content_hash,
-            gs1_link_set_hash=link_hash,  # per-GTIN: every language shares the one link set
-            last_run=ts,
-            title=row.title,  # the next run diffs against this (§10.6.2)
-        )
+        outcomes[row.language].gs1_set = True
+        outcomes[row.language].qr_paths = qr_paths
+    return _link_set_hash(links)
+
+
+def _commit_state(  # noqa: PLR0913 — the merge needs both legs' output plus where to put it
+    state: State,
+    gtin: str,
+    rows: list[PlanRow],
+    page_entries: dict[str, StateEntry],
+    link_hash: str | None,
+    ts: datetime,
+) -> None:
+    """Persist one GTIN's state, once every leg of this run has succeeded.
+
+    Written here rather than inside each leg so a GTIN stays all-or-nothing. A resolver
+    write that fails after the pages were upserted must not leave the page half behind: the
+    next run would read a fresh ``content_hash``, and only the empty ``gs1_link_set_hash``
+    would keep it from classifying UNCHANGED and never retrying the link.
+
+    On ``--only links`` there are no page entries, so each row updates the entry already in
+    state. A row with neither gets **no state at all** — that is the page this tool does not
+    manage (:func:`_find_page`), and inventing a ``content_hash`` for it would claim we
+    published content we never wrote, which the next run would believe.
+    """
+    for row in rows:
+        entry = page_entries.get(row.language) or state.entries.get(gtin, {}).get(row.language)
+        if entry is None:
+            _log.warning(
+                "gtin %s (%s): resolver link written for a page this tool does not manage; "
+                "recording no state for it",
+                gtin,
+                row.language,
+            )
+            continue
+        if link_hash is not None:
+            # per-GTIN: every language shares the one link set
+            entry = entry.model_copy(update={"gs1_link_set_hash": link_hash, "last_run": ts})
+        state.entries.setdefault(gtin, {})[row.language] = entry
 
 
 def _execute_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them only hides them
@@ -442,6 +645,7 @@ def _execute_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them
     engine: TemplateEngine,
     state: State,
     ts: datetime,
+    mode: _Mode,
 ) -> list[RunOutcome]:
     """Run every confirmed row of one GTIN, then its per-product writes. Never raises."""
     outcomes = {
@@ -449,24 +653,37 @@ def _execute_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them
         for row in rows
     }
     fresh: dict[str, _Page] = {}
-    for row in rows:
-        try:
-            fresh[row.language] = _upsert_row(cfg, row, wp, engine, state, outcomes[row.language])
-        except Exception as exc:  # noqa: BLE001 — one bad row must not abort the run
-            outcomes[row.language].status = "error"
-            outcomes[row.language].error = repr(exc)
-            _log.error("row %s/%s failed: %r", gtin, row.language, exc)
-
-    if len(fresh) != len(rows):
-        _block_gtin(gtin, rows, outcomes)
-    else:
-        try:
-            _finish_gtin(cfg, gtin, rows, fresh, wp, gs1, state, ts, outcomes)
-        except Exception as exc:  # noqa: BLE001 — one bad GTIN must not abort the run
-            for row in rows:
+    if mode.writes_pages:
+        for row in rows:
+            try:
+                fresh[row.language] = _upsert_row(
+                    cfg, row, wp, engine, state, outcomes[row.language]
+                )
+            except Exception as exc:  # noqa: BLE001 — one bad row must not abort the run
                 outcomes[row.language].status = "error"
                 outcomes[row.language].error = repr(exc)
-            _log.error("gtin %s failed its per-product writes: %r", gtin, exc)
+                _log.error("row %s/%s failed: %r", gtin, row.language, exc)
+        if len(fresh) != len(rows):
+            _block_gtin(gtin, rows, outcomes)
+            return [outcomes[row.language] for row in rows]
+
+    try:
+        page_entries = _finish_pages(gtin, rows, fresh, wp, state, ts) if mode.writes_pages else {}
+        link_hash = None
+        if mode.writes_links:
+            pages = _pages_for_links(cfg, gtin, rows, fresh, wp, state)
+            _verify_targets(wp, pages, {page.url for page in fresh.values()})
+            link_hash = _finish_links(cfg, gtin, rows, pages, gs1, outcomes)
+        _commit_state(state, gtin, rows, page_entries, link_hash, ts)
+    except Exception as exc:  # noqa: BLE001 — one bad GTIN must not abort the run
+        for row in rows:
+            outcomes[row.language].status = "error"
+            outcomes[row.language].error = repr(exc)
+        _log.error("gtin %s failed its per-product writes: %r", gtin, exc)
+        return [outcomes[row.language] for row in rows]
+
+    for row in rows:
+        outcomes[row.language].status = "ok"
     return [outcomes[row.language] for row in rows]
 
 
@@ -478,6 +695,7 @@ def _execute(  # noqa: PLR0913 — one collaborator per step; bundling them only
     engine: TemplateEngine,
     state: State,
     ts: datetime,
+    mode: _Mode,
 ) -> list[RunOutcome]:
     """Execute the confirmed rows grouped by GTIN, returning outcomes in plan order.
 
@@ -491,7 +709,7 @@ def _execute(  # noqa: PLR0913 — one collaborator per step; bundling them only
 
     done: dict[tuple[str, str], RunOutcome] = {}
     for gtin, gtin_rows in by_gtin.items():
-        for outcome in _execute_gtin(cfg, gtin, gtin_rows, wp, gs1, engine, state, ts):
+        for outcome in _execute_gtin(cfg, gtin, gtin_rows, wp, gs1, engine, state, ts, mode):
             done[(outcome.gtin, outcome.language)] = outcome
     return [done[(row.gtin, row.language)] for row in rows]
 
@@ -513,29 +731,43 @@ def _render_qr_for(cfg: ClientConfig, row: PlanRow) -> list[Path]:
 
 
 def _preview_row(
-    cfg: ClientConfig, row: PlanRow, engine: TemplateEngine, ts: datetime
+    cfg: ClientConfig, row: PlanRow, engine: TemplateEngine, ts: datetime, mode: _Mode
 ) -> RunOutcome:
     """Render the template and log the intended mutations without performing them (§5.4)."""
     outcome = RunOutcome(gtin=row.gtin, language=row.language, ts=ts, status="dry-run")
     try:
-        engine.render(row.product, row.language, _client_meta(cfg))
+        if mode.writes_pages:
+            engine.render(row.product, row.language, _client_meta(cfg))
         # One line per row, but the GS1 write is per GTIN: a GTIN with two confirmed rows
         # gets one resolver write carrying both languages' links, not one write per line.
-        _log.info(
-            "[dry-run] %s/%s: would upsert WP %r page %r%s, then link this GTIN's languages "
-            "as translations and point GS1 %s at their pages",
-            row.gtin,
-            row.language,
-            cfg.wordpress.post_type,
-            row.slug,
-            " (with hero image/video)" if cfg.media is not None else "",
-            _digital_link_url(cfg, row),
-        )
+        _log.info("[dry-run] %s/%s: %s", row.gtin, row.language, _preview_text(cfg, row, mode))
     except Exception as exc:  # noqa: BLE001 — surface template errors as a failed preview row
         outcome.status = "error"
         outcome.error = repr(exc)
         _log.error("dry-run row %s/%s failed: %r", row.gtin, row.language, exc)
     return outcome
+
+
+def _preview_text(cfg: ClientConfig, row: PlanRow, mode: _Mode) -> str:
+    """One row's intended mutations, in the words of the leg(s) actually selected.
+
+    The links half names the *planned* target rather than a resolved one: a dry run builds
+    no clients, so it cannot read state or look a page up, let alone verify it. Saying so is
+    the point — the verification that refuses a 404 happens at execute time.
+    """
+    parts = []
+    if mode.writes_pages:
+        media = " (with hero image/video)" if cfg.media is not None else ""
+        parts.append(
+            f"upsert WP {cfg.wordpress.post_type!r} page {row.slug!r}{media}, then link "
+            f"this GTIN's languages as translations"
+        )
+    if mode.writes_links:
+        parts.append(
+            f"point GS1 {_digital_link_url(cfg, row)} at {row.target_url} and render its "
+            f"QR (the real run verifies that target serves first, and refuses if it does not)"
+        )
+    return "would " + ", then ".join(parts)
 
 
 def _confirmed_rows(confirmed: ConfirmedPlan) -> list[PlanRow]:
@@ -621,13 +853,14 @@ def _write_log(log_path: Path, outcomes: list[RunOutcome]) -> None:
             handle.write(json.dumps(outcome.model_dump(mode="json"), ensure_ascii=False) + "\n")
 
 
-def _run(
+def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per policy switch
     cfg: ClientConfig,
     confirmed: ConfirmedPlan,
     resolved_gs1: ResolvedGS1Config | None,
     *,
     dry_run: bool,
     revive: bool,
+    mode: _Mode,
 ) -> int:
     """Execute (or preview) the confirmed plan; return the process exit code."""
     rows = _restrict_to_pilot(
@@ -638,22 +871,23 @@ def _run(
     log_path = Path("output") / cfg.client_id / "runs" / f"{ts.strftime(_TS_FORMAT)}.jsonl"
 
     if dry_run or resolved_gs1 is None:
-        outcomes = [_preview_row(cfg, row, engine, ts) for row in rows]
+        outcomes = [_preview_row(cfg, row, engine, ts, mode) for row in rows]
     else:
         state = load_state(cfg.client_id)
         with (
             WordPressClient(cfg.wordpress) as wp,
             GS1DigitalLinkClient(resolved_gs1) as gs1,
         ):
-            outcomes = _execute(cfg, rows, wp, gs1, engine, state, ts)
+            outcomes = _execute(cfg, rows, wp, gs1, engine, state, ts, mode)
         save_state(state)
 
     _write_log(log_path, outcomes)
     errors = sum(1 for o in outcomes if o.status == "error")
     _log.info("run complete: %d ok, %d error(s)", len(outcomes) - errors, errors)
     prefix = "[dry-run] " if dry_run else ""
+    leg = "" if mode is _Mode.BOTH else f" ({mode} only)"
     print(
-        f"{prefix}{len(outcomes)} row(s), {errors} error(s); log: {log_path}",
+        f"{prefix}{len(outcomes)} row(s){leg}, {errors} error(s); log: {log_path}",
         file=sys.stderr,
     )
     return _EXIT_ERRORS if errors else _EXIT_OK
@@ -671,6 +905,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--plan", help="Path to a Plan JSON (all rows confirmed)")
     source.add_argument("--confirmed", help="Path to a ConfirmedPlan JSON")
+    parser.add_argument(
+        "--only",
+        choices=[_Mode.PAGES.value, _Mode.LINKS.value],
+        help=(
+            "Run one leg instead of both: 'pages' writes the WordPress pages and stops "
+            "(reversible); 'links' writes only the Digital Link records and QR, pointing them "
+            "at pages that already exist (permanent, and each target is verified first). "
+            "Omit to do both, which is the default."
+        ),
+    )
     parser.add_argument(
         "--dry-run", action="store_true", help="Preview intended mutations without performing them"
     )
@@ -690,10 +934,43 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _production_refusal(cfg: ClientConfig, mode: _Mode) -> str:
+    """The exit-2 message for a production run without the acknowledgment flag.
+
+    Names only what the selected leg actually does. ``--only pages`` writes live pages but
+    creates no permanent records, and claiming otherwise would teach the operator to read
+    past this message — which is the one thing it cannot afford.
+    """
+    if mode is _Mode.PAGES:
+        consequence = f"would publish live pages to {cfg.wordpress.site_url}"
+    elif mode is _Mode.LINKS:
+        consequence = (
+            "would register permanent GS1 records (GS1 v2 has no delete — records can only "
+            "be disabled)"
+        )
+    else:
+        consequence = (
+            f"would publish live pages to {cfg.wordpress.site_url} and register permanent GS1 "
+            "records (GS1 v2 has no delete — records can only be disabled)"
+        )
+    return (
+        f"refusing to write to PRODUCTION: gs1.environment is 'production', so this run "
+        f"{consequence}. Re-run with --i-understand-production to proceed, or --dry-run to "
+        f"preview without writing."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns the process exit code."""
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     args = _parse_args(argv)
+    # A dry run exists to show the intended mutations, and those are logged at INFO — at
+    # WARNING it printed nothing but a row count, which is the one thing it did not need to
+    # say. Only dry runs are raised: a real run's per-row detail belongs in the JSONL.
+    logging.basicConfig(
+        level=logging.INFO if args.dry_run else logging.WARNING,
+        format="%(levelname)s %(message)s",
+    )
+    mode = _Mode(args.only) if args.only else _Mode.BOTH
     try:
         cfg = get_client(args.client_id)
         confirmed = _load_confirmed(args)
@@ -702,13 +979,7 @@ def main(argv: list[str] | None = None) -> int:
             and cfg.gs1.environment == "production"
             and not args.i_understand_production
         ):
-            print(
-                "refusing to write to PRODUCTION: gs1.environment is 'production', so this run "
-                f"would publish live pages to {cfg.wordpress.site_url} and register permanent GS1 "
-                "records (GS1 v2 has no delete — records can only be disabled). Re-run with "
-                "--i-understand-production to proceed, or --dry-run to preview without writing.",
-                file=sys.stderr,
-            )
+            print(_production_refusal(cfg, mode), file=sys.stderr)
             return _EXIT_CONFIG_ERROR
         resolved_gs1 = None if args.dry_run else cfg.gs1.resolve()
     except (
@@ -720,7 +991,7 @@ def main(argv: list[str] | None = None) -> int:
     ) as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return _EXIT_CONFIG_ERROR
-    return _run(cfg, confirmed, resolved_gs1, dry_run=args.dry_run, revive=args.revive)
+    return _run(cfg, confirmed, resolved_gs1, dry_run=args.dry_run, revive=args.revive, mode=mode)
 
 
 if __name__ == "__main__":

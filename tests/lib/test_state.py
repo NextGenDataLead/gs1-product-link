@@ -399,6 +399,44 @@ def test_legacy_state_without_status_fields_is_not_held() -> None:
     assert rows[0].classification is PlanClassification.UNCHANGED
 
 
+def test_diff_changed_when_page_published_without_a_resolver_link() -> None:
+    # What `run_execute --only pages` leaves behind. Its content hash MATCHES — that is
+    # exactly what makes the gap invisible — so without this rule the row classifies
+    # UNCHANGED, and a follow-up `/gs1-links` finds nothing to publish and says so cheerfully.
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _state_with(
+        product.gtin, "nl", content_hash=baseline.content_hash, wp_url=baseline.target_url
+    )
+    entry = state.entries[product.gtin]["nl"]
+    state.entries[product.gtin]["nl"] = entry.model_copy(update={"gs1_link_set_hash": ""})
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.CHANGED
+    # A named diff row, so the §10.6.2 prompt says what is missing rather than printing a
+    # bare "Changes:" header the operator has to guess at.
+    assert rows[0].diff == {"gs1_link": ("not written", "will be written")}
+
+
+def test_diff_held_outranks_a_missing_resolver_link() -> None:
+    # An unpublished product whose resolver link was never written is still held: intent
+    # about the product outranks the fact that half of it was never finished.
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )[0]
+    state = _held_state(
+        product, baseline.content_hash, baseline.target_url, wp_status="draft", gs1_link_set_hash=""
+    )
+
+    rows = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.HELD
+
+
 def test_diff_changed_in_body_only_has_no_diff() -> None:
     product = _product()
     baseline = diff_against_state(

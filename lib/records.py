@@ -260,6 +260,12 @@ class StateEntry(BaseModel):
     the GTIN, not the language, but is stored per-language because state is keyed
     ``(gtin, language)`` — mirroring ``gs1_link_set_hash``, which is already duplicated
     across an entry's languages for exactly that reason.
+
+    An **empty** ``gs1_link_set_hash`` means "page published, resolver link never written"
+    — what ``run_execute --only pages`` leaves behind. It is a real value, not a missing
+    one: ``lib.state._classify`` reads it and reports the row CHANGED so the links half can
+    still be planned. Every state file written before ``--only`` existed carries a real
+    digest, so nothing already live is affected.
     """
 
     wp_page_id: int
