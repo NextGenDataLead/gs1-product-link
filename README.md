@@ -7,9 +7,13 @@ destination WordPress pages along the way.
 
 The tool runs inside **Claude Code**: deterministic Python scripts do the
 per-row work, while Claude handles planning, user interaction, and exception
-cases. It is **multi-tenant by design** — every user supplies their own
-credentials via a gitignored config file. There are **no central services** and
-nothing to host.
+cases.
+
+**One client per repository.** You clone it, point it at your own export and
+your own WordPress site, and run it locally. Credentials live in a gitignored
+`.env`; `clients.yml` — also gitignored — holds the configuration and the
+**names** of those environment variables, never their values. There are **no
+central services**, nothing to host, and nothing of yours leaves your machine.
 
 ## Status
 

@@ -80,9 +80,9 @@ Expected, on a clean checkout:
 
 ```
 All checks passed!
-98 files already formatted
-Success: no issues found in 21 source files
-522 passed, 2 skipped, 5 deselected
+102 files already formatted
+Success: no issues found in 22 source files
+534 passed, 2 skipped, 5 deselected
 ```
 
 **Why a bare `pytest` is safe.** `pyproject.toml` sets `addopts = "-m 'not staging'"`. The 5 deselected tests are the staging integration tests — they write to a **live** WordPress site and the **GS1 production** resolver. They are deselected by default deliberately, because relying on their `skipif` env-var guard was not enough: a shell that had sourced `.env` satisfied that guard, and a bare `pytest` then hit production. Do not run `pytest -m staging` unless you have read `.env.example`'s staging block in full and understand that a GS1 record **cannot be deleted**.
@@ -107,7 +107,7 @@ python -c "from lib.config import load_clients; print(sorted(load_clients('clien
 # -> ['noviplast']      # proves the loader works. It does NOT mean you are set up for Noviplast.
 ```
 
-Delete or replace the `noviplast:` block before you configure your own client. Nothing will ever act on a client you do not name on the command line, but leaving a stale example in your live `clients.yml` invites confusion later.
+**Delete or replace the `noviplast:` block before you configure your own client** — and do it properly, because the single-client default makes a leftover example load-bearing. With exactly one client defined, commands infer it and act on it without you naming it. So a `clients.yml` containing only the stale example means a bare `python -m scripts.run_plan` acts on **that** example; and a `clients.yml` containing the example *plus* yours makes the id mandatory again, so every command fails until you name one. Neither is dangerous — the example points at a site you have no credentials for — but both waste time.
 
 ### Secrets
 
@@ -116,7 +116,7 @@ Delete or replace the `noviplast:` block before you configure your own client. N
 Each script loads it for you. `python -m scripts.<name>` calls `load_env()` (`lib/env.py`) at process start, which reads `.env` with `override=False` — so a variable already exported in your shell still wins, and CI, which has no `.env`, is unaffected:
 
 ```bash
-python -m scripts.run_plan {client_id}      # .env is loaded automatically
+python -m scripts.run_plan                  # .env is loaded automatically
 ```
 
 > **`.env` is plain text.** Keep it `chmod 600`, out of any shared backup, and rotate anything that
@@ -170,6 +170,13 @@ Nine scripts, all invoked as modules. Every one takes the `client_id` — the ke
 
 Exit codes are uniform: **0** success, **1** errors in the work itself, **2** configuration or usage error. Run any of them with `--help` for the authoritative flag list — `inspect_export` takes a bare path and no flags, so its `--help` just prints its one-line usage.
 
+> **The `client_id` argument is optional.** One client per repository is the normal case, so every
+> script below infers it when `clients.yml` defines exactly one client. Pass it explicitly whenever
+> you like — and note that it becomes **mandatory again** the moment a second client exists, because
+> silently picking between them would be a way to publish the wrong catalogue to the wrong site.
+> Paths stay namespaced by id either way (`output/{client_id}/…`), so adding a second client later
+> costs nothing.
+
 ### Read-only steps — safe to run any time, no credentials
 
 ```bash
@@ -177,19 +184,19 @@ Exit codes are uniform: **0** success, **1** errors in the work itself, **2** co
 python -m scripts.inspect_export input/{client_id}/products.xlsx
 
 # Export -> output/{client_id}/data/products.json   (--dry-run validates and writes nothing)
-python -m scripts.parse_export {client_id} [--dry-run] [--output PATH]
+python -m scripts.parse_export [--dry-run] [--output PATH]
 
 # Draft or gate the GPC brick -> category map. --check exits 1 if any brick is unmapped.
-python -m scripts.build_brick_map {client_id} [--datamodel FILE.xlsx] [--sheet S] [--check]
+python -m scripts.build_brick_map [--datamodel FILE.xlsx] [--sheet S] [--check]
 
 # Draft or gate the video filename -> GTIN map. --check exits 1 if any file is unmapped.
-python -m scripts.build_video_map {client_id} [--check]
+python -m scripts.build_video_map [--check]
 
 # Consolidated data-quality report -> output/{client_id}/data-quality-report.md
-python -m scripts.report_quality {client_id} [--out PATH]
+python -m scripts.report_quality [--out PATH]
 
 # Classify every (GTIN, language) as new / changed / unchanged -> output/{client_id}/plan.json
-python -m scripts.run_plan {client_id} [--products PATH]
+python -m scripts.run_plan [--products PATH]
 ```
 
 Run `report_quality` after `parse_export`, `run_plan`, or `build_video_map` — it renders whatever those steps last produced, and it is how you find source-data problems to fix in MyGS1 rather than papering over them in code.
@@ -199,9 +206,9 @@ Run `report_quality` after `parse_export`, `run_plan`, or `build_video_map` — 
 Only for clients with `generator.enabled: true`. Two backends share one cache and contract:
 
 ```bash
-python -m scripts.run_generate {client_id} --emit      # write pending requests (default)
-python -m scripts.run_generate {client_id} --ingest    # read a session's results into the cache
-python -m scripts.run_generate {client_id} --backend api   # fill the cache directly via the API
+python -m scripts.run_generate --emit      # write pending requests (default)
+python -m scripts.run_generate --ingest    # read a session's results into the cache
+python -m scripts.run_generate --backend api   # fill the cache directly via the API
 ```
 
 `--emit` / `--ingest` is the **in-session** path: Claude writes the copy in your session and needs **no API key**. `--backend api` is the headless path and is the only step that costs money — see [`costs.md`](costs.md). After ingesting, re-run `run_plan` so the generated copy merges into the plan.
@@ -210,14 +217,14 @@ python -m scripts.run_generate {client_id} --backend api   # fill the cache dire
 
 ```bash
 # Preview everything, write nothing. Always do this first.
-python -m scripts.run_execute {client_id} --plan output/{client_id}/plan.json --dry-run
+python -m scripts.run_execute --plan output/{client_id}/plan.json --dry-run
 
 # Real run.
-python -m scripts.run_execute {client_id} --plan PATH [--revive] [--i-understand-production]
-python -m scripts.run_execute {client_id} --confirmed PATH   # a reviewed ConfirmedPlan
+python -m scripts.run_execute --plan PATH [--revive] [--i-understand-production]
+python -m scripts.run_execute --confirmed PATH   # a reviewed ConfirmedPlan
 
 # Take a product down: retract its Digital Link and draft its pages.
-python -m scripts.run_unpublish {client_id} --gtin GTIN [--gtin GTIN ...] [--dry-run]
+python -m scripts.run_unpublish --gtin GTIN [--gtin GTIN ...] [--dry-run]
 ```
 
 `--plan` treats every row as confirmed; `--confirmed` consumes a `ConfirmedPlan` that has been
@@ -245,23 +252,23 @@ Read-only until the final step. This is the one workflow where working hands-on 
 
 4. **Iterate until the parse is clean:**
    ```bash
-   python -m scripts.parse_export {client_id} --dry-run
+   python -m scripts.parse_export --dry-run
    ```
    Repeat until there are no warnings on required fields. `brand` and `product_name` are mandatory. Then drop `--dry-run` to write `products.json`.
 
-5. **Review data quality** — `python -m scripts.report_quality {client_id}`. Fix what belongs in MyGS1 at the source. Blank or wrong source data must not be invented downstream.
+5. **Review data quality** — `python -m scripts.report_quality`. Fix what belongs in MyGS1 at the source. Blank or wrong source data must not be invented downstream.
 
 6. **Map the page fields.** Set `wordpress.acf_map` (or a template) so every page slot has a source. See [`template-variables.md`](template-variables.md).
 
 7. **Plan:**
    ```bash
-   python -m scripts.run_plan {client_id}
+   python -m scripts.run_plan
    ```
    Confirm the counts are what you expect before going further.
 
 8. **Dry-run the write:**
    ```bash
-   python -m scripts.run_execute {client_id} --plan output/{client_id}/plan.json --dry-run
+   python -m scripts.run_execute --plan output/{client_id}/plan.json --dry-run
    ```
 
 9. **Publish a small first wave — from chat, not from the command line.** Say *"run for {client_id}"* and take the gates one at a time. Two or three GTINs, not the whole batch, and keep `gs1.environment: test` until a page renders correctly. Then verify each one properly:

@@ -14,6 +14,7 @@ environment ``clients.yml`` block and bridges to the resolved shape via
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Final, Literal
 
@@ -426,21 +427,66 @@ def load_clients(path: str | Path = DEFAULT_CLIENTS_PATH) -> dict[str, ClientCon
     return clients
 
 
-def get_client(client_id: str, path: str | Path = DEFAULT_CLIENTS_PATH) -> ClientConfig:
+def get_client(
+    client_id: str | None = None, path: str | Path = DEFAULT_CLIENTS_PATH
+) -> ClientConfig:
     """Load one client's configuration by id (§4.2).
 
+    The normal deployment is **one client per repository**, so ``client_id`` may be omitted
+    when the config defines exactly one client — see :func:`resolve_client_id`. Passing an id
+    explicitly always works and is required once a second client exists.
+
     Args:
-        client_id: Key under ``clients:`` in the config file.
+        client_id: Key under ``clients:`` in the config file, or ``None`` to use the only
+            client defined.
         path: Path to the config file.
 
     Returns:
         The client's :class:`ClientConfig`.
 
     Raises:
-        ConfigError: If the client id is unknown (or the file fails to load).
+        ConfigError: If the client id is unknown, or omitted when the config defines zero or
+            more than one client (or the file fails to load).
     """
     clients = load_clients(path)
+    resolved = client_id if client_id is not None else resolve_client_id(None, clients)
     try:
-        return clients[client_id]
+        return clients[resolved]
     except KeyError as exc:
-        raise ConfigError(f"unknown client_id {client_id!r}") from exc
+        known = ", ".join(sorted(clients)) or "none"
+        raise ConfigError(f"unknown client_id {resolved!r} (defined: {known})") from exc
+
+
+def resolve_client_id(
+    client_id: str | None, clients: Mapping[str, ClientConfig] | None = None
+) -> str:
+    """Return the client id to act on, defaulting to the only one defined.
+
+    One client per repository is the normal case, so requiring the id on every command is
+    ceremony. It stays **mandatory** the moment a second client exists: silently picking one
+    of several would be a way to publish the wrong catalogue to the wrong site.
+
+    Args:
+        client_id: An explicit id, or ``None`` to infer it.
+        clients: Already-loaded clients, to avoid re-reading the config file.
+
+    Returns:
+        The resolved client id.
+
+    Raises:
+        ConfigError: If ``client_id`` is ``None`` and the config defines zero, or more than
+            one, client.
+    """
+    if client_id is not None:
+        return client_id
+    loaded = clients if clients is not None else load_clients()
+    match sorted(loaded):
+        case [only]:
+            return only
+        case []:
+            raise ConfigError("clients config defines no clients — nothing to act on")
+        case many:
+            raise ConfigError(
+                f"clients config defines {len(many)} clients ({', '.join(many)}) — "
+                "name the one to act on explicitly"
+            )
