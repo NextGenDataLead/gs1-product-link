@@ -197,7 +197,7 @@ gdsn_extras:
 - **`acf_map`** (`clients.yml`, currently `{}`): `product_title` → `generated_tagline`,
   `product_header_video_text` → `generated_tagline`, `product_description` → `generated_description`.
 - **Approval gate:** reviewed twice — `run_generate` cache output + `plan.json` — never auto-published
-  (flow-orchestrator confirm + draft-first). Update `skills/flow-orchestrator/SKILL.md`.
+  (flow-orchestrator confirm + draft-first). Update `.claude/skills/flow-orchestrator/SKILL.md`.
 
 ## Config additions (`lib/config.py` + `schema/clients.schema.json`)
 A `GeneratorConfig` block: `enabled`, `model` (`claude-sonnet-5`), `prompt_version`, api-key env-var
@@ -221,7 +221,7 @@ name, `max_tokens`. Typed, validated at load.
    summary line; tests.
 8. **Wire `acf_map`** in `clients.yml`; acf test.
 9. **Docs + gate** — update `docs/clients/noviplast-page-adapter.md` §4.1/§4.2/§8 and
-   `skills/flow-orchestrator/SKILL.md`.
+   `.claude/skills/flow-orchestrator/SKILL.md`.
 
 ## Reuse (do not rebuild)
 `lib/acf.build_acf_payload`, `lib/units.decode_net_content`,

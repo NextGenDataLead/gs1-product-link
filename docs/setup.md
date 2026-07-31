@@ -19,7 +19,7 @@ The tool turns a GS1 Data Source export into (a) WordPress product pages, one pe
 
 > **This tool is operated from Claude Code. That is a deliberate decision, not a preference.**
 >
-> You tell Claude Code what you want — *"run for noviplast"* — and it loads the `flow-orchestrator` skill, which walks you through the operator gates and invokes the Python scripts for you. **You are not expected to type the script commands yourself.**
+> You tell Claude Code what you want — *"publish noviplast to GS1"* — and it loads the `flow-orchestrator` skill, which walks you through the operator gates and invokes the Python scripts for you. **You are not expected to type the script commands yourself.**
 >
 > **Claude.ai, Claude Desktop, and Claude Cowork are explicitly out of scope.** Cowork was evaluated and removed: it executes in a remote cloud sandbox, which would mean handing production WordPress and GS1 credentials to an environment outside your control, and its network egress to `www.noviplast.nl` and the GS1 API was never proven. Claude Code runs on your machine with your credentials staying on it.
 
@@ -160,12 +160,22 @@ Note also that **environment variables do not survive between separate Claude Co
 **Say what you want in Claude Code:**
 
 ```
-run for {client_id}
+publish {client_id} to GS1
 ```
 
 That loads the `flow-orchestrator` skill, which drives the whole pipeline and stops at each operator gate: language selection → the generated-copy review gate → the plan review gate → a per-row diff gate for changed rows → a **mandatory production environment-confirmation gate** → execute → progress → post-run summary → retry. Nothing proceeds without your answer, and the skill passes `--i-understand-production` only *after* you confirm at that gate.
 
-**Use this for every real run.** Those gates are the reason nothing has been published by accident, and they exist only on this path — invoking the scripts directly bypasses all of them. Other useful phrasings: *"parse the export for {client_id}"*, *"generate copy for {client_id}"*, *"create product pages for {client_id}"*, *"render QR for {client_id}"*, *"update the Digital Link for {client_id}"* — one per skill in `skills/`.
+> **Say "GS1", not just "run".** *"run for {client_id}"* and *"process {client_id}"* still work and
+> stay documented, but a bare "run" is one of the most overloaded words in a coding session — it
+> competes with every other meaning, including a built-in `run` skill that launches a project's app.
+> **If the skill does not load, the gates below do not happen** and a publish can proceed unreviewed.
+> Naming GS1 makes the match unambiguous, because nothing else does.
+>
+> **Confirm it loaded** before answering any gate: Claude should say it is using `flow-orchestrator`
+> and open with the language-selection gate. If it starts running scripts without asking you
+> anything, stop it — that is the unsanctioned path.
+
+**Use this for every real run.** Those gates are the reason nothing has been published by accident, and they exist only on this path — invoking the scripts directly bypasses all of them. Other useful phrasings: *"parse the export for {client_id}"*, *"generate copy for {client_id}"*, *"create product pages for {client_id}"*, *"render QR for {client_id}"*, *"update the Digital Link for {client_id}"* — one per skill in `.claude/skills/`.
 
 ### What it runs underneath
 
@@ -276,7 +286,7 @@ Read-only until the final step. This is the one workflow where working hands-on 
    python -m scripts.run_execute --plan output/{client_id}/plan.json --dry-run
    ```
 
-9. **Publish a small first wave — from chat, not from the command line.** Say *"run for {client_id}"* and take the gates one at a time. Two or three GTINs, not the whole batch, and keep `gs1.environment: test` until a page renders correctly. Then verify each one properly:
+9. **Publish a small first wave — from chat, not from the command line.** Say *"publish {client_id} to GS1"* and take the gates one at a time. Two or three GTINs, not the whole batch, and keep `gs1.environment: test` until a page renders correctly. Then verify each one properly:
    - Fetch the page HTML and confirm the content is actually **rendered**. A `200` proves nothing — the ACF write path fails silently.
    - Check resolution with **GET**: `curl -sS -o /dev/null -w '%{http_code}' -L https://id.gs1.org/01/{gtin14}` → 307 → your page → 200. The resolver **404s to HEAD**.
 

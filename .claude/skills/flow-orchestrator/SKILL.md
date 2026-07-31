@@ -1,15 +1,25 @@
 ---
 name: flow-orchestrator
-description: "Drive a full client run end-to-end — generate copy, plan, confirm, then execute WordPress pages, GS1 Digital Link and QR, with step-by-step operator gates. Use when the operator says 'run for {client}' or 'process {client}'."
+description: "Publish a client's products to GS1 Digital Link and WordPress end-to-end — generate copy, plan, confirm, then execute pages, GS1 resolver entries and QR, with step-by-step operator gates. Use when the operator says 'publish {client} to GS1', 'run the GS1 pipeline for {client}', 'run for {client}', or 'process {client}'. This is the only sanctioned path for publishing: it is what enforces the review gates."
 ---
 
 # Flow Orchestrator
 
 ## When to load
 
-Trigger phrases: **"run for {client}"**, **"process {client}"** (§10.5) — e.g. "run for
-noviplast in test env". Load this skill to drive a full client run end-to-end from chat:
-parse → plan → present → confirm → execute → summarise.
+Trigger phrases (§10.5), most to least specific:
+
+- **"publish {client} to GS1"** ← preferred
+- **"run the GS1 pipeline for {client}"**
+- **"run for {client}"**, **"process {client}"** — short forms, kept for continuity
+
+e.g. "publish noviplast to GS1, test env". Load this skill to drive a full client run end-to-end
+from chat: parse → plan → present → confirm → execute → summarise.
+
+> **Prefer the GS1-qualified phrasings.** A bare *"run for X"* is generic: in a coding session it
+> competes with every other meaning of "run" — including a built-in `run` skill that launches a
+> project's app. If this skill is not loaded, the operator gates below **do not happen** and a
+> publish can proceed unreviewed. When in doubt, say "publish {client} to GS1".
 
 ## What this skill does
 
