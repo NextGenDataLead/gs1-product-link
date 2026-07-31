@@ -96,11 +96,12 @@ The two authoritative design documents — read them before contributing:
   types, module contracts, error handling, idempotency, and Definition of Done
   per phase (§12).
 
-Also: [docs/OPEN_DECISIONS.md](docs/OPEN_DECISIONS.md) — decisions analysed but not yet
-taken (currently: where credentials should live) · [docs/PREPARATION.md](docs/PREPARATION.md) —
-operator preparation checklist · [docs/ROADMAP.md](docs/ROADMAP.md) — phase status ·
-[docs/clients/](docs/clients/) — per-client notes, including the pilot's page model and
-live audit trail.
+Also: [docs/OPEN_DECISIONS.md](docs/OPEN_DECISIONS.md) — decisions analysed, with their
+evidence and outcome (none currently open) ·
+[docs/PREPARATION.md](docs/PREPARATION.md) — operator preparation checklist ·
+[docs/ROADMAP.md](docs/ROADMAP.md) — phase status · [docs/clients/](docs/clients/) —
+per-client notes, including the pilot's page model and live audit trail ·
+[docs/archive/](docs/archive/) — superseded working notes, kept for provenance only.
 
 ## Cost to users
 

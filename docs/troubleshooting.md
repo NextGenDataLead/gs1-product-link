@@ -20,7 +20,7 @@ pilot. If you are mid-incident, start with [Traps that have actually bitten](#tr
 |---|---|
 | Per-row outcome of every mutating run | `output/{client_id}/runs/{ts}.jsonl` — one `RunOutcome` per row, written whether the row succeeded or failed |
 | What the tool believes is already published | `output/{client_id}/state.json` |
-| Source-data problems | `output/{client_id}/data-quality-report.md` (`python -m scripts.report_quality {client_id}`) |
+| Source-data problems | `output/{client_id}/data-quality-report.md` (`python -m scripts.report_quality`) |
 | What was actually published, per wave | `docs/clients/{client_id}-live-log.md`, where a client keeps one |
 
 **Every exception** derives from `OrchestratorError` (`lib/errors.py`), so `except OrchestratorError`
@@ -257,7 +257,7 @@ Common causes: a GTIN row with no `product_name` in the default language (**E5**
 missing (**E17**); a `column_map` target that is not a `ProductRecord` field (**E6**, raised at config
 load).
 
-**Fix:** `python -m scripts.parse_export {client_id} --dry-run` and iterate until clean. Required
+**Fix:** `python -m scripts.parse_export --dry-run` and iterate until clean. Required
 fields are `brand` and `product_name`.
 
 ### `GS1APIError`
@@ -435,8 +435,8 @@ preservation. That is the gap.
 Practical rollback for one product:
 
 ```bash
-python -m scripts.run_unpublish {client_id} --gtin {gtin} --dry-run   # preview
-python -m scripts.run_unpublish {client_id} --gtin {gtin}             # retract + draft pages
+python -m scripts.run_unpublish --gtin {gtin} --dry-run   # preview
+python -m scripts.run_unpublish --gtin {gtin}             # retract + draft pages
 ```
 
 This retracts the Digital Link and drafts the pages, and classifies the GTIN as HELD so a later run

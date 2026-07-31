@@ -102,8 +102,8 @@ A bare `https://id.gs1.org/01/{gtin14}` resolves to the **default** language tar
 **The v2 API has no DELETE.** An entry can only be switched off:
 
 ```bash
-python -m scripts.run_unpublish {client_id} --gtin {gtin} --dry-run   # preview
-python -m scripts.run_unpublish {client_id} --gtin {gtin}
+python -m scripts.run_unpublish --gtin {gtin} --dry-run   # preview
+python -m scripts.run_unpublish --gtin {gtin}
 ```
 
 `retract` PATCHes `isEnabled` to `false` — the API equivalent of clearing MyGS1's *"Activeer GS1 Digital Link"* checkbox. It **deliberately leaves the links intact**: deactivating already stops the entry resolving, so wiping the link/language/title configuration would buy nothing and cost the configuration a later reactivation would have to re-enter by hand.

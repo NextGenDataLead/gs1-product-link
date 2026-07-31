@@ -52,7 +52,7 @@ brand-typo report — everything on the page-adapter critical path is done.
 
 Merged to `main` (the `noviplast-page-adapter` branch is history).
 SPEC: [generator SPEC](clients/noviplast-generator-spec.md).
-Suite green at HEAD — 519 passed, 2 skipped, 5 deselected (staging); ruff + `mypy --strict` clean.
+Suite green at HEAD — 534 passed, 2 skipped, 5 deselected (staging); ruff + `mypy --strict` clean.
 
 | # | Commit | State |
 |---|---|---|
@@ -96,10 +96,10 @@ numbered phase is now complete.**
 Phase 11 shipped `v0.1.0`: version bumped to `0.1.0` across `pyproject.toml`, `package.json`, the
 three `mcps/*/package.json` and the lockfile; `CHANGELOG.md` reconstructed from 92 unrecorded
 commits and promoted to `[0.1.0]`; the `v0.1.0` tag and GitHub release published; the announcement
-drafted at `docs/announcement-v0.1.0.md` (**not** published). The **MCP registry entry is
-deferred** — it requires publishing the three npm packages, which are `private: true`; the
-`server.json` files are committed and the choice is recorded as
-[OD-2](OPEN_DECISIONS.md#od-2--publish-the-three-mcp-servers-to-npm-or-keep-them-private).
+drafted at `docs/announcement-v0.1.0.md` (**not** published). The **MCP registry entry will not be
+submitted** — decided 2026-07-31 ([OD-2](OPEN_DECISIONS.md#resolved)): the three servers stay
+private, so that DoD box is unticked by choice rather than left as outstanding work. The
+`server.json` files are committed and schema-valid, so it is cheap to reverse.
 
 Also resolved alongside the release: [OD-1](OPEN_DECISIONS.md) — `.env` is now the single source of
 truth for credentials, and the ambient `~/.claude/settings.json` `env` block is gone.

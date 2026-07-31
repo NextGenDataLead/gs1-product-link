@@ -135,8 +135,8 @@ outright, which is why every image is converted to a web JPEG at upload. See
 ## Parse and check
 
 ```bash
-python -m scripts.parse_export {client_id} --dry-run    # validate, write nothing
-python -m scripts.parse_export {client_id}              # write products.json
+python -m scripts.parse_export --dry-run    # validate, write nothing
+python -m scripts.parse_export              # write products.json
 ```
 
 `--dry-run` reports warnings without producing a file. Exit codes: **0** ok, **1** parse errors, **2**
@@ -146,7 +146,7 @@ config errors. On any parse error the script writes **nothing** — you never ge
 Then review data quality properly:
 
 ```bash
-python -m scripts.report_quality {client_id}
+python -m scripts.report_quality
 # -> output/{client_id}/data-quality-report.md
 ```
 
@@ -179,8 +179,8 @@ and a client's own categorisation is not purely semantic. So the mapping is a
 `categories.brick_category_map` **plus** a per-GTIN `overrides` list, reviewed by the client:
 
 ```bash
-python -m scripts.build_brick_map {client_id} --datamodel diy-datamodel.xlsx   # draft
-python -m scripts.build_brick_map {client_id} --check                          # exit 1 if unmapped
+python -m scripts.build_brick_map --datamodel diy-datamodel.xlsx   # draft
+python -m scripts.build_brick_map --check                          # exit 1 if unmapped
 ```
 
 Unmapped bricks **warn**; the tool never guesses a category.

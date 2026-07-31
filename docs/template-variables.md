@@ -135,7 +135,7 @@ a typo produces a page that publishes cleanly with a field silently missing.
 
 ```bash
 # 1. Dry-run and read the warnings — every omitted field is logged.
-python -m scripts.run_execute {client_id} --plan output/{client_id}/plan.json --dry-run
+python -m scripts.run_execute --plan output/{client_id}/plan.json --dry-run
 
 # 2. Publish ONE page as a draft, then read the rendered HTML.
 curl -sS https://{site}/{slug}/ | grep -o 'expected-copy'
@@ -150,9 +150,9 @@ Fields prefixed `generated_` are filled by the copy generator, not the export. T
 cache and contract:
 
 ```bash
-python -m scripts.run_generate {client_id} --emit      # queue requests for the in-session producer
-python -m scripts.run_generate {client_id} --ingest    # read results back into the cache
-python -m scripts.run_generate {client_id} --backend api
+python -m scripts.run_generate --emit      # queue requests for the in-session producer
+python -m scripts.run_generate --ingest    # read results back into the cache
+python -m scripts.run_generate --backend api
 ```
 
 `--emit` / `--ingest` needs **no API key** — Claude writes the copy in session. Re-run `run_plan`
