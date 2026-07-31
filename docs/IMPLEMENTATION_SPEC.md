@@ -20,7 +20,7 @@ The design goal: any single module should be implementable by asking Claude Code
 | `PROJECT_HANDOVER.md` | The "why" — scope, decisions, phases, risks | **First**, fully |
 | `IMPLEMENTATION_SPEC.md` (this) | The "how" — types, contracts, DoD | **Second**, fully — operational bible |
 | `architecture.md` | System diagram (inline SVG) | Skim for spatial context |
-| `OBSIDIAN_NOTE_content.md` | Copy-paste starter prompt per phase | Only the prompt for the current phase |
+| ~~`OBSIDIAN_NOTE_content.md`~~ | Copy-paste starter prompt per phase | **Obsolete** — all 11 phases are complete. Archived at [`archive/OBSIDIAN_NOTE_content.md`](archive/OBSIDIAN_NOTE_content.md). |
 
 **Ignore for building:**
 - `PREPARATION.md` — operator-side setup checklist; the operator has already used it to gather credentials, keys, and access before you were invoked.
@@ -33,7 +33,7 @@ The design goal: any single module should be implementable by asking Claude Code
 | Phase overview (11 phases, effort, exit gates) | `PROJECT_HANDOVER.md` §8.1 |
 | What each phase actually does | `PROJECT_HANDOVER.md` §8.2 |
 | Definition of Done per phase | This document, §12 |
-| Copy-paste starter prompt for a phase | `OBSIDIAN_NOTE_content.md` → per-phase section |
+| Copy-paste starter prompt for a phase | Obsolete — all phases complete; see [`archive/`](archive/) |
 | Coding conventions (style, error handling, HTTP, JSON) | This document, §1 |
 | GS1 NL API v2 spec (endpoints, bodies, responses) | `PROJECT_HANDOVER.md` §4.1 + §4.2 |
 | Client-code shape for `lib/gs1_dl_client.py` | This document, §4.3 |
@@ -1383,12 +1383,12 @@ start of the phase (like the export and control file). See `docs/clients/novipla
       promoted to `[0.1.0]`. The footer `[0.0.1]` link pointed at a release tag that never existed;
       it now points at the commit that set the version.
 - [x] Git tag `v0.1.0` pushed
-- [ ] ~~MCP registry entry submitted~~ — **deferred, see [OD-2](OPEN_DECISIONS.md#od-2--publish-the-three-mcp-servers-to-npm-or-keep-them-private).**
+- [ ] ~~MCP registry entry submitted~~ — **will not be done. Decided 2026-07-31 (OD-2): the three
+      MCP servers stay private.** This box stays unticked **by choice, not as outstanding work.**
       Submission requires the npm packages to be published and publicly resolvable (ownership is
-      verified by reading the published `package.json` for an `mcpName` matching `server.json`).
-      All three are `"private": true`. The `server.json` files are **written and committed** at
-      `mcps/*/server.json`; only the publish-and-submit step is outstanding, and it is a decision
-      rather than a task.
+      verified by reading the published `package.json` for an `mcpName` matching `server.json`), and
+      all three are `"private": true`. The `server.json` files are written, committed at
+      `mcps/*/server.json`, and schema-valid, so the decision is cheap to reverse.
 - [x] Announcement drafted — `docs/announcement-v0.1.0.md`. Drafted only; **not published**, and
       it carries a pre-publication checklist (rotate the exposed password, confirm the client is
       willing to be named, re-check the tariff claims).
@@ -1412,7 +1412,7 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 7. Run `python -m scripts.inspect_export input/{client_id}/products.xlsx`
 8. Take suggested `column_map` and refine
 9. Copy final map into `clients.yml`
-10. `python -m scripts.parse_export {client_id} --dry-run` — iterate until zero warnings on required fields
+10. `python -m scripts.parse_export --dry-run` — iterate until zero warnings on required fields
 
 **Output:** Excel at `input/{client_id}/products.xlsx` + populated `column_map` + zero-warning dry-run.
 

@@ -1,11 +1,13 @@
 # Open decisions
 
-Decisions that are **identified, analysed, and not yet made**. Each entry states the origin, the
-evidence, the options with honest trade-offs, and a recommendation — so the decision can be taken
-later without redoing the investigation.
+Decisions that were **identified and analysed** rather than made in passing. Each entry states the
+origin, the evidence, the options with honest trade-offs, and a recommendation — so the decision can
+be taken later without redoing the investigation, and so a decision already taken is not silently
+re-litigated.
 
-Resolved decisions move into `IMPLEMENTATION_SPEC.md` or the relevant `docs/` page and are struck
-through here with the outcome.
+Once taken, an entry is **struck through with its outcome** and listed under
+[Resolved](#resolved); the analysis stays in place. **There are currently no open decisions** — both
+entries below are decided.
 
 ---
 
@@ -179,10 +181,24 @@ launch config.
 
 ---
 
-## OD-2 — Publish the three MCP servers to npm, or keep them private?
+## ~~OD-2 — Publish the three MCP servers to npm, or keep them private?~~ — DECIDED
 
-**Status:** open · **Raised:** 2026-07-30 (Phase 11 release) · **Owner:** operator ·
-**Blocks:** the §12 Phase 11 box *"MCP registry entry submitted"* — and nothing else.
+**Status:** **decided 2026-07-31 — option A, keep them private** · **Raised:** 2026-07-30 (Phase 11
+release) · **Owner:** operator
+
+> **Outcome.** The three servers stay `"private": true`. Nothing is published to npm and no registry
+> entry is submitted, so the §12 Phase 11 box *"MCP registry entry submitted"* stays unticked **by
+> choice, permanently** — it is not outstanding work.
+>
+> The `server.json` files remain committed at `mcps/*/server.json` and valid against the
+> `2025-12-11` schema, so the decision is cheap to reverse: publishing to npm (with a matching
+> `mcpName` in each `package.json`) and submitting is all that would be left.
+>
+> **Revisit only if** someone actually wants to consume one of these servers. `qr-render` is the
+> candidate — it takes no credentials and no `clients.yml`, so it is the only one genuinely useful
+> standing alone.
+
+*The original analysis is preserved below.*
 
 ### Origin
 
@@ -229,6 +245,8 @@ deferred and the reason recorded here rather than left looking unfinished. Revis
 actually wants to consume a server, or if the `clients.yml` coupling in `gs1-nl` / `wordpress` is
 ever loosened into plain configuration.
 
+*Adopted 2026-07-31 — see the outcome note at the top of this entry.*
+
 ---
 
 ## Resolved
@@ -236,3 +254,8 @@ ever loosened into plain configuration.
 - **OD-1 — where credentials live** → **option B, 2026-07-30.** `.env` is the single source of truth,
   loaded by `lib/env.py` `load_env()` from each script's `__main__` block; the `~/.claude/settings.json`
   `env` block is gone. Full write-up above, including two corrections to its own original evidence.
+- **OD-2 — publish the MCP servers?** → **option A, 2026-07-31: keep them private.** Nothing is
+  published to npm and no registry entry is submitted; the §12 Phase 11 box stays unticked by choice,
+  not as outstanding work. `server.json` files stay committed, so it is cheap to reverse.
+
+**No open decisions.**

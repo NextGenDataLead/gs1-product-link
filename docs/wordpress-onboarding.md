@@ -209,8 +209,8 @@ by marketing name, so `video_map_path` points at a **client-confirmed** name→G
 gate it:
 
 ```bash
-python -m scripts.build_video_map {client_id}            # emit a hint skeleton
-python -m scripts.build_video_map {client_id} --check     # exit 1 if any file is unmapped
+python -m scripts.build_video_map            # emit a hint skeleton
+python -m scripts.build_video_map --check     # exit 1 if any file is unmapped
 ```
 
 `video_transcode: true` runs the ffmpeg H.264/MP4 prepare step — necessary because a source `.mpg`
@@ -241,8 +241,8 @@ For every page in a first wave:
 ## Taking a page down
 
 ```bash
-python -m scripts.run_unpublish {client_id} --gtin {gtin} --dry-run
-python -m scripts.run_unpublish {client_id} --gtin {gtin}
+python -m scripts.run_unpublish --gtin {gtin} --dry-run
+python -m scripts.run_unpublish --gtin {gtin}
 ```
 
 Retracts the Digital Link, drafts the pages, and classifies the GTIN as **HELD** so a later run will

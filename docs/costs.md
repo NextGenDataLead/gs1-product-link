@@ -41,8 +41,8 @@ This is the one place the tool can spend money, and it is **optional in two sens
 ### The in-session producer — free
 
 ```bash
-python -m scripts.run_generate {client_id} --emit      # queue pending requests
-python -m scripts.run_generate {client_id} --ingest    # read results back
+python -m scripts.run_generate --emit      # queue pending requests
+python -m scripts.run_generate --ingest    # read results back
 ```
 
 Claude writes the copy **inside your Claude Code session**. It needs **no API key** and adds **no API
@@ -52,7 +52,7 @@ pilot used.
 ### The headless API backend — metered
 
 ```bash
-python -m scripts.run_generate {client_id} --backend api
+python -m scripts.run_generate --backend api
 ```
 
 This calls the Anthropic Messages API directly (`lib/llm.py`) and is billed per token. Use it for

@@ -76,7 +76,7 @@ mileage, not a finished product.
       updated, old one revoked and verified dead (`OPEN_DECISIONS.md`).
 - [ ] Confirm the pilot client is happy to be named. This draft deliberately does not name them.
 - [ ] Re-check `docs/costs.md` against the current GS1 NL tariff page — pricing claims age badly.
-- [ ] Decide OD-2 (publish the MCP servers or not) if the announcement mentions them. It currently
-      does not.
+- [x] Decide OD-2 (publish the MCP servers or not). Decided 2026-07-31: **keep them private.** The
+      draft says so in *Limits*; do not add an install line for them.
 - [ ] The repository is public. Nothing above should reveal a GTIN, a URL, or an account number
       that is not already public.

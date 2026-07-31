@@ -80,10 +80,15 @@ Expected, on a clean checkout:
 
 ```
 All checks passed!
-102 files already formatted
+103 files already formatted
 Success: no issues found in 22 source files
 534 passed, 2 skipped, 5 deselected
 ```
+
+**Only the last two lines are worth comparing.** The formatted-file count moves whenever anyone adds
+a file — ruff 0.16 formats Python blocks inside Markdown, so all 23 documents are counted alongside
+the 67 Python files. A different number there means the docs changed, not that anything is wrong.
+What matters is that each command exits **0**.
 
 **Why a bare `pytest` is safe.** `pyproject.toml` sets `addopts = "-m 'not staging'"`. The 5 deselected tests are the staging integration tests — they write to a **live** WordPress site and the **GS1 production** resolver. They are deselected by default deliberately, because relying on their `skipif` env-var guard was not enough: a shell that had sourced `.env` satisfied that guard, and a bare `pytest` then hit production. Do not run `pytest -m staging` unless you have read `.env.example`'s staging block in full and understand that a GS1 record **cannot be deleted**.
 
