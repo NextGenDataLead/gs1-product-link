@@ -915,7 +915,7 @@ Names: `wp_upsert_page`, `wp_upload_media`, `wp_find_by_slug`, `wp_verify_url`, 
 
 ## 10. Skills — SKILL.md skeletons
 
-Each skill in `skills/{name}/SKILL.md`. Common structure:
+Each skill in `.claude/skills/{name}/SKILL.md`. Common structure:
 
 ```markdown
 # {Skill Name}
@@ -939,24 +939,24 @@ Each skill in `skills/{name}/SKILL.md`. Common structure:
 {Common problems + handling.}
 ```
 
-### 10.1 `skills/gs1-export-parser/SKILL.md`
+### 10.1 `.claude/skills/gs1-export-parser/SKILL.md`
 - Trigger: "parse the export" or user drops an .xlsx in chat
 - Steps: identify `client_id` (ask if unclear), run `scripts/parse_export.py`, summarise counts and warnings
 
-### 10.2 `skills/wordpress-product-page/SKILL.md`
+### 10.2 `.claude/skills/wordpress-product-page/SKILL.md`
 - Trigger: mentioning WP page creation/update
 - Steps: verify template exists, verify multilingual plugin detected, render, upsert, verify_url
 
-### 10.3 `skills/gs1-digital-link/SKILL.md`
+### 10.3 `.claude/skills/gs1-digital-link/SKILL.md`
 - Trigger: setting resolver targets
 - Steps: build payload from `ProductRecord` + config, call bulk upsert
 
-### 10.4 `skills/qr-render/SKILL.md`
+### 10.4 `.claude/skills/qr-render/SKILL.md`
 - Trigger: generating QR files
 - Steps: build URI, call render, present output paths
 
-### 10.5 `skills/flow-orchestrator/SKILL.md`
-- Trigger: "run for {client}", "process {client}"
+### 10.5 `.claude/skills/flow-orchestrator/SKILL.md`
+- Trigger: "publish {client} to GS1" (preferred), "run the GS1 pipeline for {client}"; "run for {client}" / "process {client}" kept as short forms
 - Steps: parse → plan → present diff → collect confirmation → execute → summarise
 
 Full body: TBD during Phase 8; skeletons enough for now.

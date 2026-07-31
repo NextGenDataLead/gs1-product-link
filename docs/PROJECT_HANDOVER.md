@@ -707,11 +707,12 @@ gs1-digital-link-orchestrator/
 │   ├── gs1-nl/
 │   ├── wordpress/
 │   └── qr-render/
-├── skills/
+├── .claude/skills/          # Claude Code discovers project skills HERE, not in ./skills
 │   ├── gs1-export-parser/
 │   ├── wordpress-product-page/
 │   ├── gs1-digital-link/
 │   ├── qr-render/
+│   ├── content-generator/
 │   └── flow-orchestrator/
 ├── templates/
 │   ├── _default/

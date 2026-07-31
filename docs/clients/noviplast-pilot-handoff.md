@@ -154,8 +154,8 @@ MCP registry entry; draft announcement. Tick §12 Phase 11.
 ## Pointers
 - Page model / WPML / write traps / QR-language: [`noviplast-page-adapter.md`](noviplast-page-adapter.md).
 - Generator contract / voice: [`noviplast-generator-spec.md`](noviplast-generator-spec.md),
-  `prompts/noviplast/generation.v1.md`, `skills/content-generator/SKILL.md`.
-- Operator flow: `skills/flow-orchestrator/SKILL.md`.
+  `prompts/noviplast/generation.v1.md`, `.claude/skills/content-generator/SKILL.md`.
+- Operator flow: `.claude/skills/flow-orchestrator/SKILL.md`.
 - **What's live:** [`noviplast-live-log.md`](noviplast-live-log.md) — committed audit trail of every
   page/GS1 record published to the live site (machine source: gitignored `output/noviplast/state.json`).
 - Auto-memory: `phase9-resolution-proven.md` (this pilot's live state + gotchas).

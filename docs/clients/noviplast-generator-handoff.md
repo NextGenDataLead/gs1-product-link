@@ -95,7 +95,7 @@ everything else is assembly from parsed data. Four things:
 - **`lib/templates.py` `_build_context(product, language, client_meta)`** — the per-language render
   seam (where net_content decoding lives). Note: the pilot renders via **ACF/Oxygen**, not these
   templates — the templates are the Phase-5 body path.
-- **`skills/flow-orchestrator/SKILL.md`** — the human-approval/confirmation step the generator's
+- **`.claude/skills/flow-orchestrator/SKILL.md`** — the human-approval/confirmation step the generator's
   gate slots into. Draft-first publishing (pages created as **draft**) backstops it.
 
 ---

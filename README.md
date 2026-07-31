@@ -53,7 +53,7 @@ Then **run it from Claude Code** — that is the operating surface, not an alter
 the command line:
 
 ```
-run for {client_id}
+publish {client_id} to GS1
 ```
 
 This loads the `flow-orchestrator` skill, which drives the pipeline and stops at every
