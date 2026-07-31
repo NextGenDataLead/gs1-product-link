@@ -12,7 +12,9 @@
 
 We are building an open-source orchestration tool that helps Dutch suppliers go from compliant product data in **GS1 Data Source** to a printable, GS1-compliant QR code (a *QR code powered by GS1*, encoding a GS1 Digital Link URI) with the resolver target pointing at the supplier's own website. The tool also provisions the destination web pages on the supplier's WordPress site.
 
-The system runs inside **Claude Code**, with deterministic Python scripts doing the heavy lifting and Claude handling planning, user interaction, and exception cases. It is **multi-tenant by design** — every user supplies their own credentials via a gitignored config file. There are **no central services**.
+The system runs inside **Claude Code**, with deterministic Python scripts doing the heavy lifting and Claude handling planning, user interaction, and exception cases. The deployment model is **one client per repository**: you clone it, point it at your own export and site, and run it locally. Credentials live in a gitignored `.env`; `clients.yml` — also gitignored — holds the configuration and the **names** of those environment variables, never their values. There are **no central services**.
+
+> `clients.yml` is still keyed by client id, and every script still accepts one, so a single checkout *can* carry several clients. That capability is retained rather than advertised: the id is optional when exactly one client is defined, and becomes mandatory again the moment a second appears — silently choosing between them would be a way to publish the wrong catalogue to the wrong site.
 
 **Data path:** Product data enters the tool as an **Excel/CSV export from MyGS1** (the free, standard route). Programmatic reads via GS1 Data Link are explicitly out of scope for v0.1.0.
 

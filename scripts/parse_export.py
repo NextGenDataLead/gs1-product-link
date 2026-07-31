@@ -156,7 +156,11 @@ def _write_issues(path: Path, issues: list[SourceIssue]) -> None:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="parse_export", description="Parse a client export.")
-    parser.add_argument("client_id", help="Key under clients: in clients.yml")
+    parser.add_argument(
+        "client_id",
+        nargs="?",
+        help="Key under clients: in clients.yml (optional when only one client is defined)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Validate only; write no file")
     parser.add_argument("--output", help="Override output/{client_id}/data/products.json")
     return parser.parse_args(argv)
@@ -187,9 +191,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(result.errors)} parse errors", file=sys.stderr)
         return _EXIT_PARSE_ERROR
 
-    issues_path = Path(f"output/{args.client_id}/data/source_issues.json")
+    issues_path = Path(f"output/{client.client_id}/data/source_issues.json")
     if not args.dry_run:
-        output = Path(args.output or f"output/{args.client_id}/data/products.json")
+        output = Path(args.output or f"output/{client.client_id}/data/products.json")
         _write_output(output, result.records)
         _write_issues(issues_path, result.issues)
     print(

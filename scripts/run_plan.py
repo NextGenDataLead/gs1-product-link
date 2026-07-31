@@ -306,7 +306,11 @@ def _summary(
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="run_plan", description="Build a run plan from products.")
-    parser.add_argument("client_id", help="Key under clients: in clients.yml")
+    parser.add_argument(
+        "client_id",
+        nargs="?",
+        help="Key under clients: in clients.yml (optional when only one client is defined)",
+    )
     parser.add_argument(
         "--products",
         help="Path to the parsed products JSON (default: output/{id}/data/products.json)",

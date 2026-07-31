@@ -165,7 +165,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         prog="run_unpublish",
         description="Retract a product's Digital Link and draft its WordPress pages.",
     )
-    parser.add_argument("client_id", help="Key under clients: in clients.yml")
+    parser.add_argument(
+        "client_id",
+        nargs="?",
+        help="Key under clients: in clients.yml (optional when only one client is defined)",
+    )
     parser.add_argument(
         "--gtin",
         action="append",

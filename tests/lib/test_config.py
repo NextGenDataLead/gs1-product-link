@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import yaml
 
-from lib.config import GS1Config, get_client, load_clients
+from lib.config import GS1Config, get_client, load_clients, resolve_client_id
 from lib.errors import ConfigError, ExportParseError
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 
@@ -65,6 +65,51 @@ def test_get_client_unknown_id_raises(tmp_path: Path) -> None:
     path = _write_config(tmp_path, _base_client())
     with pytest.raises(ConfigError, match="unknown client_id"):
         get_client("nope", path)
+
+
+# --- Single-client default (one client per repository) -----------------------
+
+
+def test_get_client_defaults_to_the_only_client(tmp_path: Path) -> None:
+    """One client per repo is the normal case, so naming it on every command is ceremony."""
+    path = _write_config(tmp_path, _base_client())
+    assert get_client(None, path).client_id == "acme"
+
+
+def test_resolve_client_id_returns_the_only_client(tmp_path: Path) -> None:
+    clients = load_clients(_write_config(tmp_path, _base_client()))
+    assert resolve_client_id(None, clients) == "acme"
+
+
+def test_resolve_client_id_passes_an_explicit_id_through(tmp_path: Path) -> None:
+    """An explicit id is never second-guessed, even against a single-client config."""
+    clients = load_clients(_write_config(tmp_path, _base_client()))
+    assert resolve_client_id("whatever", clients) == "whatever"
+
+
+def test_resolve_client_id_refuses_to_guess_between_several(tmp_path: Path) -> None:
+    """Silently picking one of several would publish the wrong catalogue to the wrong site."""
+    data = {"version": 1, "clients": {"acme": _base_client(), "beta": _base_client()}}
+    path = tmp_path / "clients.yml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    clients = load_clients(str(path))
+
+    with pytest.raises(ConfigError, match="defines 2 clients"):
+        resolve_client_id(None, clients)
+
+
+def test_get_client_omitted_id_with_several_clients_raises(tmp_path: Path) -> None:
+    data = {"version": 1, "clients": {"acme": _base_client(), "beta": _base_client()}}
+    path = tmp_path / "clients.yml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="name the one to act on explicitly"):
+        get_client(None, str(path))
+
+
+def test_resolve_client_id_with_no_clients_raises() -> None:
+    with pytest.raises(ConfigError, match="defines no clients"):
+        resolve_client_id(None, {})
 
 
 def test_schema_invalid_config_raises_config_error(tmp_path: Path) -> None:

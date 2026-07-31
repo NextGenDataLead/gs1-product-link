@@ -105,7 +105,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="build_brick_map", description="Draft or check a client's GPC brick → category map."
     )
-    parser.add_argument("client_id", help="Key under clients: in clients.yml")
+    parser.add_argument(
+        "client_id",
+        nargs="?",
+        help="Key under clients: in clients.yml (optional when only one client is defined)",
+    )
     parser.add_argument("--datamodel", help="Path to the GS1 DIY sector datamodel (.xlsx)")
     parser.add_argument("--code-column", help="Datamodel column holding the GPC brick code")
     parser.add_argument("--category-column", help="Datamodel column holding the DIY sector label")

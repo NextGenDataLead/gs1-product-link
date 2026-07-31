@@ -120,7 +120,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         prog="build_video_map",
         description="Draft or check a client's video name→GTIN mapping.",
     )
-    parser.add_argument("client_id", help="Key under clients: in clients.yml")
+    parser.add_argument(
+        "client_id",
+        nargs="?",
+        help="Key under clients: in clients.yml (optional when only one client is defined)",
+    )
     parser.add_argument(
         "--products", help="Parsed products JSON (default: output/{id}/data/products.json)"
     )
@@ -140,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         return _EXIT_USAGE
 
     if cfg.media is None:
-        print(f"client {args.client_id!r} has no media config", file=sys.stderr)
+        print(f"client {cfg.client_id!r} has no media config", file=sys.stderr)
         return _EXIT_USAGE
 
     if args.check:

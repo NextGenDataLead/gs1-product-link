@@ -663,7 +663,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="run_execute", description="Execute a confirmed run plan."
     )
-    parser.add_argument("client_id", help="Key under clients: in clients.yml")
+    parser.add_argument(
+        "client_id",
+        nargs="?",
+        help="Key under clients: in clients.yml (optional when only one client is defined)",
+    )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--plan", help="Path to a Plan JSON (all rows confirmed)")
     source.add_argument("--confirmed", help="Path to a ConfirmedPlan JSON")

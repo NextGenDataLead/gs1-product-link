@@ -1,7 +1,9 @@
 """Render the per-step issue reports into one human-readable data-quality worklist.
 
 Usage:
-    python -m scripts.report_quality CLIENT_ID [--out PATH]
+    python -m scripts.report_quality [CLIENT_ID] [--out PATH]
+
+``CLIENT_ID`` may be omitted when ``clients.yml`` defines exactly one client.
 
 Reads the machine-readable issue files under ``output/{client_id}/data/``
 (``source_issues.json``, ``generated_issues.json``, ``video_map_issues.json``,
@@ -27,7 +29,9 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from lib.config import resolve_client_id
 from lib.env import load_env
+from lib.errors import ConfigError
 from lib.quality_report import render_quality_report
 from lib.records import ProductRecord, SourceIssue
 
@@ -85,7 +89,11 @@ def _load_observations(path: Path) -> list[str]:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render the consolidated data-quality report.")
-    parser.add_argument("client_id")
+    parser.add_argument(
+        "client_id",
+        nargs="?",
+        help="Key under clients: in clients.yml (optional when only one client is defined)",
+    )
     parser.add_argument(
         "--out", help="output path (default output/{client_id}/data-quality-report.md)"
     )
@@ -95,11 +103,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns the process exit code."""
     args = _parse_args(argv)
-    data_dir = Path("output") / args.client_id / "data"
+    try:
+        client_id = resolve_client_id(args.client_id)
+    except ConfigError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return _EXIT_CONFIG_ERROR
+
+    data_dir = Path("output") / client_id / "data"
     if not data_dir.is_dir():
         print(
             f"config error: {data_dir} does not exist — run the pipeline "
-            f"(parse_export / run_plan) for {args.client_id} first",
+            f"(parse_export / run_plan) for {client_id} first",
             file=sys.stderr,
         )
         return _EXIT_CONFIG_ERROR
@@ -112,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         freshness[key] = _mtime(path)
 
     markdown = render_quality_report(
-        client_id=args.client_id,
+        client_id=client_id,
         source_issues=issues["source"],
         generated_issues=issues["generated"],
         video_map_issues=issues["video_map"],
@@ -123,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         observations=_load_observations(data_dir / "observations.json"),
     )
 
-    out = Path(args.out) if args.out else Path("output") / args.client_id / "data-quality-report.md"
+    out = Path(args.out) if args.out else Path("output") / client_id / "data-quality-report.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(markdown, encoding="utf-8")
     total = sum(len(v) for v in issues.values())
