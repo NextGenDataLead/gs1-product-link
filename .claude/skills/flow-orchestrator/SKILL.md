@@ -1,6 +1,6 @@
 ---
 name: flow-orchestrator
-description: "Publish a client's products to GS1 Digital Link and WordPress end-to-end — generate copy, plan, confirm, then execute pages, GS1 resolver entries and QR, with step-by-step operator gates. Use when the operator says 'publish {client} to GS1', 'run the GS1 pipeline for {client}', 'run for {client}', or 'process {client}'. This is the only sanctioned path for publishing: it is what enforces the review gates."
+description: "Publish a client's products to GS1 Digital Link and WordPress end-to-end — generate copy, plan, confirm, then execute pages, GS1 resolver entries and QR, with step-by-step operator gates. Use when the operator says 'publish {client} to GS1', 'run the GS1 pipeline for {client}', 'run for {client}', or 'process {client}', and for any request to create only the pages or only the Digital Links: this skill classifies which of the three publish modes is meant and confirms it. This is the only sanctioned path for publishing: it is what enforces the review gates."
 ---
 
 # Flow Orchestrator
@@ -16,14 +16,35 @@ Trigger phrases (§10.5), most to least specific:
 e.g. "publish noviplast to GS1, test env". Load this skill to drive a full client run end-to-end
 from chat: parse → plan → present → confirm → execute → summarise.
 
+Also load it for any phrasing that asks for **one leg only** — *"create the pages for noviplast but
+don't touch GS1"*, *"just set the Digital Links, the pages already exist"*. Those are the same
+sequence with a different mode, and step 0 is where the mode gets pinned down.
+
 > **Prefer the GS1-qualified phrasings.** A bare *"run for X"* is generic: in a coding session it
 > competes with every other meaning of "run" — including a built-in `run` skill that launches a
 > project's app. If this skill is not loaded, the operator gates below **do not happen** and a
 > publish can proceed unreviewed. When in doubt, say "publish {client} to GS1".
 
+## Publish modes
+
+One sequence, three modes. The mode decides which leg of `run_execute` runs and how loud the gates
+have to be:
+
+| Mode | Slash command | Does | Reversibility |
+|---|---|---|---|
+| `pages` | `/gs1-pages` | WordPress pages only | Reversible — edit or delete the page |
+| `links` | `/gs1-links` | Digital Links only, pointing at pages that already exist | **PERMANENT** |
+| `both` | `/gs1-publish` | Pages first, then links pointing at them | **PERMANENT** |
+
+Reached by slash command, the mode is **fixed** and you state it rather than derive it. Reached by
+natural language, you classify it at step 0 and the operator confirms. When the phrasing is genuinely
+ambiguous — *"publish the webpages and digital links"* names all three vocabularies — ask; do not
+guess toward the more destructive mode.
+
 ## What this skill does
 
-Orchestrates the generate/plan/confirm/execute pipeline for one client. For a client with a
+Orchestrates the generate/plan/confirm/execute pipeline for one client, in whichever of the three
+modes above applies. For a client with a
 `generator` config it first fills and reviews the generated-copy cache (review gate 1), then runs
 `scripts/run_plan.py` to classify each `(GTIN, language)` — which merges that cache — and presents
 the plan (review gate 2), collects the operator's confirmation in chat, writes a `ConfirmedPlan` to
@@ -48,6 +69,54 @@ below stays dormant — it is implemented and ready for future product updates.
 
 ## Steps
 
+Numbered from **0**, and the numbering is load-bearing: step 0 was added after the rest and the
+other eleven keep their numbers so every cross-reference to "step 8" — here, in
+`IMPLEMENTATION_SPEC.md` §8.3, in `docs/setup.md` — still points at the same gate.
+
+0. **Intent confirmation (gate 0).** Before running anything, present what is about to happen and
+   require a choice. Five things, in this order:
+
+   - **Mode** — `pages`, `links`, or `both`, and what each does *not* touch.
+   - **Export file cross-check.** `parse_export` has **no input-path override**: the path comes from
+     `clients.yml` → `export.path`. So when the operator names a file (*"/gs1-publish for
+     @products-2026-q3.xlsx"*) that filename **verifies the config** rather than driving the run.
+     State the configured path and how long ago it was modified, and ask whether it is the same
+     file. This catches the likeliest real error — a fresh export dropped somewhere new while
+     config still points at the old one — which nothing downstream would notice.
+   - **Product count** from `output/{client}/data/products.json`. Label it as the source catalogue
+     size, **not** the number of rows this run will write: that arrives at the plan gate (step 5).
+   - **Environment** — `test` or `production`, resolved from `clients.yml`.
+   - **Permanence**, for `links` and `both` only.
+
+   For `links` / `both`, present verbatim:
+   ```
+   About to run the GS1 publish flow for noviplast.
+     Mode:        both — WordPress pages, then Digital Links pointing at them
+     Export:      input/noviplast/products.xlsx (modified 12 days ago)
+     Products:    127 in the parsed catalogue
+     Environment: production
+
+   A GS1 Digital Link record can never be deleted. Retraction only disables it; the
+   record stays on the account permanently.
+
+   Proceed?
+   [confirm | change-mode | cancel]
+   ```
+   For `pages`, the same block with the permanence paragraph replaced by:
+   ```
+   Pages only — no GS1 record is written, so this run is reversible.
+   ```
+   If the operator named a file that does not match `export.path`, add above the menu:
+   ```
+   You said products-2026-q3.xlsx. Config points at input/noviplast/products.xlsx,
+   modified 12 days ago. Same file?
+   ```
+   `change-mode` → re-present with the chosen mode; `cancel` → abort, run nothing.
+
+   **This gate is asymmetric on purpose.** `pages` is reversible, so it **also stands in for the
+   step-8 environment confirmation** — gate 0 has already named the environment and nothing
+   irreversible follows. `links` and `both` still take step 8 as well.
+
 1. **Resolve the client.** Determine `client_id` from the request; ask if ambiguous. If
    `output/{client}/data/products.json` is missing or stale, run
    `python -m scripts.parse_export {client}` first (the `gs1-export-parser` skill).
@@ -69,6 +138,11 @@ below stays dormant — it is implemented and ready for future product updates.
    `output/{client}/data/generated_issues.json` work list. **This pipeline fails silently — verify
    the copy against the real product, not the "ingested N" count.** Generation never publishes; the
    second gate is `plan.json` (step 5) and execute is draft-first.
+
+   This step runs in **`links` mode too**, even though no page is written. Not for the copy itself —
+   for the plan: with a `generator` configured, `run_plan` omits any `(GTIN, language)` that has no
+   generated tagline (E21), so an empty cache yields an empty plan and the run publishes nothing
+   while reporting success.
 
 4. **Plan.** Run `python -m scripts.run_plan {client}` and read
    `output/{client}/plan.json`. run_plan omits any `(GTIN, language)` with a missing
@@ -135,13 +209,16 @@ below stays dormant — it is implemented and ready for future product updates.
      records. When it is empty, the change is in the product body; say so plainly
      (`Changes: product content (no title or URL change)`) rather than printing a bare
      `Changes:` header.
+     A `gs1_link` key means something different from a content change: the page is published
+     but its resolver link was never written (a previous `pages` run). Present it as
+     `Changes: resolver link not written yet` — nothing about the page is changing.
 
 7. **Write the ConfirmedPlan.** Serialise `ConfirmedPlan{plan, confirmed_gtins_by_lang}`
    to `output/{client}/plan.confirmed.json`, with `confirmed_gtins_by_lang` as a list of
    `[gtin, language]` pairs (the shape `run_execute --confirmed` consumes).
 
-8. **Environment confirmation (§10.6.7).** If the client's resolved GS1 environment is
-   `production`, present verbatim and require a choice before executing:
+8. **Environment confirmation (§10.6.7).** In `links` and `both` mode, if the client's resolved
+   GS1 environment is `production`, present verbatim and require a choice before executing:
    ```
    About to execute against PRODUCTION environment (gs1nl-api.gs1.nl).
    This will make live changes to https://www.noviplast.nl.
@@ -150,12 +227,21 @@ below stays dormant — it is implemented and ready for future product updates.
    ```
    Mandatory and non-overridable; enforced here per run (not per session). `confirm` →
    proceed; `switch-to-test` → re-resolve to the test environment; `cancel` → abort.
+   **Skipped in `pages` mode** — gate 0 already named the environment and nothing irreversible
+   follows, so a second production prompt for a page you can delete only trains the operator to
+   click through them.
 
 9. **Execute.** Invoke
    `python -m scripts.run_execute {client} --confirmed output/{client}/plan.confirmed.json`.
-   When the resolved environment is `production`, **append `--i-understand-production`** — the
-   step-8 confirmation *is* that acknowledgment. Without the flag, `run_execute` refuses a live
-   production run (exit 2), so a production execute that omits it will not proceed.
+   - **Append `--only pages` or `--only links`** unless the mode is `both`, which is what omitting
+     the flag means. The operator never types this — you supply it, on the strength of gate 0.
+   - When the resolved environment is `production`, **append `--i-understand-production`** — the
+     confirmation that authorises it is step 8 in `links`/`both` mode and gate 0 in `pages` mode.
+     Without the flag, `run_execute` refuses a live production run (exit 2), so a production
+     execute that omits it will not proceed.
+   In `links` mode, `run_execute` verifies every resolver target serves before writing anything,
+   and refuses the GTINs whose targets do not. Those come back as errors in step 11 — read them as
+   "the page is not where the plan says it is", not as a GS1 fault.
 
 10. **Progress (§10.6.3).** For runs over 20 rows, surface progress every 10 rows;
    otherwise only at the end. Not per-row (per-row detail goes to the JSONL log):
@@ -193,11 +279,15 @@ below stays dormant — it is implemented and ready for future product updates.
     propagation lag, not a failure"). Write the observations in addition to your chat summary,
     not instead of it. Omit the file (or an empty `notes`) when there is genuinely nothing to flag.
 
-## MCP tools used
+## How the work is done
 
-None directly. This skill drives `scripts/run_plan.py` and `scripts/run_execute.py` (and
-`scripts/parse_export.py` when products are missing). The GS1/WordPress/QR MCP tool
-wrappers are wired in Phase 8.
+Python, invoked as modules: `scripts/run_plan.py` and `scripts/run_execute.py`, plus
+`scripts/parse_export.py` when products are missing and `scripts/run_generate.py` for copy. Those
+scripts own the production guard, the `state.json` writes, and the run JSONL — so keep the work on
+them rather than driving `lib/` directly, which would reimplement all three in prose.
+
+There are MCP servers in `mcps/`, but they are **not** how anything here works and there is no
+`.mcp.json`. They expose a strict subset of the Python clients, and OD-2 keeps them private.
 
 ## Failure modes
 
@@ -221,3 +311,11 @@ wrappers are wired in Phase 8.
   the execute step rather than invoking `run_execute` with an empty plan.
 - **Missing control file.** If `website_status` is configured but the file is absent,
   run_plan exits 2 — ask the operator to place it at the configured path before retrying.
+- **`links` mode refused a GTIN: "refusing to point a permanent GS1 record at it".** Its target URL
+  did not serve. Do **not** work around it — that refusal is the whole reason the mode is safe to
+  offer. Find out where the page actually is (the slug may not match `slug_pattern`, or the page may
+  be drafted or gone), fix `wordpress.target_url_pattern` or publish the page, and re-run. The other
+  GTINs in the batch already went through.
+- **`pages` mode leaves rows CHANGED.** Expected, not a bug: a page published without its resolver
+  link is not finished, and the plan says so until `/gs1-links` completes it. The row's diff carries
+  `gs1_link`, not a content change.

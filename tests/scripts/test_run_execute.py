@@ -30,6 +30,7 @@ from lib.config import (
     TemplateConfig,
     WordPressConfig,
 )
+from lib.errors import WordPressAPIError
 from lib.records import LocalisedText, Plan, PlanClassification, PlanRow, ProductRecord, State
 from lib.state import load_state
 from scripts import run_execute
@@ -140,20 +141,28 @@ class _Recorder:
         self.translations: list[dict[str, int]] = []
         self.downloaded: list[str] = []
         self.uploaded: list[dict[str, Any]] = []
+        self.slug_lookups: list[dict[str, Any]] = []
 
 
-def _install(
+def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration has to survive
     monkeypatch: pytest.MonkeyPatch,
     cfg: ClientConfig,
     *,
     verify: bool = True,
     wp_error: Exception | None = None,
     wp_error_languages: tuple[str, ...] = ("nl", "fr"),
+    unverifiable: tuple[str, ...] = (),
+    findable_slugs: dict[tuple[str, str], int] | None = None,
 ) -> _Recorder:
     """Patch the two clients with recording fakes.
 
     ``wp_error_languages`` narrows ``wp_error`` to specific languages, so a test can fail
     one language of a GTIN and leave its sibling healthy.
+
+    ``unverifiable`` lists URLs whose ``verify_url`` **raises**, which is what the real
+    client does on a non-2xx — it never returns ``False``. ``findable_slugs`` maps
+    ``(slug, language)`` to the page id ``find_by_slug`` should report, so a ``--only links``
+    test can choose between the three ways a target gets resolved.
     """
     rec = _Recorder()
 
@@ -177,7 +186,18 @@ def _install(
 
         def verify_url(self, url: str) -> bool:
             rec.verified.append(url)
+            if url in unverifiable:
+                raise WordPressAPIError(404, "Not Found")
             return verify
+
+        def find_by_slug(
+            self, post_type: str, slug: str, language: str | None = None
+        ) -> dict[str, Any] | None:
+            rec.slug_lookups.append({"post_type": post_type, "slug": slug, "language": language})
+            pid = (findable_slugs or {}).get((slug, language or ""))
+            if pid is None:
+                return None
+            return {"id": pid, "link": _page_url(language or "nl", slug, post_type=post_type)}
 
         def link_translations(self, translations: dict[str, int]) -> None:
             rec.translations.append(translations)
@@ -848,3 +868,279 @@ def test_dry_run_bypasses_production_guard(tmp_path: Path, monkeypatch: pytest.M
 
     assert code == 0
     assert rec.wp == [] and rec.gs1 == []  # dry-run writes nothing; ack not required
+
+
+# --- --only: the three publish flows -----------------------------------------
+#
+# `/gs1-pages`, `/gs1-links` and `/gs1-publish` are three thin skills over one flag. The
+# tests below are about what each leg does and — more importantly — what it must *not* do:
+# a `--only pages` run that quietly wrote a GS1 record would be unrecoverable, since a
+# Digital Link can never be deleted.
+
+
+def test_only_pages_writes_no_resolver_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`/gs1-pages` is the reversible flow: WordPress only, nothing permanent."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--only", "pages"])
+
+    assert code == 0
+    assert len(rec.wp) == 2  # both pages upserted
+    assert rec.translations  # and linked as translations — that is a WordPress write
+    assert rec.gs1 == []  # nothing permanent happened
+    assert not (tmp_path / "output" / "acme" / "qr").exists()  # QR belongs to the links leg
+    outcomes = _read_outcomes(tmp_path)
+    assert [o["status"] for o in outcomes] == ["ok", "ok"]
+    assert [o["gs1_set"] for o in outcomes] == [False, False]
+
+
+def test_only_pages_records_state_with_an_empty_link_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The empty hash is the record of "page published, resolver link never written".
+
+    Without it the next ``run_plan`` reads a matching ``content_hash``, classifies the row
+    UNCHANGED, and a follow-up ``/gs1-links`` finds nothing to publish — silently.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+
+    entry = load_state("acme").entries[GTIN_A]["nl"]
+    assert entry.gs1_link_set_hash == ""
+    assert entry.content_hash == "hash-" + GTIN_A  # the page half really was written
+    assert entry.wp_page_id == _page_id(f"p-{GTIN_A}")
+
+
+def test_only_pages_does_not_blank_an_existing_link_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-running pages over a fully published product must not look like the link vanished."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+    published = load_state("acme").entries[GTIN_A]["nl"].gs1_link_set_hash
+    assert published  # a real digest
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+
+    assert load_state("acme").entries[GTIN_A]["nl"].gs1_link_set_hash == published
+
+
+def test_only_links_touches_no_wordpress_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`/gs1-links` points the resolver at pages that already exist; it writes none."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    # A prior run published the page, so state knows where it lives.
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+    rec.wp.clear()
+    rec.translations.clear()
+    rec.verified.clear()
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--only", "links"])
+
+    assert code == 0
+    assert rec.wp == []  # no page upserted
+    assert rec.translations == []  # translation linking is a WordPress write
+    assert len(rec.gs1) == 1
+    assert rec.gs1[0]["links"][0]["target_url"] == f"https://wp.test/product/p-{GTIN_A}/"
+    assert (tmp_path / "output" / "acme" / "qr" / f"{GTIN_A}.svg").is_file()
+    # The target came from state, not from a page written just now, so it was verified.
+    assert rec.verified == [f"https://wp.test/product/p-{GTIN_A}/"]
+
+
+def test_pages_then_links_lands_the_same_state_as_one_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two-step flow converges on what `/gs1-publish` writes in one go."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+    in_one_go = _entry_without_timestamp(load_state("acme"))
+
+    (tmp_path / "output" / "acme" / "state.json").unlink()
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "links"]) == 0
+
+    assert _entry_without_timestamp(load_state("acme")) == in_one_go
+
+
+def test_only_links_refuses_a_target_that_does_not_serve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole point of the precondition: no permanent record aimed at a 404.
+
+    A GS1 record can never be deleted, so this refusal is the last chance to stop a QR
+    being printed against a dead URL. The healthy GTIN alongside it must still publish.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    dead = f"https://wp.test/product/p-{GTIN_A}/"
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A), _row(GTIN_B)))
+
+    # Both pages published fine; GTIN_A's went dark afterwards (deleted, drafted, renamed).
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+    rec = _install(monkeypatch, cfg, unverifiable=(dead,))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--only", "links"])
+
+    assert code == 1
+    assert [entry["gtin"] for entry in rec.gs1] == [GTIN_B]  # only the healthy GTIN
+    outcomes = {o["gtin"]: o for o in _read_outcomes(tmp_path, newest=True)}
+    assert outcomes[GTIN_A]["status"] == "error"
+    assert "refusing to point a permanent GS1 record" in outcomes[GTIN_A]["error"]
+    assert outcomes[GTIN_B]["status"] == "ok"
+    # The blocked GTIN keeps its empty link hash, so the next plan still offers to finish it.
+    assert load_state("acme").entries[GTIN_A]["nl"].gs1_link_set_hash == ""
+
+
+def test_only_links_finds_an_unmanaged_page_by_slug(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no state, the page is located live — and still verified before the write."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg, findable_slugs={(f"p-{GTIN_A}", "nl"): 4242})
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--only", "links"])
+
+    assert code == 0
+    assert rec.slug_lookups == [{"post_type": "product", "slug": f"p-{GTIN_A}", "language": "nl"}]
+    assert rec.gs1[0]["links"][0]["target_url"] == f"https://wp.test/product/p-{GTIN_A}/"
+    assert rec.verified == [f"https://wp.test/product/p-{GTIN_A}/"]
+    # State stays empty: this tool did not publish that page, so it cannot claim its content.
+    assert load_state("acme").entries == {}
+
+
+def test_only_links_falls_back_to_the_planned_target_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A site whose slugs don't match `slug_pattern` is the ordinary pre-existing case."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg)  # nothing findable, no state
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--only", "links"])
+
+    assert code == 0
+    assert rec.slug_lookups  # the lookup was attempted first
+    # PlanRow.target_url, built by diff_against_state from wordpress.target_url_pattern.
+    assert rec.gs1[0]["links"][0]["target_url"] == f"https://wp.test/product/p-{GTIN_A}/"
+    assert rec.verified == [f"https://wp.test/product/p-{GTIN_A}/"]
+    assert load_state("acme").entries == {}
+
+
+def test_only_links_refuses_an_unverifiable_planned_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fallback is the most dangerous source, so it is the one that must fail closed."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    dead = f"https://wp.test/product/p-{GTIN_A}/"
+    rec = _install(monkeypatch, cfg, unverifiable=(dead,))
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--only", "links"])
+
+    assert code == 1
+    assert rec.gs1 == []
+    assert load_state("acme").entries == {}
+
+
+def test_both_flow_verifies_a_language_rebuilt_from_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A language not written this run is used unverified no longer.
+
+    ``_known_pages`` rebuilds it from ``state.json``, which records where a page *was* — the
+    resolver link is then aimed at a URL nothing checked. One code path now covers this and
+    the ``--only links`` case.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg)
+    both = _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr"))
+    nl_only = _write_json(tmp_path / "nl.json", _plan(_row(GTIN_A, "nl")))
+    assert run_execute.main(["acme", "--plan", str(nl_only)]) == 0
+    rec.verified.clear()
+
+    confirmed = tmp_path / "confirmed.json"
+    confirmed.write_text(
+        json.dumps(
+            {"plan": both.model_dump(mode="json"), "confirmed_gtins_by_lang": [[GTIN_A, "fr"]]}
+        ),
+        encoding="utf-8",
+    )
+    assert run_execute.main(["acme", "--confirmed", str(confirmed)]) == 0
+
+    # fr was written and verified by the pages leg; nl came from state and was verified too.
+    assert sorted(rec.verified) == sorted(
+        [_page_url("fr", f"p-{GTIN_A}"), _page_url("nl", f"p-{GTIN_A}")]
+    )
+
+
+def test_dry_run_only_links_renders_nothing_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dry run builds no clients, so it cannot verify — it says so instead."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--dry-run", "--only", "links"])
+
+    assert code == 0
+    assert rec.wp == [] and rec.gs1 == [] and rec.verified == []
+    assert load_state("acme").entries == {}
+    assert [o["status"] for o in _read_outcomes(tmp_path)] == ["dry-run"]
+
+
+def test_production_refusal_for_pages_claims_no_permanent_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--only pages` writes live pages but creates nothing permanent; the message must agree.
+
+    An operator who reads "permanent GS1 records" on a run that creates none learns to read
+    past this message — which is the one thing the guard cannot afford.
+    """
+    monkeypatch.chdir(tmp_path)
+    _install(monkeypatch, _prod_config())
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--only", "pages"])
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "live pages" in err
+    assert "permanent GS1 records" not in err
+    assert "--i-understand-production" in err  # still gated: it is a live site
+
+
+def _read_outcomes(tmp_path: Path, *, newest: bool = False) -> list[dict[str, Any]]:
+    """The RunOutcome dicts from the run log (the newest one, when several runs happened)."""
+    logs = sorted((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
+    path = logs[-1] if newest else logs[0]
+    return [json.loads(line) for line in path.read_text().splitlines()]

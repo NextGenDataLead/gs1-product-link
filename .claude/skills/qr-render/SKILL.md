@@ -14,7 +14,7 @@ each encoding the product's GS1 Digital Link URI. In the pilot this runs as part
 
 ## What this skill does
 
-Wraps `lib/qr.py` and the `qr-render` MCP server. For each GTIN it builds the Digital Link URI from
+Drives `lib/qr.py`. For each GTIN it builds the Digital Link URI from
 the client's `digital_link_url_pattern`, then renders one file per requested format to
 `output/{client}/qr/{gtin}.{ext}`. The renderer uppercases the URI's scheme and host (the GTIN path
 is untouched) so the whole string falls in the QR alphanumeric set for a denser symbol; SVG output is
@@ -24,8 +24,7 @@ writer rejects 1-bit mode). Tone is **concise and business-like, not conversatio
 ## Inputs
 
 - `client_id` (from the trigger phrase; ask if unclear) — used to build the output directory and to
-  read the client's QR config; the `qr_render` tool itself takes an explicit request, not a
-  `client_id`.
+  read the client's QR config; `render_qr` itself takes an explicit request, not a `client_id`.
 - `clients.yml` `qr` config: `formats` (default `[svg, png]`), `size_mm` (20), `error_correction`
   (`M`), `dpi` (300); and `digital_link_url_pattern` for the URI.
 - The GTINs in scope (usually the confirmed plan subset) from
@@ -40,9 +39,9 @@ writer rejects 1-bit mode). Tone is **concise and business-like, not conversatio
    `digital_link_url_pattern` (e.g. `https://id.gs1.org/01/{gtin14}`, GTIN zero-padded to 14) — the
    same URI the resolver serves.
 
-3. **Render.** Call `qr_render` with `uri`, `output_dir` = `output/{client}/qr`, `gtin`, `formats`,
-   `size_mm`, and `error_correction` from the client's `qr` config. The output filename is
-   `{gtin}.{format}`; the directory is created if absent.
+3. **Render.** Call `render_qr(uri, output_dir, gtin, formats, size_mm, ecc, dpi)` with
+   `output_dir` = `output/{client}/qr` and the rest from the client's `qr` config. The output
+   filename is `{gtin}.{format}`; the directory is created if absent. It returns the written paths.
 
 4. **Present output paths (§10.4).** List the written files verbatim:
    ```
@@ -51,15 +50,33 @@ writer rejects 1-bit mode). Tone is **concise and business-like, not conversatio
      08713195000374.png
    ```
 
-## MCP tools used
+## The Python API
 
-- `qr_render` — render a QR symbol for a Digital Link URI to `svg`/`png`/`eps` files. Params:
-  `uri`, `output_dir`, `gtin`, `formats[]` (enum `svg|png|eps`), `size_mm`, `error_correction`
-  (enum `L|M|Q|H`). It takes a **fully explicit request** — no `client_id`, no `clients.yml`
-  lookup — so you pass the `output_dir` and QR settings yourself.
+`lib/qr.py` `render_qr(...)` — one function, a **fully explicit request**: no `client_id`, no
+`clients.yml` lookup, so you pass the output directory and QR settings yourself.
 
-The parallel library `lib/qr.py` (`render_qr(...)`) is what `scripts/run_execute.py` drives on the
-orchestrated path, reading the same values from `cfg.qr`.
+```python
+from lib.config import get_client
+from lib.qr import render_qr
+
+cfg = get_client(client_id)
+paths = render_qr(
+    uri=cfg.gs1.digital_link_url_pattern.format(gtin14=product.gtin14),
+    output_dir=Path("output") / cfg.client_id / "qr",
+    gtin=product.gtin,
+    formats=cfg.qr.formats,  # svg | png | eps
+    size_mm=cfg.qr.size_mm,
+    ecc=cfg.qr.error_correction,  # L | M | Q | H
+    dpi=cfg.qr.dpi,
+)
+```
+
+It is a bare library with no exit codes of its own — errors propagate to the caller, which owns the
+error accounting.
+
+There is a `qr-render` MCP server in `mcps/qr-render/`, but it is **not** how this works and there
+is no `.mcp.json`; OD-2 keeps those servers private. `scripts/run_execute.py` calls `render_qr`
+directly on the orchestrated path, reading the same values from `cfg.qr`.
 
 ## Failure modes
 

@@ -96,12 +96,12 @@ auto-published**: it is reviewed here (cache) and again in `plan.json`, then exe
    - `cancel` — stop; the cache keeps whatever ingested so far (nothing is published).
    Off-menu reply → the same canned reply as step 2. Never offer to publish from here.
 
-## MCP tools used
+## How the work is done
 
-None directly. This skill drives `scripts/run_generate.py` (`--emit` / `--ingest`) and reads/writes
+Python. This skill drives `scripts/run_generate.py` (`--emit` / `--ingest`) and reads/writes
 the `output/{client}/data/` JSON artifacts. The copy itself is written by Claude in-session, so no
-API key or MCP call is involved (the headless API backend in `lib/llm.py` is the alternative
-producer, wired in a later commit).
+API key is involved; `lib/llm.py` is the alternative headless producer. No MCP server is involved
+and there is no `.mcp.json`.
 
 ## Failure modes
 

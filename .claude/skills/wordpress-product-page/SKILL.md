@@ -15,7 +15,7 @@ own.
 
 ## What this skill does
 
-Wraps `lib/wp_client.py`, `lib/acf.py`, and the `wordpress` MCP server. For each `(GTIN, language)`
+Drives `lib/wp_client.py` and `lib/acf.py`. For each `(GTIN, language)`
 it renders the page from the client's template, upserts it idempotently (matched by `existing_id`,
 then `slug`, then `meta.gtin`), and writes the ACF fields mapped in `clients.yml` `acf_map`. Auth is
 HTTP Basic with a WordPress **application password** read from an environment variable. Because the
@@ -26,8 +26,9 @@ review step. Tone is **concise and business-like, not conversational**.
 
 ## Inputs
 
-- `client_id` (from the trigger phrase; ask if unclear). The MCP resolves `site_url`, credentials,
-  and post status from `clients.yml` by `client_id`.
+- `client_id` (from the trigger phrase; ask if unclear). `get_client(client_id)` from
+  `lib/config.py` resolves `site_url`, credentials, and post status from `clients.yml`; it is
+  optional when exactly one client is defined.
 - `clients.yml` `wordpress` config: `post_type`, `multilingual_plugin`, `wpml_helper_path`,
   `languages`, `acf_map`, `slug_pattern`, `target_url_pattern`; and the `app_password_env` var.
 - The client's templates at `templates/{client}/product.{lang}.html` (per `template.files`).
@@ -42,35 +43,59 @@ review step. Tone is **concise and business-like, not conversational**.
 2. **Verify the template exists.** Confirm `templates/{client}/product.{lang}.html` is present for
    each language in scope; stop if a language's template is missing.
 
-3. **Detect the multilingual plugin.** Call `wp_detect_multilingual` (`client_id`) — returns
-   `polylang`, `wpml`, or `none`. The client's configured `multilingual_plugin` overrides the probe
-   (a wrong probe would silently disable translation linking); on a mismatch, honour the config and
-   note the discrepancy.
+3. **Detect the multilingual plugin.** `WordPressClient` probes at construction and exposes the
+   result as `client.multilingual_plugin` — `polylang`, `wpml`, or `none`. The client's configured
+   `multilingual_plugin` overrides the probe (a wrong probe would silently disable translation
+   linking); on a mismatch, honour the config and note the discrepancy.
 
 4. **Render and build ACF.** Render the page content, then build the ACF payload with
    `build_acf_payload(product, language, acf_map)` — it reads each mapped source field for **this
    language only** (no cross-language fallback), omitting and warning on any absent value.
 
-5. **Upsert.** Call `wp_upsert_page` (`client_id`, `slug`, `title`, `content`, `language`,
-   `meta.gtin`, optional `featured_media`/`parent`/`existing_id`, `acf`). It is idempotent — matched
-   by `existing_id` → `slug` → `meta.gtin`. Callers **must** set `meta.gtin` (the idempotency key).
-   Upload featured media with `wp_upload_media` (idempotent by content hash + slug) first if needed;
-   `wp_find_by_slug` looks a page up without writing.
+5. **Upsert.** Call `upsert_page(post_type, slug, title, content, language, meta={"gtin": gtin},
+   featured_media=…, parent=…, existing_id=…, acf=…)`. It is idempotent — matched by `existing_id`
+   → `slug` → `meta.gtin`. Callers **must** set `meta["gtin"]` (the idempotency key). Upload
+   featured media with `upload_media(path, title=…)` (idempotent by content hash + slug) first if
+   needed; `find_by_slug(post_type, slug, language)` looks a page up without writing.
 
-6. **Verify the URL (§10.2).** Call `wp_verify_url` (`client_id`, `url`) — a HEAD returning 2xx/3xx.
-   Treat this as "the URL resolves", **not** "the page has content" (see Failure modes).
+6. **Verify the URL (§10.2).** Call `verify_url(url)` — a HEAD returning 2xx/3xx. It returns `True`
+   or **raises** `WordPressAPIError`; it never returns `False`. Treat a pass as "the URL resolves",
+   **not** "the page has content" (see Failure modes).
 
-## MCP tools used
+## The Python API
 
-- `wp_detect_multilingual` — detect `polylang` / `wpml` / `none`.
-- `wp_upsert_page` — create or update one page idempotently (lookup by `id`/`slug`/`meta.gtin`).
-- `wp_upload_media` — upload a media file idempotently by content hash + slug; returns its id.
-- `wp_find_by_slug` — find a page by slug under a post type; returns `null` when absent.
-- `wp_verify_url` — whether a URL resolves to a 2xx/3xx response via HEAD.
+`lib/wp_client.py` `WordPressClient`, constructed from the client's `WordPressConfig` and used as a
+context manager:
 
-All take `client_id` and resolve `site_url` / credentials / post status from `clients.yml`. The
-parallel library `lib/wp_client.py` + `lib/acf.py` is what `scripts/run_execute.py` drives on the
-orchestrated path.
+```python
+from lib.config import get_client
+from lib.wp_client import WordPressClient
+
+cfg = get_client(client_id)
+with WordPressClient(cfg.wordpress) as wp:
+    page = wp.upsert_page(post_type=..., slug=..., meta={"gtin": gtin}, acf=acf, ...)
+    wp.verify_url(page["link"])
+    wp.link_translations({"nl": nl_id, "fr": fr_id})
+```
+
+| Method | Does |
+|---|---|
+| `client.multilingual_plugin` | The detected plugin (`polylang` / `wpml` / `none`), resolved at construction |
+| `upsert_page(...)` | Create or update one page idempotently (lookup by `existing_id` / `slug` / `meta.gtin`) |
+| `upload_media(path, title=None)` | Upload a media file idempotently by content hash + slug; returns its id |
+| `find_by_slug(post_type, slug, language=None)` | Find a page by slug; returns `None` when absent |
+| `verify_url(url)` | `True` for 2xx/3xx via HEAD; raises `WordPressAPIError` otherwise |
+| `link_translations({lang: page_id})` | Link per-language pages as translations of one another |
+| `set_page_status(...)` / `delete_page(...)` | Draft or remove a page, guarded by its GTIN |
+
+`build_acf_payload(product, language, acf_map)` in `lib/acf.py` builds the ACF dict.
+
+There is a `wordpress` MCP server in `mcps/wordpress/`, but it is **not** how this works and there is
+no `.mcp.json`. It exposes five of the methods above and stops there: `link_translations` and the
+whole take-down path (`set_page_status`, `delete_page`, `delete_media`) have no MCP equivalent, so
+neither a multilingual publish nor `scripts/run_unpublish.py` could go through it. OD-2 keeps those
+servers private. `scripts/run_execute.py` drives the Python client on the orchestrated path; so
+should you.
 
 ## Failure modes
 

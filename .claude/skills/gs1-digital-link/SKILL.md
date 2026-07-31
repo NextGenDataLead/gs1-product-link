@@ -10,13 +10,14 @@ description: "Point a client's GTINs at their product pages in the GS1 NL resolv
 Trigger phrases: **"set resolver targets for {client}"**, **"update the Digital Link for {client}"**
 (§10.3) — e.g. "set resolver targets for noviplast". Load this skill to point a client's GTINs at
 their product pages in the GS1 NL resolver: build each Digital Link entry from the `ProductRecord`
-plus `clients.yml`, and upsert it via the `gs1-nl` MCP. In the create-only pilot this is normally
-driven by the `flow-orchestrator` skill through `run_execute`; load this skill directly when setting
-or inspecting resolver targets on their own.
+plus `clients.yml`, and upsert it with `lib/gs1_dl_client.py`. In the create-only pilot this is
+normally driven by the `flow-orchestrator` skill through `run_execute` (`/gs1-links` is the
+links-only mode of that flow); load this skill directly when setting or inspecting resolver targets
+on their own.
 
 ## What this skill does
 
-Wraps `lib/gs1_dl_client.py` and the `gs1-nl` MCP server. For each `(GTIN, language)` it builds the
+Drives `lib/gs1_dl_client.py`. For each `(GTIN, language)` it builds the
 links array from the client's `gs1_links` config (one `gs1:pip` link per configured language; the NL
 link is the `default` standaardlink) and the `target_url` pattern, sets `item_description` to the
 product name, and upserts the entry. Auth is OAuth2 client-credentials: the client mints a ~1h JWT
@@ -28,8 +29,9 @@ conversational**.
 
 ## Inputs
 
-- `client_id` (from the trigger phrase; ask if unclear). The MCP resolves account number, resolver
-  settings, and auth scheme from `clients.yml` by `client_id` — you never pass them.
+- `client_id` (from the trigger phrase; ask if unclear). `get_client(client_id).gs1.resolve()`
+  produces the account number, resolver host, and credentials from `clients.yml` plus `.env` — you
+  never pass them by hand. It is optional when exactly one client is defined.
 - The resolved GS1 environment (`test` | `production`) for the client. A `production` target is
   gated by the environment-confirmation prompt (§10.6.7) when reached via `flow-orchestrator`.
 - `clients.yml` `gs1_links` (link types, `default`, `public`, `title_pattern`) and
@@ -46,25 +48,46 @@ conversational**.
    `item_description` to the product name and `is_enabled` to `true`. Include every configured
    language — a missing language is removed from the resolver, not left untouched.
 
-3. **Upsert.** Call `gs1_digital_link_upsert_bulk` with `client_id` and the `entries[]` (it batches
-   into groups of `batch_size` internally). For a single GTIN use `gs1_digital_link_upsert`. To
-   inspect the current entry first, call `gs1_digital_link_get` (`client_id`, `gtin`) — it returns
-   `null` when the GTIN has no entry.
+3. **Upsert.** Call `safe_upsert(gtin, item_description, links, is_enabled=True, overwrite=...)` —
+   it GETs before writing and raises `OverwriteError` rather than clobbering an existing entry
+   unless `overwrite=True`. Prefer it to the bare `upsert`. For many GTINs, `upsert_bulk(entries)`
+   batches into groups of `batch_size` internally. To inspect the current entry first, `get(gtin)`
+   returns `None` when the GTIN has no entry.
 
 4. **Report.** Summarise how many entries were written and any that errored. In the orchestrated
    pilot the resolver write is one leg of `python -m scripts.run_execute {client} --confirmed
    output/{client}/plan.confirmed.json` (same client, `overwrite=True` because the plan is
    operator-confirmed); the post-execute summary (§10.6.4) reports GS1 failures alongside WordPress.
 
-## MCP tools used
+## The Python API
 
-- `gs1_digital_link_upsert_bulk` — bulk create/update; batches `entries[]` internally.
-- `gs1_digital_link_upsert` — set/update the resolver target for one GTIN.
-- `gs1_digital_link_get` — fetch the current entry for a GTIN; returns `null` if not found.
+`lib/gs1_dl_client.py` `GS1DigitalLinkClient`, constructed from the resolved GS1 config and used as
+a context manager:
 
-All three take `client_id` and resolve account number / resolver settings from `clients.yml`; the
-account number and credentials are never passed in the call. The parallel library
-`lib/gs1_dl_client.py` is what `scripts/run_execute.py` drives on the orchestrated path.
+```python
+from lib.config import get_client
+from lib.gs1_dl_client import GS1DigitalLinkClient
+
+cfg = get_client(client_id)
+with GS1DigitalLinkClient(cfg.gs1.resolve()) as gs1:
+    gs1.safe_upsert(gtin=gtin, item_description=name, links=links, is_enabled=True, overwrite=True)
+```
+
+| Method | Does |
+|---|---|
+| `safe_upsert(...)` | GET-before-write upsert; raises `OverwriteError` instead of clobbering unless `overwrite=True` |
+| `upsert(...)` | Create or update one GTIN's record (no guard) |
+| `upsert_bulk(entries)` | Many GTINs, batched by `batch_size` |
+| `get(gtin)` | The current record, or `None` |
+| `set_enabled(gtin, enabled)` | Enable or disable a record |
+| `retract(gtin)` | Take a product down: clears the links and disables the record |
+| `validate_draft(...)` | Validate a payload without writing |
+
+There is a `gs1-nl` MCP server in `mcps/gs1-nl/`, but it is **not** how this works and there is no
+`.mcp.json`. It exposes **three** of the seven methods above — `set_enabled`, `retract` and
+`validate_draft` have no MCP equivalent, so `scripts/run_unpublish.py` could not go through it at
+all — and OD-2 keeps those servers private. `scripts/run_execute.py` drives the Python client on
+the orchestrated path; so should you.
 
 ## Failure modes
 

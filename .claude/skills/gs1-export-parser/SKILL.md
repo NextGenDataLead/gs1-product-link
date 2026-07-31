@@ -52,10 +52,10 @@ business-like, not conversational** — the operator is checking counts, not rea
    inconsistency, blank required field, length overflow) so the operator can fix them at the source.
    These are the datapool's future work, not a reason to block the run.
 
-## MCP tools used
+## How the work is done
 
-None directly. This skill drives `scripts/parse_export.py`, which uses `lib/gdsn.py`. There is no
-MCP wrapper for parsing — the export is read locally from `export.path`.
+Python. This skill drives `scripts/parse_export.py`, which uses `lib/gdsn.py`. There is no MCP
+server for parsing and no `.mcp.json` — the export is read locally from `export.path`.
 
 ## Failure modes
 

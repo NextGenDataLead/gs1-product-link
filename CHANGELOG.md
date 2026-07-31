@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Three publish flows.** `/gs1-pages` (WordPress pages only, reversible), `/gs1-links`
+  (Digital Links only, aimed at pages that already exist) and `/gs1-publish` (both) —
+  three thin skills in `.claude/skills/` over one shared gate sequence. Natural-language
+  requests for a single leg route through `flow-orchestrator`, which classifies the mode
+  and confirms it.
+- `scripts/run_execute.py --only {pages,links}`. Omitting the flag does both, so every
+  existing invocation is unchanged. The skills supply it after the intent gate; operators
+  do not type it.
+- **A target-URL precondition for `--only links`, in code rather than skill prose.** Each
+  target is resolved from `state.json`, else a slug lookup, else the plan row's
+  `target_url`, and must serve 2xx/3xx before the resolver is written; a GTIN with any
+  unverifiable target gets no GS1 write. A GS1 record can never be deleted, so a permanent
+  QR target on a 404 is unrecoverable — and instructions in a skill can be skipped. The
+  same code path now also verifies languages `_known_pages` rebuilds from state on the
+  both-flow, which were previously trusted unchecked.
+- **Gate 0** in `flow-orchestrator`: mode, an export-file cross-check against
+  `clients.yml` `export.path`, product count, environment, and the permanence warning for
+  anything that writes to GS1. In `pages` mode it also stands in for the production
+  environment gate, since nothing irreversible follows.
+- `docs/setup.md` gains a "Which flow do you need?" section; `docs/troubleshooting.md`
+  gains the links-refusal and pages-leave-rows-CHANGED entries.
+
+### Changed
+- `lib/state.py` classifies an entry with an empty `gs1_link_set_hash` as CHANGED, with a
+  `gs1_link` diff row. That is what a `--only pages` run leaves behind; its content hash
+  still matches, so without this a follow-up `/gs1-links` would find every row UNCHANGED
+  and publish nothing while reporting success. HELD still outranks it. Every state file
+  written before `--only` existed carries a real digest, so nothing already live
+  re-classifies.
+- `run_execute` commits a GTIN's state once every selected leg has succeeded rather than
+  inside each leg, preserving all-or-nothing semantics across the split.
+- The production-guard refusal names only what the selected leg actually does — `--only
+  pages` no longer claims it would register permanent GS1 records.
+- The `wordpress-product-page`, `gs1-digital-link` and `qr-render` skills now document the
+  Python API in `lib/` instead of MCP tool calls, which was never how the orchestrated path
+  worked. The MCP servers stay in `mcps/` and stay in CI, but they expose a strict subset:
+  the GS1 server has 3 of 7 methods, and the WordPress server has neither
+  `link_translations` nor the take-down path, so neither a multilingual publish nor
+  `run_unpublish` could go through them. There is no `.mcp.json`.
+- `docs/setup.md`'s `ffmpeg` prerequisite row says **video only** — image conversion is
+  Pillow, already a dependency. The row was correct but linked to a section covering both.
+
 ## [0.1.0] - 2026-07-30
 
 First working release. The tool turns a GS1 Data Source (GDSN) export into GS1 Digital Link QR
