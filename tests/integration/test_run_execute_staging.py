@@ -15,8 +15,9 @@ be made safe by drafting. The page is therefore live between its creation and th
 force-delete in the teardown, and is cleaned up whatever the test did or failed at.
 
 **The GS1 production entry cannot be deleted.** The v2 API has no DELETE for a Digital
-Link. Teardown retracts it — clears its links, then disables it — which is the most that
-can be done, and leaves a dead, linkless, disabled record on Noviplast's account
+Link. Teardown retracts it — disables it via ``activationStatus``, deliberately leaving
+its links in place (see :meth:`lib.gs1_dl_client.GS1DigitalLinkClient.retract`) — which is
+the most that can be done, and leaves a dead, disabled record on Noviplast's account
 **forever**. That is a property of the GS1 API, not of this code.
 
 For that reason ``STAGING_GTIN`` has **no default** and must be a GTIN dedicated to smoke
