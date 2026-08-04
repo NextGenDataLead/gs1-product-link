@@ -104,14 +104,24 @@ def _pilot_gate(
     state: State,
     excluded: dict[str, int],
 ) -> tuple[list[ProductRecord], dict[str, int]]:
-    """Restrict to fully-mapped GTINs, dropping already-present ones (§9.5).
+    """Restrict to fully-mapped GTINs, dropping finished ones (§9.5).
 
     A no-op unless ``media.restrict_to_mapped_gtins``. Otherwise keeps only products whose GTIN
-    has a client-confirmed video in **every** language *and* has no page yet in state — so the
+    has a client-confirmed video in **every** language *and* is not already finished — so the
     plan targets the remaining pilot work and every other GTIN is excluded. Extends the tally with
-    ``not_mapped`` (no confirmed video in every language) and ``already_present`` (mapped, but a
-    page already exists). ``run_execute`` hard-enforces the mapped-only half independently, so a
+    ``not_mapped`` (no confirmed video in every language) and ``already_present`` (mapped, but
+    already finished). ``run_execute`` hard-enforces the mapped-only half independently, so a
     ``--plan`` slice can still update an already-present pilot GTIN.
+
+    **"Finished" means published *and* resolvable, not merely having a state entry.** A
+    ``run_execute --only pages`` run writes an entry whose ``gs1_link_set_hash`` is empty — the
+    page is live but no Digital Link points at it, which :func:`lib.state._has_no_resolver_link`
+    reports CHANGED so a follow-up ``--only links`` has something to plan. Treating any entry as
+    finished dropped those GTINs here, *before* classification ran, so the row never reached
+    ``_classify`` and the plan came back empty: a ``pages`` run silently removed its own GTIN from
+    every subsequent plan and the two-step flow could not complete. Requiring a link-set hash in
+    every language keeps a half-published GTIN in the queue until its resolver record exists.
+    Entries written before ``--only`` existed all carry a real hash, so no prior state reclassifies.
     """
     excluded = {**excluded, "not_mapped": 0, "already_present": 0}
     media = cfg.media
@@ -119,7 +129,11 @@ def _pilot_gate(
         return products, excluded
 
     allow = fully_mapped_gtins(load_video_map(Path(media.video_map_path)), cfg.wordpress.languages)
-    present = {canon_gtin(gtin) for gtin in state.entries}
+    present = {
+        canon_gtin(gtin)
+        for gtin, entries in state.entries.items()
+        if all(entry.gs1_link_set_hash for entry in entries.values())
+    }
     kept: list[ProductRecord] = []
     for product in products:
         gtin = product.gtin14
