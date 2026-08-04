@@ -218,6 +218,59 @@ def test_pilot_gate_restricts_to_mapped_and_absent(
     assert "1 already have a page" in err
 
 
+def _pages_only_state(*gtins: str) -> None:
+    """State as ``run_execute --only pages`` leaves it: page live, resolver link never written."""
+    entry = StateEntry(
+        wp_page_id=1,
+        wp_url="https://wp.test/x",
+        wp_featured_media_id=None,
+        content_hash="h",
+        gs1_link_set_hash="",  # the "--only pages" marker
+        last_run=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    save_state(State(client_id="acme", entries={g: {"nl": entry} for g in gtins}))
+
+
+def test_pilot_gate_keeps_gtin_whose_resolver_link_was_never_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``--only pages`` GTIN stays in the plan so ``--only links`` can finish it.
+
+    Regression: the gate treated *any* state entry as finished, so a pages-only run dropped its
+    own GTIN from every later plan — ``_classify`` never ran, the CHANGED (``gs1_link``) path
+    could not fire, and the ``/gs1-pages`` → ``/gs1-links`` handoff dead-ended with an empty plan.
+    """
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    _pages_only_state(GTIN_A)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+
+    rows = _read_plan().rows
+    assert {r.gtin for r in rows} == {GTIN_A}, "pages-only GTIN must remain plannable"
+    assert PlanClassification.CHANGED in {r.classification for r in rows}
+
+
+def test_pilot_gate_drops_gtin_once_resolver_link_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The counterpart: once the link set is written the GTIN leaves the queue as before."""
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    _present_state(GTIN_A)  # non-empty gs1_link_set_hash
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    assert _read_plan().rows == []
+
+
 def test_pilot_gate_noop_when_flag_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     vmap = _write_video_map(tmp_path, both=[GTIN_A])
