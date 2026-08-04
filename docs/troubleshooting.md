@@ -201,6 +201,26 @@ Without it the row's content hash would match, the next plan would say UNCHANGED
 the site with no QR resolving to it, and nothing would say so. Run `/gs1-links` to finish the
 publish; the rows go UNCHANGED after that.
 
+### A `pages` run left the plan empty instead of CHANGED
+
+**Fixed — this is here for builds predating the fix, and for the diagnostic.**
+
+Symptom: `/gs1-pages` succeeds, the pages go live, and the next `run_plan` reports
+`0 new, 0 unchanged, 0 changed` with the GTIN counted under `pilot-excluded (… already have a page)`.
+`/gs1-links` then has nothing to publish, so the product sits live with no QR resolving to it.
+
+Cause: `_pilot_gate` in `scripts/run_plan.py` treated **any** state entry as finished pilot work. A
+`--only pages` run writes an entry whose `gs1_link_set_hash` is empty — the marker that should
+produce a CHANGED row (above) — but the gate runs *before* classification, so `_classify` never saw
+the row. Only reachable with `media.restrict_to_mapped_gtins` on.
+
+The gate now counts a GTIN as finished only when **every** language has a non-empty
+`gs1_link_set_hash`. If you see this symptom, check that your `run_plan.py` has that condition.
+
+The general lesson generalises past this one bug: **a filter that runs before classification can
+hide rows that classification would have surfaced.** Both halves passed their own unit tests; only
+the interaction failed. See [`verifying-live.md`](verifying-live.md) for the live check that caught it.
+
 ### A page returns 200 but shows no content
 
 **The ACF write path fails silently.** A `200` from WordPress means the post exists — it does not

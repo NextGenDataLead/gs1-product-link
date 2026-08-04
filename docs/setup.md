@@ -327,10 +327,12 @@ Read-only until the final step. This is the one workflow where working hands-on 
 - `clients.yml`, `.env`, `input/`, `output/` are gitignored. Keep it that way, and keep secrets out of `clients.yml` — it holds env var *names*. **The repository is public**, so anything committed is world-readable permanently.
 - Keep credentials in `.env` and nowhere else. A Claude Code `settings.json` `env` block also works, but it is machine-wide — those secrets end up in the environment of *every* command in *every* project, which is how a password once got echoed into a chat transcript. Rotate anything that leaks; a WordPress application password is revoked and reissued in seconds from Users → Application Passwords.
 - Verify rendered HTML, never just a status code.
+- Checking the pipeline still works against production is its own procedure — see [`verifying-live.md`](verifying-live.md). Do **not** unpublish a product to create something to test with: it classifies HELD and the run does nothing, having taken the product down for no result.
 
 ## Next
 
 - [`troubleshooting.md`](troubleshooting.md) — every error type, and the traps already paid for.
+- [`verifying-live.md`](verifying-live.md) — how to prove the flows still write to production, without degrading a live product.
 - [`gs1-nl-onboarding.md`](gs1-nl-onboarding.md) · [`wordpress-onboarding.md`](wordpress-onboarding.md) — the two external systems.
 - [`data-source-export-schema.md`](data-source-export-schema.md) · [`template-variables.md`](template-variables.md) — data in, page out.
 - [`costs.md`](costs.md) — what running this costs.
