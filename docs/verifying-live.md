@@ -32,7 +32,7 @@ The pipeline is idempotent by design, so nothing has to be taken down:
 | WordPress page | `upsert_page` looks up by `existing_id` → `slug` → `meta.gtin`. With state removed it falls to slug, finds the live page, and **updates it in place** — same page id | `lib/wp_client.py` |
 | Featured media | Deterministic JPEG encode → identical SHA-256 → `upload_media` **reuses the existing attachment** | `lib/media.py` |
 | GS1 record | `upsert` rewrites the link set; the record stays **enabled throughout** | `lib/gs1_dl_client.py` |
-| Generated copy | `pending_requests` queues only *gaps*, so a cached GTIN is **not regenerated** | `scripts/run_generate.py` |
+| Generated content | `pending_requests` queues only *gaps*, so a cached GTIN is **not regenerated** | `scripts/run_generate.py` |
 
 Removing one GTIN's entry from `state.json` makes it plan NEW (`_classify` returns NEW when there is
 no prior) and drops it out of `already_present`, which `_pilot_gate` computes from `state.entries`.
@@ -148,4 +148,4 @@ GTIN from every later plan and `/gs1-pages` → `/gs1-links` dead-ended with an 
 mechanisms were correct in isolation, which is why the unit suite passed.
 
 Step 9 above is exactly where it surfaced. The full record, including the evidence table, is in
-[`clients/democlient-live-log.md`](clients/democlient-live-log.md) under *Verification runs*.
+`docs/clients/{client_id}-live-log.md` (local-only, gitignored) under *Verification runs*.

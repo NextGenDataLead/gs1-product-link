@@ -48,7 +48,7 @@ Only `nl` and `fr` exist in the data. The "combine 3301+3332" work is effectivel
 ## Architecture (one line)
 
 Generation is a **cache-backed merge step that runs in `run_plan` before `diff_against_state`**,
-mirroring `_assign_categories` (`scripts/run_plan.py:98-134,164`): it materialises generated copy
+mirroring `_assign_categories` (`scripts/run_plan.py:98-134,164`): it materialises generated content
 onto the `ProductRecord` so it enters the content hash, flows to ACF, and reclassifies rows — with
 all LLM spend isolated in the opt-in `run_generate` step that only writes the cache.
 

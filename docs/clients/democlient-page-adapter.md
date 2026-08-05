@@ -198,7 +198,7 @@ that comes from the feed instead of a model is one fewer line in the upstream re
 bullets, Technische details stay deterministic. `lib/generator.py` owns the fingerprint-keyed cache
 and the pure `merge_generated` assembly; `scripts/run_generate.py` fills the cache through one
 contract from either producer (in-session emit→ingest, or `--backend api` via `lib/llm.py`);
-`run_plan` merges the cache before `diff_against_state` so generated copy enters the content hash;
+`run_plan` merges the cache before `diff_against_state` so generated content enters the content hash;
 and `acf_map` feeds `product_title`/`product_header_video_text` ← `generated_tagline` and
 `product_description` ← `generated_description`. Full design and 1067 verbatim/tighten/generate
 routing: [`democlient-generator-spec.md`](democlient-generator-spec.md).

@@ -32,7 +32,7 @@ review step. Tone is **concise and business-like, not conversational**.
 - `clients.yml` `wordpress` config: `post_type`, `multilingual_plugin`, `wpml_helper_path`,
   `languages`, `acf_map`, `slug_pattern`, `target_url_pattern`; and the `app_password_env` var.
 - The client's templates at `templates/{client}/product.{lang}.html` (per `template.files`).
-- Parsed products at `output/{client}/data/products.json`, with the merged generated copy for the
+- Parsed products at `output/{client}/data/products.json`, with the merged generated content for the
   `acf_map` source fields (tagline / description).
 
 ## Steps

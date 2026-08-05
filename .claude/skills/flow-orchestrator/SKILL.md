@@ -1,6 +1,6 @@
 ---
 name: flow-orchestrator
-description: "Publish a client's products to GS1 Digital Link and WordPress end-to-end — generate copy, plan, confirm, then execute pages, GS1 resolver entries and QR, with step-by-step operator gates. Use when the operator says 'publish {client} to GS1', 'run the GS1 pipeline for {client}', 'run for {client}', or 'process {client}', and for any request to create only the pages or only the Digital Links: this skill classifies which of the three publish modes is meant and confirms it. This is the only sanctioned path for publishing: it is what enforces the review gates."
+description: "Publish a client's products to GS1 Digital Link and WordPress end-to-end — generate content, plan, confirm, then execute pages, GS1 resolver entries and QR, with step-by-step operator gates. Use when the operator says 'publish {client} to GS1', 'run the GS1 pipeline for {client}', 'run for {client}', or 'process {client}', and for any request to create only the pages or only the Digital Links: this skill classifies which of the three publish modes is meant and confirms it. This is the only sanctioned path for publishing: it is what enforces the review gates."
 ---
 
 # Flow Orchestrator
@@ -45,11 +45,11 @@ guess toward the more destructive mode.
 
 Orchestrates the generate/plan/confirm/execute pipeline for one client, in whichever of the three
 modes above applies. For a client with a
-`generator` config it first fills and reviews the generated-copy cache (review gate 1), then runs
+`generator` config it first fills and reviews the generated-content cache (review gate 1), then runs
 `scripts/run_plan.py` to classify each `(GTIN, language)` — which merges that cache — and presents
 the plan (review gate 2), collects the operator's confirmation in chat, writes a `ConfirmedPlan` to
 `output/{client}/plan.confirmed.json`, and invokes `scripts/run_execute.py` on the confirmed subset
-— then reports the outcome. Generated copy is **never auto-published**: it is reviewed twice and
+— then reports the outcome. Generated content is **never auto-published**: it is reviewed twice and
 executed draft-first. Tone is **concise and business-like, not conversational** (§10.6): verbose
 text creates fatigue during batch runs.
 
@@ -64,7 +64,7 @@ below stays dormant — it is implemented and ready for future product updates.
 - `clients.yml` config for the client (languages, environment, `website_status`, `flow`,
   `generator`).
 - Parsed products at `output/{client}/data/products.json` (run `parse_export` if absent).
-- For a client with a `generator` config, the generated-copy cache at
+- For a client with a `generator` config, the generated-content cache at
   `output/{client}/data/generated_cache.json` (filled in step 3; `run_plan` reads it).
 
 ## Steps
@@ -129,7 +129,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    Default `all`. Remember the chosen subset for step 6.
 
 3. **Generate copy & review (gate 1 of 2).** Skip this step for a client with no `generator`
-   config. Otherwise fill the generated-copy cache, then review it before planning — the tagline
+   config. Otherwise fill the generated-content cache, then review it before planning — the tagline
    and Eigenschappen are LLM-written, so they are reviewed *before* they can reach a page:
    - **In-session (no API key):** run `python -m scripts.run_generate {client} --emit`, then invoke the
      `content-generator` skill to write the copy and `--ingest` it; that skill presents the review.

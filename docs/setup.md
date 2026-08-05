@@ -151,7 +151,7 @@ Note also that **environment variables do not survive between separate Claude Co
 | `template` | HTML template overrides (optional — ACF clients don't need it) | [`template-variables.md`](template-variables.md) |
 | `qr` | Formats, `size_mm`, error correction, `dpi` | |
 | `categories` | GPC brick → site category, plus per-GTIN overrides | |
-| `generator` | Optional LLM copy generation | [`costs.md`](costs.md) |
+| `generator` | Optional LLM content generation | [`costs.md`](costs.md) |
 | `media` | Images and video, field names, write shape | [`wordpress-onboarding.md`](wordpress-onboarding.md) |
 | `website_status` | Operator control file marking which products are already on the site | |
 
@@ -181,11 +181,11 @@ Plain language works too — *"publish democlient to GS1"*, *"just set the Digit
 publish {client_id} to GS1
 ```
 
-That loads the `flow-orchestrator` skill, which drives the whole pipeline and stops at each operator gate: **intent confirmation (gate 0)** → language selection → the generated-copy review gate → the plan review gate → a per-row diff gate for changed rows → a **mandatory production environment-confirmation gate** → a **mandatory dry run** → execute → progress → post-run summary → retry. Nothing proceeds without your answer, and the skill passes `--i-understand-production` only *after* you confirm at a gate.
+That loads the `flow-orchestrator` skill, which drives the whole pipeline and stops at each operator gate: **intent confirmation (gate 0)** → language selection → the generated-content review gate → the plan review gate → a per-row diff gate for changed rows → a **mandatory production environment-confirmation gate** → a **mandatory dry run** → execute → progress → post-run summary → retry. Nothing proceeds without your answer, and the skill passes `--i-understand-production` only *after* you confirm at a gate.
 
 Gate 0 states the mode, cross-checks the export file against `clients.yml`, gives the product count and environment, and — for anything that writes to GS1 — warns that the records are permanent. In `pages` mode it also stands in for the production environment gate, since nothing irreversible follows.
 
-**Use this for every real run.** Those gates are the reason nothing has been published by accident, and they exist only on this path — invoking the scripts directly bypasses all of them. Other useful phrasings: *"parse the export for {client_id}"*, *"generate copy for {client_id}"*, *"create product pages for {client_id}"*, *"render QR for {client_id}"*, *"update the Digital Link for {client_id}"* — one per skill in `.claude/skills/`.
+**Use this for every real run.** Those gates are the reason nothing has been published by accident, and they exist only on this path — invoking the scripts directly bypasses all of them. Other useful phrasings: *"parse the export for {client_id}"*, *"generate content for {client_id}"*, *"create product pages for {client_id}"*, *"render QR for {client_id}"*, *"update the Digital Link for {client_id}"* — one per skill in `.claude/skills/`.
 
 ## Onboard a client
 

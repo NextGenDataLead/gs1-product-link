@@ -25,7 +25,7 @@ path (incl. git workflow) from here to release. DoD checkboxes stay authoritativ
   publish. **This is Step 3 below; media Step 1 is done.**
 - `08713195000527` — **RESOLVED 2026-07-28: republished cleanly** (`run_execute --revive`, copy
   generated in-session first) and now live nl+fr as the 10th GTIN. Pages 1447/1448 are `publish`,
-  GS1 re-enabled. It was held for *missing generated copy*, not a blank feed.
+  GS1 re-enabled. It was held for *missing generated content*, not a blank feed.
 - Client is **done mapping**; the ~140 unmapped video rows are left to the client. A **GTIN-format bug**
   (the mapping is 13-digit, the pipeline 14-digit) is fixed via `canon_gtin` (zfill-14).
 - **Git:** media landed via **PR #7** + a content-slug/docs PR; the pilot-allowlist + this handoff
@@ -98,8 +98,8 @@ gates → commit → push → PR → merge → sync `main` → delete the branch
 ### Step 3 — Finish Phase 9: publish the 13-GTIN batch — **THE ACTIVE STEP**
 The pilot-gate has already scoped the runnable batch. `run_plan democlient` writes the 13 GTINs (26
 rows) to `output/democlient/plan.json`. Readiness (checked 2026-07-26): all 13 have title + image +
-video (both langs); **none have generated copy yet** — that is the blocker.
-1. **Generate copy for the 13** — in-session `content-generator` (no API key). They are
+video (both langs); **none have generated content yet** — that is the blocker.
+1. **Generate content for the 13** — in-session `content-generator` (no API key). They are
    `generate`-mode, so the LLM writes tagline + **Eigenschappen** bullets from the marketing message +
    net content + dims/material (Technische details stay deterministic). Write `generation_results.json`.
 2. **Review Gate #1** — a human/client approves each product's tagline + bullets (live marketing copy).
@@ -139,7 +139,7 @@ Version bump (`pyproject.toml`, `package.json`); populate `CHANGELOG.md`; push g
 MCP registry entry; draft announcement. Tick §12 Phase 11.
 
 ## One-GTIN / batch run mechanics (reusable)
-1. Ensure generated copy exists: for `tighten`-mode GTINs (attr 1067 present) faithfully shorten
+1. Ensure generated content exists: for `tighten`-mode GTINs (attr 1067 present) faithfully shorten
    `candidates`; for `generate` mode write from 1083 + context. Write `generation_results.json` (echo each
    `input_fingerprint`), `run_generate democlient --ingest`, then re-run `run_plan democlient` so
    `generated_tagline`/`generated_description` merge into `plan.json`.
@@ -156,6 +156,6 @@ MCP registry entry; draft announcement. Tick §12 Phase 11.
 - Generator contract / voice: [`democlient-generator-spec.md`](democlient-generator-spec.md),
   `prompts/democlient/generation.v1.md`, `.claude/skills/content-generator/SKILL.md`.
 - Operator flow: `.claude/skills/flow-orchestrator/SKILL.md`.
-- **What's live:** [`democlient-live-log.md`](democlient-live-log.md) — committed audit trail of every
+- **What's live:** `{client_id}-live-log.md` (local-only, gitignored) — audit trail of every
   page/GS1 record published to the live site (machine source: gitignored `output/democlient/state.json`).
 - Auto-memory: `phase9-resolution-proven.md` (this pilot's live state + gotchas).

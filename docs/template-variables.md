@@ -144,7 +144,7 @@ curl -sS https://{site}/{slug}/ | grep -o 'expected-copy'
 A `200` is not evidence. The ACF write is a **separate call** from the page create, and both fail
 silently — see [`wordpress-onboarding.md`](wordpress-onboarding.md#page-content-acf-or-template).
 
-## Generated copy
+## Generated content
 
 Fields prefixed `generated_` are filled by the copy generator, not the export. Two backends share one
 cache and contract:

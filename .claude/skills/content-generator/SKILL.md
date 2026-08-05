@@ -1,16 +1,17 @@
 ---
 name: content-generator
-description: "Write product tagline and Eigenschappen copy as the in-session producer (no API key) for the (GTIN, language) units the generator flagged, then ingest them into the cache. Use when the operator says 'generate copy for {client}' or 'write product copy for {client}'."
+description: "Write the product tagline and Eigenschappen text as the in-session producer (no API key) for the (GTIN, language) units the generator flagged, then ingest them into the cache. Use when the operator says 'generate content for {client}', 'generate copy for {client}', or 'write product copy for {client}' — the older 'copy' phrasings are kept as triggers so existing habits keep working."
 ---
 
 # Content Generator
 
 ## When to load
 
-Trigger phrases: **"generate copy for {client}"**, **"write product copy for {client}"** — e.g.
-"generate copy for democlient". Load this skill to act as the in-session copy producer: read the
+Trigger phrases: **"generate content for {client}"** ← preferred, plus **"generate copy for
+{client}"** and **"write product copy for {client}"**, kept so existing habits keep working — e.g.
+"generate content for democlient". Load this skill to act as the in-session producer: read the
 pending generation requests, write the tagline + Eigenschappen copy in the client's brand voice, and
-ingest the results into the generated-copy cache. No API key — generation happens in this session.
+ingest the results into the generated-content cache. No API key — generation happens in this session.
 
 ## What this skill does
 
@@ -22,7 +23,7 @@ per-language copy following the versioned voice template, writes
 validates each result into `output/{client}/data/generated_cache.json`. Determinism lives in the
 cache, not here: a unit is only generated once per input fingerprint, and this producer is
 interchangeable with the headless API backend. Tone is **concise and business-like, not
-conversational** — the operator is reviewing copy, not reading prose. Generated copy is **never
+conversational** — the operator is reviewing copy, not reading prose. Generated content is **never
 auto-published**: it is reviewed here (cache) and again in `plan.json`, then executed draft-first.
 
 ## Inputs
@@ -87,7 +88,7 @@ auto-published**: it is reviewed here (cache) and again in `plan.json`, then exe
    `output/{client}/data/generated_cache.json` for the full copy and
    `output/{client}/data/generated_issues.json` for the reported values. Then:
    ```
-   Generated copy is in the cache (reviewed once here). run_plan is the second review before publish.
+   Generated content is in the cache (reviewed once here). run_plan is the second review before publish.
    [looks good — continue to run_plan | regenerate GTIN … | cancel]
    ```
    - `looks good` — done; the operator proceeds to the `flow-orchestrator` skill / `run_plan`.

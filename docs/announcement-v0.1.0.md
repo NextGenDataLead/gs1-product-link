@@ -53,7 +53,7 @@ went wrong or nearly did:
 - A real run against a production account is **refused outright** unless you pass
   `--i-understand-production`. Review gates that live only in an operator flow are bypassed the
   moment someone calls the script directly.
-- A product with no generated copy, or no hero image when you require one, is **held** rather than
+- A product with no generated content, or no hero image when you require one, is **held** rather than
   published as a convincing-looking blank page.
 - Media failures degrade to a published page — the image is never allowed to stop the product.
 - A GS1 Digital Link record **cannot be deleted**; the API has no DELETE. The most any retraction

@@ -105,7 +105,7 @@ everything else is assembly from parsed data. Four things:
 - **Deterministic cache keyed on the source inputs.** Generate **once**, cache, so re-runs don't
   flip the content hash / re-bill the LLM. Cache location + format = open decision (§6).
 - **Human-approval gate.** It is marketing copy on a live site — every generated block is reviewed
-  before publish (flow-orchestrator confirmation + draft-first). Never auto-publish generated copy.
+  before publish (flow-orchestrator confirmation + draft-first). Never auto-publish generated content.
 - **Report every generated value** to `source_issues.json` with its source-language input — a
   generated value is a datapool gap with a suggested fill (records.py:202-204). Success = that file
   shrinking as the feed improves.
