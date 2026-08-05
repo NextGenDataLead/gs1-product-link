@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING — `website_status` is now `process_list`, and every GTIN in the file is
+  processed.** The old control file carried "already on website" / "already in GS1"
+  columns read by *presence*: any non-blank cell meant `True`. That is correct only for
+  files marking rows with `X`. A client whose file said `no` got the opposite of the word,
+  silently, and in both directions — a wrong "on website" emptied the plan and the run
+  reported success having published nothing, while a wrong "in GS1" made a product
+  eligible and pointed the pipeline at a GTIN with no resolver record. Neither raised.
+
+  The tool now interprets nothing. The file is a list of GTINs; being on it is the whole
+  meaning; the operator prepares it by deleting the rows that should not run, applying
+  whatever rule their business uses. Only the GTIN column is configured (`gtin_column`,
+  relabelable), and every other column is ignored, so operators can keep working notes
+  beside the barcodes.
+
+  **Migration:** rename the `website_status:` block to `process_list:`, keep `path` and
+  `gtin_column`, drop `on_website_column` / `in_gs1_column` / `site_link_column`, and
+  **prune the file to only the rows that should run**. A stale `website_status:` key is
+  rejected at config load (`additionalProperties: false`), so the gate cannot silently
+  disappear. `lib/website_status.py` → `lib/process_list.py`; `WebsiteStatusConfig` →
+  `ProcessListConfig`; `WebsiteStatusError` → `ProcessListError`.
+
+  A process list that parses to **zero** GTINs is now an error rather than an empty run,
+  for the same reason: an empty plan and a successful-looking no-op is the failure mode
+  this project keeps designing against.
+
 ### Added
 - **Three publish flows.** `/gs1-pages` (WordPress pages only, reversible), `/gs1-links`
   (Digital Links only, aimed at pages that already exist) and `/gs1-publish` (both) —

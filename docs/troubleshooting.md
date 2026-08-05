@@ -370,14 +370,30 @@ The state file could not be loaded, parsed, or written. Exit 2.
 Note the split from **E19**: *corrupt JSON* is recovered from (backed up, fresh state, loud warning).
 `StateError` is the *environmental* fault — permissions, I/O — and is fatal.
 
-### `WebsiteStatusError` ✚
+### `ProcessListError` ✚
 
-The operator control file (`input/{client_id}/website_status.xlsx`) is missing, unreadable, or lacks
-a required column. Treated like `ConfigError` — exit 2 — because it gates which products are eligible
-for publication.
+The process list (`input/{client_id}/process-list.xlsx`) is missing, unreadable, has no sheet
+carrying the configured GTIN column, or carries the column with **no GTINs under it**. Treated like
+`ConfigError` — exit 2 — because it names exactly which products a run may touch.
 
-**Fix:** check `website_status.path` and that the `gtin_column` / `on_website_column` names match the
-actual sheet.
+**Fix:** check `process_list.path`, and that `gtin_column` matches the header label exactly. The
+header may sit anywhere (any sheet, any row); the reader scans for it.
+
+**Empty is an error on purpose.** A file that parses to zero GTINs would otherwise produce an empty
+plan and a run that reports success having published nothing — so it stops instead.
+
+### Nothing is excluded that you expected to be excluded
+
+The process list has no status columns and **every GTIN in it is processed**. If a product you
+consider "already done" is being planned, its row is still in the file — delete it.
+
+This replaced a reader that interpreted "already on website" / "already in GS1" columns by
+presence: any non-blank cell meant *true*. That was right only for files marking rows with `X`. A
+file saying `no` meant the opposite of the word, silently, and in both directions — a wrong
+"on website" emptied the plan and the run reported success having published nothing, while a wrong
+"in GS1" made a product eligible and pointed the pipeline at a GTIN with no resolver record.
+
+Preparing the file is now the operator's job precisely because only the operator knows the rule.
 
 ### `GeneratorError` ✚
 

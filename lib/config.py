@@ -210,25 +210,30 @@ class FlowConfig(BaseModel):
     batch_size: int = 50
 
 
-class WebsiteStatusConfig(BaseModel):
-    """Operator-maintained website-status control file (create-only gate).
+class ProcessListConfig(BaseModel):
+    """Operator-maintained list of exactly which GTINs a run may touch.
 
     Not part of the datasource export and not in the original spec: a deliberate,
-    per-client extension. The file lists, per product, whether it is already on the
-    website and already registered in GS1. ``scripts/run_plan.py`` uses it to gate
-    which products are candidates for page/QR creation — eligible when the GTIN is
-    already in GS1 (its resolver record exists) and not yet on the website. Columns
-    are named here so a client can relabel them without code changes; defaults match
-    the Democlient file.
+    per-client extension. **Every GTIN in the file is processed** — the tool reads no
+    status columns and interprets no cell values, so the file's only meaning is
+    membership. The operator prepares it by deleting the rows that should not be
+    processed, applying whatever rule their business uses.
+
+    Only the GTIN column is needed, and it is named here so a client can label it
+    however they like (``Barcode``, ``EAN``, ``GTIN``…) without a code change. Any
+    other columns in the file are ignored, so an operator can keep their own working
+    notes alongside the barcodes.
+
+    This replaced a version that read "already on website" and "already in GS1"
+    columns using presence-semantics (any non-blank cell meant ``True``). That was
+    right only for files marking rows with ``X``; a file saying ``no`` silently meant
+    the opposite. See ``lib/process_list.py`` for the full account.
     """
 
     model_config = ConfigDict(frozen=True)
 
     path: str
     gtin_column: str = "Barcode"
-    on_website_column: str = "Momenteel op Website"
-    in_gs1_column: str = "Al in Gs1"
-    site_link_column: str | None = "Link naar site"
 
 
 class CategoryConfig(BaseModel):
@@ -341,7 +346,7 @@ class ClientConfig(BaseModel):
     gs1_links: list[GS1LinkConfig] = Field(default_factory=list)
     qr: QRConfig | None = None
     flow: FlowConfig | None = None
-    website_status: WebsiteStatusConfig | None = None
+    process_list: ProcessListConfig | None = None
     categories: CategoryConfig | None = None
     generator: GeneratorConfig | None = None
     media: MediaConfig | None = None

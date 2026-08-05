@@ -7,11 +7,12 @@ Loads the client config, its persisted state, and the parsed products, then clas
 each ``(GTIN, language)`` as NEW / UNCHANGED / CHANGED (``lib.state.diff_against_state``)
 and writes the resulting :class:`~lib.records.Plan` to ``output/{client_id}/plan.json``.
 
-When the client configures a ``website_status`` control file, products are first gated
-to the create-only candidate set — eligible only when the GTIN is already in GS1 and not
-yet on the website. Products that are already live, not yet in GS1, or absent from the
-control file are excluded from the plan and reported in the summary. Without a
-``website_status`` config, every product is planned (the plain spec behaviour).
+When the client configures a ``process_list``, products are first gated to the GTINs on
+that list — **every GTIN in the file is processed**, and every product not on it is
+excluded and reported in the summary. The list carries no status columns and the tool
+interprets no cell values: the operator prepares it by deleting the rows that should not
+run. Without a ``process_list`` config, every product is planned (the plain spec
+behaviour).
 
     --products:   default output/{client_id}/data/products.json
 
@@ -40,12 +41,12 @@ from pydantic import ValidationError
 from lib.categories import resolve_category
 from lib.config import ClientConfig, get_client
 from lib.env import load_env
-from lib.errors import ConfigError, GeneratorError, StateError, WebsiteStatusError
+from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError
 from lib.generator import load_cache, merge_generated
 from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
+from lib.process_list import load_process_list
 from lib.records import Plan, PlanClassification, ProductRecord, SourceIssue, State
 from lib.state import diff_against_state, load_state
-from lib.website_status import WebsiteStatus, load_website_status
 
 _log = logging.getLogger("scripts.run_plan")
 
@@ -73,29 +74,20 @@ def _load_products(path: Path) -> list[ProductRecord]:
 
 
 def _gate(
-    products: list[ProductRecord], statuses: dict[str, WebsiteStatus]
+    products: list[ProductRecord], listed: frozenset[str]
 ) -> tuple[list[ProductRecord], dict[str, int]]:
-    """Filter products to the create-only candidate set (in GS1, not yet on site).
+    """Filter products to the GTINs the operator listed for processing.
 
-    Returns the eligible products plus a tally of why the rest were excluded:
-    ``on_website`` (already live), ``not_in_gs1`` (GS1 record absent), and ``unknown``
-    (GTIN not present in the control file).
+    Membership is the whole rule: a product is a candidate if and only if its GTIN is on
+    the list. No cell values are read, so there is nothing here to misinterpret — see
+    :mod:`lib.process_list` for why that matters.
+
+    Returns the listed products plus a one-key tally (``not_listed``) of how many were
+    excluded. GTINs are compared as GTIN-14 so a 13-digit barcode in the file joins to a
+    14-digit product GTIN regardless of a leading zero.
     """
-    eligible: list[ProductRecord] = []
-    excluded = {"on_website": 0, "not_in_gs1": 0, "unknown": 0}
-    for product in products:
-        # Statuses are keyed by GTIN-14 so a 13-digit control-file barcode joins to a
-        # 14-digit product GTIN regardless of a leading zero.
-        status = statuses.get(product.gtin14)
-        if status is None:
-            excluded["unknown"] += 1
-        elif status.on_website:
-            excluded["on_website"] += 1
-        elif not status.in_gs1:
-            excluded["not_in_gs1"] += 1
-        else:
-            eligible.append(product)
-    return eligible, excluded
+    candidates = [product for product in products if product.gtin14 in listed]
+    return candidates, {"not_listed": len(products) - len(candidates)}
 
 
 def _pilot_gate(
@@ -234,10 +226,10 @@ def _build_plan(
     the category-mapping issues (unmapped bricks left unset), and the generated-content issues
     (one per generated/adjusted value and per blank marketing message).
     """
-    if cfg.website_status is not None:
-        candidates, excluded = _gate(products, load_website_status(cfg.website_status))
+    if cfg.process_list is not None:
+        candidates, excluded = _gate(products, load_process_list(cfg.process_list))
     else:
-        candidates, excluded = products, {"on_website": 0, "not_in_gs1": 0, "unknown": 0}
+        candidates, excluded = products, {"not_listed": 0}
 
     state = load_state(cfg.client_id)
     candidates, excluded = _pilot_gate(cfg, candidates, state, excluded)
@@ -294,14 +286,9 @@ def _summary(
     held = plan.counts[PlanClassification.HELD]
     if held:
         line += f", {held} held (unpublished; run_execute skips these without --revive)"
-    gated = excluded["on_website"] + excluded["not_in_gs1"] + excluded["unknown"]
-    if gated:
-        line += (
-            f"; {gated} excluded ("
-            f"{excluded['on_website']} already on website, "
-            f"{excluded['not_in_gs1']} not yet in GS1, "
-            f"{excluded['unknown']} not in control file)"
-        )
+    not_listed = excluded.get("not_listed", 0)
+    if not_listed:
+        line += f"; {not_listed} excluded (not on the process list)"
     pilot_blocked = excluded.get("not_mapped", 0) + excluded.get("already_present", 0)
     if pilot_blocked:
         line += (
@@ -349,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         ConfigError,
         GeneratorError,
         StateError,
-        WebsiteStatusError,
+        ProcessListError,
         FileNotFoundError,
         json.JSONDecodeError,
         ValidationError,

@@ -3,23 +3,30 @@
 Client-specific quirks and decisions. Expanded during the Phase 9 pilot; started in
 Phase 7 to record the create-only gate.
 
-## Website-status control file (create-only gate)
+## Process list (which GTINs a run may touch)
 
-Democlient's run is **create-only**: a product gets a WordPress page + QR only when it is
-already registered in GS1 and not yet on the website. This is driven by an operator-
-maintained control file, **not** the datasource export:
+Democlient's run is **create-only**, and which products are in scope comes from an
+operator-maintained file, **not** the datasource export:
 
-- **Location:** `input/democlient/website_status.xlsx` (git-ignored, operator-provided).
-- **Columns:** `Artikelnr. | Omschrijving NL | Barcode | Momenteel op Website | Al in Gs1 | Link naar site`.
-- **Join key:** `Barcode` = GTIN (matches `ProductRecord.gtin`). `Artikelnr.` is the
-  internal article number; `Link naar site` is the existing-page URL — both informational.
-- **Eligibility:** `Al in Gs1` filled (GS1 record exists) **and** `Momenteel op Website`
-  blank (not yet live). Already-live, not-in-GS1, and GTINs absent from the file are
-  excluded and reported in the `run_plan` summary.
+- **Location:** `input/democlient/process-list.xlsx` (git-ignored, operator-provided).
+- **Required column:** the GTIN column only — `Barcode` by default, relabelable via
+  `process_list.gtin_column`. Every other column is ignored, so the operator can keep
+  their own working notes (article number, description, existing URL) beside it.
+- **Join key:** the barcode, normalised to GTIN-14, so a 13-digit value joins to
+  `ProductRecord.gtin14` regardless of the leading zero.
+- **Rule:** **every GTIN in the file is processed.** Products absent from it are excluded
+  and reported in the `run_plan` summary. Nothing else is read and no cell value is
+  interpreted.
 
-Configured under `clients.yml` → `democlient.website_status`. Because every eligible row is
+**Preparing the file is the operator's job.** Delete the rows that should not run,
+applying whatever rule the business uses — already live, not yet in GS1, seasonal, on
+hold. The tool deliberately holds no opinion, because the previous version did: it read
+"already on website" / "already in GS1" columns by presence, so any non-blank cell meant
+*true* and a file saying `no` silently meant the opposite. See `lib/process_list.py`.
+
+Configured under `clients.yml` → `democlient.process_list`. Because every listed row is
 new, the hash-based CHANGED/diff detection (built per §8.2/§4.8) stays dormant at runtime —
 it is exercised by unit tests and reserved for future product updates.
 
-This control file is **not part of the original spec** — a deliberate, user-approved
-extension for the pilot workflow (see CHANGELOG, Phase 7).
+This file is **not part of the original spec** — a deliberate, user-approved extension for
+the pilot workflow (see CHANGELOG, Phase 7).

@@ -337,17 +337,14 @@
         "batch_size": { "type": "integer", "minimum": 1 }
       }
     },
-    "websiteStatus": {
+    "processList": {
       "type": "object",
       "additionalProperties": false,
       "required": ["path"],
-      "description": "Operator-maintained control file gating page/QR creation (create-only).",
+      "description": "Operator-maintained list of exactly which GTINs a run may touch. Every GTIN in the file is processed; no cell values are interpreted. The operator prepares it by deleting rows that should not run.",
       "properties": {
         "path": { "type": "string" },
-        "gtin_column": { "type": "string" },
-        "on_website_column": { "type": "string" },
-        "in_gs1_column": { "type": "string" },
-        "site_link_column": { "type": "string" }
+        "gtin_column": { "type": "string" }
       }
     },
     "categories": {
@@ -497,7 +494,7 @@
         },
         "qr": { "$ref": "#/$defs/qr" },
         "flow": { "$ref": "#/$defs/flow" },
-        "website_status": { "$ref": "#/$defs/websiteStatus" },
+        "process_list": { "$ref": "#/$defs/processList" },
         "categories": { "$ref": "#/$defs/categories" },
         "generator": { "$ref": "#/$defs/generator" },
         "media": { "$ref": "#/$defs/media" }
