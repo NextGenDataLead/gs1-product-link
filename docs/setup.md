@@ -19,9 +19,9 @@ The tool turns a GS1 Data Source export into (a) WordPress product pages, one pe
 
 > **This tool is operated from Claude Code. That is a deliberate decision, not a preference.**
 >
-> You tell Claude Code what you want — *"publish noviplast to GS1"* — and it loads the `flow-orchestrator` skill, which walks you through the operator gates and invokes the Python scripts for you. **You are not expected to type the script commands yourself.**
+> You drive it from chat — normally with a slash command, **`/gs1-publish`** (or `/gs1-pages` / `/gs1-links` for one leg) — which loads the `flow-orchestrator` skill, walks you through the operator gates, and invokes the Python scripts for you. **You are not expected to type the script commands yourself.** Plain language works too (*"publish {client_id} to GS1"*), but the slash command is preferred: it pins the mode instead of leaving it to be inferred. See [Which flow do you need?](#which-flow-do-you-need).
 >
-> **Claude.ai, Claude Desktop, and Claude Cowork are explicitly out of scope.** Cowork was evaluated and removed: it executes in a remote cloud sandbox, which would mean handing production WordPress and GS1 credentials to an environment outside your control, and its network egress to `www.noviplast.nl` and the GS1 API was never proven. Claude Code runs on your machine with your credentials staying on it.
+> **Claude.ai, Claude Desktop, and Claude Cowork are explicitly out of scope.** Cowork was evaluated and removed: it executes in a remote cloud sandbox, which would mean handing production WordPress and GS1 credentials to an environment outside your control, and its network egress to `www.noviplast.nl`. Claude Code runs on your machine with your credentials staying on it.
 
 So why does this document list Python commands at all? Three reasons, and none of them is "type these during a normal run":
 
@@ -82,7 +82,7 @@ Expected, on a clean checkout:
 All checks passed!
 103 files already formatted
 Success: no issues found in 22 source files
-534 passed, 2 skipped, 5 deselected
+550 passed, 2 skipped, 5 deselected
 ```
 
 **Only the last two lines are worth comparing.** The formatted-file count moves whenever anyone adds
@@ -116,7 +116,7 @@ python -c "from lib.config import load_clients; print(sorted(load_clients('clien
 
 ### Secrets
 
-`clients.yml` holds only the **names** of environment variables — never a value. The values live in **`.env` at the repository root, which is the single source of truth** (decided in [`OPEN_DECISIONS.md` → OD-1](OPEN_DECISIONS.md#od-1--where-credentials-live-claude-code-settingsjson-vs-env)). `.env.example` documents every variable; copy it, fill it in, and keep it `chmod 600`. It is gitignored.
+`clients.yml` holds only the **names** of environment variables — never a value. The values live in **`.env` at the repository root, which is the single source of truth** . `.env.example` documents every variable; copy it, fill it in, and keep it `chmod 600`. It is gitignored.
 
 Each script loads it for you. `python -m scripts.<name>` calls `load_env()` (`lib/env.py`) at process start, which reads `.env` with `override=False` — so a variable already exported in your shell still wins, and CI, which has no `.env`, is unaffected:
 
@@ -181,100 +181,11 @@ Plain language works too — *"publish noviplast to GS1"*, *"just set the Digita
 publish {client_id} to GS1
 ```
 
-That loads the `flow-orchestrator` skill, which drives the whole pipeline and stops at each operator gate: **intent confirmation (gate 0)** → language selection → the generated-copy review gate → the plan review gate → a per-row diff gate for changed rows → a **mandatory production environment-confirmation gate** → execute → progress → post-run summary → retry. Nothing proceeds without your answer, and the skill passes `--i-understand-production` only *after* you confirm at a gate.
+That loads the `flow-orchestrator` skill, which drives the whole pipeline and stops at each operator gate: **intent confirmation (gate 0)** → language selection → the generated-copy review gate → the plan review gate → a per-row diff gate for changed rows → a **mandatory production environment-confirmation gate** → a **mandatory dry run** → execute → progress → post-run summary → retry. Nothing proceeds without your answer, and the skill passes `--i-understand-production` only *after* you confirm at a gate.
 
 Gate 0 states the mode, cross-checks the export file against `clients.yml`, gives the product count and environment, and — for anything that writes to GS1 — warns that the records are permanent. In `pages` mode it also stands in for the production environment gate, since nothing irreversible follows.
 
-> **Say "GS1", not just "run".** *"run for {client_id}"* and *"process {client_id}"* still work and
-> stay documented, but a bare "run" is one of the most overloaded words in a coding session — it
-> competes with every other meaning, including a built-in `run` skill that launches a project's app.
-> **If the skill does not load, the gates below do not happen** and a publish can proceed unreviewed.
-> Naming GS1 makes the match unambiguous, because nothing else does.
->
-> **Confirm it loaded** before answering any gate: Claude should say it is using `flow-orchestrator`
-> and open with the language-selection gate. If it starts running scripts without asking you
-> anything, stop it — that is the unsanctioned path.
-
 **Use this for every real run.** Those gates are the reason nothing has been published by accident, and they exist only on this path — invoking the scripts directly bypasses all of them. Other useful phrasings: *"parse the export for {client_id}"*, *"generate copy for {client_id}"*, *"create product pages for {client_id}"*, *"render QR for {client_id}"*, *"update the Digital Link for {client_id}"* — one per skill in `.claude/skills/`.
-
-### What it runs underneath
-
-You do not type these during a normal run. They are here so you can recognise what Claude Code is doing, follow [`troubleshooting.md`](troubleshooting.md) when a step fails, and work the iterative read-only loop when onboarding a new client.
-
-Nine scripts, all invoked as modules. Every one takes the `client_id` — the key under `clients:` in `clients.yml` — as its first positional argument, except `inspect_export`, which takes a file path.
-
-Exit codes are uniform: **0** success, **1** errors in the work itself, **2** configuration or usage error. Run any of them with `--help` for the authoritative flag list — `inspect_export` takes a bare path and no flags, so its `--help` just prints its one-line usage.
-
-> **The `client_id` argument is optional.** One client per repository is the normal case, so every
-> script below infers it when `clients.yml` defines exactly one client. Pass it explicitly whenever
-> you like — and note that it becomes **mandatory again** the moment a second client exists, because
-> silently picking between them would be a way to publish the wrong catalogue to the wrong site.
-> Paths stay namespaced by id either way (`output/{client_id}/…`), so adding a second client later
-> costs nothing.
-
-### Read-only steps — safe to run any time, no credentials
-
-```bash
-# Describe an export's sheets, attributes and sample values; suggest a gdsn_map.
-python -m scripts.inspect_export input/{client_id}/products.xlsx
-
-# Export -> output/{client_id}/data/products.json   (--dry-run validates and writes nothing)
-python -m scripts.parse_export [--dry-run] [--output PATH]
-
-# Draft or gate the GPC brick -> category map. --check exits 1 if any brick is unmapped.
-python -m scripts.build_brick_map [--datamodel FILE.xlsx] [--sheet S] [--check]
-
-# Draft or gate the video filename -> GTIN map. --check exits 1 if any file is unmapped.
-python -m scripts.build_video_map [--check]
-
-# Consolidated data-quality report -> output/{client_id}/data-quality-report.md
-python -m scripts.report_quality [--out PATH]
-
-# Classify every (GTIN, language) as new / changed / unchanged -> output/{client_id}/plan.json
-python -m scripts.run_plan [--products PATH]
-```
-
-Run `report_quality` after `parse_export`, `run_plan`, or `build_video_map` — it renders whatever those steps last produced, and it is how you find source-data problems to fix in MyGS1 rather than papering over them in code.
-
-### Copy generation — optional
-
-Only for clients with `generator.enabled: true`. Two backends share one cache and contract:
-
-```bash
-python -m scripts.run_generate --emit      # write pending requests (default)
-python -m scripts.run_generate --ingest    # read a session's results into the cache
-python -m scripts.run_generate --backend api   # fill the cache directly via the API
-```
-
-`--emit` / `--ingest` is the **in-session** path: Claude writes the copy in your session and needs **no API key**. `--backend api` is the headless path and is the only step that costs money — see [`costs.md`](costs.md). After ingesting, re-run `run_plan` so the generated copy merges into the plan.
-
-### Writing steps — these mutate live systems
-
-```bash
-# Preview everything, write nothing. Always do this first.
-python -m scripts.run_execute --plan output/{client_id}/plan.json --dry-run
-
-# Real run.
-python -m scripts.run_execute --plan PATH [--only {pages,links}] [--revive] [--i-understand-production]
-python -m scripts.run_execute --confirmed PATH   # a reviewed ConfirmedPlan
-
-# Take a product down: retract its Digital Link and draft its pages.
-python -m scripts.run_unpublish --gtin GTIN [--gtin GTIN ...] [--dry-run]
-```
-
-`--plan` treats every row as confirmed; `--confirmed` consumes a `ConfirmedPlan` that has been
-through review. They are mutually exclusive and one is required.
-
-`--only` is what backs the three flows above: `pages` runs the WordPress leg and stops, `links` runs
-the GS1 leg against pages that already exist, and omitting it does both. **You do not type this
-either** — the skills supply it after gate 0, the same way `--i-understand-production` is supplied
-after the environment gate. It is documented here so you recognise it in a log or a `--help`.
-
-> **The production guard.** A real run — not `--dry-run` — against a client whose `gs1.environment` is `production` is **refused with exit 2** unless you pass `--i-understand-production`. This exists so a bare `--plan` cannot publish live pages and create permanent GS1 records. `--dry-run` never needs it.
-
-Writes are idempotent: re-running the same input converges on the same state rather than duplicating pages, records or media.
-
-> **If you find yourself typing `run_execute` by hand, stop and ask why.** The direct invocation exists for tests, recovery, and the odd surgical re-run — not for publishing. A normal wave goes through the chat flow above.
 
 ## Onboard a client
 
@@ -324,9 +235,9 @@ Read-only until the final step. This is the one workflow where working hands-on 
 - A live production run requires `--i-understand-production`. That prompt is the guard working, not an obstacle to route around.
 - Never `pytest -m staging` casually — it writes to live WordPress and GS1 production.
 - A GS1 Digital Link record **cannot be deleted**. `run_unpublish` deactivates it; the disabled record stays on the account permanently. Never point a smoke test at a real product's GTIN.
-- `clients.yml`, `.env`, `input/`, `output/` are gitignored. Keep it that way, and keep secrets out of `clients.yml` — it holds env var *names*. **The repository is public**, so anything committed is world-readable permanently.
+- `clients.yml`, `.env`, `input/`, `output/` are gitignored. Keep it that way, and keep secrets out of `clients.yml` — it holds env var *names*. 
 - Keep credentials in `.env` and nowhere else. A Claude Code `settings.json` `env` block also works, but it is machine-wide — those secrets end up in the environment of *every* command in *every* project, which is how a password once got echoed into a chat transcript. Rotate anything that leaks; a WordPress application password is revoked and reissued in seconds from Users → Application Passwords.
-- Verify rendered HTML, never just a status code.
+- Verify the webpages manually, never just rely on a status code.
 - Checking the pipeline still works against production is its own procedure — see [`verifying-live.md`](verifying-live.md). Do **not** unpublish a product to create something to test with: it classifies HELD and the run does nothing, having taken the product down for no result.
 
 ## Next

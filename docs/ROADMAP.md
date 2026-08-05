@@ -52,7 +52,7 @@ brand-typo report — everything on the page-adapter critical path is done.
 
 Merged to `main` (the `noviplast-page-adapter` branch is history).
 SPEC: [generator SPEC](clients/noviplast-generator-spec.md).
-Suite green at HEAD — 534 passed, 2 skipped, 5 deselected (staging); ruff + `mypy --strict` clean.
+Suite green at HEAD — 550 passed, 2 skipped, 5 deselected (staging); ruff + `mypy --strict` clean.
 
 | # | Commit | State |
 |---|---|---|

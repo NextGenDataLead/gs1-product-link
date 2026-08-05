@@ -10,8 +10,13 @@ credentials.json
 secrets.*
 
 # === Tool inputs/outputs ===
-input/
-output/
+# The directories are tracked (via .gitkeep) so a fresh clone has somewhere to put
+# an export and somewhere to write results. Everything inside them stays ignored:
+# input/ holds client exports and media, output/ holds state.json, plans and run logs.
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
 
 # === Python ===
 __pycache__/

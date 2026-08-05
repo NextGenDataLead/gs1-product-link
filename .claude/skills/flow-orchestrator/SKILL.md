@@ -231,6 +231,19 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    follows, so a second production prompt for a page you can delete only trains the operator to
    click through them.
 
+8.5. **Dry run (mandatory).** Before the real invocation, run the *same* command with `--dry-run`
+   added and every other flag identical — same `--confirmed` path, same `--only`. It builds no
+   clients, writes nothing, and needs no `--i-understand-production`. Show the operator what it
+   says it would mutate, then proceed to step 9.
+
+   Numbered 8.5 rather than 9 on purpose: the numbering is load-bearing (see the note above
+   step 0), and renumbering would break every cross-reference to "step 9".
+
+   This is the step that catches a plan pointing at the wrong rows, the wrong leg, or the wrong
+   URLs — while it still costs nothing. Two things it cannot catch, so do not read a clean dry run
+   as more than it is: in `links` mode it does **not** verify that the targets serve (the real run
+   does that, and refuses), and it does not prove the ACF fields will land.
+
 9. **Execute.** Invoke
    `python -m scripts.run_execute {client} --confirmed output/{client}/plan.confirmed.json`.
    - **Append `--only pages` or `--only links`** unless the mode is `both`, which is what omitting
