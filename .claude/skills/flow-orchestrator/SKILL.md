@@ -1,6 +1,6 @@
 ---
 name: flow-orchestrator
-description: "Publish a client's products to GS1 Digital Link and WordPress end-to-end — generate copy, plan, confirm, then execute pages, GS1 resolver entries and QR, with step-by-step operator gates. Use when the operator says 'publish {client} to GS1', 'run the GS1 pipeline for {client}', 'run for {client}', or 'process {client}', and for any request to create only the pages or only the Digital Links: this skill classifies which of the three publish modes is meant and confirms it. This is the only sanctioned path for publishing: it is what enforces the review gates."
+description: "Publish a client's products to GS1 Digital Link and WordPress end-to-end — generate content, plan, confirm, then execute pages, GS1 resolver entries and QR, with step-by-step operator gates. Use when the operator says 'publish {client} to GS1', 'run the GS1 pipeline for {client}', 'run for {client}', or 'process {client}', and for any request to create only the pages or only the Digital Links: this skill classifies which of the three publish modes is meant and confirms it. This is the only sanctioned path for publishing: it is what enforces the review gates."
 ---
 
 # Flow Orchestrator
@@ -13,10 +13,10 @@ Trigger phrases (§10.5), most to least specific:
 - **"run the GS1 pipeline for {client}"**
 - **"run for {client}"**, **"process {client}"** — short forms, kept for continuity
 
-e.g. "publish noviplast to GS1, test env". Load this skill to drive a full client run end-to-end
+e.g. "publish democlient to GS1, test env". Load this skill to drive a full client run end-to-end
 from chat: parse → plan → present → confirm → execute → summarise.
 
-Also load it for any phrasing that asks for **one leg only** — *"create the pages for noviplast but
+Also load it for any phrasing that asks for **one leg only** — *"create the pages for democlient but
 don't touch GS1"*, *"just set the Digital Links, the pages already exist"*. Those are the same
 sequence with a different mode, and step 0 is where the mode gets pinned down.
 
@@ -45,11 +45,11 @@ guess toward the more destructive mode.
 
 Orchestrates the generate/plan/confirm/execute pipeline for one client, in whichever of the three
 modes above applies. For a client with a
-`generator` config it first fills and reviews the generated-copy cache (review gate 1), then runs
+`generator` config it first fills and reviews the generated-content cache (review gate 1), then runs
 `scripts/run_plan.py` to classify each `(GTIN, language)` — which merges that cache — and presents
 the plan (review gate 2), collects the operator's confirmation in chat, writes a `ConfirmedPlan` to
 `output/{client}/plan.confirmed.json`, and invokes `scripts/run_execute.py` on the confirmed subset
-— then reports the outcome. Generated copy is **never auto-published**: it is reviewed twice and
+— then reports the outcome. Generated content is **never auto-published**: it is reviewed twice and
 executed draft-first. Tone is **concise and business-like, not conversational** (§10.6): verbose
 text creates fatigue during batch runs.
 
@@ -64,7 +64,7 @@ below stays dormant — it is implemented and ready for future product updates.
 - `clients.yml` config for the client (languages, environment, `website_status`, `flow`,
   `generator`).
 - Parsed products at `output/{client}/data/products.json` (run `parse_export` if absent).
-- For a client with a `generator` config, the generated-copy cache at
+- For a client with a `generator` config, the generated-content cache at
   `output/{client}/data/generated_cache.json` (filled in step 3; `run_plan` reads it).
 
 ## Steps
@@ -90,9 +90,9 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 
    For `links` / `both`, present verbatim:
    ```
-   About to run the GS1 publish flow for noviplast.
+   About to run the GS1 publish flow for democlient.
      Mode:        both — WordPress pages, then Digital Links pointing at them
-     Export:      input/noviplast/products.xlsx (modified 12 days ago)
+     Export:      input/democlient/products.xlsx (modified 12 days ago)
      Products:    127 in the parsed catalogue
      Environment: production
 
@@ -108,7 +108,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    ```
    If the operator named a file that does not match `export.path`, add above the menu:
    ```
-   You said products-2026-q3.xlsx. Config points at input/noviplast/products.xlsx,
+   You said products-2026-q3.xlsx. Config points at input/democlient/products.xlsx,
    modified 12 days ago. Same file?
    ```
    `change-mode` → re-present with the chosen mode; `cancel` → abort, run nothing.
@@ -123,13 +123,13 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 
 2. **Language selection (§10.6.6).** Present verbatim:
    ```
-   Client noviplast supports [nl, fr]. Which languages should this run cover?
+   Client democlient supports [nl, fr]. Which languages should this run cover?
    [all | nl | fr | nl,fr]
    ```
    Default `all`. Remember the chosen subset for step 6.
 
 3. **Generate copy & review (gate 1 of 2).** Skip this step for a client with no `generator`
-   config. Otherwise fill the generated-copy cache, then review it before planning — the tagline
+   config. Otherwise fill the generated-content cache, then review it before planning — the tagline
    and Eigenschappen are LLM-written, so they are reviewed *before* they can reach a page:
    - **In-session (no API key):** run `python -m scripts.run_generate {client} --emit`, then invoke the
      `content-generator` skill to write the copy and `--ingest` it; that skill presents the review.
@@ -160,7 +160,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 5. **Plan summary (§10.6.1).** Present verbatim (the actionable total is NEW + CHANGED;
    UNCHANGED rows are never executed):
    ```
-   Plan for noviplast (test env):
+   Plan for democlient (test env):
      New:       38
      Unchanged:  7
      Changed:    2
@@ -180,7 +180,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    corrupt and has been reset), put it **above** the counts, not below, and say what it
    means before offering the menu:
    ```
-   WARNING: prior state was corrupt and has been reset (backup: output/noviplast/state.json.corrupt.20260713T031200Z).
+   WARNING: prior state was corrupt and has been reset (backup: output/democlient/state.json.corrupt.20260713T031200Z).
    Every row therefore re-plans as NEW. Re-running them is idempotent — pages are matched by
    slug/meta.gtin and updated in place, not duplicated — but it will rewrite live pages and
    resolver targets rather than skip them.
@@ -198,7 +198,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
      GTIN 8712345678905 (nl) — Cable Organiser Pro
      Changes:
        title:      "Cable Organiser" → "Cable Organiser Pro"
-       target_url: /noviplast/cable-organiser/ → /noviplast/cable-organiser-pro/
+       target_url: /democlient/cable-organiser/ → /democlient/cable-organiser-pro/
 
      [apply | skip | show-full-diff]
      ```
@@ -221,7 +221,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    GS1 environment is `production`, present verbatim and require a choice before executing:
    ```
    About to execute against PRODUCTION environment (gs1nl-api.gs1.nl).
-   This will make live changes to https://www.noviplast.nl.
+   This will make live changes to https://www.democlient.nl.
    Continue?
    [confirm | switch-to-test | cancel]
    ```
@@ -230,6 +230,19 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    **Skipped in `pages` mode** — gate 0 already named the environment and nothing irreversible
    follows, so a second production prompt for a page you can delete only trains the operator to
    click through them.
+
+8.5. **Dry run (mandatory).** Before the real invocation, run the *same* command with `--dry-run`
+   added and every other flag identical — same `--confirmed` path, same `--only`. It builds no
+   clients, writes nothing, and needs no `--i-understand-production`. Show the operator what it
+   says it would mutate, then proceed to step 9.
+
+   Numbered 8.5 rather than 9 on purpose: the numbering is load-bearing (see the note above
+   step 0), and renumbering would break every cross-reference to "step 9".
+
+   This is the step that catches a plan pointing at the wrong rows, the wrong leg, or the wrong
+   URLs — while it still costs nothing. Two things it cannot catch, so do not read a clean dry run
+   as more than it is: in `links` mode it does **not** verify that the targets serve (the real run
+   does that, and refuses), and it does not prove the ACF fields will land.
 
 9. **Execute.** Invoke
    `python -m scripts.run_execute {client} --confirmed output/{client}/plan.confirmed.json`.
@@ -251,7 +264,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 
 11. **Post-execute summary (§10.6.4).** Read the run JSONL and present verbatim:
     ```
-    Run finished for noviplast (test env, 2026-05-27T14:32:11Z).
+    Run finished for democlient (test env, 2026-05-27T14:32:11Z).
       Ok:       38
       Error:     2
       Skipped:   0
@@ -260,8 +273,8 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
       GTIN 8712345678912 (fr): WP 422 — invalid taxonomy term "outdoor_dier-fr" not found
       GTIN 8712345678919 (nl): image_url returned 404
 
-    Log: output/noviplast/runs/20260527T143211Z.jsonl
-    QR files: output/noviplast/qr/
+    Log: output/democlient/runs/20260527T143211Z.jsonl
+    QR files: output/democlient/qr/
 
     Retry the 2 failures? [yes | no | detail]
     ```

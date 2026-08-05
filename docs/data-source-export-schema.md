@@ -38,7 +38,7 @@ you actually have. Example output:
   GPC classification category code (3122)  (attr=3122)
       e.g. 10005844 | 10005426 | 10000546
   Name of information provider (3090)  (attr=3090)
-      e.g. Noviplast B.V.
+      e.g. Democlient B.V.
 ```
 
 ## The GDSN structure

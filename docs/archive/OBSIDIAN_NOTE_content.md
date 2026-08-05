@@ -4,7 +4,7 @@ Reference note for the open-source **GS1 Digital Link Orchestrator**: a tool tha
 
 ## Source of truth
 
-**Canonical location:** the Obsidian vault at `10_Clients/MDP/Projects/Noviplast_2D/Project/`. Every Claude Code session should start by pulling the relevant notes from there.
+**Canonical location:** the Obsidian vault at `10_Clients/MDP/Projects/Democlient_2D/Project/`. Every Claude Code session should start by pulling the relevant notes from there.
 
 Documents in the vault:
 
@@ -21,8 +21,8 @@ The local code repo (once initialised in Phase 1) will live at `~/code/gs1-digit
 ## MDP context
 
 - **MDP** = Master Data Partners, the consultancy where the project owner works. MDP operates on behalf of clients who each have their own GS1 NL contracts.
-- **Noviplast** is the pilot client for v0.1.0 — a Dutch product supplier with a WordPress catalogue site (`https://www.noviplast.nl`), multilingual NL+FR, custom post type and Polylang.
-- **Other MDP clients** in the same segment (Dutch product suppliers with WordPress catalogue sites) are expected to follow after Noviplast succeeds. The tool is multi-tenant from the start.
+- **Democlient** is the pilot client for v0.1.0 — a Dutch product supplier with a WordPress catalogue site (`https://www.democlient.nl`), multilingual NL+FR, custom post type and Polylang.
+- **Other MDP clients** in the same segment (Dutch product suppliers with WordPress catalogue sites) are expected to follow after Democlient succeeds. The tool is multi-tenant from the start.
 - **Why open-source:** MDP benefits from having the tooling published; none of the code is client-specific.
 
 ## System architecture
@@ -60,7 +60,7 @@ Full inline SVG at [[architecture]].
 - **Goal:** open-source tool that lets a Dutch supplier go from a MyGS1 Excel export to a printable QR code powered by GS1 whose resolver redirects to a WordPress page the tool also provisions.
 - **Data path:** Excel export from MyGS1. GS1 Data Link (paid read API) is out of scope.
 - **Resolver:** GS1 NL's. QR encodes `https://id.gs1.org/01/{GTIN14}`.
-- **Pilot client:** Noviplast (custom post type `noviplast`, Polylang, NL + FR).
+- **Pilot client:** Democlient (custom post type `democlient`, Polylang, NL + FR).
 - **Status:** ready to build.
 
 ## Running the build with an AI agent (fresh-session workflow)
@@ -180,13 +180,13 @@ Each INTENT cell ends with a **DoD headline** — the 2-3 canonical done-conditi
 | N | Name | SPEC_REFS | INTENT |
 |---|---|---|---|
 | 2 | GS1 Digital Link client + MCP | §4.1, §4.3, §5, §6.3, §9.1, §12 Phase 2 | Build `lib/gs1_dl_client.py` for API v2 (upsert, upsert_bulk, get, set_enabled, validate_draft, OAuth2 client-credentials token minting per §4.1 — `_mint_token`/`_get_token`, Bearer JWT, retry policy per §5.1, JSONL logging with token scrubbing). Build `mcps/gs1-nl/` in TypeScript with three MCP tools per §9.1. Fixtures per §13.2 will be provided by me; ping me when you need them. Preserve path anomalies (mixed case `digitalLink` for GET/PATCH, missing `/v2/` in ValidateDraft) exactly as documented. **DoD headline:** §6.3 idempotency contracts pass; retry logic passes with mocked 429 and 5xx; token never appears in log output; real test-env call returns expected v2 shape. |
-| 3 | Excel parser + records schema | §2, §3, §4.9, §7 (E1–E7, E16–E17), §8.1, §8.5, §12 Phase 3 | Build `lib/records.py` (all types §2.1–§2.3), `lib/config.py` (types §2.4 + `load_clients()` §4.2), `scripts/parse_export.py` §8.1, `scripts/inspect_export.py` §8.5. Column-map direction: Excel-column-name as KEY, canonical field path as VALUE (§3.2). Per-language paths use dot notation (`product_name.nl`). I'll provide the pilot Noviplast export at `input/noviplast/products.xlsx`. Iterate with `--dry-run` until zero warnings. **DoD headline:** all §2 types validated with tests; edge cases E1–E7, E16–E17 have unit tests; `inspect_export.py` produces a working `column_map` from the pilot export; ProductRecord JSON round-trip preserves all fields. |
-| 4 | WordPress client + MCP | §4.4, §4.5, §6.1, §6.2, §7 (E7, E8, E11), §9.2, §12 Phase 4 | Survey existing WordPress MCPs and recommend adopt vs. fork with reasons. Build `lib/wp_client.py` (app password auth, custom post types, idempotent upsert per §6.1–§6.2, media upload, plugin detection) and `lib/multilingual.py` (Polylang adapter; WPML stub raises `NotImplementedError`). MCP tools per §9.2. Staging WP URL and credentials I'll provide. **DoD headline:** §6.1 and §6.2 idempotency contracts tested against staging WP; multilingual detection returns `polylang` for Noviplast staging; edge cases E7 (image 404), E8 (mismatched meta.gtin), E11 (slug collision) covered. |
-| 5 | QR + templates | §3.4, §4.6, §4.7, §6.4, §9.3, §12 Phase 5 | Build `lib/qr.py` §4.7, `lib/templates.py` §4.6 with override resolution, default templates `templates/_default/product.{nl,en,fr}.html`, Noviplast templates from PROJECT_HANDOVER §5.5. Build `mcps/qr-render/` §9.3. Manual test at end: render one QR at 20mm, print, scan with iOS + Android. **DoD headline:** §6.4 QR idempotency tested; printed 20mm QR scans on both iOS and Android; template override resolution tested; missing template raises `TemplateError` cleanly. |
+| 3 | Excel parser + records schema | §2, §3, §4.9, §7 (E1–E7, E16–E17), §8.1, §8.5, §12 Phase 3 | Build `lib/records.py` (all types §2.1–§2.3), `lib/config.py` (types §2.4 + `load_clients()` §4.2), `scripts/parse_export.py` §8.1, `scripts/inspect_export.py` §8.5. Column-map direction: Excel-column-name as KEY, canonical field path as VALUE (§3.2). Per-language paths use dot notation (`product_name.nl`). I'll provide the pilot Democlient export at `input/democlient/products.xlsx`. Iterate with `--dry-run` until zero warnings. **DoD headline:** all §2 types validated with tests; edge cases E1–E7, E16–E17 have unit tests; `inspect_export.py` produces a working `column_map` from the pilot export; ProductRecord JSON round-trip preserves all fields. |
+| 4 | WordPress client + MCP | §4.4, §4.5, §6.1, §6.2, §7 (E7, E8, E11), §9.2, §12 Phase 4 | Survey existing WordPress MCPs and recommend adopt vs. fork with reasons. Build `lib/wp_client.py` (app password auth, custom post types, idempotent upsert per §6.1–§6.2, media upload, plugin detection) and `lib/multilingual.py` (Polylang adapter; WPML stub raises `NotImplementedError`). MCP tools per §9.2. Staging WP URL and credentials I'll provide. **DoD headline:** §6.1 and §6.2 idempotency contracts tested against staging WP; multilingual detection returns `polylang` for Democlient staging; edge cases E7 (image 404), E8 (mismatched meta.gtin), E11 (slug collision) covered. |
+| 5 | QR + templates | §3.4, §4.6, §4.7, §6.4, §9.3, §12 Phase 5 | Build `lib/qr.py` §4.7, `lib/templates.py` §4.6 with override resolution, default templates `templates/_default/product.{nl,en,fr}.html`, Democlient templates from PROJECT_HANDOVER §5.5. Build `mcps/qr-render/` §9.3. Manual test at end: render one QR at 20mm, print, scan with iOS + Android. **DoD headline:** §6.4 QR idempotency tested; printed 20mm QR scans on both iOS and Android; template override resolution tested; missing template raises `TemplateError` cleanly. |
 | 6 | lib, scripts, state | §4.8, §5.4 (Level A + B rollback), §8.3, §10.5, §12 Phase 6 | Build `lib/state.py` §4.8 with atomic writes, `scripts/run_execute.py` §8.3 following the skeleton in §10.5. Unit tests for `lib/` with `pytest-httpx` mocking. **DoD headline:** `run_execute.py` completes end-to-end for one GTIN against staging; §6.5 idempotency contract tested; state file atomicity verified by kill-mid-write test. |
 | 7 | Re-run & change detection | §8.2, §10.6, §12 Phase 7 | Build `scripts/run_plan.py` §8.2 producing `plan.json`. Extend `flow-orchestrator` skill to present plan per §10.6.1 and collect confirmations per §10.6.2, §10.6.5, §10.6.6, §10.6.7. Chat interactions must match §10.6 verbatim — concise and business-like, not conversational. **DoD headline:** change classification correct across all edge cases; chat-format diff matches §10.6 examples verbatim; full re-run flow tested in a fresh Claude Code session. |
-| 8 | Skills & flow orchestrator polish | §10.1–§10.5, §10.6, §12 Phase 8 | Finalise every SKILL.md file. Verify `flow-orchestrator` uses all patterns from §10.6. Test in a fresh Claude Code session: user uploads export, says "run for noviplast in test env". **DoD headline:** each SKILL.md finalised per §10; full chat-driven flow works end-to-end from a single instruction; skills load on expected trigger phrases. |
-| 9 | Pilot end-to-end | §12 Phase 9, PROJECT_HANDOVER §5.5 | Run end-to-end against Noviplast staging (test env). Iterate on edge cases; capture quirks in `docs/clients/noviplast.md`. First 10 real products through to production. **DoD headline:** ≥10 real products live on Noviplast production; every printed QR sample scans and resolves correctly; no manual corrections needed during the run. |
+| 8 | Skills & flow orchestrator polish | §10.1–§10.5, §10.6, §12 Phase 8 | Finalise every SKILL.md file. Verify `flow-orchestrator` uses all patterns from §10.6. Test in a fresh Claude Code session: user uploads export, says "run for democlient in test env". **DoD headline:** each SKILL.md finalised per §10; full chat-driven flow works end-to-end from a single instruction; skills load on expected trigger phrases. |
+| 9 | Pilot end-to-end | §12 Phase 9, PROJECT_HANDOVER §5.5 | Run end-to-end against Democlient staging (test env). Iterate on edge cases; capture quirks in `docs/clients/democlient.md`. First 10 real products through to production. **DoD headline:** ≥10 real products live on Democlient production; every printed QR sample scans and resolves correctly; no manual corrections needed during the run. |
 | 10 | Docs | §4.1 (troubleshooting per error type), §12 Phase 10, PROJECT_HANDOVER §4.3, §5.1–§5.4, §5.5 | Write `docs/setup.md`, `docs/costs.md`, `docs/gs1-nl-onboarding.md` (from PROJECT_HANDOVER §5.1–§5.3), `docs/wordpress-onboarding.md` (from PROJECT_HANDOVER §5.4), `docs/data-source-export-schema.md`, `docs/template-variables.md`, `docs/troubleshooting.md`. Polish README with quickstart, architecture embed, and links. **DoD headline:** unfamiliar user can clone, follow `setup.md`, and onboard a second client without asking questions; every skill and script has a docstring; `troubleshooting.md` covers each error type from §4.1. |
 | 11 | Production cut + 0.1.0 release | §12 Phase 11 | Bump version to 0.1.0 in `pyproject.toml` and `package.json`. Populate `CHANGELOG.md`. Git tag `v0.1.0` and push. Submit MCP to registry. Draft short announcement (LinkedIn/dev.to). Add GitHub issue templates. **DoD headline:** version bumped consistently across `pyproject.toml`, `package.json`, `CHANGELOG.md`; git tag `v0.1.0` pushed; MCP registry entry submitted; announcement drafted (publication optional). |
 
@@ -229,8 +229,8 @@ Then audit the current repo state:
    - Phase 1: clients.example.yml matches §10.1 exactly, including that
      `column_map` uses Excel-column-name as KEY and dotted field path as VALUE
      (this direction was recently corrected — reverse direction is wrong).
-     .env.example matches §10.2 (OAuth2 `NOVIPLAST_GS1_CLIENT_SANDBOX_ID/SECRET`
-     + `NOVIPLAST_GS1_CLIENT_ID/SECRET` pairs).
+     .env.example matches §10.2 (OAuth2 `DEMOCLIENT_GS1_CLIENT_SANDBOX_ID/SECRET`
+     + `DEMOCLIENT_GS1_CLIENT_ID/SECRET` pairs).
      GitHub Actions workflow is green on the last push.
    - Phase 2: preserve mixed-case paths for GET/PATCH endpoints
      (`digitalLink` capital L), lowercase for POST create/update.
@@ -257,11 +257,11 @@ Do not make any changes to the repo. Wait for my instruction after your report.
 
 ## Open items
 
-Tracked in [[Investigation (Noviplast_2D)]]:
+Tracked in [[Investigation (Democlient_2D)]]:
 
-- **Real MyGS1 Excel export from Noviplast** → `input/noviplast/products.xlsx`. Blocks Phase 3.
+- **Real MyGS1 Excel export from Democlient** → `input/democlient/products.xlsx`. Blocks Phase 3.
 - **Five sample responses from the Digital Link API** (test env) → `tests/fixtures/gs1_api/`. Blocks Phase 2 completion.
-- **Staging WordPress access for Noviplast** — user `automation-bot`, application password `gs1-orchestrator`, custom post type `noviplast` with `show_in_rest: true`, Polylang for NL + FR. Blocks Phase 4 completion.
+- **Staging WordPress access for Democlient** — user `automation-bot`, application password `gs1-orchestrator`, custom post type `democlient` with `show_in_rest: true`, Polylang for NL + FR. Blocks Phase 4 completion.
 
 ## Notes
 

@@ -24,8 +24,8 @@ entries below are decided.
 >
 > **Two corrections to the evidence below, found while implementing it:**
 >
-> 1. **The divergence table was wrong.** `.env` already contained `NOVIPLAST_GS1_CLIENT_ID` and
->    `NOVIPLAST_GS1_CLIENT_SECRET`, populated — plus the sandbox pair and `GS1_PROD_ACCOUNT`. The
+> 1. **The divergence table was wrong.** `.env` already contained `DEMOCLIENT_GS1_CLIENT_ID` and
+>    `DEMOCLIENT_GS1_CLIENT_SECRET`, populated — plus the sandbox pair and `GS1_PROD_ACCOUNT`. The
 >    `settings.json` block held only **three** keys, all three also in `.env`, and a SHA-256 comparison
 >    confirmed all three values were **identical**. So nothing had to be moved and no value was at risk
 >    of being lost; `.env` was already a strict superset. The claim that "a script run from a plain
@@ -39,8 +39,8 @@ entries below are decided.
 >    test does not.
 >
 > **Verified:** full suite passes in a `env -i` clean environment (522 passed, 2 skipped, 5 deselected);
-> after running all 116 `tests/scripts` tests there, none of `NOVIPLAST_WP_APP_PASS`,
-> `NOVIPLAST_GS1_CLIENT_ID`, `WP_STAGING_URL`, `STAGING_GTIN` is present in the process environment;
+> after running all 116 `tests/scripts` tests there, none of `DEMOCLIENT_WP_APP_PASS`,
+> `DEMOCLIENT_GS1_CLIENT_ID`, `WP_STAGING_URL`, `STAGING_GTIN` is present in the process environment;
 > and `runpy` of `scripts.run_plan` as `__main__` in that same clean environment *does* populate them.
 > The MCP caveat below was checked and is moot: global and project `mcpServers` are both empty and
 > there is no `.mcp.json`, so no server depended on the injected block.
@@ -72,9 +72,9 @@ The two stores have **diverged**:
 
 | Variable | `.env` | `~/.claude/settings.json` |
 |---|---|---|
-| `NOVIPLAST_WP_APP_PASS` | ✅ | ✅ **duplicated** |
-| `NOVIPLAST_GS1_CLIENT_ID` | ❌ | ✅ **only here** |
-| `NOVIPLAST_GS1_CLIENT_SECRET` | ❌ | ✅ **only here** |
+| `DEMOCLIENT_WP_APP_PASS` | ✅ | ✅ **duplicated** |
+| `DEMOCLIENT_GS1_CLIENT_ID` | ❌ | ✅ **only here** |
+| `DEMOCLIENT_GS1_CLIENT_SECRET` | ❌ | ✅ **only here** |
 | `WP_STAGING_URL` / `WP_STAGING_USER` / `STAGING_GTIN` | ✅ **only here** | ❌ |
 
 File modes at the time of investigation: `~/.claude/settings.json` = `0600`; **`.env` = `0644`
@@ -129,7 +129,7 @@ scripts, and crash dumps. With `.env` loaded explicitly, the secret enters only 
 need it.
 
 > This is not theoretical. On 2026-07-30 an assistant diagnostic ran
-> `echo "$NOVIPLAST_WP_APP_PASS"` to test whether the variable was set, and **printed the live
+> `echo "$DEMOCLIENT_WP_APP_PASS"` to test whether the variable was set, and **printed the live
 > WordPress application password in clear text into a chat transcript**. It was ambient in a shell
 > that had no need for it. Under option B that variable would not have been in that process at all.
 > **Action taken:** rotation recommended to the operator — see *Follow-up actions* below.
@@ -152,7 +152,7 @@ need it.
 2. Add one small helper (e.g. `lib/env.py` with `load_env()` wrapping `load_dotenv(override=False)`)
    and call it at the top of each `main()` in `scripts/*.py`. **Do not** call it from `lib/` module
    import or from `conftest.py`.
-3. Move `NOVIPLAST_GS1_CLIENT_ID` / `NOVIPLAST_GS1_CLIENT_SECRET` into `.env`.
+3. Move `DEMOCLIENT_GS1_CLIENT_ID` / `DEMOCLIENT_GS1_CLIENT_SECRET` into `.env`.
 4. `chmod 600 .env`.
 5. **Verify the staging guard still requires explicit sourcing** — run `pytest -m staging --collect-only`
    with a clean environment and confirm the tests still report as skipped.
@@ -170,7 +170,7 @@ launch config.
 
 ### Follow-up actions (independent of which option is chosen)
 
-- [x] **Rotate `NOVIPLAST_WP_APP_PASS`** — **done 2026-07-30.** It had been printed in clear text in a
+- [x] **Rotate `DEMOCLIENT_WP_APP_PASS`** — **done 2026-07-30.** It had been printed in clear text in a
       chat transcript that day. A new application password was issued for `automation-bot` and `.env`
       updated; the old one was revoked. Verified both ways: the new credential returns `200` from
       `GET /wp-json/wp/v2/users/me?context=edit` as `automation-bot` with role `editor`, and the old

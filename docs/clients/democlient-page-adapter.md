@@ -1,7 +1,7 @@
-# Noviplast Page Adapter — Design
+# Democlient Page Adapter — Design
 
 > Status: **implemented — content generator built 2026-07-19, the page-adapter track's last
-> critical-path item.** This specifies a Noviplast-specific WordPress page-building adapter,
+> critical-path item.** This specifies a Democlient-specific WordPress page-building adapter,
 > discovered during live pilot reconnaissance (July 2026), on top of the completed Phase 7 (plan /
 > change-detection / flow-orchestrator), which stands unchanged underneath it.
 >
@@ -9,7 +9,7 @@
 > producers — the in-session `content-generator` skill and the headless `run_generate --backend
 > api`, sharing one cache/contract seam), the `run_plan` merge, and the wired `acf_map` (generator
 > commits 1–8; see [`../ROADMAP.md`](../ROADMAP.md) and
-> [`noviplast-generator-spec.md`](noviplast-generator-spec.md)). `run_execute` renders ACF via
+> [`democlient-generator-spec.md`](democlient-generator-spec.md)). `run_execute` renders ACF via
 > `build_acf_payload`, and `multilingual_plugin: wpml` selects `WPMLAdapter`. **The one remaining
 > WP-side enabler is the WPML helper endpoint (§7): a site-side route with no core REST equivalent.
 > Verify it — and a real published page — against the live site before the pilot. This pipeline fails
@@ -19,32 +19,32 @@
 ## 1. Why this exists
 
 The generic model from Phase 5 — *render an HTML template into `post_content`* — **does not
-fit Noviplast.** Their product pages are built with **Oxygen Builder** reading **ACF fields**;
+fit Democlient.** Their product pages are built with **Oxygen Builder** reading **ACF fields**;
 `post_content` is empty and ignored by the theme. The site also runs **WPML** (not Polylang, as
-`clients.yml` currently says) and a custom `noviplast` post type. So publishing a correct page
+`clients.yml` currently says) and a custom `democlient` post type. So publishing a correct page
 means **populating the specific ACF fields the Oxygen template reads**, in **both nl and fr**,
 sourced from the **GDSN datasource export** plus a small amount of non-feed content.
 
-This adapter replaces the HTML-into-body approach *for Noviplast*.
+This adapter replaces the HTML-into-body approach *for Democlient*.
 
-## 2. Discovery summary (verified live against `www.noviplast.nl`)
+## 2. Discovery summary (verified live against `www.democlient.nl`)
 
 - **Auth:** dedicated `automation-bot` user (role **Editor**) with an Application Password works.
   Wordfence had "Disable application passwords" enabled; the site admin turned it off. Verified live:
   `GET /wp/v2/users/me?context=edit` → 200, role `editor`, with `edit_posts`, `publish_posts`,
   `upload_files`, `edit_others_posts`, `unfiltered_html`. **Use `context=edit` when checking** —
   `context=view` omits `capabilities` entirely and makes a working account look permissionless.
-  In `.env`, `NOVIPLAST_WP_APP_PASS` **must be single-quoted**: WP app passwords contain spaces, so an
+  In `.env`, `DEMOCLIENT_WP_APP_PASS` **must be single-quoted**: WP app passwords contain spaces, so an
   unquoted value breaks `source .env` at the first space and the variable loads *empty* — the run then
   fails with blank credentials rather than a clear error.
-- **CPT REST:** `noviplast` is REST-writable, and `meta.gtin` + the ACF fields + the
-  `noviplast-categories` taxonomy are all exposed, via one Code Snippet. Getting `meta.gtin` to
+- **CPT REST:** `democlient` is REST-writable, and `meta.gtin` + the ACF fields + the
+  `democlient-categories` taxonomy are all exposed, via one Code Snippet. Getting `meta.gtin` to
   appear required adding **`custom-fields`** to the CPT's supports — see §7, including the silent
   failure it caused.
 - **Multilingual:** the site runs **WPML** (`wpml/v1`, `wpml/st/v1`, `wpml/tm/v1` REST namespaces).
   `clients.yml` says `multilingual_plugin: polylang` — **wrong, must become `wpml`.**
 - **Page model:** Oxygen template renders from ACF; `post_content` empty on every published page.
-- **URL pattern confirmed correct:** `…/noviplast/{slug}/` (default lang) and `…/fr/noviplast/{slug}/`.
+- **URL pattern confirmed correct:** `…/democlient/{slug}/` (default lang) and `…/fr/democlient/{slug}/`.
 - **Images (`ReferencedFileDetailInformation`):** up to **12 files per product**
   (`ReferencedFileHeader[0..11]`), each documented with URL (2485), MimeType (2602),
   `ReferencedFileTypeCode` (2469), `IsPrimaryFile` (4277), `FileName` (2481),
@@ -57,12 +57,12 @@ This adapter replaces the HTML-into-body approach *for Noviplast*.
   - **Only 48 of 124 products have `IsPrimaryFile = TRUE`**; view codes are mostly the C-series
     (`C1L1`, `C1R1`, `C1R0`, `C1C0`…) with only 14 `A1N0` front shots. **76 products have neither a
     primary flag nor an A1N0** → the hero image must be chosen by a deterministic fallback.
-- **Control file** (`input/noviplast/website_status.xlsx`): Strict OOXML, header on row 4, data on
+- **Control file** (`input/democlient/website_status.xlsx`): Strict OOXML, header on row 4, data on
   sheet "Blad1", 13-digit barcodes. Its `Categorie` column is a **temporary personal action tracker**
   (`webpage + QR`, `GS1 + webpage + QR`, `QR only`, `moet niet`, `mag weg`) — **not** a product
   category, and absent from future exports; the tool does not use it.
 
-## 3. ACF fields on a Noviplast product page
+## 3. ACF fields on a Democlient product page
 
 Read live via a temporary `get_fields()` debug route (remove after mapping — §7). The list below
 is the **full set** the group exposes, cross-checked against the CPT's REST write schema now that
@@ -89,12 +89,12 @@ shape against a scratch draft before trusting a read-back round-trip.
 
 ### 3.1 The required write sequence (verified live)
 
-Three findings from scratch drafts against `www.noviplast.nl`, each of which fails **silently**:
+Three findings from scratch drafts against `www.democlient.nl`, each of which fails **silently**:
 
 1. **Both languages request the same slug** (`slug_pattern: p-{gtin}` has no language component).
    Created without a language, the second page collides and WordPress dedupes it to `p-{gtin}-2` —
-   so the French page lands at `/fr/noviplast/p-{gtin}-2/` while `target_url_pattern` builds
-   `/fr/noviplast/p-{gtin}/`, and **the GS1 resolver would point every French QR at a 404**.
+   so the French page lands at `/fr/democlient/p-{gtin}-2/` while `target_url_pattern` builds
+   `/fr/democlient/p-{gtin}/`, and **the GS1 resolver would point every French QR at a 404**.
    Passing **`?lang={lang}` on create** fixes it: WPML scopes slug uniqueness per language, and
    both pages keep `p-{gtin}`.
 2. **`?lang=` and `acf` in the same create request are incompatible.** The ACF values are
@@ -119,8 +119,8 @@ Three findings from scratch drafts against `www.noviplast.nl`, each of which fai
    the first pilot product (2026-07-17):
 
    ```
-   GET /wp/v2/noviplast?slug=p-08713195000527&lang=fr&context=edit  -> id 1448, acf.product_title = null
-   GET /wp/v2/noviplast/1448?context=edit                           -> acf.product_title = "Chiffons micro fibres…"
+   GET /wp/v2/democlient?slug=p-08713195000527&lang=fr&context=edit  -> id 1448, acf.product_title = null
+   GET /wp/v2/democlient/1448?context=edit                           -> acf.product_title = "Chiffons micro fibres…"
    ```
 
    The value is **stored correctly**; only the collection read is wrong, and only for the
@@ -136,7 +136,7 @@ the default language), with every lookup scoped to the row's language:
 GET  /wp/v2/{post_type}?slug=…&lang={lang}     lookup — the &lang is not optional
 POST /wp/v2/{post_type}?lang={lang}            title, slug, status, meta.gtin   — no acf
 POST /wp/v2/{post_type}/{id}                   acf: {...}                       — second call
-POST /noviplast/v1/translations                {"translations": {...}, "source_language": "nl"}
+POST /democlient/v1/translations                {"translations": {...}, "source_language": "nl"}
 ```
 
 **Implemented** in `lib/wp_client.py` (`_lang_params`, `_write_acf`, `upsert_page(acf=...)`) and
@@ -148,13 +148,13 @@ returning the same ids rather than duplicating (§6.5).
 
 | Page element | Stored in | GDSN / other source | Transform |
 |---|---|---|---|
-| Product name (heading) | WP **post title** | `TradeItemDescription` — **attr 3318**, nl/fr | **strip leading `"Noviplast "`** |
+| Product name (heading) | WP **post title** | `TradeItemDescription` — **attr 3318**, nl/fr | **strip leading `"Democlient "`** |
 | Tagline | ACF `product_title` + `product_header_video_text` | `TradeItemMarketingMessage` — **attr 1083**, nl/fr (113/127 nl, 112/127 fr) | use as-is |
 | Eigenschappen + Technische details | ACF `product_description` (HTML, per language) | **Mostly feed data; only the Eigenschappen bullets are generated** — see §4.1 | assemble → generate the gap → **human-approve** → render as HTML |
 | Main image | featured media + `product_header_image` + `product_regular_image` | GDSN referenced files — hero selected by `IsPrimaryFile` → view code → sequence | download → **convert/resize (TIFF→web)** → upload |
 | Gallery images | ACF `product_gallery` | remaining GDSN referenced images | download → **convert/resize** → upload → repeater rows |
 | Video | ACF `product_header_video_file` | **media folder**, file named `{gtin}*` | match by GTIN prefix → upload |
-| Category | `noviplast-categories` term | **GPC brick code** → category map | lookup table (§5) |
+| Category | `democlient-categories` term | **GPC brick code** → category map | lookup table (§5) |
 | GTIN | post meta `gtin` | GTIN | direct |
 | GS1 Digital Link + QR | GS1 resolver + QR files | GTIN + page URL | existing pipeline |
 | Page body (`post_content`) | — | — | **left empty** (Oxygen-driven) |
@@ -198,10 +198,10 @@ that comes from the feed instead of a model is one fewer line in the upstream re
 bullets, Technische details stay deterministic. `lib/generator.py` owns the fingerprint-keyed cache
 and the pure `merge_generated` assembly; `scripts/run_generate.py` fills the cache through one
 contract from either producer (in-session emit→ingest, or `--backend api` via `lib/llm.py`);
-`run_plan` merges the cache before `diff_against_state` so generated copy enters the content hash;
+`run_plan` merges the cache before `diff_against_state` so generated content enters the content hash;
 and `acf_map` feeds `product_title`/`product_header_video_text` ← `generated_tagline` and
 `product_description` ← `generated_description`. Full design and 1067 verbatim/tighten/generate
-routing: [`noviplast-generator-spec.md`](noviplast-generator-spec.md).
+routing: [`democlient-generator-spec.md`](democlient-generator-spec.md).
 
 ### 4.2 RESOLVED (2026-07-17): attr 1083 is a marketing message, not a tagline
 
@@ -274,7 +274,7 @@ as §5.n (e.g. the category design is **§5.7**).
    any media the feed can't supply, then publishes. The tool never auto-publishes marketing pages.
 3. **Title — `Functional Name` (attr 3301).** Per language, the clean functional name
    (*"voegstrijker"*), matching the live "Cable Organiser" style. **Changed 2026-07-17 from 3318**,
-   which carried material+colour noise (*"Noviplast Voegstrijker kunststof oranje"*); 3318 is now
+   which carried material+colour noise (*"Democlient Voegstrijker kunststof oranje"*); 3318 is now
    carried in `extras.marketing_name` (it holds the brand-prefix typos). 3297 (`DescriptionShort`,
    an internal logistics string) remains in `extras.logistics_name`. The `3332`+`3301` intelligent
    combination is deferred to the generator — blind concatenation produces duplicates
@@ -320,7 +320,7 @@ as §5.n (e.g. the category design is **§5.7**).
    - **Caveat:** for the 76 products with no primary flag and no front shot, the chosen hero is a
      best guess from an angled C-series image. Draft-first publishing covers this — the marketer
      can swap the hero before publishing. 3 of 127 products have no images at all.
-6. **Video (folder):** a single flat folder, e.g. `input/noviplast/media/`, with files named
+6. **Video (folder):** a single flat folder, e.g. `input/democlient/media/`, with files named
    `{gtin}*.mp4`; the tool matches by GTIN prefix, uploads, and sets `product_header_video_file`.
    Products without a matching file simply get no video.
 7. **Category — GPC brick → site term (Phase 7.5, §5.7).** Derived from the GPC brick
@@ -365,7 +365,7 @@ as §5.n (e.g. the category design is **§5.7**).
   dimensions / material, human-approved (the feed covers only 6/127).
 - ~~Who writes the French pages — the tool, or the translator?~~ **Resolved (client decision):
   the tool writes both languages.** French comes from the GDSN feed where present — it is
-  Noviplast's own datapool data (**36 of 37** planned products have a French `TradeItemDescription`
+  Democlient's own datapool data (**36 of 37** planned products have a French `TradeItemDescription`
   3318; **112 of 127** a French `TradeItemMarketingMessage` 1083), i.e. parallel source data rather
   than a translation to author, and the reference text for regulated product info. Where French is
   **missing**, the LLM generator fills it (see the feature/benefit generator below — same
@@ -395,7 +395,7 @@ as §5.n (e.g. the category design is **§5.7**).
 
 ## 7. WordPress-side enablers (onboarding tasks)
 
-All REST enablers live in one Code Snippet, **"Noviplast GS1 – expose CPT to REST"** (the site runs
+All REST enablers live in one Code Snippet, **"Democlient GS1 – expose CPT to REST"** (the site runs
 the *Code Snippets* plugin — `code-snippets/v1` in the REST namespace list). The CPT and the
 taxonomy are both registered elsewhere (theme/plugin), so the snippet adjusts them through the
 `register_post_type_args` / `register_taxonomy_args` filters rather than editing them at their
@@ -433,13 +433,13 @@ source — the filters survive updates to whatever registers them.
   resolved for images: `product_header_image`/`product_regular_image` are written as an **attachment
   id** and Oxygen renders the `<img>`; `media.image_write_shape: id` (config default). Both shapes
   stay wired (`wp_client.media_source_url` covers `url`), so a change is a config flip, not code.
-- **`noviplast-categories` taxonomy → `show_in_rest`** — **done** via `register_taxonomy_args`.
+- **`democlient-categories` taxonomy → `show_in_rest`** — **done** via `register_taxonomy_args`.
   (The earlier note that it "404s" was wrong: it returned **403 `rest_forbidden`**. That distinction
   is a useful diagnostic — core returns **404 `rest_taxonomy_invalid`** when a taxonomy does not
   exist and **403** when it exists with `show_in_rest` false. So the taxonomy was always registered
   and correctly attached to the CPT; only the REST flag was missing. The CPT's `taxonomies: []` had
   the same single cause — that list is filtered to REST-visible taxonomies.)
-- **`meta.gtin` collection filtering** — `rest_noviplast_query` filter, scoped to the `gtin` key
+- **`meta.gtin` collection filtering** — `rest_democlient_query` filter, scoped to the `gtin` key
   only (no arbitrary meta querying). **Todo.** `meta_key`/`meta_value` are **not** core REST
   features: core drops unknown query params silently rather than erroring, so without this the
   tool's §6.1 gtin lookup receives an unfiltered page of *every* post. Verified live — a query for
@@ -448,8 +448,8 @@ source — the filters survive updates to whatever registers them.
   by GTIN without it, and correctly falls through to *create*). The filter is still wanted: without
   it the lookup only ever sees the first page of results, so a page whose **slug changed** would not
   be found by GTIN and would be recreated rather than updated.
-- **WPML helper endpoint** — **done**, as the Code Snippet *"Noviplast GS1 – WPML translation
-  linking"*. Exposes `POST /wp-json/noviplast/v1/translations` taking
+- **WPML helper endpoint** — **done**, as the Code Snippet *"Democlient GS1 – WPML translation
+  linking"*. Exposes `POST /wp-json/democlient/v1/translations` taking
   `{"translations": {"nl": id, "fr": id}, "source_language": "nl"}`, mirroring Polylang's
   `/pll/v1/translations` shape so `lib/multilingual.py` stays symmetric. It assigns each post's
   language and links the set as one translation group via WPML's PHP API
@@ -457,7 +457,7 @@ source — the filters survive updates to whatever registers them.
   any (a half-linked group has no rollback), and **reads the group back** from
   `wpml_get_element_translations` so a silent no-op fails loudly. Verified live: a scratch nl/fr
   pair linked under `trid` 626, confirmed from WPML's own tables.
-  Prerequisite, already satisfied: WPML → *Vertaling berichttypes* → `noviplast` =
+  Prerequisite, already satisfied: WPML → *Vertaling berichttypes* → `democlient` =
   **Vertaalbaar – alleen vertaalde items weergeven**. That is also the right choice on the merits —
   the fallback variant ("val terug op de standaardtaal") would serve **Dutch content at French
   URLs** for any untranslated product, returning 200 so `verify_url` passes and the row reports
@@ -471,7 +471,7 @@ source — the filters survive updates to whatever registers them.
   French pages. **Open decision (§6):** whether the tool writes `fr` from the GDSN feed or the
   translator continues to.
 - **GPC → category** map populated; category terms exist. **Todo.**
-- Remove the temporary `noviplast-debug/v1/fields` route once mapping is frozen. It is
+- Remove the temporary `democlient-debug/v1/fields` route once mapping is frozen. It is
   **auth-gated** (401 unauthenticated), so it is not a public data leak — keep it until the ACF
   mapping is verified, then delete the *"TEMP - ACF field name discovery"* snippet.
 
@@ -494,13 +494,13 @@ source — the filters survive updates to whatever registers them.
   copy exists, and planned as soon as it does.
 - `lib/gdsn.py` / parser + `clients.yml` `gdsn_map`:
   - ~~fix `product_name` → attr 3318~~ — **superseded 2026-07-17**: the title is now **3301**
-    (Functional Name). 3318 carried material/colour noise (*"Noviplast Voegstrijker kunststof
+    (Functional Name). 3318 carried material/colour noise (*"Democlient Voegstrijker kunststof
     oranje"*); 3301 is the clean name (*"voegstrijker"*). 3318 kept as `extras.marketing_name`.
   - ~~add the tagline → attr 1083~~ — **superseded**: 1083 is **not** the tagline (exhaustive
     search; 34/36 live taglines are not in the feed). Parsed as `description_short`, now a
     **generator input only** — `acf_map` is empty, `report_issues: false`, no `max_length`.
   - ~~expose `TradeItemFeatureBenefit` (1067)~~ — **done**, `description_long`; 6/127, a generator seed.
-  - ~~strip the leading `"Noviplast "`~~ — **moot**: 3301 has no brand prefix, so the whole
+  - ~~strip the leading `"Democlient "`~~ — **moot**: 3301 has no brand prefix, so the whole
     `strip_prefix` concern (and its `brand_prefix_mismatch` findings) retired with the 3318 title.
   - ~~ranked market resolution~~ — **done**: `market_priority` replaced the 1:1 `market_language`
     map; first non-blank value per field/language walking the order. `product_name` fr 124 → 126/127.
@@ -623,7 +623,7 @@ source — the filters survive updates to whatever registers them.
 - **Re-run `parse_export` before `run_plan`, always.** `run_plan` reads
   `output/{client_id}/data/products.json` off disk and cannot tell how old it is. Caught live on the
   pilot run: the on-disk copy predated `strip_prefix`, so the first plan carried titles like
-  *"Noviplast Microvezeldoek stof"* — the very prefix `clients.yml` has been configured to strip for
+  *"Democlient Microvezeldoek stof"* — the very prefix `clients.yml` has been configured to strip for
   weeks. `strip_prefix` was working; the artifact was stale. Re-parsing produced *"Microvezeldoek
   stof"* and the plan was correct.
 
@@ -633,7 +633,7 @@ source — the filters survive updates to whatever registers them.
   page title of every product.
 
 - **`accountNumber` in `clients.yml` was wrong — fixed 2026-07-17.** It read `8713195000008`,
-  commented *"Noviplast GLN — confirmed accepted (200) in prod"*: a guess derived from the
+  commented *"Democlient GLN — confirmed accepted (200) in prod"*: a guess derived from the
   `8713195` prefix rather than read from the token, unlike the sandbox entry beside it. Verified
   live: the production token's own `accountNumber` claim is **`8719965024137`**, and the live
   record for `08713195000374` is owned by `8719965024137` — so every production POST was carrying
@@ -659,12 +659,12 @@ source — the filters survive updates to whatever registers them.
   for a link type the server knows. It is the tell, not a decoration.
 
   Still true and not a bug: the API normalises a `mediaType` of `null` to `""`.
-- A **Noviplast page-build step** that assembles the above into the ACF payload — replacing the
+- A **Democlient page-build step** that assembles the above into the ACF payload — replacing the
   Phase 5 HTML-template render for this client.
 
 ## 9. Relationship to the rest of the project
 
 Phase 7 (`run_plan`, `diff_against_state`, `flow-orchestrator`) is complete and committed and is the
 engine underneath this: it still computes *what* to act on. This adapter changes only **how the
-WordPress page is built** for Noviplast, and adds the media/WPML/LLM pieces the real site requires.
+WordPress page is built** for Democlient, and adds the media/WPML/LLM pieces the real site requires.
 It is effectively a new phase of work and should be planned and specced as such before coding.

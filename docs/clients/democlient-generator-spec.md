@@ -2,10 +2,10 @@
 
 **Status:** **complete** (all 9 commits, 2026-07-19; see [`../ROADMAP.md`](../ROADMAP.md) for the
 commit tracker and how this fits the numbered phases). Supersedes the scoping questions in
-`docs/clients/noviplast-generator-handoff.md`. Grounded in a full read of the codebase and the
+`docs/clients/democlient-generator-handoff.md`. Grounded in a full read of the codebase and the
 real 127-product export. Written 2026-07-18.
 
-The Noviplast GS1→WordPress page-adapter pipeline is complete except for its last critical-path
+The Democlient GS1→WordPress page-adapter pipeline is complete except for its last critical-path
 item: the **content generator**. Every other page slot is deterministic assembly from parsed GDSN
 data; the generator owns the handful of slots that require *writing* copy.
 
@@ -48,7 +48,7 @@ Only `nl` and `fr` exist in the data. The "combine 3301+3332" work is effectivel
 ## Architecture (one line)
 
 Generation is a **cache-backed merge step that runs in `run_plan` before `diff_against_state`**,
-mirroring `_assign_categories` (`scripts/run_plan.py:98-134,164`): it materialises generated copy
+mirroring `_assign_categories` (`scripts/run_plan.py:98-134,164`): it materialises generated content
 onto the `ProductRecord` so it enters the content hash, flows to ACF, and reclassifies rows — with
 all LLM spend isolated in the opt-in `run_generate` step that only writes the cache.
 
@@ -220,7 +220,7 @@ name, `max_tokens`. Typed, validated at load.
 7. **`run_plan` integration** — merge before `diff_against_state`; E18 backstop; `generated_issues.json`;
    summary line; tests.
 8. **Wire `acf_map`** in `clients.yml`; acf test.
-9. **Docs + gate** — update `docs/clients/noviplast-page-adapter.md` §4.1/§4.2/§8 and
+9. **Docs + gate** — update `docs/clients/democlient-page-adapter.md` §4.1/§4.2/§8 and
    `.claude/skills/flow-orchestrator/SKILL.md`.
 
 ## Reuse (do not rebuild)
@@ -243,7 +243,7 @@ for schemas, absolute imports. Tests: `.venv/bin/python -m pytest -q`.
    round-trip validates via `apply_result` (bad-shape result rejected; good result lands in cache).
 3. **Integration** — `test_run_plan.py`: generated content reclassifies CHANGED; E18 row with cached
    fr plans; E18 row with no cache still SKIPs.
-4. **Real run (staged)** — `run_generate noviplast` on the real `products.json`, eyeball
+4. **Real run (staged)** — `run_generate democlient` on the real `products.json`, eyeball
    `generated_cache.json` (spot-check NL + FR blocks), then `run_plan` and confirm generated fields
    appear on `plan.json` rows and reclassify. Draft-first execute protects the live site. **This
    pipeline fails silently — verify against the real parsed data, not just green tests.**

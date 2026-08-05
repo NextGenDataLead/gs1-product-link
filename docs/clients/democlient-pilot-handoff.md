@@ -1,4 +1,4 @@
-# Noviplast pilot — handoff & steps-to-completion
+# Democlient pilot — handoff & steps-to-completion
 
 **Read this first after a context clear.** It carries the live state of the Phase 9 pilot and the exact
 path (incl. git workflow) from here to release. DoD checkboxes stay authoritative in
@@ -15,7 +15,7 @@ path (incl. git workflow) from here to release. DoD checkboxes stay authoritativ
 - **The pilot is frozen to the fully-mapped GTINs.** `media.restrict_to_mapped_gtins: true` —
   `run_execute` **hard-blocks** any GTIN without a client-confirmed video in *every* language (even via
   `--plan`); `run_plan` additionally drops already-present GTINs. The allowlist is derived live from
-  `input/noviplast/videos/mapping.yml` (`lib.media_video.fully_mapped_gtins`).
+  `input/democlient/videos/mapping.yml` (`lib.media_video.fully_mapped_gtins`).
 - **The numbers:** **20** GTINs are video-mapped in both nl+fr = the allowlist. Of those, **5 are
   already live** on the site (`…0473, …1739, …3948, …5676, …7359`, per `website_status`), **2 are
   already present** (`…7717` published, `…0527` dirty draft) → **13 are the runnable batch**. 13 +
@@ -25,7 +25,7 @@ path (incl. git workflow) from here to release. DoD checkboxes stay authoritativ
   publish. **This is Step 3 below; media Step 1 is done.**
 - `08713195000527` — **RESOLVED 2026-07-28: republished cleanly** (`run_execute --revive`, copy
   generated in-session first) and now live nl+fr as the 10th GTIN. Pages 1447/1448 are `publish`,
-  GS1 re-enabled. It was held for *missing generated copy*, not a blank feed.
+  GS1 re-enabled. It was held for *missing generated content*, not a blank feed.
 - Client is **done mapping**; the ~140 unmapped video rows are left to the client. A **GTIN-format bug**
   (the mapping is 13-digit, the pipeline 14-digit) is fixed via `canon_gtin` (zfill-14).
 - **Git:** media landed via **PR #7** + a content-slug/docs PR; the pilot-allowlist + this handoff
@@ -41,9 +41,9 @@ path (incl. git workflow) from here to release. DoD checkboxes stay authoritativ
 - **GS1 v2 has no DELETE.** `retract` only disables (`isEnabled:false`); the record persists forever.
   Register only GTINs you're committed to. WP pages are fully reversible (draft/delete).
 - **Production, live site.** `clients.yml` GS1 `environment: production` (account `8719965024137`); WP
-  `post_status: publish` on `www.noviplast.nl` (no separate staging). Safety = GTIN choice + dry-run +
+  `post_status: publish` on `www.democlient.nl` (no separate staging). Safety = GTIN choice + dry-run +
   review, not environment isolation.
-- **Env:** `set -a; source .env; set +a`. `NOVIPLAST_WP_APP_PASS` must stay **single-quoted** (spaces).
+- **Env:** `set -a; source .env; set +a`. `DEMOCLIENT_WP_APP_PASS` must stay **single-quoted** (spaces).
 - **Single QR → nl default; no single QR robustly routes by language** (resolver 404s on unsupported
   `Accept-Language` with `?linkType=`). Decide fr-QR strategy in Phase 9 finish (see page-adapter doc).
 
@@ -73,9 +73,9 @@ gates → commit → push → PR → merge → sync `main` → delete the branch
   **content-addressed slug** (`{base}-{sha12}`) after a live idempotency bug (see §7 / §12).
 - **PROVEN LIVE** on `08713195007717` (nl 1449 / fr 1450): image + correct video (Hydro Jet) render on
   both; re-runs reuse the same 4 attachments. §12 boxes **2 and 4 checked**.
-- **OPEN (boxes 1, 3):** the name→GTIN mapping is drafted at `input/noviplast/videos/mapping.yml` (166
+- **OPEN (boxes 1, 3):** the name→GTIN mapping is drafted at `input/democlient/videos/mapping.yml` (166
   files; 26 strong pre-fills + `…7717` confirmed) but needs **client sign-off** on the rest; then
-  `build_video_map noviplast --check` must exit 0. Watch: `Seal Strip.mpg` is 0 bytes (re-copy);
+  `build_video_map democlient --check` must exit 0. Watch: `Seal Strip.mpg` is 0 bytes (re-copy);
   filenames are **English marketing names**, mostly not in the feed, so most rows are a human call.
 - **WP-side (operator):** added `register_post_meta('attachment','content_sha256', …)` to the
   "expose CPT to REST" snippet (now optional — dedup no longer needs it; see §7).
@@ -96,15 +96,15 @@ gates → commit → push → PR → merge → sync `main` → delete the branch
   off-menu-reply branch, retry `yes` path, missing-field prompt §10.6.5.
 
 ### Step 3 — Finish Phase 9: publish the 13-GTIN batch — **THE ACTIVE STEP**
-The pilot-gate has already scoped the runnable batch. `run_plan noviplast` writes the 13 GTINs (26
-rows) to `output/noviplast/plan.json`. Readiness (checked 2026-07-26): all 13 have title + image +
-video (both langs); **none have generated copy yet** — that is the blocker.
-1. **Generate copy for the 13** — in-session `content-generator` (no API key). They are
+The pilot-gate has already scoped the runnable batch. `run_plan democlient` writes the 13 GTINs (26
+rows) to `output/democlient/plan.json`. Readiness (checked 2026-07-26): all 13 have title + image +
+video (both langs); **none have generated content yet** — that is the blocker.
+1. **Generate content for the 13** — in-session `content-generator` (no API key). They are
    `generate`-mode, so the LLM writes tagline + **Eigenschappen** bullets from the marketing message +
    net content + dims/material (Technische details stay deterministic). Write `generation_results.json`.
 2. **Review Gate #1** — a human/client approves each product's tagline + bullets (live marketing copy).
-3. `run_generate noviplast --ingest` → `run_plan noviplast` (merges copy). Re-check readiness — all green.
-4. **Dry-run:** `run_execute noviplast --plan <13-batch> --dry-run` (26 rows, nothing blocked).
+3. `run_generate democlient --ingest` → `run_plan democlient` (merges copy). Re-check readiness — all green.
+4. **Dry-run:** `run_execute democlient --plan <13-batch> --dry-run` (26 rows, nothing blocked).
 5. **Publish staged (LIVE, per-wave operator go-ahead):** a first wave of 2–3, fully verified, then the
    rest. Each sets page (title + copy + image + video), links nl/fr, GS1 record, QR. The pilot-gate
    guarantees no non-mapped GTIN is written.
@@ -139,23 +139,23 @@ Version bump (`pyproject.toml`, `package.json`); populate `CHANGELOG.md`; push g
 MCP registry entry; draft announcement. Tick §12 Phase 11.
 
 ## One-GTIN / batch run mechanics (reusable)
-1. Ensure generated copy exists: for `tighten`-mode GTINs (attr 1067 present) faithfully shorten
+1. Ensure generated content exists: for `tighten`-mode GTINs (attr 1067 present) faithfully shorten
    `candidates`; for `generate` mode write from 1083 + context. Write `generation_results.json` (echo each
-   `input_fingerprint`), `run_generate noviplast --ingest`, then re-run `run_plan noviplast` so
+   `input_fingerprint`), `run_generate democlient --ingest`, then re-run `run_plan democlient` so
    `generated_tagline`/`generated_description` merge into `plan.json`.
-2. Slice the wanted rows from `output/noviplast/plan.json` into a minimal Plan
+2. Slice the wanted rows from `output/democlient/plan.json` into a minimal Plan
    (`{client_id, generated_at, total, counts, rows}`) and run
-   `run_execute noviplast --plan <file>` (treats every row as confirmed; add
+   `run_execute democlient --plan <file>` (treats every row as confirmed; add
    `--i-understand-production` for a live prod run — it is refused without it) — or drive it via
    flow-orchestrator once Phase 9.8 is validated. `--dry-run` previews with no writes.
 3. Verify render + resolution (see invariants). Rollback if wrong: `set_page_status(draft)`/`delete_page`
    + `gs1.retract`.
 
 ## Pointers
-- Page model / WPML / write traps / QR-language: [`noviplast-page-adapter.md`](noviplast-page-adapter.md).
-- Generator contract / voice: [`noviplast-generator-spec.md`](noviplast-generator-spec.md),
-  `prompts/noviplast/generation.v1.md`, `.claude/skills/content-generator/SKILL.md`.
+- Page model / WPML / write traps / QR-language: [`democlient-page-adapter.md`](democlient-page-adapter.md).
+- Generator contract / voice: [`democlient-generator-spec.md`](democlient-generator-spec.md),
+  `prompts/democlient/generation.v1.md`, `.claude/skills/content-generator/SKILL.md`.
 - Operator flow: `.claude/skills/flow-orchestrator/SKILL.md`.
-- **What's live:** [`noviplast-live-log.md`](noviplast-live-log.md) — committed audit trail of every
-  page/GS1 record published to the live site (machine source: gitignored `output/noviplast/state.json`).
+- **What's live:** `{client_id}-live-log.md` (local-only, gitignored) — audit trail of every
+  page/GS1 record published to the live site (machine source: gitignored `output/democlient/state.json`).
 - Auto-memory: `phase9-resolution-proven.md` (this pilot's live state + gotchas).

@@ -149,7 +149,7 @@ class WordPressConfig(BaseModel):
     #: Path to the site-side WPML helper route (``multilingual_plugin: wpml`` only). WPML has
     #: no core REST route for language assignment or translation linking, so each site hosts a
     #: small helper; the namespace is per-site, hence config rather than a constant. See
-    #: ``lib.multilingual.WPMLAdapter`` and ``docs/clients/noviplast-page-adapter.md`` §7.
+    #: ``lib.multilingual.WPMLAdapter`` and ``docs/clients/democlient-page-adapter.md`` §7.
     wpml_helper_path: str = "/wp-json/gs1dl/v1/translations"
     default_language: str = "nl"
     languages: list[str] = Field(default_factory=lambda: ["nl"])
@@ -219,7 +219,7 @@ class WebsiteStatusConfig(BaseModel):
     which products are candidates for page/QR creation — eligible when the GTIN is
     already in GS1 (its resolver record exists) and not yet on the website. Columns
     are named here so a client can relabel them without code changes; defaults match
-    the Noviplast file.
+    the Democlient file.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -236,7 +236,7 @@ class CategoryConfig(BaseModel):
 
     Client-owned, signed-off data that is *not* derivable from the feed: GPC bricks span
     marketing categories and a client's own scheme is not purely semantic (see
-    ``docs/clients/noviplast-page-adapter.md`` §5.7). ``terms`` is the closed set of allowed
+    ``docs/clients/democlient-page-adapter.md`` §5.7). ``terms`` is the closed set of allowed
     category terms; ``brick_category_map`` maps a GPC brick code to one of them; ``overrides``
     resolves bricks that span categories, per GTIN, and win over the brick map.
 

@@ -10,7 +10,7 @@ Open-source tool die Nederlandse leveranciers van GS1 Data Source Excel-export �
 
 **Status:** klaar om te bouwen. Alle blokkerende vragen aan GS1 NL zijn beantwoord.
 
-**Pilotklant:** Noviplast (custom post type `noviplast`, Polylang, NL + FR).
+**Pilotklant:** Democlient (custom post type `democlient`, Polylang, NL + FR).
 
 ---
 
@@ -27,8 +27,8 @@ Open-source tool die Nederlandse leveranciers van GS1 Data Source Excel-export �
 
 ### Credentials (buiten deze notitie houden)
 - GS1 NL Digital Link API keys (test + productie) → in `~/code/gs1-digital-link-orchestrator/.env`
-- WordPress application password Noviplast staging → idem
-- MyGS1 login voor Noviplast → password manager
+- WordPress application password Democlient staging → idem
+- MyGS1 login voor Democlient → password manager
 
 ---
 
@@ -39,7 +39,7 @@ Open-source tool die Nederlandse leveranciers van GS1 Data Source Excel-export �
 - MijnGS1 login: https://mijn-v2.gs1.nl
 - GS1 NL developer portal (acceptance): https://gs1nl-api-acc-developer.gs1.nl/
 - Kennisbank "Aan de slag met API's": https://www.gs1.nl/kennisbank/data-services/aan-de-slag-met-api-s/
-- Noviplast productie: https://www.noviplast.nl
+- Democlient productie: https://www.democlient.nl
 
 ---
 
@@ -111,7 +111,7 @@ Elke volgende sessie: verwijs naar de relevante fase in `PROJECT_HANDOVER.md` §
 
 1. **Fase 1 — Repo skeleton** (deze eerste prompt)
 2. **Fase 2 — GS1 Digital Link client + MCP** — vergt eerst de fixtures uit `IMPLEMENTATION_SPEC.md` §13.2 (curl commando's uitvoeren tegen test-API)
-3. **Fase 3 — Excel parser + records** — vergt eerst een echte MyGS1-export van Noviplast per §13.1
+3. **Fase 3 — Excel parser + records** — vergt eerst een echte MyGS1-export van Democlient per §13.1
 4. **Fase 4 — WordPress client + MCP** — vergt staging WP toegang per §13.3
 5. **Fase 5 — QR + templates**
 6. **Fase 6 — lib, scripts, state**
@@ -123,9 +123,9 @@ Elke volgende sessie: verwijs naar de relevante fase in `PROJECT_HANDOVER.md` §
 
 ## Data die nog verzameld moet worden (§13 IMPLEMENTATION_SPEC)
 
-- [ ] Echte MyGS1 Excel-export van Noviplast → `input/noviplast/products.xlsx` (blokkeert Fase 3)
+- [ ] Echte MyGS1 Excel-export van Democlient → `input/democlient/products.xlsx` (blokkeert Fase 3)
 - [ ] Vijf curl-responses van de Digital Link API → `tests/fixtures/gs1_api/` (blokkeert Fase 2 afronding)
-- [ ] Staging WordPress voor Noviplast met application password → env vars (blokkeert Fase 4)
+- [ ] Staging WordPress voor Democlient met application password → env vars (blokkeert Fase 4)
 
 ## Prompts voor volgende fases (template)
 
@@ -148,7 +148,7 @@ Start when ready.
 
 ## Gerelateerde notities
 
-- [[Noviplast — klant context]] (nog aan te maken — bevat GLN, product-scope, contactpersoon)
+- [[Democlient — klant context]] (nog aan te maken — bevat GLN, product-scope, contactpersoon)
 - [[GS1 NL contact log]] (nog aan te maken — chronologisch overzicht van contactmomenten met GS1 NL)
 - [[WordPress patterns — custom post types + Polylang]] (nog aan te maken — herbruikbaar patroon voor toekomstige klanten)
 

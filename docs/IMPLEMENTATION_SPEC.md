@@ -262,10 +262,10 @@ Supported target paths:
 - **Per-language**: `product_name.{lang}`, `description_short.{lang}`, `description_long.{lang}`
 - **Free-form**: `extras.{name}`
 
-Example for Noviplast (NL + FR):
+Example for Democlient (NL + FR):
 ```yaml
 export:
-  path: "./input/noviplast/products.xlsx"
+  path: "./input/democlient/products.xlsx"
   column_map:
     "GTIN":                        gtin
     "Merk":                        brand
@@ -518,7 +518,7 @@ def _auth_header(self) -> dict[str, str]:
 
 `MultilingualAdapter` base with `link_translations(wp, translations: dict[str, int])`. Concrete: `PolylangAdapter` (uses `/wp-json/pll/v1/` endpoints), `WPMLAdapter`, `NoOpAdapter` for `multilingual_plugin: none`. Built by `make_adapter(plugin, *, wpml_helper_path, source_language)`.
 
-> **`WPMLAdapter` is implemented and in production — this section previously described it as a "stub raises `NotImplementedError`, v0.2". That was the plan; the pilot needed it, so it was built.** WPML publishes no core REST route for assigning a post's language or linking a translation group (both need its PHP API), so the adapter POSTs to a small **site-side helper** — a Code Snippet / mu-plugin — at `wordpress.wpml_helper_path` (default `/wp-json/gs1dl/v1/translations`; the pilot overrides it to `/wp-json/noviplast/v1/translations`). The route is deliberately shaped like Polylang's so both adapters stay symmetric:
+> **`WPMLAdapter` is implemented and in production — this section previously described it as a "stub raises `NotImplementedError`, v0.2". That was the plan; the pilot needed it, so it was built.** WPML publishes no core REST route for assigning a post's language or linking a translation group (both need its PHP API), so the adapter POSTs to a small **site-side helper** — a Code Snippet / mu-plugin — at `wordpress.wpml_helper_path` (default `/wp-json/gs1dl/v1/translations`; the pilot overrides it to `/wp-json/democlient/v1/translations`). The route is deliberately shaped like Polylang's so both adapters stay symmetric:
 >
 > ```
 > POST {helper_path}  {"translations": {"nl": 123, "fr": 456}, "source_language": "nl"}
@@ -527,7 +527,7 @@ def _auth_header(self) -> dict[str, str]:
 >
 > The helper reads `translations` back from WPML's own tables rather than echoing the request, and `_assert_linked` **verifies it matches what was sent**, raising `WordPressAPIError` (409) otherwise — so a silent no-op, the failure this integration is most prone to, surfaces as an error rather than as a page that looks published but is unreachable in its own language. `ConfigError` if `source_language` is absent from the linked set (WPML needs a source to hang the `trid` off), or if `wpml` is configured without both `wpml_helper_path` and `default_language`. Fewer than two languages is a no-op.
 >
-> **Plugin selection: an explicit config value beats detection, deliberately.** `wp_client._resolve_plugin` probes Polylang's `/wp-json/pll/v1/languages` then WPML's `/wp-json/wpml/v1`, but only *uses* the probe when config says `none`; a configured value wins and a mismatch merely warns. Letting a failed probe override a configured `wpml` would substitute `NoOpAdapter`, whose `link_translations` does nothing and raises nothing — every page would publish, report `ok`, and never be linked. Helper source and live verification: `docs/clients/noviplast-page-adapter.md` §7; operator-facing guide: `docs/wordpress-onboarding.md`.
+> **Plugin selection: an explicit config value beats detection, deliberately.** `wp_client._resolve_plugin` probes Polylang's `/wp-json/pll/v1/languages` then WPML's `/wp-json/wpml/v1`, but only *uses* the probe when config says `none`; a configured value wins and a mismatch merely warns. Letting a failed probe override a configured `wpml` would substitute `NoOpAdapter`, whose `link_translations` does nothing and raises nothing — every page would publish, report `ok`, and never be linked. Helper source and live verification: `docs/clients/democlient-page-adapter.md` §7; operator-facing guide: `docs/wordpress-onboarding.md`.
 
 ### 4.6 `lib/templates.py`
 
@@ -986,7 +986,7 @@ Style: **concise, business-like**. Not conversational. Verbose text creates fati
 After `run_plan.py`:
 
 ```
-Plan for noviplast (test env):
+Plan for democlient (test env):
   New:       38
   Unchanged:  7
   Changed:    2
@@ -1008,7 +1008,7 @@ Off-menu reply → "Please pick one of the listed options, or specify a filter (
 GTIN 8712345678905 (nl) — Cable Organiser Pro
 Changes:
   title:      "Cable Organiser" → "Cable Organiser Pro"
-  target_url: /noviplast/cable-organiser/ → /noviplast/cable-organiser-pro/
+  target_url: /democlient/cable-organiser/ → /democlient/cable-organiser-pro/
 
 [apply | skip | show-full-diff]
 ```
@@ -1028,7 +1028,7 @@ Not per-row. Per-row output → JSONL log.
 #### 10.6.4 Post-execute summary
 
 ```
-Run finished for noviplast (test env, 2026-05-27T14:32:11Z).
+Run finished for democlient (test env, 2026-05-27T14:32:11Z).
   Ok:       38
   Error:     2
   Skipped:   0
@@ -1037,8 +1037,8 @@ Errors:
   GTIN 8712345678912 (fr): WP 422 — invalid taxonomy term "outdoor_dier-fr" not found
   GTIN 8712345678919 (nl): image_url returned 404
 
-Log: output/noviplast/runs/20260527T143211Z.jsonl
-QR files: output/noviplast/qr/
+Log: output/democlient/runs/20260527T143211Z.jsonl
+QR files: output/democlient/qr/
 
 Retry the 2 failures? [yes | no | detail]
 ```
@@ -1063,7 +1063,7 @@ GTIN 8712345678905 is missing `product_name_fr` (required for language fr).
 #### 10.6.6 Language selection
 
 ```
-Client noviplast supports [nl, fr]. Which languages should this run cover?
+Client democlient supports [nl, fr]. Which languages should this run cover?
 [all | nl | fr | nl,fr]
 ```
 
@@ -1075,7 +1075,7 @@ Before every production run:
 
 ```
 About to execute against PRODUCTION environment (gs1nl-api.gs1.nl).
-This will make live changes to https://www.noviplast.nl.
+This will make live changes to https://www.democlient.nl.
 Continue?
 [confirm | switch-to-test | cancel]
 ```
@@ -1154,7 +1154,7 @@ tests/
 - [ ] `inspect_export.py` runs against pilot export, produces a suggested mapping
       (`gdsn_map` for GDSN exports, `column_map` for flat)
 - [ ] `parse_export.py {client}` produces `output/{client}/data/products.json` with zero
-      warnings (pilot: 127 Noviplast products, nl + fr)
+      warnings (pilot: 127 Democlient products, nl + fr)
 - [ ] Round-trip: `ProductRecord → JSON → ProductRecord` preserves all fields
 - [ ] Spec/schema/`clients.yml` document the GDSN format (§3.6); `lib/config.py` present
 
@@ -1186,9 +1186,9 @@ tests/
 > finalised as of Phase 8, 2026-07-19.) Tracked below as Phase 8's "Full re-run flow (plan → diff →
 > confirm → execute) in a fresh Claude Code session".
 
-### Page adapter (Noviplast pilot) — mapping, data quality, lifecycle
-Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered gate. Detail in
-`docs/clients/noviplast-page-adapter.md` §4/§8. Done 2026-07-17:
+### Page adapter (Democlient pilot) — mapping, data quality, lifecycle
+Cross-cuts Phases 6–9; it is Democlient-specific and does not fit one numbered gate. Detail in
+`docs/clients/democlient-page-adapter.md` §4/§8. Done 2026-07-17:
 - [x] Field mapping resolved *with the client* (field walk): title from **3301** (was 3318, which
       carried material/colour noise); the 1083 "tagline" mapping unwired — it is a generator *input*,
       never the tagline (exhaustive search: 34/36 live taglines are not in the feed). 3297/3318 kept
@@ -1206,7 +1206,7 @@ Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered 
       in-session `content-generator` skill and the headless `--backend api` (`lib/llm.py`, Sonnet
       5) — the `run_plan` merge, the wired `acf_map`, and `generated_issues.json`. Owns the 3301(+3332)
       title combination, the tagline = `usps[0]` (NOT 1083) choice, and the USP bullets. Design +
-      tracker: `docs/clients/noviplast-generator-spec.md`, `docs/ROADMAP.md`.
+      tracker: `docs/clients/democlient-generator-spec.md`, `docs/ROADMAP.md`.
 - [x] `net_content` H87 → functional-name decoding (2026-07-18) — `reference/measurement_units.json`
       (the datamodel's `MeasurementUnitCode_GDSN` picklist, 129 codes → nl/en/fr) + `lib/units.py`
       (`decode_net_content`), decoded per language at render time in `templates._build_context`.
@@ -1217,12 +1217,12 @@ Cross-cuts Phases 6–9; it is Noviplast-specific and does not fit one numbered 
 ### Phase 7.5 — GPC brick → category mapping
 Derive the product-category assignment from the **GS1 DIY sector datamodel**, since GPC bricks do
 not map 1:1 onto a client's marketing categories. **The operator supplies the DIY datamodel** at the
-start of the phase (like the export and control file). See `docs/clients/noviplast-page-adapter.md` §5.7.
+start of the phase (like the export and control file). See `docs/clients/democlient-page-adapter.md` §5.7.
 - [x] DIY datamodel supplied by the operator and parsed — operator supplied `GS1 Data Source
       Datamodel 3.1.36.xlsx` ("do-it-yourself, garden and pets"); `load_diy_datamodel` reads it (sheet
       `Bricks`, `Brick Code` / `NL Brick Title`), covering all 73 export bricks.
 - [x] Every GPC brick present in the client export maps to a category term — `build_brick_map
-      noviplast --check` is green (73 bricks, 0 unmapped).
+      democlient --check` is green (73 bricks, 0 unmapped).
 - [x] Bricks that span categories are resolved by a per-GTIN override list — brick `10003865`
       (Tuin Handgereedschap) → `tuin`, with `08713195003948` (Notenkraker) overridden to `keuken`.
 - [x] `brick_category_map` + overrides live in `clients.yml`, reviewed and signed off by the client —
@@ -1232,12 +1232,12 @@ start of the phase (like the export and control file). See `docs/clients/novipla
       than guess — all 73 planned rows carry a category, `category_issues.json` empty; assignment
       precedes hashing so a category change classifies CHANGED.
 
-> **Done 2026-07-18 (branch `noviplast-page-adapter`).** Tool layer: `CategoryConfig` + schema,
+> **Done 2026-07-18 (branch `democlient-page-adapter`).** Tool layer: `CategoryConfig` + schema,
 > `lib/categories.py` (resolver, coverage, DIY-datamodel parser, draft generator),
 > `scripts/build_brick_map.py`, and the `run_plan` wiring, all test-covered. The operator's DIY
 > datamodel then unblocked #1; the client's sign-off of the 73-brick map + nutcracker override
 > closed #2/#4. The signed-off map lives in the gitignored `clients.yml`; the reviewed source is
-> `output/noviplast/data/categories.proposed.yml`. The same DIY datamodel also supplied the unit
+> `output/democlient/data/categories.proposed.yml`. The same DIY datamodel also supplied the unit
 > picklist that closed the Phase 7 page-adapter `net_content` H87 decoding item (above).
 
 ### Phase 8 — Skills
@@ -1258,8 +1258,8 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > documentation wrapper over code that already works (`scripts/`, `lib/`, `mcps/`), grounded in the
 > real flags, output paths, and exit codes of what it wraps.
 >
-> The end-to-end chat flow was driven in a Claude Code session on the real Noviplast operator files
-> (`input/noviplast/products.xlsx` + `website_status.xlsx`): `parse_export` (127 products, 11
+> The end-to-end chat flow was driven in a Claude Code session on the real Democlient operator files
+> (`input/democlient/products.xlsx` + `website_status.xlsx`): `parse_export` (127 products, 11
 > warnings) → `run_generate --emit` (246 pending) → `content-generator` write + `--ingest` (review
 > gate 1) → `run_plan` (72 new, 2 held, 90 excluded — review gate 2) → confirm gate. Every §10.6
 > gate presented correctly. Each skill loads on its documented trigger phrase (all 6 phrases are
@@ -1273,7 +1273,7 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > helper endpoint + a real ACF page rendering), not here.
 
 ### Phase 9 — Pilot end-to-end
-- [x] ≥10 real products live on pilot WP staging → production _(10 live 2026-07-28: `…7717` + 8-GTIN batch + `…0527`; see `docs/clients/noviplast-live-log.md`)_
+- [x] ≥10 real products live on pilot WP staging → production _(10 live 2026-07-28: `…7717` + 8-GTIN batch + `…0527`; see the local-only `docs/clients/{client_id}-live-log.md`)_
 - [x] Every printed QR sample scans and resolves correctly _(all 10 resolve `GET id.gs1.org/01/<gtin>` → 307 → 200; physical phone-scan of a printed sample confirmed working 2026-07-28)_
 - [x] No manual corrections needed during the run _(both waves + the `…0527` republish ran 0-error; verification was read-only)_
 
@@ -1285,7 +1285,7 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > ≥10 is **paused by operator choice**; the boxes above stay unchecked until the batch runs. Two items
 > were split out for a real client-facing pilot: **media (Phase 9.5)** and the **fr-QR strategy** (one
 > QR resolves only to the nl default; no single QR robustly routes by language — see
-> `clients/noviplast-page-adapter.md`).
+> `clients/democlient-page-adapter.md`).
 
 ### Phase 9.5 — Media (images + video)
 - [ ] Product-name → GTIN mapping for the video files built and **client-confirmed** (per language)
@@ -1307,7 +1307,7 @@ start of the phase (like the export and control file). See `docs/clients/novipla
 > **Proven live 2026-07-20** on `08713195007717` (nl 1449 / fr 1450): image renders on both, its
 > correct video (Hydro Jet) renders in a `<video>` on both, GS1 still resolves — so boxes 2 and 4 are
 > checked, and box 3's mechanism is proven per-language. **Two live findings** (both in
-> `clients/noviplast-page-adapter.md` §7 now): the image ACF write-shape is an **attachment id** (not a
+> `clients/democlient-page-adapter.md` §7 now): the image ACF write-shape is an **attachment id** (not a
 > URL); and media re-runs were **not** idempotent until fixed — the `content_sha256` dedup meta is
 > silently dropped on attachments unless registered in REST, and stale attachments squatted the base
 > slug. Both are addressed by making the media slug **content-addressed** (`{base}-{sha12}`, PR after
@@ -1593,20 +1593,20 @@ Commit a `README.md` in `tests/fixtures/gs1_api/` documenting what each response
 3. Generate application password `gs1-orchestrator`
 4. Confirm custom post type registered (`/wp-json/wp/v2/types`)
 5. If missing: add `'show_in_rest' => true` to `register_post_type` in the theme's `functions.php` or a plugin
-6. Set `NOVIPLAST_WP_APP_PASS` env var
+6. Set `DEMOCLIENT_WP_APP_PASS` env var
 7. Verify types:
    ```bash
-   curl -u "automation-bot:$NOVIPLAST_WP_APP_PASS" \
-     https://staging.noviplast.nl/wp-json/wp/v2/types
+   curl -u "automation-bot:$DEMOCLIENT_WP_APP_PASS" \
+     https://staging.democlient.nl/wp-json/wp/v2/types
    ```
    Custom post type must appear
 8. Test create:
    ```bash
-   curl -u "automation-bot:$NOVIPLAST_WP_APP_PASS" \
+   curl -u "automation-bot:$DEMOCLIENT_WP_APP_PASS" \
      -H "Content-Type: application/json" \
      -X POST \
      -d '{"title": "Test", "status": "draft", "content": "test"}' \
-     https://staging.noviplast.nl/wp-json/wp/v2/{post_type}
+     https://staging.democlient.nl/wp-json/wp/v2/{post_type}
    ```
    Expect 201; note returned `id`; delete manually via admin
 
@@ -1647,4 +1647,4 @@ Commit a `README.md` in `tests/fixtures/gs1_api/` documenting what each response
 - [[PROJECT_HANDOVER]] — the "why" companion
 - [[PREPARATION]] — operator preparation checklist
 - [[OBSIDIAN_NOTE_content]] — hub note with all 11 phase prompts
-- [[Noviplast_2D]] — project hub
+- [[Democlient_2D]] — project hub

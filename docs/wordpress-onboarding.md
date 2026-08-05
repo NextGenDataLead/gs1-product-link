@@ -136,8 +136,8 @@ POST {wpml_helper_path}
 ```
 
 The default path is `/wp-json/gs1dl/v1/translations`; a client may override it (the pilot uses
-`/wp-json/noviplast/v1/translations`). Helper source and live verification are in
-`docs/clients/noviplast-page-adapter.md` §7.
+`/wp-json/democlient/v1/translations`). Helper source and live verification are in
+`docs/clients/democlient-page-adapter.md` §7.
 
 > **Silent failure #4 — the response is verified, not trusted.** The helper reads `translations` back
 > from WPML's own tables rather than echoing the request, and the adapter **asserts it matches what
@@ -255,5 +255,5 @@ publish it again. `run_execute --revive` is the deliberate opt-in to republish h
 
 - [`setup.md`](setup.md) · [`gs1-nl-onboarding.md`](gs1-nl-onboarding.md) · [`troubleshooting.md`](troubleshooting.md)
 - [`template-variables.md`](template-variables.md) — `acf_map` and templates in detail.
-- `docs/clients/noviplast-page-adapter.md` — the pilot's page model, WPML helper source, and write traps.
+- `docs/clients/democlient-page-adapter.md` — the pilot's page model, WPML helper source, and write traps.
 - `IMPLEMENTATION_SPEC.md` §4.4 (client shape), §4.5 (multilingual), §6.1–§6.2 (idempotency).

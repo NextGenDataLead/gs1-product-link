@@ -4,11 +4,11 @@
 piece) in a fresh session. Self-contained: read this, then the linked doc sections, and you have
 enough to scope without re-deriving. Written 2026-07-18.
 
-> After `/clear`: point me at this file (`docs/clients/noviplast-generator-handoff.md`). The
+> After `/clear`: point me at this file (`docs/clients/democlient-generator-handoff.md`). The
 > auto-loaded `MEMORY.md` also links it. Next intended step is **scoping** (a SPEC), not coding.
 
 > **UPDATE 2026-07-18 — scoping DONE.** The SPEC now lives at
-> `docs/clients/noviplast-generator-spec.md` (all §4/§6 open decisions settled: Sonnet 5, full
+> `docs/clients/democlient-generator-spec.md` (all §4/§6 open decisions settled: Sonnet 5, full
 > three-part description, separate `run_generate`, few-shot voice; 3332 confirmed 4/127 so title
 > combination is a trivial rule; dims 127/127 and material 75/127 need small `gdsn_extras` adds).
 > **Next step is coding commit 1** of that SPEC's list. This handoff remains useful background;
@@ -18,25 +18,25 @@ enough to scope without re-deriving. Written 2026-07-18.
 
 ## 0. Where the project is
 
-- **Branch `noviplast-page-adapter`** (pushed). Full suite green (**352 passed**, 2 skipped, 5
+- **Branch `democlient-page-adapter`** (pushed). Full suite green (**352 passed**, 2 skipped, 5
   staging-deselected); `ruff check` + `mypy --strict lib scripts` clean. `.venv/bin/python` runs
   everything; tests: `.venv/bin/python -m pytest -q`.
 - **Just completed (this session):**
   - **Phase 7.5 — GPC brick → category mapping: DONE**, all 5 DoD met. Operator supplied the GS1
-    DIY datamodel (`input/noviplast/GS1 Data Source Datamodel 3.1.36.xlsx`); client signed off the
+    DIY datamodel (`input/democlient/GS1 Data Source Datamodel 3.1.36.xlsx`); client signed off the
     73-brick map + 1 override in `clients.yml`. See `IMPLEMENTATION_SPEC.md` §12 Phase 7.5 and
-    `noviplast-page-adapter.md` §5.7.
+    `democlient-page-adapter.md` §5.7.
   - **`net_content` H87 decoding: DONE** (Phase 7 page-adapter item). `reference/
     measurement_units.json` + `lib/units.py` `decode_net_content` → "5 H87" renders "5 Stuk"/"5
     Pièce" per language, at render time in `templates._build_context`.
 - **The generator is the remaining critical-path item.** It is **not a numbered phase** — it is a
-  page-adapter track item (`noviplast-page-adapter.md` §4.1, §4.2, §5, §6, §8). Not started.
+  page-adapter track item (`democlient-page-adapter.md` §4.1, §4.2, §5, §6, §8). Not started.
 
 ---
 
 ## 1. What the generator actually owns (grounded in the field walk)
 
-Its real scope is **smaller than "write the description"** (`noviplast-page-adapter.md` §4.1):
+Its real scope is **smaller than "write the description"** (`democlient-page-adapter.md` §4.1):
 everything else is assembly from parsed data. Four things:
 
 1. **Title combination** — the WP **post title** comes from **attr 3301** (Functional Name) today.
@@ -59,14 +59,14 @@ everything else is assembly from parsed data. Four things:
   "5 H87" → "5 Stuk"/"5 Pièce") + dimensions/material. 125/127 have net_content.
 - Title base (3301), images, video, category (7.5), GS1 links, QR.
 
-### `product_description` structure (one HTML blob, `noviplast-page-adapter.md` §4.1)
+### `product_description` structure (one HTML blob, `democlient-page-adapter.md` §4.1)
 ```html
 <p><strong>{tagline}</strong></p>                        <!-- = product_title, one value 3× -->
 <p><strong>Eigenschappen</strong><br />• … • …</p>        <!-- generated -->
 <p><strong>Technische details</strong><br />• …</p>       <!-- deterministic (net_content etc.) -->
 ```
 
-### ACF field targets (`noviplast-page-adapter.md` §3) — `wordpress.acf_map` is currently `{}`
+### ACF field targets (`democlient-page-adapter.md` §3) — `wordpress.acf_map` is currently `{}`
 - `product_title` ← tagline
 - `product_header_video_text` ← tagline (same value)
 - `product_description` ← the three-part HTML blob above
@@ -105,11 +105,11 @@ everything else is assembly from parsed data. Four things:
 - **Deterministic cache keyed on the source inputs.** Generate **once**, cache, so re-runs don't
   flip the content hash / re-bill the LLM. Cache location + format = open decision (§6).
 - **Human-approval gate.** It is marketing copy on a live site — every generated block is reviewed
-  before publish (flow-orchestrator confirmation + draft-first). Never auto-publish generated copy.
+  before publish (flow-orchestrator confirmation + draft-first). Never auto-publish generated content.
 - **Report every generated value** to `source_issues.json` with its source-language input — a
   generated value is a datapool gap with a suggested fill (records.py:202-204). Success = that file
   shrinking as the feed improves.
-- **E18 must change meaning** (`noviplast-page-adapter.md` §8): a missing `product_name.{lang}` today
+- **E18 must change meaning** (`democlient-page-adapter.md` §8): a missing `product_name.{lang}` today
   is **skipped**; with the generator it should be **planned and flagged for generation**, not dropped.
   (Currently `run_plan` logs `SKIPPED … missing product_name.fr` — 1 fr row in the pilot.)
 - **Bilingual:** generate both nl and fr; fr only where the feed lacks it. WPML write path already
@@ -138,14 +138,14 @@ everything else is assembly from parsed data. Four things:
 
 ## 5. Key files / entry points
 
-- Design: `docs/clients/noviplast-page-adapter.md` §3 (ACF), §3.1 (write traps), §4.1 (three-part
+- Design: `docs/clients/democlient-page-adapter.md` §3 (ACF), §3.1 (write traps), §4.1 (three-part
   description), §4.2 (1083-is-not-the-tagline), §5 (items 3 Title, 4 Tagline, 5 Eigenschappen), §6
   (open decisions), §8 (tool-side work list). `IMPLEMENTATION_SPEC.md` §1 (conventions), §12.
 - Code: `lib/gdsn.py`, `lib/records.py`, `lib/acf.py`, `lib/wp_client.py`, `lib/units.py`,
   `lib/templates.py`, `lib/state.py`, `scripts/run_plan.py`, `scripts/run_execute.py`,
   `scripts/parse_export.py`. Config: `clients.example.yml` (durable) / `clients.yml` (gitignored real).
-- Data: `input/noviplast/products.xlsx` (127-product GDSN export),
-  `output/noviplast/data/products.json` (parsed), the DIY datamodel xlsx.
+- Data: `input/democlient/products.xlsx` (127-product GDSN export),
+  `output/democlient/data/products.json` (parsed), the DIY datamodel xlsx.
 
 ---
 

@@ -8,7 +8,7 @@ description: "Point a client's GTINs at their product pages in the GS1 NL resolv
 ## When to load
 
 Trigger phrases: **"set resolver targets for {client}"**, **"update the Digital Link for {client}"**
-(§10.3) — e.g. "set resolver targets for noviplast". Load this skill to point a client's GTINs at
+(§10.3) — e.g. "set resolver targets for democlient". Load this skill to point a client's GTINs at
 their product pages in the GS1 NL resolver: build each Digital Link entry from the `ProductRecord`
 plus `clients.yml`, and upsert it with `lib/gs1_dl_client.py`. In the create-only pilot this is
 normally driven by the `flow-orchestrator` skill through `run_execute` (`/gs1-links` is the

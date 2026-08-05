@@ -33,7 +33,7 @@ already run. Two things worth budgeting for:
 - **Upload limits.** You may need `upload_max_filesize` / `post_max_size` raised, which on some managed
   hosts means a plan change.
 
-## Copy generation — the only variable cost
+## Content generation — the only variable cost
 
 This is the one place the tool can spend money, and it is **optional in two senses**: only clients with
 `generator.enabled: true` use it at all, and even then the default backend is free.
@@ -103,7 +103,7 @@ product data.
 
 ### Three things that keep it low
 
-- **The cache.** Generated copy is cached and keyed by an input fingerprint, so re-running does **not**
+- **The cache.** Generated content is cached and keyed by an input fingerprint, so re-running does **not**
   re-pay. Only units whose source data actually changed are regenerated. Publishing 20 GTINs in waves
   costs the same as publishing them all at once.
 - **Held rows cost nothing.** A GTIN with no usable source input is skipped from the plan (E21) rather
@@ -117,7 +117,7 @@ product data.
 
 - **QR rendering** — local, `qrcode[pil]`, free at any volume.
 - **Re-runs** — idempotent. Re-running converges on the same state; it does not duplicate pages,
-  attachments, or GS1 records, and it does not re-pay for generated copy.
+  attachments, or GS1 records, and it does not re-pay for generated content.
 - **Dry runs** — `--dry-run` performs no writes and makes no billable calls.
 
 ## Summary
@@ -128,12 +128,12 @@ product data.
 | GS1 Digital Link API | Free |
 | GS1 Data Source contract | Already paid |
 | WordPress | Existing hosting |
-| Copy generation, in-session | Free — no API key |
-| Copy generation, `--backend api` | A few dollars per full catalogue |
+| Content generation, in-session | Free — no API key |
+| Content generation, `--backend api` | A few dollars per full catalogue |
 | QR rendering | Free |
 
 ## See also
 
 - [`setup.md`](setup.md) — the pipeline.
-- [`template-variables.md`](template-variables.md#generated-copy) — how generated copy is produced.
+- [`template-variables.md`](template-variables.md#generated-content) — how generated content is produced.
 - [`gs1-nl-onboarding.md`](gs1-nl-onboarding.md) — the contracts you need.

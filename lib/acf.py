@@ -1,16 +1,16 @@
 """Assemble the ACF field payload for one (product, language).
 
 Some WordPress themes render a page from **ACF fields** rather than ``post_content`` —
-Noviplast's Oxygen template is one, and its ``post_content`` is empty on every published
+Democlient's Oxygen template is one, and its ``post_content`` is empty on every published
 page. For those clients the Phase 5 model (render HTML into the body) produces a page that
 returns 200, passes ``verify_url``, reports ``ok``, and shows the customer nothing. This
 module supplies what such a client needs instead: a mapping from ACF field name to the
 :class:`~lib.records.ProductRecord` field that feeds it.
 
 The mapping lives in ``clients.yml`` (``wordpress.acf_map``), not here: field names are the
-client's, and a tool that hardcodes ``product_title`` is a tool that only serves Noviplast.
+client's, and a tool that hardcodes ``product_title`` is a tool that only serves Democlient.
 
-See ``docs/clients/noviplast-page-adapter.md`` §3–§4.1 for how the fields were established
+See ``docs/clients/democlient-page-adapter.md`` §3–§4.1 for how the fields were established
 against the live site.
 """
 
@@ -57,7 +57,7 @@ def build_acf_payload(
         language: The page's language; selects the value from localised source fields.
         acf_map: ``{acf_field_name: product_record_field}``, from
             ``clients.yml`` ``wordpress.acf_map``. Reach into extras with
-            ``extras.{name}``. Several ACF fields may share one source — Noviplast's
+            ``extras.{name}``. Several ACF fields may share one source — Democlient's
             tagline feeds both ``product_title`` and ``product_header_video_text``.
 
     Returns:

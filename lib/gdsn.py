@@ -2,7 +2,7 @@
 
 This is a spec extension (see ``docs/IMPLEMENTATION_SPEC.md`` §3 notes). Where
 ``lib.records.parse_excel_row`` handles a flat single-sheet export, this module
-handles the rich multi-worksheet GDSN datapool export the pilot client (Noviplast)
+handles the rich multi-worksheet GDSN datapool export the pilot client (Democlient)
 actually produces.
 
 Structure of a GDSN export:
@@ -609,7 +609,7 @@ def _check_length(value: str, limit: int, where: _Where, acc: _Accumulator) -> s
     datapool is authoritative, and a value silently cut here stays too long in MyGS1 and
     returns on the next export — while the page shows a sentence severed mid-word.
 
-    The case this exists for: Noviplast's tagline is mapped to GS1 attr 1083
+    The case this exists for: Democlient's tagline is mapped to GS1 attr 1083
     *TradeItemMarketingMessage*, which is free-text marketing copy **by definition** and is
     frequently a paragraph (fr median 150 chars, max 1433) where the page's tagline slot
     wants one line (~31 on live pages). That is a mapping mismatch, not a typo, so the fix

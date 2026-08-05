@@ -9,9 +9,21 @@ clients.yml
 credentials.json
 secrets.*
 
+# === Client audit trail (local-only) ===
+# The live-publish log records the real published URLs, WordPress page ids and GTINs.
+# Those identifiers have to stay accurate to be worth keeping, so the file is not
+# committed to a public repository. It lives beside its client's other docs and is
+# reconstructable from output/{client_id}/state.json, which is the machine source of truth.
+docs/clients/*-live-log.md
+
 # === Tool inputs/outputs ===
-input/
-output/
+# The directories are tracked (via .gitkeep) so a fresh clone has somewhere to put
+# an export and somewhere to write results. Everything inside them stays ignored:
+# input/ holds client exports and media, output/ holds state.json, plans and run logs.
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
 
 # === Python ===
 __pycache__/

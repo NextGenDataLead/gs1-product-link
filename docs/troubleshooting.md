@@ -58,8 +58,8 @@ contract that issued your GTINs is a *different* contract. Note the asymmetry: o
 WordPress issues application passwords as six space-separated 4-character groups. In `.env`:
 
 ```bash
-NOVIPLAST_WP_APP_PASS='abcd EFGH ijkl MNOP qrst UVWX'   # correct — single-quoted
-NOVIPLAST_WP_APP_PASS=abcd EFGH ijkl MNOP qrst UVWX     # BROKEN — silently empty
+DEMOCLIENT_WP_APP_PASS='abcd EFGH ijkl MNOP qrst UVWX'   # correct — single-quoted
+DEMOCLIENT_WP_APP_PASS=abcd EFGH ijkl MNOP qrst UVWX     # BROKEN — silently empty
 ```
 
 Unquoted, `source .env` stops at the first space and the variable loads as `abcd`. The symptom is a
@@ -103,11 +103,11 @@ mid-publish. Use it after editing `.env`, after a rotation, or whenever a `401` 
 ```bash
 python - <<'PY'
 import os, httpx
-os.environ.pop("NOVIPLAST_WP_APP_PASS", None)   # ignore any stale exported value
+os.environ.pop("DEMOCLIENT_WP_APP_PASS", None)   # ignore any stale exported value
 from lib.env import load_env; load_env()        # read .env only
-pw = os.environ["NOVIPLAST_WP_APP_PASS"]
+pw = os.environ["DEMOCLIENT_WP_APP_PASS"]
 print("groups:", len(pw.split()))               # expect 6
-r = httpx.get("https://www.noviplast.nl/wp-json/wp/v2/users/me?context=edit",
+r = httpx.get("https://www.democlient.nl/wp-json/wp/v2/users/me?context=edit",
               auth=("automation-bot", pw), timeout=20, follow_redirects=True)
 print("HTTP", r.status_code)
 d = r.json() if r.status_code == 200 else {}
@@ -168,7 +168,7 @@ GS1 records. Either pass the flag deliberately, add `--dry-run`, or switch the c
 
 ```
 gtin 08713195007359 failed its per-product writes: RuntimeError('target URL for language nl
-does not serve: https://www.noviplast.nl/noviplast/p-08713195007359/ (...) — refusing to
+does not serve: https://www.democlient.nl/democlient/p-08713195007359/ (...) — refusing to
 point a permanent GS1 record at it')
 ```
 

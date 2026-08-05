@@ -36,9 +36,9 @@ defaults:
 
 clients:
 
-  # Example — Noviplast: custom post type, Polylang, NL + FR
-  noviplast:
-    display_name: "Noviplast B.V."
+  # Example — Democlient: custom post type, Polylang, NL + FR
+  democlient:
+    display_name: "Democlient B.V."
     enabled: true
 
     gs1:
@@ -47,17 +47,17 @@ clients:
       account_number_test: "8720796420906"
       account_number_production: "8712345000003"
       # OAuth2 client credentials per environment (issued via MyGS1 / dev portal)
-      client_id_env_test: NOVIPLAST_GS1_CLIENT_SANDBOX_ID
-      client_secret_env_test: NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET
-      client_id_env_production: NOVIPLAST_GS1_CLIENT_ID
-      client_secret_env_production: NOVIPLAST_GS1_CLIENT_SECRET
+      client_id_env_test: DEMOCLIENT_GS1_CLIENT_SANDBOX_ID
+      client_secret_env_test: DEMOCLIENT_GS1_CLIENT_SANDBOX_SECRET
+      client_id_env_production: DEMOCLIENT_GS1_CLIENT_ID
+      client_secret_env_production: DEMOCLIENT_GS1_CLIENT_SECRET
 
     export:
       # 'gdsn' = multi-sheet GS1 Data Source / GDSN datapool export (one worksheet
       # per module, keyed on Gtin + TargetMarketCountryCode). 'flat' = single-sheet
       # MyGS1 article list (see column_map/extras_columns). See IMPLEMENTATION_SPEC §3.
       format: gdsn
-      path: "./input/noviplast/products.xlsx"
+      path: "./input/democlient/products.xlsx"
       # Markets in the order to consult them (highest priority first). Every market row
       # carries every language, so which market *has* a value varies by product — the tool
       # takes the first non-blank value per product/field/language walking this order.
@@ -67,11 +67,11 @@ clients:
       market_priority: ["528", "056", "276", "442"]   # NL, BE, DE, LU
       # ProductRecord field → GDSN attribute source. `attribute` is the GDSN attribute
       # number (e.g. "3297") or a path segment name (e.g. GpcCategoryCode). Discover
-      # these by running: python -m scripts.inspect_export input/noviplast/products.xlsx
+      # these by running: python -m scripts.inspect_export input/democlient/products.xlsx
       gdsn_map:
         # 3301 Functional Name = the page title (big name). The clean functional name
         # ("voegstrijker"), matching the live "Cable Organiser" style — NOT 3318, which
-        # carries material+colour noise ("Noviplast Voegstrijker kunststof oranje"), and
+        # carries material+colour noise ("Democlient Voegstrijker kunststof oranje"), and
         # NOT 3297, which is DescriptionShort, an internal logistics string. Verified live
         # 2026-07-17. No strip_prefix — 3301 has no brand prefix. See docs §4.1.
         # DEFERRED to the generator: prefix/suffix with 3332 (Product variation) — blind
@@ -104,7 +104,7 @@ clients:
         # "Noviplat"), which the report may check once its scope widens past published
         # fields.
         marketing_name:    { sheet: TradeItemDescription, attribute: "3318", localised: true }
-        # --- Content-generator inputs (see docs/clients/noviplast-generator-spec.md) ---
+        # --- Content-generator inputs (see docs/clients/democlient-generator-spec.md) ---
         # 3332 Product variation — the intelligent title suffix. Near-empty (4/127), so the
         # generator's title step is a deterministic dedup rule, not LLM work. Localised, but
         # only the default-language token is carried (extras collapse to one language).
@@ -121,23 +121,23 @@ clients:
         material:          { sheet: BrickGPCCommercialData,  attribute: "Material" }
 
     wordpress:
-      site_url: "https://www.noviplast.nl"
+      site_url: "https://www.democlient.nl"
       username: "automation-bot"
-      app_password_env: NOVIPLAST_WP_APP_PASS
-      post_type: noviplast
+      app_password_env: DEMOCLIENT_WP_APP_PASS
+      post_type: democlient
       multilingual_plugin: wpml
       # WPML has no core REST route for language assignment or translation linking,
       # so the site hosts a small helper (Code Snippet / mu-plugin). Its namespace is
-      # per-site — see docs/clients/noviplast-page-adapter.md §7 for the source.
-      wpml_helper_path: "/wp-json/noviplast/v1/translations"
+      # per-site — see docs/clients/democlient-page-adapter.md §7 for the source.
+      wpml_helper_path: "/wp-json/democlient/v1/translations"
       languages: [nl, fr]
       default_language: nl
       image_handling: url_in_export
       taxonomies:
-        noviplast-categories:
+        democlient-categories:
           map_from_column: "category"
       # The Oxygen template renders from ACF, not post_content, so these fields *are* the
-      # page (docs/clients/noviplast-page-adapter.md §3). Field names are the client's;
+      # page (docs/clients/democlient-page-adapter.md §3). Field names are the client's;
       # they live here rather than in lib/.
       #
       # Wired to the GENERATOR's fields. The tagline (usps[0]) feeds both the sentence below
@@ -156,7 +156,7 @@ clients:
       target_url_pattern: "{site_url}/{lang_segment}{post_type}/{slug}/"
 
     template:
-      override_dir: templates/noviplast
+      override_dir: templates/democlient
       files:
         nl: product.nl.html
         fr: product.fr.html
@@ -172,9 +172,9 @@ clients:
 
     # Create-only gate (not in the datasource export): a product is a candidate for
     # page/QR creation only when it is already in GS1 and not yet on the website.
-    # Column names are relabelable; these defaults match the Noviplast control file.
+    # Column names are relabelable; these defaults match the Democlient control file.
     website_status:
-      path: "./input/noviplast/website_status.xlsx"
+      path: "./input/democlient/website_status.xlsx"
       gtin_column: "Barcode"
       on_website_column: "Momenteel op Website"
       in_gs1_column: "Al in Gs1"
@@ -188,7 +188,7 @@ clients:
     # frozen voice template at prompts/{id}/generation.{prompt_version}.md and is part of the cache
     # fingerprint, so bumping it invalidates cached copy. Omit this whole block to leave the
     # generator un-configured (the API backend then refuses to run). See
-    # docs/clients/noviplast-generator-spec.md.
+    # docs/clients/democlient-generator-spec.md.
     generator:
       enabled: true
       model: claude-sonnet-5      # prefer a pinned snapshot id in production
@@ -202,9 +202,9 @@ clients:
     # (10003865 holds garden tools AND a nutcracker) and the client scheme is not semantic
     # (Power Splash, a shower head, is filed under keuken). So a brick_category_map plus a
     # per-GTIN override list, built from the GS1 DIY sector datamodel and signed off by the
-    # client. Draft one with: python -m scripts.build_brick_map noviplast --datamodel <file>
+    # client. Draft one with: python -m scripts.build_brick_map democlient --datamodel <file>
     # --code-column <c> --category-column <c>. Unmapped bricks warn and leave the category
-    # unset — never guess. See docs/clients/noviplast-page-adapter.md §5.7.
+    # unset — never guess. See docs/clients/democlient-page-adapter.md §5.7.
     #
     # The VALUES below are illustrative placeholders, not the signed-off map. Replace them.
     categories:
@@ -236,6 +236,6 @@ clients:
       # ffmpeg_bin: ffmpeg           # override if ffmpeg is not on PATH
       video_folders:
         # Paths are case-sensitive on Linux — match the folders on disk exactly.
-        nl: "input/noviplast/videos/NL"
-        fr: "input/noviplast/videos/FR"
-      video_map_path: "input/noviplast/videos/mapping.yml"
+        nl: "input/democlient/videos/NL"
+        fr: "input/democlient/videos/FR"
+      video_map_path: "input/democlient/videos/mapping.yml"
