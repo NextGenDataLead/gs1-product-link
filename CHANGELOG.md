@@ -101,7 +101,7 @@ label. `0.0.1` was a repository skeleton; everything below is what filled it in.
   - `scripts/inspect_export.py` — onboarding utility that lists worksheet attributes
     and suggests a `gdsn_map` (§8.5).
   - `schema/clients.schema.json` — `export` block extended for the GDSN format.
-  - Pilot: Noviplast's real GDSN export parses to 127 products (nl + fr) with zero
+  - Pilot: Democlient's real GDSN export parses to 127 products (nl + fr) with zero
     warnings.
 
 - **Phase 4 — WordPress client + MCP.**
@@ -141,8 +141,8 @@ label. `0.0.1` was a repository skeleton; everything below is what filled it in.
     edge E12 (unknown `{{extras.*}}` key → empty render + one WARNING) and E13 (data
     containing `{{`/`}}` or HTML is escaped and never re-parsed).
   - `templates/_default/product.{nl,en,fr}.html` — default product templates; and
-    `templates/noviplast/product.{nl,fr}.html` — the pilot's first templates, surfacing
-    the Noviplast `functional_name` extra (§6.5, §5.5).
+    `templates/democlient/product.{nl,fr}.html` — the pilot's first templates, surfacing
+    the Democlient `functional_name` extra (§6.5, §5.5).
   - `lib/qr.py` — `render_qr(uri, output_dir, gtin, formats, size_mm, ecc, dpi=300)`
     writing SVG/PNG/EPS Digital Link QR files (§4.7). Applies the uppercase-domain
     optimisation (scheme + host uppercased, path preserved) for alphanumeric-mode symbols;
@@ -188,10 +188,10 @@ label. `0.0.1` was a repository skeleton; everything below is what filled it in.
     covered by passing tests.
   - **WordPress access unblocked (supersedes the earlier deferral).** This item was previously
     recorded as blocked: Application Passwords were disabled by Wordfence on production
-    `www.noviplast.nl` and no staging site existed. That has since been fixed and verified —
+    `www.democlient.nl` and no staging site existed. That has since been fixed and verified —
     the `automation-bot` user authenticates against the live REST API with the **editor** role
     (`edit_posts`, `publish_posts`, `upload_files`, `edit_others_posts`, `unfiltered_html`), and
-    the `noviplast` custom post type is registered and REST-exposed (`rest_base: noviplast`).
+    the `democlient` custom post type is registered and REST-exposed (`rest_base: democlient`).
     The live `run_execute` end-to-end run for one GTIN is therefore **runnable, not blocked** —
     it simply has not been run yet, and it writes to a live WooCommerce store and the GS1
     production resolver, so it needs a deliberate go-ahead and a disposable GTIN.
@@ -260,7 +260,7 @@ label. `0.0.1` was a repository skeleton; everything below is what filled it in.
     `gs1-export-parser`, so a Cowork test now would exercise one-fifth of the surface it is
     meant to validate.
   - The plan half now runs on **real operator data**, not a fixture: both `products.xlsx` and
-    `website_status.xlsx` are in `input/noviplast/`. `parse_export` reads the 127-product GDSN
+    `website_status.xlsx` are in `input/democlient/`. `parse_export` reads the 127-product GDSN
     export with zero warnings and `run_plan` gates it to 73 rows (37 nl + 36 fr; one fr row
     skipped by E18 for a missing `product_name.fr`), excluding 90 products — 61 already on the
     website, 12 not yet in GS1, 17 absent from the control file.
@@ -287,9 +287,9 @@ label. `0.0.1` was a repository skeleton; everything below is what filled it in.
     (`GS1 Data Source Datamodel 3.1.36.xlsx`, sheet `Bricks` / `NL Brick Title`) covering all 73
     export bricks; the client signed off the 73-brick map + one override (`10003865` Tuin
     Handgereedschap → `tuin`, with the Notenkraker `08713195003948` → `keuken`). `build_brick_map
-    noviplast --check` is green and `run_plan` assigns a category to all 73 planned rows
+    democlient --check` is green and `run_plan` assigns a category to all 73 planned rows
     (`category_issues.json` empty). The signed-off map lives in the gitignored `clients.yml`; the
-    reviewed source is `output/noviplast/data/categories.proposed.yml`. Open decision resolved:
+    reviewed source is `output/democlient/data/categories.proposed.yml`. Open decision resolved:
     missing WordPress terms must **pre-exist** (`require_terms_exist`), enforced later at the
     not-yet-built term-assignment step.
 - **Page adapter — `net_content` unit decoding.** `reference/measurement_units.json` (the GS1 DIY
@@ -309,7 +309,7 @@ label. `0.0.1` was a repository skeleton; everything below is what filled it in.
   classification, and `acf_map` is wired to the generated fields. Producers may declare a
   `generation_inference` — a claim written beyond the literal feed text — which flows to
   `generated_issues.json` for a human to verify before publishing. Spec:
-  `docs/clients/noviplast-generator-spec.md`; voice: `prompts/noviplast/generation.v1.md`.
+  `docs/clients/democlient-generator-spec.md`; voice: `prompts/democlient/generation.v1.md`.
 - **Phase 8 — Skills.** All six `skills/*/SKILL.md` finalised: `flow-orchestrator`,
   `content-generator`, `gs1-export-parser`, `gs1-digital-link`, `qr-render`, and
   `wordpress-product-page`. Each carries Agent-Skill YAML frontmatter (name + description with
@@ -320,7 +320,7 @@ label. `0.0.1` was a repository skeleton; everything below is what filled it in.
   validated end to end: WordPress pages render ACF, the GS1 production record is enabled, and
   `GET id.gs1.org/01/{gtin}` → 307 → page → 200. Scaled to **10 live GTINs**, every QR
   resolving, no manual corrections, and a printed QR confirmed scanning from a phone.
-  `docs/clients/noviplast-live-log.md` is the committed audit trail of what is live (the
+  `docs/clients/democlient-live-log.md` is the committed audit trail of what is live (the
   machine source, `output/{client}/state.json`, is gitignored).
 - **Phase 9.5 — Media.** Images and video now publish with the page. `lib/media.py` decodes
   TIFF/PNG/JPEG, flattens alpha, downscales and writes a deterministic baseline JPEG — 93 of

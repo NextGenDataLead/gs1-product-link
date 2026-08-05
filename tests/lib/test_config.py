@@ -48,12 +48,12 @@ def _write_config(
 def test_loads_example_config_with_defaults_applied() -> None:
     clients = load_clients("clients.example.yml")
 
-    noviplast = clients["noviplast"]
-    assert noviplast.display_name == "Noviplast B.V."
-    assert noviplast.gs1.batch_size == 50  # inherited from defaults
-    assert noviplast.wordpress.post_status == "publish"  # inherited from defaults
-    assert noviplast.wordpress.multilingual_plugin == "wpml"  # client override
-    assert noviplast.wordpress.wpml_helper_path == "/wp-json/noviplast/v1/translations"
+    democlient = clients["democlient"]
+    assert democlient.display_name == "Democlient B.V."
+    assert democlient.gs1.batch_size == 50  # inherited from defaults
+    assert democlient.wordpress.post_status == "publish"  # inherited from defaults
+    assert democlient.wordpress.multilingual_plugin == "wpml"  # client override
+    assert democlient.wordpress.wpml_helper_path == "/wp-json/democlient/v1/translations"
 
 
 def test_get_client_returns_config(tmp_path: Path) -> None:
@@ -249,7 +249,7 @@ def test_categories_unknown_key_rejected_by_schema(tmp_path: Path) -> None:
 
 
 def test_example_config_categories_block_loads() -> None:
-    cfg = load_clients("clients.example.yml")["noviplast"]
+    cfg = load_clients("clients.example.yml")["democlient"]
     assert cfg.categories is not None
     assert "tuin" in cfg.categories.terms
     assert cfg.categories.brick_category_map["10003865"] == "tuin"
@@ -338,7 +338,7 @@ def test_media_unknown_key_rejected_by_schema(tmp_path: Path) -> None:
 
 
 def test_example_config_media_block_loads() -> None:
-    cfg = load_clients("clients.example.yml")["noviplast"]
+    cfg = load_clients("clients.example.yml")["democlient"]
     assert cfg.media is not None
     assert cfg.media.video_transcode is True
     assert set(cfg.media.video_folders) == {"nl", "fr"}

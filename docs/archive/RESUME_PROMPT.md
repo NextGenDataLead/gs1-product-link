@@ -1,4 +1,4 @@
-# Resume prompt — Noviplast page adapter
+# Resume prompt — Democlient page adapter
 
 Paste the block below into a fresh session **in normal mode** (not plan, not auto-accept):
 it is an orientation brief, and the project writes to a live WordPress site and the GS1
@@ -9,7 +9,7 @@ Disposable — rewrite it once the state it describes is stale.
 ---
 
 ````
-Resuming the GS1 Digital Link Orchestrator — Noviplast pilot page adapter.
+Resuming the GS1 Digital Link Orchestrator — Democlient pilot page adapter.
 Fresh context; everything below was verified live, but re-verify before trusting it.
 
 ## What we do first, before any code
@@ -24,7 +24,7 @@ assess *after* the run, not something to fix mid-flight or code around. The data
 authoritative; the tool reports, it does not repair.
 
 ## Read first, in this order
-1. `docs/clients/noviplast-page-adapter.md` — the live-verified design. §3.1 (write
+1. `docs/clients/democlient-page-adapter.md` — the live-verified design. §3.1 (write
    sequence + **five** silent traps), §4.1, §4.2 (the tagline — now RESOLVED, see below),
    §7 (WP enablers, all done), §8 (tool-side work + the bugs fixed 2026-07-17).
 2. `git log --oneline dbf29c8..HEAD` on branch `phase-7-audit-fixes` — ~28 commits,
@@ -70,8 +70,8 @@ findings retire) vs keep it in the slot until the generator lands. **Not yet dec
 **`08713195000527` (*Microvezeldoek stof*)** is the first product this tool has published:
 pages **1447** (nl) / **1448** (fr), same slug `p-08713195000527`, linked as translations
 (`trid` 626), GS1 **enabled** with exactly 2 links (nl default only), idempotent on re-run.
-  https://www.noviplast.nl/noviplast/p-08713195000527/
-  https://www.noviplast.nl/fr/noviplast/p-08713195000527/
+  https://www.democlient.nl/democlient/p-08713195000527/
+  https://www.democlient.nl/fr/democlient/p-08713195000527/
 
 It carries **title + tagline only** (no description/images/category), and its tagline comes
 from 1083 — i.e. the wrong field, per above. **The user asked to unpublish it** after
@@ -94,24 +94,24 @@ resolver — a drafted page with an enabled Digital Link resolves to a **404**, 
   carried an account that wasn't ours, and got a 200. **It always comes from the token
   claim.** `clients.yml` is gitignored, so §8 is the only durable record.
 
-`clients.yml` now has `environment: production` on the noviplast block (the default stays
+`clients.yml` now has `environment: production` on the democlient block (the default stays
 `test` so a new client can't reach production by omission).
 
 ## Traps — read before verifying anything
 - **Re-run `parse_export` before `run_plan`.** `run_plan` reads `products.json` off disk and
-  cannot date it. The pilot's first plan carried *"Noviplast Microvezeldoek stof"* because
+  cannot date it. The pilot's first plan carried *"Democlient Microvezeldoek stof"* because
   the artifact predated `strip_prefix` — which worked fine. Tell: `source_issues.json` was
   absent while `products.json` was not, and the same run writes both.
 - **Never verify ACF via a language-scoped collection query.** `?slug=…&lang=fr` returns
   `acf.product_title: null` for the non-default language *even when stored correctly*; a
-  direct `GET /noviplast/{id}` shows it. Cost a false alarm on the live run. **Read ACF back
+  direct `GET /democlient/{id}` shows it. Cost a false alarm on the live run. **Read ACF back
   by page id.** (§3.1 finding 5 — the mirror of the `?lang=`+acf write trap.)
 - **`scripts/inspect_export.py` is stale and misleading.** `_KNOWN_ATTRIBUTES` maps
   `3297 -> product_name` and `3318 -> description_long`. Both are known-wrong (`clients.yml`
   says 3297 is an internal logistics string; 3318 is the name, fixed in `c76492b`), and 1067
   is absent. The tool `clients.yml` points operators at for column discovery would
   re-introduce the bug the project already fixed. Fix it before trusting any mapping.
-- **`.env`: keep `NOVIPLAST_WP_APP_PASS` single-quoted.** WP app passwords contain spaces;
+- **`.env`: keep `DEMOCLIENT_WP_APP_PASS` single-quoted.** WP app passwords contain spaces;
   unquoted it loads *empty* and everything 401s while looking like a permissions problem.
 
 ## Measured facts about the export (2026-07-17, real data)
@@ -143,7 +143,7 @@ resolver — a drafted page with an enabled Digital Link resolves to a **404**, 
   clean up in a `finally` and are guarded three ways (8713195 prefix; a live pre-flight; and
   the export's product list — the first two both pass a real product, proved by
   `08713195000374`). The GS1 record still **cannot be deleted**, only disabled.
-- `parse_export` writes `output/noviplast/data/source_issues.json` — the MyGS1 work queue.
+- `parse_export` writes `output/democlient/data/source_issues.json` — the MyGS1 work queue.
   111 findings: 107 `value_too_long` (**measuring the wrong field — see the tagline above**),
   4 `brand_prefix_mismatch`.
 

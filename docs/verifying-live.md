@@ -148,4 +148,4 @@ GTIN from every later plan and `/gs1-pages` → `/gs1-links` dead-ended with an 
 mechanisms were correct in isolation, which is why the unit suite passed.
 
 Step 9 above is exactly where it surfaced. The full record, including the evidence table, is in
-[`clients/noviplast-live-log.md`](clients/noviplast-live-log.md) under *Verification runs*.
+[`clients/democlient-live-log.md`](clients/democlient-live-log.md) under *Verification runs*.

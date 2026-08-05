@@ -13,10 +13,10 @@ Trigger phrases (§10.5), most to least specific:
 - **"run the GS1 pipeline for {client}"**
 - **"run for {client}"**, **"process {client}"** — short forms, kept for continuity
 
-e.g. "publish noviplast to GS1, test env". Load this skill to drive a full client run end-to-end
+e.g. "publish democlient to GS1, test env". Load this skill to drive a full client run end-to-end
 from chat: parse → plan → present → confirm → execute → summarise.
 
-Also load it for any phrasing that asks for **one leg only** — *"create the pages for noviplast but
+Also load it for any phrasing that asks for **one leg only** — *"create the pages for democlient but
 don't touch GS1"*, *"just set the Digital Links, the pages already exist"*. Those are the same
 sequence with a different mode, and step 0 is where the mode gets pinned down.
 
@@ -90,9 +90,9 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 
    For `links` / `both`, present verbatim:
    ```
-   About to run the GS1 publish flow for noviplast.
+   About to run the GS1 publish flow for democlient.
      Mode:        both — WordPress pages, then Digital Links pointing at them
-     Export:      input/noviplast/products.xlsx (modified 12 days ago)
+     Export:      input/democlient/products.xlsx (modified 12 days ago)
      Products:    127 in the parsed catalogue
      Environment: production
 
@@ -108,7 +108,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    ```
    If the operator named a file that does not match `export.path`, add above the menu:
    ```
-   You said products-2026-q3.xlsx. Config points at input/noviplast/products.xlsx,
+   You said products-2026-q3.xlsx. Config points at input/democlient/products.xlsx,
    modified 12 days ago. Same file?
    ```
    `change-mode` → re-present with the chosen mode; `cancel` → abort, run nothing.
@@ -123,7 +123,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 
 2. **Language selection (§10.6.6).** Present verbatim:
    ```
-   Client noviplast supports [nl, fr]. Which languages should this run cover?
+   Client democlient supports [nl, fr]. Which languages should this run cover?
    [all | nl | fr | nl,fr]
    ```
    Default `all`. Remember the chosen subset for step 6.
@@ -160,7 +160,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 5. **Plan summary (§10.6.1).** Present verbatim (the actionable total is NEW + CHANGED;
    UNCHANGED rows are never executed):
    ```
-   Plan for noviplast (test env):
+   Plan for democlient (test env):
      New:       38
      Unchanged:  7
      Changed:    2
@@ -180,7 +180,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    corrupt and has been reset), put it **above** the counts, not below, and say what it
    means before offering the menu:
    ```
-   WARNING: prior state was corrupt and has been reset (backup: output/noviplast/state.json.corrupt.20260713T031200Z).
+   WARNING: prior state was corrupt and has been reset (backup: output/democlient/state.json.corrupt.20260713T031200Z).
    Every row therefore re-plans as NEW. Re-running them is idempotent — pages are matched by
    slug/meta.gtin and updated in place, not duplicated — but it will rewrite live pages and
    resolver targets rather than skip them.
@@ -198,7 +198,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
      GTIN 8712345678905 (nl) — Cable Organiser Pro
      Changes:
        title:      "Cable Organiser" → "Cable Organiser Pro"
-       target_url: /noviplast/cable-organiser/ → /noviplast/cable-organiser-pro/
+       target_url: /democlient/cable-organiser/ → /democlient/cable-organiser-pro/
 
      [apply | skip | show-full-diff]
      ```
@@ -221,7 +221,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    GS1 environment is `production`, present verbatim and require a choice before executing:
    ```
    About to execute against PRODUCTION environment (gs1nl-api.gs1.nl).
-   This will make live changes to https://www.noviplast.nl.
+   This will make live changes to https://www.democlient.nl.
    Continue?
    [confirm | switch-to-test | cancel]
    ```
@@ -264,7 +264,7 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 
 11. **Post-execute summary (§10.6.4).** Read the run JSONL and present verbatim:
     ```
-    Run finished for noviplast (test env, 2026-05-27T14:32:11Z).
+    Run finished for democlient (test env, 2026-05-27T14:32:11Z).
       Ok:       38
       Error:     2
       Skipped:   0
@@ -273,8 +273,8 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
       GTIN 8712345678912 (fr): WP 422 — invalid taxonomy term "outdoor_dier-fr" not found
       GTIN 8712345678919 (nl): image_url returned 404
 
-    Log: output/noviplast/runs/20260527T143211Z.jsonl
-    QR files: output/noviplast/qr/
+    Log: output/democlient/runs/20260527T143211Z.jsonl
+    QR files: output/democlient/qr/
 
     Retry the 2 failures? [yes | no | detail]
     ```

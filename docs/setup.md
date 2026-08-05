@@ -21,7 +21,7 @@ The tool turns a GS1 Data Source export into (a) WordPress product pages, one pe
 >
 > You drive it from chat — normally with a slash command, **`/gs1-publish`** (or `/gs1-pages` / `/gs1-links` for one leg) — which loads the `flow-orchestrator` skill, walks you through the operator gates, and invokes the Python scripts for you. **You are not expected to type the script commands yourself.** Plain language works too (*"publish {client_id} to GS1"*), but the slash command is preferred: it pins the mode instead of leaving it to be inferred. See [Which flow do you need?](#which-flow-do-you-need).
 >
-> **Claude.ai, Claude Desktop, and Claude Cowork are explicitly out of scope.** Cowork was evaluated and removed: it executes in a remote cloud sandbox, which would mean handing production WordPress and GS1 credentials to an environment outside your control, and its network egress to `www.noviplast.nl`. Claude Code runs on your machine with your credentials staying on it.
+> **Claude.ai, Claude Desktop, and Claude Cowork are explicitly out of scope.** Cowork was evaluated and removed: it executes in a remote cloud sandbox, which would mean handing production WordPress and GS1 credentials to an environment outside your control, and its network egress to `www.democlient.nl`. Claude Code runs on your machine with your credentials staying on it.
 
 So why does this document list Python commands at all? Three reasons, and none of them is "type these during a normal run":
 
@@ -103,16 +103,16 @@ cp clients.example.yml clients.yml   # per-client, non-secret configuration
 cp .env.example .env                 # secrets only
 ```
 
-**`clients.example.yml` is a template to replace, not a config to adopt.** It ships with one worked example client (`noviplast:`) because an empty skeleton teaches nothing — the example shows what a fully-tuned client looks like, `gdsn_map` and `acf_map` and all. When you onboard your own client you **replace that block**, you do not publish alongside it.
+**`clients.example.yml` is a template to replace, not a config to adopt.** It ships with one worked example client (`democlient:`) because an empty skeleton teaches nothing — the example shows what a fully-tuned client looks like, `gdsn_map` and `acf_map` and all. When you onboard your own client you **replace that block**, you do not publish alongside it.
 
 It is nonetheless useful exactly once, before you have any real credentials, as an **install smoke test** — it is a known-good file, so if the loader parses it your install is sound and any later failure is your config, not your environment:
 
 ```bash
 python -c "from lib.config import load_clients; print(sorted(load_clients('clients.yml')))"
-# -> ['noviplast']      # proves the loader works. It does NOT mean you are set up for Noviplast.
+# -> ['democlient']      # proves the loader works. It does NOT mean you are set up for Democlient.
 ```
 
-**Delete or replace the `noviplast:` block before you configure your own client** — and do it properly, because the single-client default makes a leftover example load-bearing. With exactly one client defined, commands infer it and act on it without you naming it. So a `clients.yml` containing only the stale example means a bare `python -m scripts.run_plan` acts on **that** example; and a `clients.yml` containing the example *plus* yours makes the id mandatory again, so every command fails until you name one. Neither is dangerous — the example points at a site you have no credentials for — but both waste time.
+**Delete or replace the `democlient:` block before you configure your own client** — and do it properly, because the single-client default makes a leftover example load-bearing. With exactly one client defined, commands infer it and act on it without you naming it. So a `clients.yml` containing only the stale example means a bare `python -m scripts.run_plan` acts on **that** example; and a `clients.yml` containing the example *plus* yours makes the id mandatory again, so every command fails until you name one. Neither is dangerous — the example points at a site you have no credentials for — but both waste time.
 
 ### Secrets
 
@@ -167,7 +167,7 @@ Three commands, one gated sequence. Pick by what you want written:
 | `/gs1-links` | GS1 Digital Link records and QR only, pointing at pages that **already exist**. Touches no page. | **PERMANENT** |
 | `/gs1-publish` | Both: pages first, then links pointing at them. The normal full publish. | **PERMANENT** |
 
-Plain language works too — *"publish noviplast to GS1"*, *"just set the Digital Links for noviplast"* — and lands in the same place: `flow-orchestrator` classifies which mode you meant and confirms it at gate 0 before anything runs. The slash commands only skip the guessing.
+Plain language works too — *"publish democlient to GS1"*, *"just set the Digital Links for democlient"* — and lands in the same place: `flow-orchestrator` classifies which mode you meant and confirms it at gate 0 before anything runs. The slash commands only skip the guessing.
 
 > **`/gs1-links` is the one to be careful with.** Its targets are not pages the tool just created and verified — they come from `state.json`, a slug lookup, or `wordpress.target_url_pattern`. A GS1 record **can never be deleted**, so a QR printed against a wrong URL is permanent.
 >
@@ -191,7 +191,7 @@ Gate 0 states the mode, cross-checks the export file against `clients.yml`, give
 
 Read-only until the final step. This is the one workflow where working hands-on with the scripts is expected: mapping an unfamiliar export is iterative, and you want to see each result before deciding the next change.
 
-1. **Add the client** to `clients.yml`. Copy the example block and change `client_id`, `display_name`, `export.path`, and the `wordpress` / `gs1` blocks — then remove the leftover `noviplast:` example so your live config describes only your own clients. Add the credential env vars to `.env` (see [Secrets](#secrets)); `clients.yml` gets the **names** only.
+1. **Add the client** to `clients.yml`. Copy the example block and change `client_id`, `display_name`, `export.path`, and the `wordpress` / `gs1` blocks — then remove the leftover `democlient:` example so your live config describes only your own clients. Add the credential env vars to `.env` (see [Secrets](#secrets)); `clients.yml` gets the **names** only.
 
 2. **Drop the export** at `input/{client_id}/products.xlsx`. `input/` and `output/` are gitignored, so client data never enters the repository. Create the directory if it does not exist.
 

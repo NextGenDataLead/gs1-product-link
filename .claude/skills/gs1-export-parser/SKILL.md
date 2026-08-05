@@ -8,7 +8,7 @@ description: "Parse a client's GS1 Data Source / GDSN datapool workbook into the
 ## When to load
 
 Trigger phrases: **"parse the export for {client}"**, **"parse {client}'s export"** (§10.1) — e.g.
-"parse the export for noviplast", or when the operator drops an `.xlsx` in chat. Load this skill to
+"parse the export for democlient", or when the operator drops an `.xlsx` in chat. Load this skill to
 turn the client's GS1 Data Source / GDSN datapool workbook into the normalised
 `output/{client}/data/products.json` the rest of the pipeline reads, and to surface the source-data
 issues that need fixing at MyGS1.
@@ -42,8 +42,8 @@ business-like, not conversational** — the operator is checking counts, not rea
 3. **Summarise counts and warnings (§10.1).** Read the stderr line `Parsed {N} products ({W}
    warnings)` and present verbatim:
    ```
-   Parsed noviplast: 127 products, 4 warnings.
-   9 source-data issue(s) need fixing at MyGS1 — see output/noviplast/data/source_issues.json.
+   Parsed democlient: 127 products, 4 warnings.
+   9 source-data issue(s) need fixing at MyGS1 — see output/democlient/data/source_issues.json.
    ```
    Drop the second line when `source_issues.json` is `[]`. An empty list means "checked, clean"; a
    **missing** file means no run has looked yet — do not read the absence as clean.

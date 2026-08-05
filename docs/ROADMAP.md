@@ -12,11 +12,11 @@ does not. Last updated 2026-07-30.
 
 - **Numbered phases (1–11)** — the horizontal framework build: the reusable tool (GS1 client, WP
   client, parser, state, plan/execute, skills, release). DoD boxes live in §12.
-- **Page-adapter track (Noviplast pilot)** — a vertical, client-specific slice that **cross-cuts
+- **Page-adapter track (Democlient pilot)** — a vertical, client-specific slice that **cross-cuts
   Phases 6–9** and does not fit one numbered gate (§12 says so explicitly). Its last critical-path
   item, the **content generator, is now complete** (all 9 commits). Detail in
-  [`clients/noviplast-page-adapter.md`](clients/noviplast-page-adapter.md) and the
-  [generator SPEC](clients/noviplast-generator-spec.md).
+  [`clients/democlient-page-adapter.md`](clients/democlient-page-adapter.md) and the
+  [generator SPEC](clients/democlient-generator-spec.md).
 
 ## Phase status (summary — authoritative boxes in §12)
 
@@ -32,7 +32,7 @@ does not. Last updated 2026-07-30.
 | — | **Page-adapter track** | Done — **generator complete** (all 9 commits, see below) |
 | 7.5 | GPC brick → category | **Done** (§12 [x], 2026-07-18) |
 | 8 | Skills | **Done** (§12 all 4 [x]) — all 6 SKILL.md finalised; chat flow validated on real files; the execute leg proven in Phase 9 and the full plan → diff → confirm → execute loop walked in Phase 9.8, which ticked the last box |
-| 9 | Pilot end-to-end (≥10 live, QR scans, no manual fixes) | **Done** (§12 all 3 [x], 2026-07-28). 10 GTINs live nl+fr; all resolve via GET → 307 → 200; printed-QR phone scan confirmed; both waves ran 0-error. fr-QR strategy decided: keep as-is (bare QR → nl default, fr via the site switcher). Audit trail in [`clients/noviplast-live-log.md`](clients/noviplast-live-log.md) |
+| 9 | Pilot end-to-end (≥10 live, QR scans, no manual fixes) | **Done** (§12 all 3 [x], 2026-07-28). 10 GTINs live nl+fr; all resolve via GET → 307 → 200; printed-QR phone scan confirmed; both waves ran 0-error. fr-QR strategy decided: keep as-is (bare QR → nl default, fr via the site switcher). Audit trail in [`clients/democlient-live-log.md`](clients/democlient-live-log.md) |
 | 9.5 | Media (images + video) | **Code merged (PR #7) + proven live (2026-07-20).** Image+video render on pilot 1449/1450; media idempotent (content-addressed slug). **Open:** the drafted name→GTIN mapping (166 files) needs **client sign-off** (§12 boxes 1/3) |
 | 9.8 | Operator flow (Claude Code) | **Done** (§12 all 4 [x], PR #29 `071f8fe`, 2026-07-30). `flow-orchestrator` driven end-to-end in a fresh Claude Code session with the operator answering every gate, via a reversible dry-run harness (nothing written; `state.json` verified byte-identical after teardown). Ticked the open **Phase 8 box #4** |
 | 10 | Docs | **Done** (§12 all 3 [x], 2026-07-30). Seven `docs/*.md` written **from the code at HEAD**; README status corrected; drift fixed (§4.1, §4.5, §8, PREPARATION §3.18). `setup.md` proven by **executing it verbatim from a fresh clone** — which surfaced and got a real `inspect_export --help` crash fixed |
@@ -50,8 +50,8 @@ brand-typo report — everything on the page-adapter critical path is done.
 
 ## Generator — commit tracker
 
-Merged to `main` (the `noviplast-page-adapter` branch is history).
-SPEC: [generator SPEC](clients/noviplast-generator-spec.md).
+Merged to `main` (the `democlient-page-adapter` branch is history).
+SPEC: [generator SPEC](clients/democlient-generator-spec.md).
 Suite green at HEAD — 550 passed, 2 skipped, 5 deselected (staging); ruff + `mypy --strict` clean.
 
 | # | Commit | State |

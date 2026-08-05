@@ -213,7 +213,7 @@ Portal reference: `https://gs1nl-api-acc-developer.gs1.nl/api-details#api=digita
       "linkType": "pip",
       "language": "nl",
       "linkTitle": "Product page",
-      "targetUrl": "https://www.noviplast.nl/noviplast/{slug}/",
+      "targetUrl": "https://www.democlient.nl/democlient/{slug}/",
       "defaultLinkType": true,
       "public": true,
       "mediaType": "text/html"
@@ -225,7 +225,7 @@ Portal reference: `https://gs1nl-api-acc-developer.gs1.nl/api-details#api=digita
 
 **Field notes:**
 
-- `accountNumber` — the account under which the Digital Link is created. **Environment-specific** and taken from the minted token's `accountNumber` claim (Phase 2 found the sandbox account is `8720796420906`, not Noviplast's production GLN). `clients.yml` holds `account_number_test` / `account_number_production` separately.
+- `accountNumber` — the account under which the Digital Link is created. **Environment-specific** and taken from the minted token's `accountNumber` claim (Phase 2 found the sandbox account is `8720796420906`, not Democlient's production GLN). `clients.yml` holds `account_number_test` / `account_number_production` separately.
 - `identificationKeyType` — enumerated string. `"Gtin"` for product Digital Links; other values exist for `Sscc`, `Gln`, etc., but aren't used in v0.1.0 scope.
 - `identificationKey` — the identifier value. For GTIN: the digit string, padded to 14 characters (`gtin14`).
 - `resolverSettings.useGS1Resolver` — always `true` for our scope (matches decision §3.1). `resolverDomainName` is only meaningful when `useGS1Resolver` is `false`; can be `null` otherwise.
@@ -344,7 +344,7 @@ The client parses this into `ErrorResult[]` and exposes it on `GS1APIError.error
 
 **Source:** MyGS1 (`https://mijn-v2.gs1.nl`) → article list → export.
 
-> **Phase 3 update — the pilot uses the richer GDSN export.** Noviplast's real export is
+> **Phase 3 update — the pilot uses the richer GDSN export.** Democlient's real export is
 > the full **GS1 Data Source / GDSN datapool** export (24 module worksheets, 7 header rows,
 > `Gtin` + `TargetMarketCountryCode` composite key, `LanguageCode`/`Value` pairs), not the
 > flat article-list export the table below assumes. The parser handles both via
@@ -383,7 +383,7 @@ The client parses this into `ErrorResult[]` and exposes it on `GS1APIError.error
 
 **Authentication:** WordPress Application Passwords. Avoid JWT plugins.
 
-**Post creation:** `POST /wp-json/wp/v2/{post_type}`. Note `post_type` is **not always `page`** (Noviplast uses `noviplast`). Schema captures this per client. Post type must have `show_in_rest: true` — verify during onboarding.
+**Post creation:** `POST /wp-json/wp/v2/{post_type}`. Note `post_type` is **not always `page`** (Democlient uses `democlient`). Schema captures this per client. Post type must have `show_in_rest: true` — verify during onboarding.
 
 **Per-product payload:**
 ```json
@@ -404,9 +404,9 @@ The client parses this into `ErrorResult[]` and exposes it on `GS1APIError.error
 - **WPML detected when:** `/wp-json/sitepress-multilingual-cms/...` routes exist
 - **None:** Independent sibling pages with language-prefixed slugs
 
-**Noviplast specifics (worked example):**
-- Custom post type `noviplast`
-- Custom taxonomy `noviplast-categories` with `-fr` suffix (Polylang convention)
+**Democlient specifics (worked example):**
+- Custom post type `democlient`
+- Custom taxonomy `democlient-categories` with `-fr` suffix (Polylang convention)
 - Languages NL + FR; NL at site root, FR at `/fr/`
 
 ### 4.5 Credentials strategy
@@ -416,7 +416,7 @@ One key per client, one env var per key:
 ```yaml
 gs1:
   admin_gln: "8712345000003"
-  subscription_key_env: NOVIPLAST_GS1_KEY
+  subscription_key_env: DEMOCLIENT_GS1_KEY
 ```
 
 `lib/config.py` reads the named env var at call time. No secrets are ever committed or logged.
@@ -482,8 +482,8 @@ Free end-to-end; no extra GS1 NL contract required beyond what the client alread
 ```bash
 H=gs1nl-api-acc.gs1.nl
 TOKEN=$(curl -s -X POST \
-  -H "client_id: $NOVIPLAST_GS1_CLIENT_SANDBOX_ID" \
-  -H "client_secret: $NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET" \
+  -H "client_id: $DEMOCLIENT_GS1_CLIENT_SANDBOX_ID" \
+  -H "client_secret: $DEMOCLIENT_GS1_CLIENT_SANDBOX_SECRET" \
   "https://$H/authorization/token" \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
 curl -i -H "Authorization: Bearer $TOKEN" \
@@ -542,9 +542,9 @@ Before Phase 4 (or before onboarding any new client to an already-built tool), w
 
 **5.4.6 Application Password generated** — WP admin → user's profile → Application Passwords → name it `gs1-orchestrator` → generate. Copy immediately (WordPress shows it exactly once). Store in `.env` under `{CLIENT}_WP_APP_PASS`. If missing, check `wp-config.php` for `define('WP_APPLICATION_PASSWORDS', false);` and remove.
 
-**5.4.7 Custom post type registered with REST support** — Every post type the tool writes to must have `show_in_rest => true`. Test: `curl https://{site}/wp-json/wp/v2/types | jq 'keys'` must include target post type slug with valid `rest_base`. For Noviplast: `noviplast`.
+**5.4.7 Custom post type registered with REST support** — Every post type the tool writes to must have `show_in_rest => true`. Test: `curl https://{site}/wp-json/wp/v2/types | jq 'keys'` must include target post type slug with valid `rest_base`. For Democlient: `democlient`.
 
-**5.4.8 Custom taxonomies registered with REST support** — If tool sets taxonomy terms, taxonomy must be REST-enabled. Test: `curl https://{site}/wp-json/wp/v2/taxonomies | jq 'keys'`. For Noviplast: `noviplast-categories`.
+**5.4.8 Custom taxonomies registered with REST support** — If tool sets taxonomy terms, taxonomy must be REST-enabled. Test: `curl https://{site}/wp-json/wp/v2/taxonomies | jq 'keys'`. For Democlient: `democlient-categories`.
 
 **5.4.9 Required taxonomy terms exist** — Terms referenced from Excel `category` column must exist in WP before the tool runs. v0.1.0 strategy: unknown-term rows are flagged, user prompted in chat. Auto-create deferred to v0.2 to avoid silent duplicate proliferation from typos.
 
@@ -560,14 +560,14 @@ Before Phase 4 (or before onboarding any new client to an already-built tool), w
 
 **5.4.15 Slug strategy confirmed with client** — **GTIN-based** (`p-{gtin}`): deterministic, no collisions, immune to product-name changes. **Default.** **Human-readable**: SEO-friendlier but risks `-2` suffixes on duplicates. Set `wordpress.slug_pattern: "p-{gtin}"` in `clients.yml`. Once printed on packaging, the slug lives forever in the QR-target URL. Confirm **before any production run**.
 
-### 5.5 Pilot client discovery — Noviplast
+### 5.5 Pilot client discovery — Democlient
 
-This section records the concrete findings from inspecting Noviplast (`https://www.noviplast.nl` and its French locale `https://www.noviplast.nl/fr/`) during project planning. Kept because the assumptions that drive `clients.yml` for Noviplast originate here, and because the same discovery pattern applies to future MDP clients.
+This section records the concrete findings from inspecting Democlient (`https://www.democlient.nl` and its French locale `https://www.democlient.nl/fr/`) during project planning. Kept because the assumptions that drive `clients.yml` for Democlient originate here, and because the same discovery pattern applies to future MDP clients.
 
 **How the findings were gathered:** direct inspection of the public site and its HTML source during May 2026 project planning. Not verified against WP admin or an internal export — those verifications happen during onboarding (§5.4).
 
-> **Phase 3 (July 2026) — export confirmed as GDSN.** The real Noviplast export
-> (`input/noviplast/products.xlsx`) is a GS1 Data Source / GDSN datapool export: 24 module
+> **Phase 3 (July 2026) — export confirmed as GDSN.** The real Democlient export
+> (`input/democlient/products.xlsx`) is a GS1 Data Source / GDSN datapool export: 24 module
 > worksheets, **127 distinct GTINs** across markets 056 (BE), 276 (DE), 442 (LU), 528 (NL),
 > languages nl/fr/de. Phase 3 sources `nl` from market 528 and `fr` from 056, producing 127
 > `ProductRecord`s with zero warnings. The `clients.yml` `export` block uses `format: gdsn`
@@ -575,21 +575,21 @@ This section records the concrete findings from inspecting Noviplast (`https://w
 
 **Findings:**
 
-- **Custom post type:** URLs follow the pattern `https://www.noviplast.nl/fr/noviplast/{slug}/` (e.g. `.../fr/noviplast/party-cutter/`). This means the site uses a custom post type called `noviplast` for products, not standard WP `page` or WooCommerce `product`.
-  - **Implication:** `wordpress.post_type: noviplast` in `clients.yml`. WP MCP must handle custom post types, not only pages.
-  - **Verify during onboarding:** `curl https://www.noviplast.nl/wp-json/wp/v2/types | jq 'keys'` — expect `noviplast` in the list, with `rest_base` field.
+- **Custom post type:** URLs follow the pattern `https://www.democlient.nl/fr/democlient/{slug}/` (e.g. `.../fr/democlient/party-cutter/`). This means the site uses a custom post type called `democlient` for products, not standard WP `page` or WooCommerce `product`.
+  - **Implication:** `wordpress.post_type: democlient` in `clients.yml`. WP MCP must handle custom post types, not only pages.
+  - **Verify during onboarding:** `curl https://www.democlient.nl/wp-json/wp/v2/types | jq 'keys'` — expect `democlient` in the list, with `rest_base` field.
 
-- **Custom taxonomy:** French-locale category slugs like `doe_het_zelf-fr`, `keuken-fr`, `outdoor_dier-fr` appear in category URLs. This means the site uses a custom taxonomy `noviplast-categories`.
-  - **Implication:** taxonomy mapping in `clients.yml` under `taxonomies.noviplast-categories.map_from_column`.
+- **Custom taxonomy:** French-locale category slugs like `doe_het_zelf-fr`, `keuken-fr`, `outdoor_dier-fr` appear in category URLs. This means the site uses a custom taxonomy `democlient-categories`.
+  - **Implication:** taxonomy mapping in `clients.yml` under `taxonomies.democlient-categories.map_from_column`.
 
 - **Multilingual plugin: Polylang (strong inference).** The `-fr` slug suffix on translated taxonomy terms is a very characteristic Polylang pattern — Polylang requires unique slugs across languages by default, so users end up suffixing translated terms. WPML translates slugs natively and doesn't need this workaround.
   - **Implication:** `wordpress.multilingual_plugin: polylang` in `clients.yml`. WPML support deferred to v0.2.
-  - **Verify during onboarding:** `curl https://www.noviplast.nl/wp-json/pll/v1/languages` should return 200 with the configured languages.
+  - **Verify during onboarding:** `curl https://www.democlient.nl/wp-json/pll/v1/languages` should return 200 with the configured languages.
 
 - **URL / language structure:** default language is Dutch (site root); French is served at `/fr/` subdirectory. Meta tags confirm `og:locale: nl_NL` on the root and `fr_FR` on `/fr/` pages.
   - **Implication:** `wordpress.languages: [nl, fr]` and `wordpress.default_language: nl`. `target_url_pattern` uses `{lang_segment}` that expands to empty for `nl` and `fr/` for `fr`.
 
-- **Theme:** custom theme at `/wp-content/themes/noviplast/`. Not a common third-party theme; product-template inspection during onboarding will be theme-specific.
+- **Theme:** custom theme at `/wp-content/themes/democlient/`. Not a common third-party theme; product-template inspection during onboarding will be theme-specific.
 
 - **Hosting note:** the FR page canonical URL leaks a TransIP staging hostname (`novipl.site.transip.me/fr/`). Suggests TransIP hosting with a staging environment reachable at that subdomain. Useful to know for staging-WP arrangements (§5.4.13).
 
@@ -772,7 +772,7 @@ gs1-digital-link-orchestrator/
 
 **Phase 7 — Re-run & change detection:** `scripts/run_plan.py` — hash per (GTIN, language); classify new/unchanged/changed. `flow-orchestrator` skill — format diff for chat, collect decisions, emit `plan.confirmed.json`, invoke execute. Test: change one product name, re-run, confirm prompt appears. Exit gate: full re-run flow works in Claude Code chat.
 
-**Phase 7.5 — GPC brick → category mapping:** Derive each product's site category from its GPC brick, using the **GS1 DIY sector datamodel** as the classification source — **the operator supplies the DIY datamodel at the start of the phase** (as with the export and control file; it is not sourced by the tool). A straight brick→category map is not sufficient: bricks span marketing categories (e.g. brick `10003865` holds both garden tools and a nutcracker) and the client's own categorisation is not purely semantic (a shower head filed under *keuken*). So the phase produces a `brick_category_map` **plus a per-GTIN override list** in `clients.yml`, reviewed and signed off by the client. ~70 distinct bricks across the 127-product pilot export. Exit gate: every brick in the export maps to a category, overrides cover the exceptions, and `run_plan` assigns the category for every planned product (unmapped bricks warn, never guess). Detail in `docs/clients/noviplast-page-adapter.md` §5.7.
+**Phase 7.5 — GPC brick → category mapping:** Derive each product's site category from its GPC brick, using the **GS1 DIY sector datamodel** as the classification source — **the operator supplies the DIY datamodel at the start of the phase** (as with the export and control file; it is not sourced by the tool). A straight brick→category map is not sufficient: bricks span marketing categories (e.g. brick `10003865` holds both garden tools and a nutcracker) and the client's own categorisation is not purely semantic (a shower head filed under *keuken*). So the phase produces a `brick_category_map` **plus a per-GTIN override list** in `clients.yml`, reviewed and signed off by the client. ~70 distinct bricks across the 127-product pilot export. Exit gate: every brick in the export maps to a category, overrides cover the exceptions, and `run_plan` assigns the category for every planned product (unmapped bricks warn, never guess). Detail in `docs/clients/democlient-page-adapter.md` §5.7.
 
 **Phase 8 — Skills & flow orchestrator polish:** Finalise SKILL.md files. Test in fresh Claude Code session: user uploads export, says "run for {client} in test". Exit gate: end-to-end flow works from a single chat instruction.
 
@@ -803,7 +803,7 @@ Phases 2–5 can run in parallel with multiple developers; with one developer, s
 |---|---|---|---|---|
 | R1 | WordPress MCP ecosystem too immature; build from scratch | Medium | Medium | Time-boxed survey in Phase 4; budget contingency |
 | R2 | Per-client template variation explodes | Low at 5 clients; high at 50 | Medium | Document patterns; consider `templates/_shared/` partials |
-| R3 | Polylang/WPML differences balloon scope | Medium | Medium | v0.1.0 = Polylang only (Noviplast uses it); WPML in 0.2 |
+| R3 | Polylang/WPML differences balloon scope | Medium | Medium | v0.1.0 = Polylang only (Democlient uses it); WPML in 0.2 |
 | R4 | State persistence across sessions | High | Medium | State to local files under `output/` in the repo working tree |
 | R5 | Idempotency edge cases | High | Low–Medium | Each step does a lookup before action |
 | R6 | Wrong `digitalLinkUrl` baked into printed QRs | Low (caught Phase 5) | High | Real print + scan test before any client uses production |
@@ -883,9 +883,9 @@ defaults:
 
 clients:
 
-  # Example — Noviplast: custom post type, Polylang, NL + FR
-  noviplast:
-    display_name: "Noviplast B.V."
+  # Example — Democlient: custom post type, Polylang, NL + FR
+  democlient:
+    display_name: "Democlient B.V."
     enabled: true
 
     gs1:
@@ -894,13 +894,13 @@ clients:
       account_number_test: "8720796420906"
       account_number_production: "8719965024137"
       # OAuth2 client credentials per environment (issued via MyGS1 / dev portal)
-      client_id_env_test: NOVIPLAST_GS1_CLIENT_SANDBOX_ID
-      client_secret_env_test: NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET
-      client_id_env_production: NOVIPLAST_GS1_CLIENT_ID
-      client_secret_env_production: NOVIPLAST_GS1_CLIENT_SECRET
+      client_id_env_test: DEMOCLIENT_GS1_CLIENT_SANDBOX_ID
+      client_secret_env_test: DEMOCLIENT_GS1_CLIENT_SANDBOX_SECRET
+      client_id_env_production: DEMOCLIENT_GS1_CLIENT_ID
+      client_secret_env_production: DEMOCLIENT_GS1_CLIENT_SECRET
 
     export:
-      path: "./input/noviplast/products.xlsx"
+      path: "./input/democlient/products.xlsx"
       # Excel column name (as it appears in the header row, case-sensitive) →
       # canonical ProductRecord field path. See IMPLEMENTATION_SPEC.md §3.2 for
       # the full mapping semantics (per-language paths use dot notation).
@@ -919,22 +919,22 @@ clients:
         - "Barcode type"
 
     wordpress:
-      site_url: "https://www.noviplast.nl"
+      site_url: "https://www.democlient.nl"
       username: "automation-bot"
-      app_password_env: NOVIPLAST_WP_APP_PASS
-      post_type: noviplast
+      app_password_env: DEMOCLIENT_WP_APP_PASS
+      post_type: democlient
       multilingual_plugin: polylang
       languages: [nl, fr]
       default_language: nl
       image_handling: url_in_export
       taxonomies:
-        noviplast-categories:
+        democlient-categories:
           map_from_column: "category"
       slug_pattern: "p-{gtin}"
       target_url_pattern: "{site_url}/{lang_segment}{post_type}/{slug}/"
 
     template:
-      override_dir: templates/noviplast
+      override_dir: templates/democlient
       files:
         nl: product.nl.html
         fr: product.fr.html
@@ -951,16 +951,16 @@ clients:
 ```bash
 # Copy to .env and fill in. .env is gitignored.
 
-# Noviplast — OAuth2 client credentials per environment (the client mints a
+# Democlient — OAuth2 client credentials per environment (the client mints a
 # short-lived token from these); plus the WordPress application password.
 # Test / acceptance (sandbox):
-NOVIPLAST_GS1_CLIENT_SANDBOX_ID=
-NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET=
+DEMOCLIENT_GS1_CLIENT_SANDBOX_ID=
+DEMOCLIENT_GS1_CLIENT_SANDBOX_SECRET=
 # Production:
-NOVIPLAST_GS1_CLIENT_ID=
-NOVIPLAST_GS1_CLIENT_SECRET=
+DEMOCLIENT_GS1_CLIENT_ID=
+DEMOCLIENT_GS1_CLIENT_SECRET=
 # WordPress
-NOVIPLAST_WP_APP_PASS=
+DEMOCLIENT_WP_APP_PASS=
 ```
 
 ### 10.3 System architecture diagram
@@ -1136,7 +1136,7 @@ Source: `https://www.gs1.nl/producten-services/data-exchange/tarieven/`.
   - §5.2 step 5 smoke-test curl rewritten for v2 endpoint + Authorization header.
   - §9.1 R10 status changed from "Low–Medium" to **"Materialised — v2"** with note that the adapter pattern still applies for any future v3 auth changes.
   - §10.1 `clients.example.yml` restructured: `gs1.admin_gln` → `gs1.account_number`; `subscription_key_env_*` → `token_env_*`; added `api_version`, `auth_scheme`, `identification_key_type`, `resolver_settings` defaults, `default_media_type`.
-  - §10.2 `.env.example`: env var names renamed `NOVIPLAST_GS1_KEY_*` → `NOVIPLAST_GS1_TOKEN_*` for accuracy.
+  - §10.2 `.env.example`: env var names renamed `DEMOCLIENT_GS1_KEY_*` → `DEMOCLIENT_GS1_TOKEN_*` for accuracy.
   - GET endpoint captured: `GET /digitallinkv2/v2/digitalLink/{identificationKeyType}/{identificationKey}` (note mixed case `digitalLink` vs lowercase POST paths). Response `AdvancedDigitalLinkResponse` documented in §4.2. **Not-found HTTP status remains empirical** — v2 docs list 200/400/500, no 404.
   - PATCH `/activationStatus` endpoint documented in §4.2: toggle `isEnabled` without full-record rewrite; 204 on success.
   - ValidateDraft POST endpoint documented in §4.2: dry-run validation returning `isValid`, error message, available AIs, and `currentAnchorRelative`. **Note this endpoint lacks the `/v2/` path segment** (`/digitallinkv2/digitalLink/validateDraft`, not `.../v2/digitalLink/...`).
@@ -1147,7 +1147,7 @@ Source: `https://www.gs1.nl/producten-services/data-exchange/tarieven/`.
 - **Changes from 0.5:**
   - §3.1 extended: full reasoning for GS1 NL resolver over self-hosted (incl. the Vercel evaluation)
   - §3.8 extended: historical rationale for Excel over GS1 Data Link API
-  - §5.5 added: pilot client discovery — Noviplast findings
+  - §5.5 added: pilot client discovery — Democlient findings
   - §9.1 R10 added: GS1 NL auth model change risk
   - §10.4 expanded: call context, caveats
 - **Changes from 0.4:**
@@ -1170,4 +1170,4 @@ Source: `https://www.gs1.nl/producten-services/data-exchange/tarieven/`.
 - [[OBSIDIAN_NOTE_content]] — hub note with all 11 phase prompts
 - [[GS1_NL_EMAIL]] — historical email
 - [[architecture]] — system diagram
-- [[Noviplast_2D]] — project hub
+- [[Democlient_2D]] — project hub

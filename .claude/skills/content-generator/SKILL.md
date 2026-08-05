@@ -8,7 +8,7 @@ description: "Write product tagline and Eigenschappen copy as the in-session pro
 ## When to load
 
 Trigger phrases: **"generate copy for {client}"**, **"write product copy for {client}"** — e.g.
-"generate copy for noviplast". Load this skill to act as the in-session copy producer: read the
+"generate copy for democlient". Load this skill to act as the in-session copy producer: read the
 pending generation requests, write the tagline + Eigenschappen copy in the client's brand voice, and
 ingest the results into the generated-copy cache. No API key — generation happens in this session.
 
@@ -43,7 +43,7 @@ auto-published**: it is reviewed here (cache) and again in `plan.json`, then exe
 2. **Read the requests.** Load `generation_requests.json`. Note `prompt_version`, the unit count, and
    the split by `mode` (`tighten` vs `generate`) and `needs_name`. Present verbatim:
    ```
-   noviplast: 246 units to generate (3 tighten, 243 generate; 1 needs a French name).
+   democlient: 246 units to generate (3 tighten, 243 generate; 1 needs a French name).
    Generate all, or a subset?
    [all | only-tighten | only GTIN … | cancel]
    ```
@@ -67,7 +67,7 @@ auto-published**: it is reviewed here (cache) and again in `plan.json`, then exe
 5. **Write the results.** Write `output/{client}/data/generation_results.json`:
    ```json
    {
-     "client_id": "noviplast",
+     "client_id": "democlient",
      "results": [
        { "gtin": "08713195000473", "language": "nl",
          "usps": ["Verwijder makkelijk beschadigde schroeven", "Werkt op hout, plastic en glas"],

@@ -8,7 +8,7 @@ and leaves the category unset. The tool never guesses (a brick can span categori
 guess is a wrong page filing, not a near-miss).
 
 Format-agnostic on purpose: it consumes :class:`~lib.records.ProductRecord`, not the GDSN
-export, so it works for any export path. See ``docs/clients/noviplast-page-adapter.md`` §5.7.
+export, so it works for any export path. See ``docs/clients/democlient-page-adapter.md`` §5.7.
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@ v0.1.0 supports Polylang, WPML, and a no-op for single-language sites.
 WPML exposes no core REST route for language assignment or translation linking, so
 :class:`WPMLAdapter` calls a small site-side helper (a Code Snippet / mu-plugin) that wraps
 WPML's PHP API. That route is deliberately shaped like Polylang's ``/pll/v1/translations``
-so both adapters stay symmetric. See ``docs/clients/noviplast-page-adapter.md`` §7 for the
+so both adapters stay symmetric. See ``docs/clients/democlient-page-adapter.md`` §7 for the
 helper's source and the live verification.
 """
 
@@ -77,7 +77,7 @@ class WPMLAdapter(MultilingualAdapter):
     WPML publishes no core REST route for assigning a post's language or linking a set of
     posts as one translation group — both need its PHP API. So the site hosts a small helper
     (a Code Snippet / mu-plugin; source and live verification in
-    ``docs/clients/noviplast-page-adapter.md`` §7) exposing one route shaped like Polylang's::
+    ``docs/clients/democlient-page-adapter.md`` §7) exposing one route shaped like Polylang's::
 
         POST {helper_path}
         {"translations": {"nl": 123, "fr": 456}, "source_language": "nl"}

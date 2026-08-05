@@ -1,10 +1,14 @@
-# Noviplast — live-publish log
+# Democlient — live-publish log
 
-The durable, committed record of what this pipeline has published to the **live** customer site
-(`www.noviplast.nl`) and the **GS1 NL production** resolver. Append one row per `(GTIN, language)`
-each time a wave goes live.
+The durable, committed record of what this pipeline has published to the **live** customer site and
+the **GS1 NL production** resolver. Append one row per `(GTIN, language)` each time a wave goes live.
 
-> **Why this exists.** The machine source of truth is `output/noviplast/state.json`, but that is
+> **Names vs. facts.** This repository's documentation calls the pilot client `democlient`. The
+> **URLs, page ids and GTINs recorded below are the real published ones** and are deliberately not
+> rewritten — an audit trail that records addresses nothing serves is worse than no audit trail. So
+> the client *name* here is a placeholder; every *identifier* is real and verifiable.
+
+> **Why this exists.** The machine source of truth is `output/{client_id}/state.json`, but that is
 > gitignored (local-only), so it is not a shareable audit trail. This file is. Keep them in sync:
 > after a live run, copy the new `state.json` entries here. `state.json` wins on conflict — it is
 > what the pipeline actually wrote.
@@ -14,7 +18,7 @@ each time a wave goes live.
 
 ## Currently live
 
-Pages serving on `www.noviplast.nl` with an **enabled** GS1 Digital Link record.
+Pages serving on the live client site with an **enabled** GS1 Digital Link record.
 
 | GTIN | Product (nl / fr) | Lang | WP page | URL | GS1 | First published | Wave |
 |---|---|---|---|---|---|---|---|
@@ -119,7 +123,7 @@ yields `2 changed` with `diff={'gs1_link': ...}`, which is what the two-step flo
 
 After each live wave (`run_execute … --i-understand-production`, or the `flow-orchestrator` execute):
 
-1. Read the new/changed entries in `output/noviplast/state.json`.
+1. Read the new/changed entries in `output/{client_id}/state.json`.
 2. Add a row per `(GTIN, language)` to **Currently live** (or **Drafts** if `wp_status != publish`),
    with the WP page id + URL + GS1 status + date + wave label.
 3. Bump the live GTIN count and, once ≥10, note the Phase 9 DoD is met.

@@ -7,7 +7,7 @@ stores generated copy between runs, the :class:`GenerationRequest`/:class:`Gener
 contract both producers (the in-session producer and the headless API backend) fill, and
 the pure :func:`merge_generated` step that folds cached copy onto :class:`ProductRecord`
 before classification (mirroring ``run_plan._assign_categories``). See
-``docs/clients/noviplast-generator-spec.md``.
+``docs/clients/democlient-generator-spec.md``.
 
 Determinism comes from the cache, not the producer: each entry is keyed by a fingerprint of
 the source inputs plus a ``prompt_version``, so re-runs reuse frozen copy and a feed edit (a

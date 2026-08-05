@@ -1,4 +1,4 @@
-"""Video → GTIN mapping and web-prep for the Noviplast pilot (Phase 9.5 media).
+"""Video → GTIN mapping and web-prep for the Democlient pilot (Phase 9.5 media).
 
 Videos are **not** in the GDSN feed (all 375 feed media are ``PRODUCT_IMAGE``). The operator
 supplies two local folders (nl, fr) whose files are named by **English marketing name**

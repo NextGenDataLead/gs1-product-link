@@ -8,7 +8,7 @@ description: "Produce scannable QR symbols for a client's GTINs, each encoding t
 ## When to load
 
 Trigger phrases: **"render QR for {client}"**, **"generate the QR files for {client}"** (§10.4) —
-e.g. "render QR for noviplast". Load this skill to produce scannable QR symbols for a client's GTINs,
+e.g. "render QR for democlient". Load this skill to produce scannable QR symbols for a client's GTINs,
 each encoding the product's GS1 Digital Link URI. In the pilot this runs as part of
 `flow-orchestrator` / `run_execute`; load it directly to render or re-render QR files on their own.
 
@@ -45,7 +45,7 @@ writer rejects 1-bit mode). Tone is **concise and business-like, not conversatio
 
 4. **Present output paths (§10.4).** List the written files verbatim:
    ```
-   Rendered QR for noviplast: 2 file(s) per GTIN → output/noviplast/qr/
+   Rendered QR for democlient: 2 file(s) per GTIN → output/democlient/qr/
      08713195000374.svg
      08713195000374.png
    ```

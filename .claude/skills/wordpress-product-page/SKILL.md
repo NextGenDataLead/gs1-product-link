@@ -8,7 +8,7 @@ description: "Render and idempotently upsert a client's WordPress product pages,
 ## When to load
 
 Trigger phrases: **"create product pages for {client}"**, **"update {client}'s WordPress pages"**
-(§10.2) — e.g. "create product pages for noviplast". Load this skill to render and upsert a client's
+(§10.2) — e.g. "create product pages for democlient". Load this skill to render and upsert a client's
 product pages on their WordPress site, idempotently, one per `(GTIN, language)`. In the pilot this is
 one leg of `flow-orchestrator` / `run_execute`; load it directly to create or update pages on their
 own.

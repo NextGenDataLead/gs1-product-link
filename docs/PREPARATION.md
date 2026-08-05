@@ -2,7 +2,7 @@
 
 **Purpose:** Complete these before starting Phase 1 with Claude Code. This checklist consolidates every "get ready" action that lives scattered across `PROJECT_HANDOVER.md` and `IMPLEMENTATION_SPEC.md`, presented in the order you actually do them.
 
-**Audience:** You — the operator (currently: MDP, working for Noviplast as pilot).
+**Audience:** You — the operator (currently: MDP, working for Democlient as pilot).
 
 **Version:** 0.3 — updated for GS1 NL Digital Link API v2
 
@@ -18,7 +18,7 @@ Work top to bottom. Each item has:
 
 If a step blocks a specific phase, you can defer it until that phase — but it's easier to bulk-complete the same category (all GS1 items together, all WP items together) so you're not context-switching later.
 
-**Source-of-truth note:** the canonical location for all specification documents is the Obsidian vault at `10_Clients/MDP/Projects/Noviplast_2D/Project/`. Every Claude Code session should start by pulling the relevant notes from there.
+**Source-of-truth note:** the canonical location for all specification documents is the Obsidian vault at `10_Clients/MDP/Projects/Democlient_2D/Project/`. Every Claude Code session should start by pulling the relevant notes from there.
 
 ---
 
@@ -71,7 +71,7 @@ Do this once, regardless of how many clients you eventually onboard.
 ### 1.8 Obsidian vault reachable
 
 - **What:** confirm the vault containing this note is available on this machine.
-- **Verify:** you can navigate to `10_Clients/MDP/Projects/Noviplast_2D/Project/` and see the six documents.
+- **Verify:** you can navigate to `10_Clients/MDP/Projects/Democlient_2D/Project/` and see the six documents.
 - **Blocks:** starting Claude Code sessions with the canonical docs at hand.
 
 ---
@@ -105,15 +105,15 @@ Do this once, regardless of how many clients you eventually onboard.
 
 ### 2.5 Project structure in Obsidian vault verified
 
-- **What:** the project structure under `10_Clients/MDP/Projects/Noviplast_2D/` exists with `Project/` subfolder containing the six documents ([[PROJECT_HANDOVER]], [[IMPLEMENTATION_SPEC]], [[PREPARATION]] (this note), [[OBSIDIAN_NOTE_content]], [[GS1_NL_EMAIL]], [[architecture]]). Deliverable [[Preparation plan (Noviplast_2D)]] under `Deliverables/`, todo [[Investigation (Noviplast_2D)]] under `Todos/`.
+- **What:** the project structure under `10_Clients/MDP/Projects/Democlient_2D/` exists with `Project/` subfolder containing the six documents ([[PROJECT_HANDOVER]], [[IMPLEMENTATION_SPEC]], [[PREPARATION]] (this note), [[OBSIDIAN_NOTE_content]], [[GS1_NL_EMAIL]], [[architecture]]). Deliverable [[Preparation plan (Democlient_2D)]] under `Deliverables/`, todo [[Investigation (Democlient_2D)]] under `Todos/`.
 - **Verify:** open Obsidian, navigate the paths, all notes present.
 - **Blocks:** starting Claude Code sessions with reachable specs.
 
 ---
 
-## Part 3: Per-client setup — Noviplast pilot
+## Part 3: Per-client setup — Democlient pilot
 
-Repeat this section (Part 3) for every new client. For the initial build, complete for Noviplast.
+Repeat this section (Part 3) for every new client. For the initial build, complete for Democlient.
 
 > **Auth is OAuth2 client-credentials** (confirmed in Phase 2). You do **not** get a
 > ready-to-use token — you get a **client id + client secret** and mint a short-lived
@@ -123,13 +123,13 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
 
 - **What:** in the acceptance developer portal (`https://gs1nl-api-acc-developer.gs1.nl/`, signed in with the MyGS1 account) obtain the **Client ID** and **Client Secret** for the Digital Link API v2, and subscribe to that API product.
 - **Verify:** both values received and copied.
-- **Store as:** `NOVIPLAST_GS1_CLIENT_SANDBOX_ID` and `NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET` in local `.env`.
+- **Store as:** `DEMOCLIENT_GS1_CLIENT_SANDBOX_ID` and `DEMOCLIENT_GS1_CLIENT_SANDBOX_SECRET` in local `.env`.
 - **Blocks:** Phase 2 (need them to mint tokens), Phase 9 (testing).
 
 ### 3.2 GS1 NL Digital Link API v2 — production client credentials
 
 - **What:** same as 3.1, for the production developer portal / environment.
-- **Store as:** `NOVIPLAST_GS1_CLIENT_ID` and `NOVIPLAST_GS1_CLIENT_SECRET`.
+- **Store as:** `DEMOCLIENT_GS1_CLIENT_ID` and `DEMOCLIENT_GS1_CLIENT_SECRET`.
 - **Blocks:** Phase 11 (production cut).
 
 ### 3.3 GS1 API credentials smoke-tested
@@ -138,8 +138,8 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
   ```bash
   H=gs1nl-api-acc.gs1.nl   # production: gs1nl-api.gs1.nl
   TOKEN=$(curl -s -X POST \
-    -H "client_id: $NOVIPLAST_GS1_CLIENT_SANDBOX_ID" \
-    -H "client_secret: $NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET" \
+    -H "client_id: $DEMOCLIENT_GS1_CLIENT_SANDBOX_ID" \
+    -H "client_secret: $DEMOCLIENT_GS1_CLIENT_SANDBOX_SECRET" \
     "https://$H/authorization/token" \
     | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
   # The account you may write to is in the token's accountNumber claim (base64 middle segment).
@@ -165,20 +165,20 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
 
 ### 3.6 MyGS1 Excel export downloaded
 
-- **What:** in MyGS1 for Noviplast, export the article list to Excel. If they use filters (e.g. by category), consider exporting **without filters** first to see all columns.
-- **Store as:** `input/noviplast/products.xlsx` inside the code repo (once repo exists).
+- **What:** in MyGS1 for Democlient, export the article list to Excel. If they use filters (e.g. by category), consider exporting **without filters** first to see all columns.
+- **Store as:** `input/democlient/products.xlsx` inside the code repo (once repo exists).
 - **Verify:** file opens in Excel/LibreOffice; you can see product rows.
 - **Blocks:** Phase 3.
 
 ### 3.7 Excel columns inspected and column-map drafted
 
 - **What:** after Phase 3 provides `scripts/inspect_export.py`, run it against the Excel and draft a `column_map` in `clients.yml`. Iterate with `--dry-run` until zero warnings on required fields.
-- **Verify:** `python -m scripts.parse_export noviplast --dry-run` completes with zero warnings on required fields.
+- **Verify:** `python -m scripts.parse_export democlient --dry-run` completes with zero warnings on required fields.
 - **Blocks:** Phase 3 completion.
 
 ### 3.8 WordPress staging site available
 
-- **What:** coordinate with Noviplast to get a staging WP site or a safe subdomain of the production site (they hint at TransIP hosting; `novipl.site.transip.me` appears in one canonical URL). Confirm you can log into WP admin.
+- **What:** coordinate with Democlient to get a staging WP site or a safe subdomain of the production site (they hint at TransIP hosting; `novipl.site.transip.me` appears in one canonical URL). Confirm you can log into WP admin.
 - **Verify:** you can reach `https://{staging-host}/wp-admin/` and log in.
 - **Blocks:** Phase 4 completion.
 
@@ -217,26 +217,26 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
 ### 3.14 Application Password generated
 
 - **What:** log in as `automation-bot`, WP admin → Users → Profile → Application Passwords → name `gs1-orchestrator` → generate.
-- **Store as:** environment variable `NOVIPLAST_WP_APP_PASS`.
-- **Verify:** `curl -u "automation-bot:$NOVIPLAST_WP_APP_PASS" https://{staging}/wp-json/wp/v2/users/me` returns your user data.
+- **Store as:** environment variable `DEMOCLIENT_WP_APP_PASS`.
+- **Verify:** `curl -u "automation-bot:$DEMOCLIENT_WP_APP_PASS" https://{staging}/wp-json/wp/v2/users/me` returns your user data.
 - **Blocks:** Phase 4.
 
 ### 3.15 Custom post type registered with REST
 
-- **What:** verify `noviplast` post type exists and is REST-enabled.
-- **Verify:** `curl https://{staging}/wp-json/wp/v2/types | jq 'keys'` includes `noviplast`, and `.noviplast.rest_base` is set.
+- **What:** verify `democlient` post type exists and is REST-enabled.
+- **Verify:** `curl https://{staging}/wp-json/wp/v2/types | jq 'keys'` includes `democlient`, and `.democlient.rest_base` is set.
 - **Fix if missing:** add `'show_in_rest' => true` to the `register_post_type` call in the theme's `functions.php` or the plugin registering the type.
 - **Blocks:** Phase 4.
 
 ### 3.16 Custom taxonomies registered with REST
 
-- **What:** verify `noviplast-categories` taxonomy is REST-enabled.
+- **What:** verify `democlient-categories` taxonomy is REST-enabled.
 - **Verify:** `curl https://{staging}/wp-json/wp/v2/taxonomies | jq 'keys'` includes it.
 - **Blocks:** Phase 4 if taxonomy integration is used.
 
 ### 3.17 Required taxonomy terms exist
 
-- **What:** for each unique category value in the Excel `category` column, verify a matching term exists in WP admin → Products/Noviplast → Categories.
+- **What:** for each unique category value in the Excel `category` column, verify a matching term exists in WP admin → Products/Democlient → Categories.
 - **Verify:** all unique categories from Excel have a WP term.
 - **Fix:** create missing terms manually (v0.1.0 does not auto-create; deferred to v0.2).
 - **Blocks:** Phase 9 (pilot run).
@@ -251,11 +251,11 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
 **If the site runs WPML (the pilot):**
 
 - **What:** configure NL + FR with NL default and a `/fr/` subdirectory structure, and mark the
-  `noviplast` post type as translatable. Then **install the helper route** — WPML publishes no core
+  `democlient` post type as translatable. Then **install the helper route** — WPML publishes no core
   REST route for assigning a post's language or linking a translation group, so the site must host a
   small Code Snippet / mu-plugin exposing one endpoint at `wordpress.wpml_helper_path` (default
-  `/wp-json/gs1dl/v1/translations`; the pilot uses `/wp-json/noviplast/v1/translations`). Source and
-  live verification: [`clients/noviplast-page-adapter.md`](clients/noviplast-page-adapter.md) §7.
+  `/wp-json/gs1dl/v1/translations`; the pilot uses `/wp-json/democlient/v1/translations`). Source and
+  live verification: [`clients/democlient-page-adapter.md`](clients/democlient-page-adapter.md) §7.
 - **Verify:** `curl https://{site}/wp-json/wpml/v1` returns 200, **and** the helper route accepts a
   POST and echoes back the translation group it actually wrote (a group that differs from the one sent
   is rejected by the client as a 409 — that assertion is the whole point of the helper's response).
@@ -277,9 +277,9 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
 - **Verify:** upload a 5 MB test image via WP admin — should succeed.
 - **Blocks:** Phase 4 completion if `image_handling: url_in_export` is used.
 
-### 3.20 Theme's single-noviplast.php inspected
+### 3.20 Theme's single-democlient.php inspected
 
-- **What:** open the theme file `wp-content/themes/noviplast/single-noviplast.php` (or equivalent). Understand what surrounding layout (header, sidebar, related products) will wrap our template content.
+- **What:** open the theme file `wp-content/themes/democlient/single-democlient.php` (or equivalent). Understand what surrounding layout (header, sidebar, related products) will wrap our template content.
 - **Verify:** you know what our template content needs to look like to fit visually.
 - **Blocks:** Phase 5 template polish.
 
@@ -298,22 +298,22 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
 
 ### 3.23 Draft product template created
 
-- **What:** create `templates/noviplast/product.nl.html` and `templates/noviplast/product.fr.html` as first-cut Mustache templates that fit the theme's `single-noviplast.php` layout.
+- **What:** create `templates/democlient/product.nl.html` and `templates/democlient/product.fr.html` as first-cut Mustache templates that fit the theme's `single-democlient.php` layout.
 - **Verify:** template renders without Mustache errors against a sample `ProductRecord`.
 - **Blocks:** Phase 5 completion.
 
 ### 3.24 Local `.env` file populated
 
-- **What:** copy `.env.example` to `.env`, fill in `NOVIPLAST_GS1_CLIENT_SANDBOX_ID`, `NOVIPLAST_GS1_CLIENT_SANDBOX_SECRET`, `NOVIPLAST_GS1_CLIENT_ID`, `NOVIPLAST_GS1_CLIENT_SECRET`, `NOVIPLAST_WP_APP_PASS`.
+- **What:** copy `.env.example` to `.env`, fill in `DEMOCLIENT_GS1_CLIENT_SANDBOX_ID`, `DEMOCLIENT_GS1_CLIENT_SANDBOX_SECRET`, `DEMOCLIENT_GS1_CLIENT_ID`, `DEMOCLIENT_GS1_CLIENT_SECRET`, `DEMOCLIENT_WP_APP_PASS`.
 - **Where:** `.env` at the repo root (gitignored).
-- **Verify:** `python -c "import os; print(bool(os.getenv('NOVIPLAST_GS1_CLIENT_SANDBOX_ID')))"` returns `True` in a shell that sourced `.env`.
+- **Verify:** `python -c "import os; print(bool(os.getenv('DEMOCLIENT_GS1_CLIENT_SANDBOX_ID')))"` returns `True` in a shell that sourced `.env`.
 - **Blocks:** any Phase 2+ run.
 
 ### 3.25 `clients.yml` populated
 
-- **What:** copy `clients.example.yml` to `clients.yml`, fill in the `noviplast` block per [[PROJECT_HANDOVER]] §10.1.
+- **What:** copy `clients.example.yml` to `clients.yml`, fill in the `democlient` block per [[PROJECT_HANDOVER]] §10.1.
 - **Where:** `clients.yml` at the repo root (gitignored).
-- **Verify:** `python -m scripts.parse_export noviplast --dry-run` runs (may report warnings on optional fields, but no schema errors).
+- **Verify:** `python -m scripts.parse_export democlient --dry-run` runs (may report warnings on optional fields, but no schema errors).
 - **Blocks:** Phase 3.
 
 ---
@@ -327,7 +327,7 @@ Before starting the first Claude Code session:
 - [ ] Part 3.1, 3.2 done (GS1 keys)
 - [ ] Part 3.6 done (Excel export in hand)
 - [ ] Vault project structure verified (item 2.5)
-- [ ] [[Noviplast_2D]] project hub note reachable
+- [ ] [[Democlient_2D]] project hub note reachable
 
 Parts 3.7 through 3.25 can be completed during Phases 2–5 as they become relevant. But if you can front-load 3.8–3.14 (WP staging setup) before Phase 4 starts, you'll save a week of calendar time.
 
@@ -348,7 +348,7 @@ These are ongoing hygiene, not one-off tasks:
 
 - Full onboarding walkthrough: [[PROJECT_HANDOVER]] §5
 - WordPress setup detailed reference (15 items with fixes): [[PROJECT_HANDOVER]] §5.4
-- Noviplast-specific discovery findings: [[PROJECT_HANDOVER]] §5.5
+- Democlient-specific discovery findings: [[PROJECT_HANDOVER]] §5.5
 - Developer verification steps (curl commands): [[IMPLEMENTATION_SPEC]] §13
 - Phase-by-phase development plan: [[PROJECT_HANDOVER]] §8.2
 - Definition of Done per phase: [[IMPLEMENTATION_SPEC]] §12
