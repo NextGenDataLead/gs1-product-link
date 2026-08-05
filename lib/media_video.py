@@ -57,7 +57,7 @@ def canon_gtin(gtin: str) -> str:
 
     The mapping file is often keyed with 13-digit GTINs (no indicator digit) while the pipeline
     carries 14-digit GTINs, so a raw ``==`` silently misses. Stripping non-digits and left-padding
-    to 14 makes the two forms compare equal — the same canonicalisation the ``website_status`` gate
+    to 14 makes the two forms compare equal — the same canonicalisation the ``process_list`` gate
     uses via :attr:`lib.records.ProductRecord.gtin14`.
     """
     return re.sub(r"\D", "", gtin).zfill(_GTIN_WIDTH)

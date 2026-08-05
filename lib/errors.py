@@ -126,15 +126,19 @@ class StateError(OrchestratorError):
     """The state file could not be loaded, parsed, or written."""
 
 
-class WebsiteStatusError(OrchestratorError):
-    """The website-status control file is missing, unreadable, or malformed.
+class ProcessListError(OrchestratorError):
+    """The process list is missing, unreadable, malformed, or empty.
 
-    Raised by ``lib.website_status.load_website_status`` when the operator's
-    control file (``input/{client_id}/website_status.xlsx``) cannot be opened or
-    is missing a required column. The control file gates which products are
-    eligible for page/QR creation (already in GS1 and not yet on the website);
-    a missing or malformed one is an operator-config error, so ``run_plan.py``
-    treats it like :class:`ConfigError` (exit 2).
+    Raised by ``lib.process_list.load_process_list`` when the operator's control
+    file (``input/{client_id}/process-list.xlsx``) cannot be opened, has no sheet
+    carrying the configured GTIN column, or carries the column with no GTINs under
+    it. The list names exactly which GTINs a run may touch, so a missing or
+    malformed one is an operator-config error and ``run_plan.py`` treats it like
+    :class:`ConfigError` (exit 2).
+
+    **Empty is an error, not an empty run.** A file that parses to zero GTINs would
+    otherwise yield an empty plan and a run that reports success having published
+    nothing — the silent no-op this tool keeps having to design against.
     """
 
 

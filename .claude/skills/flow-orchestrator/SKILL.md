@@ -54,14 +54,16 @@ executed draft-first. Tone is **concise and business-like, not conversational** 
 text creates fatigue during batch runs.
 
 For the pilot the flow is **create-only**: `run_plan.py` gates products through the
-website-status control file, so only GTINs that are already in GS1 and not yet on the
-website become candidates. Every candidate is therefore NEW, and the CHANGED/diff path
-below stays dormant — it is implemented and ready for future product updates.
+**process list**, so only the GTINs the operator listed are candidates. Every GTIN in
+that file is processed — the tool reads no status columns, and the operator prepares the
+file by deleting the rows that should not run. Every candidate is therefore NEW, and the
+CHANGED/diff path below stays dormant — it is implemented and ready for future product
+updates.
 
 ## Inputs
 
 - `client_id` (from the trigger phrase; ask if unclear).
-- `clients.yml` config for the client (languages, environment, `website_status`, `flow`,
+- `clients.yml` config for the client (languages, environment, `process_list`, `flow`,
   `generator`).
 - Parsed products at `output/{client}/data/products.json` (run `parse_export` if absent).
 - For a client with a `generator` config, the generated-content cache at
@@ -174,8 +176,9 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    - `cancel` — abort, write nothing.
    Off-menu reply → reply verbatim: `Please pick one of the listed options, or specify a
    filter (e.g. 'only GTIN 87123...').`
-   When run_plan reported control-file exclusions, add one line beneath the counts, e.g.
-   `Excluded (control file): 12 already on website, 3 not yet in GS1, 1 not in control file.`
+   When run_plan reported process-list exclusions, add one line beneath the counts, e.g.
+   `Excluded: 89 not on the process list.` That number is products in the catalogue the
+   operator did not list — it is expected, not a warning.
    When run_plan's stderr leads with the **state-reset warning** (E19 — prior state was
    corrupt and has been reset), put it **above** the counts, not below, and say what it
    means before offering the menu:
@@ -322,7 +325,7 @@ There are MCP servers in `mcps/`, but they are **not** how anything here works a
 - **Nothing to execute.** If the confirmed subset is empty (e.g. everything excluded by the
   control file, or the operator picked `new-only` with zero NEW rows), report it and skip
   the execute step rather than invoking `run_execute` with an empty plan.
-- **Missing control file.** If `website_status` is configured but the file is absent,
+- **Missing process list.** If `process_list` is configured but the file is absent,
   run_plan exits 2 — ask the operator to place it at the configured path before retrying.
 - **`links` mode refused a GTIN: "refusing to point a permanent GS1 record at it".** Its target URL
   did not serve. Do **not** work around it — that refusal is the whole reason the mode is safe to

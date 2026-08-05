@@ -17,7 +17,7 @@ path (incl. git workflow) from here to release. DoD checkboxes stay authoritativ
   `--plan`); `run_plan` additionally drops already-present GTINs. The allowlist is derived live from
   `input/democlient/videos/mapping.yml` (`lib.media_video.fully_mapped_gtins`).
 - **The numbers:** **20** GTINs are video-mapped in both nl+fr = the allowlist. Of those, **5 are
-  already live** on the site (`…0473, …1739, …3948, …5676, …7359`, per `website_status`), **2 are
+  already live** on the site (`…0473, …1739, …3948, …5676, …7359`, per the process list), **2 are
   already present** (`…7717` published, `…0527` dirty draft) → **13 are the runnable batch**. 13 +
   `…7717` = 14 live, past the ≥10 DoD.
 - **The immediate blocker is COPY.** All 13 have title + image + video (both languages) but **no

@@ -350,7 +350,7 @@ Typed exceptions: `OrchestratorError` (base), `ConfigError`, `MissingCredentialE
 |---|---|---|
 | `OverwriteError(gtin, existing)` | `gs1_dl_client.safe_upsert` | GET-before-write guard: refuses to replace an existing Digital Link without `overwrite=True`. Carries the prior snapshot for rollback. |
 | `GtinMismatchError(gtin, existing_gtin, wp_page_id)` | `wp_client.upsert_page` | E8 — a page at the target slug belongs to a different GTIN. Distinct from `WordPressAPIError` so callers **log and skip the row** rather than treating it as a transport failure. |
-| `WebsiteStatusError` | `website_status.load_website_status` | The operator control file is missing/unreadable/missing a column. Treated like `ConfigError` (exit 2) — it gates eligibility. |
+| `ProcessListError` | `process_list.load_process_list` | The process list is missing/unreadable/lacks the GTIN column/contains no GTINs. Treated like `ConfigError` (exit 2) — it names which products a run may touch. |
 | `GeneratorError` | `lib.generator` | Corrupt/unwritable `generated_cache.json`, or a producer result that fails validation. |
 | `LLMAPIError(status_code, response_body, message=None)` | `lib.llm.AnthropicClient` | API failure, transport failure (`status_code == 0`), or a 200 lacking the forced `produce_copy` tool call. Only reachable via `run_generate --backend api`. |
 
@@ -1259,7 +1259,7 @@ start of the phase (like the export and control file). See `docs/clients/democli
 > real flags, output paths, and exit codes of what it wraps.
 >
 > The end-to-end chat flow was driven in a Claude Code session on the real Democlient operator files
-> (`input/democlient/products.xlsx` + `website_status.xlsx`): `parse_export` (127 products, 11
+> (`input/democlient/products.xlsx` + the process list): `parse_export` (127 products, 11
 > warnings) → `run_generate --emit` (246 pending) → `content-generator` write + `--ingest` (review
 > gate 1) → `run_plan` (72 new, 2 held, 90 excluded — review gate 2) → confirm gate. Every §10.6
 > gate presented correctly. Each skill loads on its documented trigger phrase (all 6 phrases are

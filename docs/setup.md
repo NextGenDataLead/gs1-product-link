@@ -153,7 +153,7 @@ Note also that **environment variables do not survive between separate Claude Co
 | `categories` | GPC brick → site category, plus per-GTIN overrides | |
 | `generator` | Optional LLM content generation | [`costs.md`](costs.md) |
 | `media` | Images and video, field names, write shape | [`wordpress-onboarding.md`](wordpress-onboarding.md) |
-| `website_status` | Operator control file marking which products are already on the site | |
+| `process_list` | Operator file listing exactly which GTINs a run may touch — every GTIN in it is processed | |
 
 ## 4. Running it
 

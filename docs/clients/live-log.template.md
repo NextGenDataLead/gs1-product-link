@@ -43,7 +43,7 @@ _None._
 ## Not published by this pipeline
 
 Products already live on the site before or outside this pipeline (client-maintained, per the
-`website_status` control file). They are **not** counted above and have no state entry.
+`process_list` file). They are **not** counted above and have no state entry.
 
 ## Verification runs
 

@@ -1,10 +1,10 @@
 """Tests for scripts/run_plan.py (IMPLEMENTATION_SPEC §8.2, §12 Phase 7).
 
 run_plan is pure orchestration over ``lib.state.diff_against_state`` and the
-website-status gate, so these tests drive ``main`` with a fake ``get_client`` and a
+process-list gate, so these tests drive ``main`` with a fake ``get_client`` and a
 temp working directory and assert the emitted ``plan.json``, the stderr summary, the
 gate filtering, and the exit codes. Classification logic itself is covered in
-``tests/lib/test_state.py``; control-file parsing in ``tests/lib/test_website_status.py``.
+``tests/lib/test_state.py``; process-list parsing in ``tests/lib/test_process_list.py``.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from lib.config import (
     GeneratorConfig,
     GS1Config,
     MediaConfig,
-    WebsiteStatusConfig,
+    ProcessListConfig,
     WordPressConfig,
 )
 from lib.errors import ConfigError
@@ -46,7 +46,7 @@ GTIN_B = "08713195007360"
 GTIN_C = "08713195007361"
 GTIN_D = "08713195007362"
 
-_STATUS_HEADER = ["Barcode", "Momenteel op Website", "Al in Gs1", "Link naar site"]
+_LIST_HEADER = ["Barcode", "Omschrijving"]  # extra columns are ignored by design
 
 
 # --- Builders ----------------------------------------------------------------
@@ -93,13 +93,13 @@ def _write_products(path: Path, products: list[ProductRecord]) -> None:
     path.write_text(payload, encoding="utf-8")
 
 
-def _write_status(tmp_path: Path, rows: list[list[Any]]) -> str:
+def _write_process_list(tmp_path: Path, rows: list[list[Any]]) -> str:
     workbook = openpyxl.Workbook()
     sheet = workbook.active
-    sheet.append(_STATUS_HEADER)
+    sheet.append(_LIST_HEADER)
     for row in rows:
         sheet.append(row)
-    path = tmp_path / "website_status.xlsx"
+    path = tmp_path / "process-list.xlsx"
     workbook.save(path)
     return str(path)
 
@@ -283,47 +283,38 @@ def test_pilot_gate_noop_when_flag_off(tmp_path: Path, monkeypatch: pytest.Monke
     assert {r.gtin for r in _read_plan().rows} == {GTIN_A, GTIN_B}  # unrestricted
 
 
-# --- Website-status gate -----------------------------------------------------
+# --- Process-list gate --------------------------------------------------------
 
 
-def test_gate_excludes_non_candidates(
+def test_gate_keeps_every_listed_gtin_and_excludes_the_rest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    status_path = _write_status(
-        tmp_path,
-        [
-            [GTIN_A, None, "x", None],  # eligible: not on site, in GS1
-            [GTIN_B, "x", "x", None],  # already on website
-            [GTIN_C, None, None, None],  # not yet in GS1
-            # GTIN_D deliberately absent from the control file -> unknown
-        ],
-    )
-    cfg = _make_config(website_status=WebsiteStatusConfig(path=status_path))
+    """Membership is the whole rule: listed -> planned, absent -> excluded."""
+    # Arrange: A and B listed, C and D not.
+    list_path = _write_process_list(tmp_path, [[GTIN_A, "Widget"], [GTIN_B, "Gadget"]])
+    cfg = _make_config(process_list=ProcessListConfig(path=list_path))
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
     _write_products(products, [_product(g) for g in (GTIN_A, GTIN_B, GTIN_C, GTIN_D)])
 
+    # Act
     code = run_plan.main(["acme", "--products", str(products)])
 
+    # Assert
     assert code == 0
     plan = _read_plan()
-    assert [r.gtin for r in plan.rows] == [GTIN_A]
-    assert plan.counts[PlanClassification.NEW] == 1
+    assert sorted({r.gtin for r in plan.rows}) == sorted([GTIN_A, GTIN_B])
     err = capsys.readouterr().err
-    assert "1 new" in err
-    assert "3 excluded" in err
-    assert "1 already on website" in err
-    assert "1 not yet in GS1" in err
-    assert "1 not in control file" in err
+    assert "2 excluded (not on the process list)" in err
 
 
 def test_gate_joins_13_digit_barcode_to_14_digit_gtin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Control file carries the 13-digit barcode; the product GTIN is 14-digit.
-    status_path = _write_status(tmp_path, [[GTIN_A.lstrip("0"), None, "*", None]])
-    cfg = _make_config(website_status=WebsiteStatusConfig(path=status_path))
+    list_path = _write_process_list(tmp_path, [[GTIN_A.lstrip("0"), "Widget"]])
+    cfg = _make_config(process_list=ProcessListConfig(path=list_path))
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
@@ -337,7 +328,7 @@ def test_gate_joins_13_digit_barcode_to_14_digit_gtin(
 def test_missing_control_file_exit_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    cfg = _make_config(website_status=WebsiteStatusConfig(path=str(tmp_path / "missing.xlsx")))
+    cfg = _make_config(process_list=ProcessListConfig(path=str(tmp_path / "missing.xlsx")))
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
