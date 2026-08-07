@@ -117,7 +117,12 @@ def load_state(client_id: str) -> State:
             exc,
             backup,
         )
-        return State(client_id=client_id, entries={}, reset_from_corrupt=True)
+        return State(
+            client_id=client_id,
+            entries={},
+            reset_from_corrupt=True,
+            corrupt_backup=str(backup),
+        )
 
 
 def _quarantine_corrupt(path: Path, client_id: str, cause: Exception) -> Path:

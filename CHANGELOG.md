@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`run_plan` writes `plan.summary.json` beside the plan.** Everything the run concluded
+  but did not put *in* the plan — the process-list and pilot-gate exclusions, the tally of
+  units dropped before classification, and the E19 state reset — existed only as prose on
+  stderr, so the only reader that could ever see it was the process that ran the command.
+  An operator returning to an hour-old plan, or anything driving `run_plan` from outside,
+  had nothing to go on.
+
+  The file carries `counts`, `total`, a `skipped` tally by reason, an `excluded` tally by
+  gate, the category and generated-content issue counts, `state_reset_from_corrupt`, and
+  `state_corrupt_backup` — the path the bad state file was quarantined to, which is the
+  evidence for that flag and is knowable only inside `load_state`, since the name is
+  stamped with the moment of the reset. `text` holds the stderr summary line verbatim, so
+  a second reader shows the operator the same words rather than a reconstruction of them.
+
+  Written on **every** run, never conditionally: a missing file has to mean "run_plan did
+  not run", so that an empty tally can mean "it ran and found nothing". Those are different
+  facts, and a reader that cannot tell them apart is the E21 trap in another costume.
+
+  `State` gains `corrupt_backup` alongside `reset_from_corrupt`, excluded from
+  serialisation for the same reason — it describes the load, not the persisted state.
+
 - **`plan.json` now records the units it dropped.** Three checks remove a
   `(GTIN, language)` *before* classification — E18 (no `product_name` in that language),
   E21 (a generator is configured but the unit has no generated copy yet) and E22
