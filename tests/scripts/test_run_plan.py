@@ -37,7 +37,16 @@ from lib.generator import (
     pending_requests,
     save_cache,
 )
-from lib.records import LocalisedText, Plan, PlanClassification, ProductRecord, State, StateEntry
+from lib.records import (
+    ConfirmedPlan,
+    LocalisedText,
+    Plan,
+    PlanClassification,
+    ProductRecord,
+    SkipReason,
+    State,
+    StateEntry,
+)
 from lib.state import save_state
 from scripts import run_plan
 
@@ -78,11 +87,15 @@ def _make_config(**overrides: Any) -> ClientConfig:
     return ClientConfig(**params)
 
 
-def _product(gtin: str = GTIN_A, brick: str | None = None) -> ProductRecord:
+def _product(
+    gtin: str = GTIN_A,
+    brick: str | None = None,
+    product_name: dict[str, str] | None = None,
+) -> ProductRecord:
     return ProductRecord(
         gtin=gtin,
         brand="Acme",
-        product_name=LocalisedText(values={"nl": "Rugsteun"}),
+        product_name=LocalisedText(values=product_name or {"nl": "Rugsteun"}),
         gpc_brick_code=brick,
     )
 
@@ -675,6 +688,64 @@ def test_e18_without_cache_still_skips_french(
     planned = {(r.gtin, r.language) for r in _read_plan().rows}
     assert (GTIN_A, "fr") not in planned  # E18 backstop: no fr name anywhere -> skipped
     assert (GTIN_A, "nl") in planned
+
+
+# --- Plan-time drops (E18/E21/E22) -------------------------------------------
+
+
+def test_dropped_units_are_written_into_the_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A unit dropped before classification is named in ``plan.json``, not just logged.
+
+    ``plan.total`` is ``len(rows)``, so a drop used to make the plan under-report the work
+    by exactly the units that had gone missing — and the only trace was a WARNING line.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(wordpress=_bilingual_wp(), generator=GeneratorConfig(enabled=True))
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+    _cache_with(GTIN_A, "nl", usps=["Slogan NL"])  # nl has copy; fr has neither name nor copy
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+
+    plan = _read_plan()
+    assert plan.total == 1  # unchanged meaning: total still counts executable rows only
+    assert [(s.gtin, s.language, s.reason) for s in plan.skipped] == [
+        (GTIN_A, "fr", SkipReason.MISSING_PRODUCT_NAME)
+    ]
+
+
+def test_summary_names_the_reason_not_just_the_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ "2 skipped" is a number to shrug at; naming the reason is an instruction."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(wordpress=_bilingual_wp(), generator=GeneratorConfig(enabled=True))
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A, product_name={"nl": "Rugsteun", "fr": "Support"})])
+
+    run_plan.main(["acme", "--products", str(products)])  # generator on, cache empty -> E21 ×2
+
+    err = capsys.readouterr().err
+    assert "0 new, 0 unchanged, 0 changed" in err  # an empty plan...
+    assert "2 skipped (2 no_generated_copy)" in err  # ...and why, on the same line
+
+
+def test_a_plan_written_before_skipped_existed_still_loads(tmp_path: Path) -> None:
+    """``skipped`` defaults to empty, so the live ``plan.confirmed.json`` keeps validating."""
+    legacy = {
+        "client_id": "acme",
+        "generated_at": "2026-07-12T00:00:00Z",
+        "total": 0,
+        "counts": {},
+        "rows": [],
+    }
+    plan = Plan.model_validate(legacy)
+    assert plan.skipped == []
+    assert ConfirmedPlan.model_validate({"plan": legacy, "confirmed_gtins_by_lang": []})
 
 
 def test_generated_issues_report_written_when_generator_configured(

@@ -175,6 +175,21 @@ class PlanRow(BaseModel):
     product: ProductRecord
 
 
+class SkipReason(StrEnum):
+    MISSING_PRODUCT_NAME = "missing_product_name"  # E18
+    NO_GENERATED_COPY = "no_generated_copy"  # E21
+    BLANK_HERO_IMAGE = "blank_hero_image"  # E22
+
+
+class SkippedUnit(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    gtin: str
+    language: str
+    reason: SkipReason
+    detail: str
+
+
 class Plan(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -183,6 +198,7 @@ class Plan(BaseModel):
     total: int
     counts: dict[PlanClassification, int]
     rows: list[PlanRow]
+    skipped: list[SkippedUnit] = Field(default_factory=list)
 
 
 class ConfirmedPlan(BaseModel):

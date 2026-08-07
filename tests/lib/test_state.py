@@ -20,7 +20,14 @@ import pytest
 
 from lib.config import WordPressConfig
 from lib.errors import ConfigError, StateError
-from lib.records import LocalisedText, PlanClassification, ProductRecord, State, StateEntry
+from lib.records import (
+    LocalisedText,
+    PlanClassification,
+    ProductRecord,
+    SkipReason,
+    State,
+    StateEntry,
+)
 from lib.state import (
     compute_content_hash,
     diff_against_state,
@@ -293,7 +300,9 @@ def _state_with(
 
 
 def test_diff_new_when_no_state_entry() -> None:
-    rows = diff_against_state([_product()], State(client_id="noviplast", entries={}), ["nl"], _wp())
+    rows, _ = diff_against_state(
+        [_product()], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )
 
     assert len(rows) == 1
     assert rows[0].classification is PlanClassification.NEW
@@ -302,7 +311,7 @@ def test_diff_new_when_no_state_entry() -> None:
 
 def test_diff_slug_and_target_url_built_from_patterns() -> None:
     product = _product(gtin="08713195007359")
-    rows = diff_against_state(
+    rows, _ = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl", "fr"], _wp()
     )
 
@@ -319,12 +328,12 @@ def test_diff_unchanged_when_hash_matches() -> None:
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     state = _state_with(
         product.gtin, "nl", content_hash=baseline.content_hash, wp_url=baseline.target_url
     )
 
-    rows = diff_against_state([product], state, ["nl"], _wp())
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.UNCHANGED
     assert rows[0].diff is None
@@ -354,10 +363,10 @@ def test_diff_held_when_product_was_unpublished(down: dict[str, object], why: st
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     state = _held_state(product, baseline.content_hash, baseline.target_url, **down)
 
-    rows = diff_against_state([product], state, ["nl"], _wp())
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.HELD, why
 
@@ -368,10 +377,10 @@ def test_diff_held_outranks_changed() -> None:
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     state = _held_state(product, "stale", baseline.target_url, wp_status="draft")
 
-    rows = diff_against_state([product], state, ["nl"], _wp())
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.HELD
 
@@ -383,7 +392,7 @@ def test_legacy_state_without_status_fields_is_not_held() -> None:
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     legacy = _entry().model_dump(mode="json")
     del legacy["wp_status"]
     del legacy["gs1_enabled"]
@@ -394,7 +403,7 @@ def test_legacy_state_without_status_fields_is_not_held() -> None:
         entries={product.gtin: {"nl": StateEntry.model_validate(legacy)}},
     )
 
-    rows = diff_against_state([product], state, ["nl"], _wp())
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.UNCHANGED
 
@@ -406,14 +415,14 @@ def test_diff_changed_when_page_published_without_a_resolver_link() -> None:
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     state = _state_with(
         product.gtin, "nl", content_hash=baseline.content_hash, wp_url=baseline.target_url
     )
     entry = state.entries[product.gtin]["nl"]
     state.entries[product.gtin]["nl"] = entry.model_copy(update={"gs1_link_set_hash": ""})
 
-    rows = diff_against_state([product], state, ["nl"], _wp())
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.CHANGED
     # A named diff row, so the §10.6.2 prompt says what is missing rather than printing a
@@ -427,12 +436,12 @@ def test_diff_held_outranks_a_missing_resolver_link() -> None:
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     state = _held_state(
         product, baseline.content_hash, baseline.target_url, wp_status="draft", gs1_link_set_hash=""
     )
 
-    rows = diff_against_state([product], state, ["nl"], _wp())
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.HELD
 
@@ -441,12 +450,12 @@ def test_diff_changed_in_body_only_has_no_diff() -> None:
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     # Title and URL both unmoved, stale content hash -> the change is in the product
     # body, which state does not retain. CHANGED, but no field-level diff to show.
     state = _state_with(product.gtin, "nl", content_hash="stale", wp_url=baseline.target_url)
 
-    rows = diff_against_state([product], state, ["nl"], _wp())
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.CHANGED
     assert rows[0].diff is None
@@ -459,12 +468,12 @@ def test_diff_changed_surfaces_title_when_renamed() -> None:
     renamed = _product(product_name=LocalisedText(values={"nl": "Rugsteun Pro"}))
     baseline = diff_against_state(
         [renamed], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     state = _state_with(
         renamed.gtin, "nl", content_hash="stale", wp_url=baseline.target_url, title="Rugsteun"
     )
 
-    rows = diff_against_state([renamed], state, ["nl"], _wp())
+    rows, _ = diff_against_state([renamed], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.CHANGED
     assert rows[0].diff == {"title": ("Rugsteun", "Rugsteun Pro")}
@@ -474,10 +483,10 @@ def test_diff_changed_surfaces_target_url_when_moved() -> None:
     product = _product()
     baseline = diff_against_state(
         [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     state = _state_with(product.gtin, "nl", content_hash="stale", wp_url="https://old.test/x/")
 
-    rows = diff_against_state([product], state, ["nl"], _wp())
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.CHANGED
     assert rows[0].diff == {"target_url": ("https://old.test/x/", baseline.target_url)}
@@ -487,12 +496,12 @@ def test_diff_changed_surfaces_title_and_target_url_together() -> None:
     renamed = _product(product_name=LocalisedText(values={"nl": "Rugsteun Pro"}))
     baseline = diff_against_state(
         [renamed], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     state = _state_with(
         renamed.gtin, "nl", content_hash="stale", wp_url="https://old.test/x/", title="Rugsteun"
     )
 
-    rows = diff_against_state([renamed], state, ["nl"], _wp())
+    rows, _ = diff_against_state([renamed], state, ["nl"], _wp())
 
     # §10.6.2 presents title before target_url.
     assert list(rows[0].diff or {}) == ["title", "target_url"]
@@ -508,18 +517,18 @@ def test_diff_state_without_recorded_title_omits_title_diff() -> None:
     renamed = _product(product_name=LocalisedText(values={"nl": "Rugsteun Pro"}))
     baseline = diff_against_state(
         [renamed], State(client_id="noviplast", entries={}), ["nl"], _wp()
-    )[0]
+    ).rows[0]
     state = _state_with(
         renamed.gtin, "nl", content_hash="stale", wp_url="https://old.test/x/", title=None
     )
 
-    rows = diff_against_state([renamed], state, ["nl"], _wp())
+    rows, _ = diff_against_state([renamed], state, ["nl"], _wp())
 
     assert rows[0].diff == {"target_url": ("https://old.test/x/", baseline.target_url)}
 
 
 def test_diff_multilanguage_expands_rows() -> None:
-    rows = diff_against_state(
+    rows, _ = diff_against_state(
         [_product()], State(client_id="noviplast", entries={}), ["nl", "fr"], _wp()
     )
 
@@ -532,12 +541,17 @@ def test_diff_missing_product_name_for_language_is_omitted(
     product = _product(product_name=LocalisedText(values={"nl": "Rugsteun"}))  # no fr
 
     with caplog.at_level("WARNING", logger="lib.state"):
-        rows = diff_against_state(
+        rows, skipped = diff_against_state(
             [product], State(client_id="noviplast", entries={}), ["nl", "fr"], _wp()
         )
 
     assert [r.language for r in rows] == ["nl"]
     assert "missing product_name.fr" in caplog.text
+    # The drop is part of the answer, not just a log line somebody might read.
+    assert [(s.gtin, s.language, s.reason) for s in skipped] == [
+        (product.gtin, "fr", SkipReason.MISSING_PRODUCT_NAME)
+    ]
+    assert skipped[0].detail in caplog.text  # the record and the warning say the same thing
 
 
 def test_diff_skips_row_without_generated_copy_when_required(
@@ -547,7 +561,7 @@ def test_diff_skips_row_without_generated_copy_when_required(
     product = _product()  # no generated_tagline
 
     with caplog.at_level("WARNING", logger="lib.state"):
-        rows = diff_against_state(
+        rows, skipped = diff_against_state(
             [product],
             State(client_id="noviplast", entries={}),
             ["nl", "fr"],
@@ -557,13 +571,18 @@ def test_diff_skips_row_without_generated_copy_when_required(
 
     assert rows == []
     assert "no generated copy" in caplog.text
+    # An empty plan and a plan with nothing to do are the same document without this.
+    assert [(s.language, s.reason) for s in skipped] == [
+        ("nl", SkipReason.NO_GENERATED_COPY),
+        ("fr", SkipReason.NO_GENERATED_COPY),
+    ]
 
 
 def test_diff_keeps_row_without_generated_copy_when_not_required() -> None:
     # Default (no generator configured): copy-less rows are planned as before.
     product = _product()
 
-    rows = diff_against_state([product], State(client_id="noviplast", entries={}), ["nl"], _wp())
+    rows, _ = diff_against_state([product], State(client_id="noviplast", entries={}), ["nl"], _wp())
 
     assert [r.language for r in rows] == ["nl"]
 
@@ -571,7 +590,7 @@ def test_diff_keeps_row_without_generated_copy_when_not_required() -> None:
 def test_diff_keeps_row_with_generated_copy_when_required() -> None:
     product = _product(generated_tagline=LocalisedText(values={"nl": "Slogan"}))
 
-    rows = diff_against_state(
+    rows, skipped = diff_against_state(
         [product],
         State(client_id="noviplast", entries={}),
         ["nl", "fr"],
@@ -581,6 +600,7 @@ def test_diff_keeps_row_with_generated_copy_when_required() -> None:
 
     # nl has copy → kept; fr lacks copy → skipped.
     assert [r.language for r in rows] == ["nl"]
+    assert [(s.language, s.reason) for s in skipped] == [("fr", SkipReason.NO_GENERATED_COPY)]
 
 
 def test_diff_holds_gtin_with_blank_image_when_required(
@@ -590,7 +610,7 @@ def test_diff_holds_gtin_with_blank_image_when_required(
     product = _product(image_url=None)
 
     with caplog.at_level("WARNING", logger="lib.state"):
-        rows = diff_against_state(
+        rows, skipped = diff_against_state(
             [product],
             State(client_id="noviplast", entries={}),
             ["nl", "fr"],
@@ -600,13 +620,19 @@ def test_diff_holds_gtin_with_blank_image_when_required(
 
     assert rows == []
     assert "blank source image" in caplog.text
+    # The check is per product, but the record is per language: the plan counts rows in
+    # (GTIN, language) units, and a skip counted in any other unit cannot be set beside them.
+    assert [(s.language, s.reason) for s in skipped] == [
+        ("nl", SkipReason.BLANK_HERO_IMAGE),
+        ("fr", SkipReason.BLANK_HERO_IMAGE),
+    ]
 
 
 def test_diff_keeps_gtin_with_blank_image_when_not_required() -> None:
     # Default: a blank image degrades gracefully at execute (E7), so the plan still includes it.
     product = _product(image_url=None)
 
-    rows = diff_against_state([product], State(client_id="noviplast", entries={}), ["nl"], _wp())
+    rows, _ = diff_against_state([product], State(client_id="noviplast", entries={}), ["nl"], _wp())
 
     assert [r.language for r in rows] == ["nl"]
 
@@ -614,7 +640,7 @@ def test_diff_keeps_gtin_with_blank_image_when_not_required() -> None:
 def test_diff_keeps_gtin_with_hero_image_when_required() -> None:
     product = _product(image_url="https://example.test/hero.jpg")
 
-    rows = diff_against_state(
+    rows, _ = diff_against_state(
         [product],
         State(client_id="noviplast", entries={}),
         ["nl"],
@@ -626,8 +652,9 @@ def test_diff_keeps_gtin_with_hero_image_when_required() -> None:
 
 
 def test_diff_empty_products_yields_no_rows() -> None:
-    rows = diff_against_state([], State(client_id="noviplast", entries={}), ["nl"], _wp())
+    rows, skipped = diff_against_state([], State(client_id="noviplast", entries={}), ["nl"], _wp())
     assert rows == []
+    assert skipped == []  # nothing came in, so nothing was dropped — a different empty plan
 
 
 def test_diff_missing_patterns_raises() -> None:

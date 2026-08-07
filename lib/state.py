@@ -19,7 +19,10 @@ state — NEW / UNCHANGED / CHANGED by content hash — and builds the ``PlanRow
 that ``scripts/run_plan.py`` writes to ``plan.json``. Its signature takes the whole
 :class:`~lib.config.WordPressConfig` rather than §4.8's bare ``target_url_pattern``,
 because building a ``PlanRow`` needs the slug pattern, site URL, post type, and
-default language too — all of which live on that config.
+default language too — all of which live on that config. It returns a
+:class:`PlanDiff`, not a bare list: the units it *drops* (E18/E21/E22) are as much of
+its answer as the ones it keeps, and while they were only a warning log every caller
+threw them away.
 """
 
 from __future__ import annotations
@@ -30,10 +33,18 @@ import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 from lib.errors import ConfigError, StateError
-from lib.records import PlanClassification, PlanRow, ProductRecord, State, StateEntry
+from lib.records import (
+    PlanClassification,
+    PlanRow,
+    ProductRecord,
+    SkippedUnit,
+    SkipReason,
+    State,
+    StateEntry,
+)
 
 if TYPE_CHECKING:
     from lib.config import WordPressConfig
@@ -251,6 +262,23 @@ def _classify(
     return PlanClassification.CHANGED, diff or None
 
 
+class PlanDiff(NamedTuple):
+    """What :func:`diff_against_state` found: the planned rows, and the units it dropped.
+
+    A pair rather than a bare list so a caller cannot take the rows and leave the drops
+    behind — which is exactly what every caller did while the drops were only a log line.
+    """
+
+    rows: list[PlanRow]
+    skipped: list[SkippedUnit]
+
+
+def _skip(gtin: str, language: str, reason: SkipReason, detail: str) -> SkippedUnit:
+    """Record a dropped unit *and* log it, so the two can never say different things."""
+    _log.warning("SKIPPED %s (%s): %s", gtin, language, detail)
+    return SkippedUnit(gtin=gtin, language=language, reason=reason, detail=detail)
+
+
 def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseline, and each policy flag
     products: list[ProductRecord],
     state: State,
@@ -258,7 +286,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     wordpress: WordPressConfig,
     require_generated_copy: bool = False,
     require_hero_image: bool = False,
-) -> list[PlanRow]:
+) -> PlanDiff:
     """Classify each ``(GTIN, language)`` against prior state, building plan rows (§4.8, §8.2).
 
     For every product × language, computes the slug, resolver target URL, title, and
@@ -289,8 +317,12 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
             runtime image fetch failure still degrades gracefully and publishes (E7).
 
     Returns:
-        One :class:`~lib.records.PlanRow` per planned ``(GTIN, language)``, in input
-        order.
+        A :class:`PlanDiff`: one :class:`~lib.records.PlanRow` per planned
+        ``(GTIN, language)`` in input order, and one
+        :class:`~lib.records.SkippedUnit` per unit dropped by E18/E21/E22. The two are
+        returned together, rather than the skips being left to a warning log the caller may
+        or may not read, because a plan that silently lost every row is the failure this
+        function is most able to cause.
 
     Raises:
         ConfigError: If ``wordpress.slug_pattern`` or ``wordpress.target_url_pattern``
@@ -304,22 +336,42 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
         )
 
     rows: list[PlanRow] = []
+    skipped: list[SkippedUnit] = []
     for product in products:
+        # E22 drops the product, but it is recorded per language: the plan's unit of work is
+        # ``(GTIN, language)``, and a count in any other unit cannot be compared with the row
+        # counts beside it.
         if require_hero_image and not (product.image_url or "").strip():  # E22
-            _log.warning("SKIPPED %s: blank source image (held; require_hero_image)", product.gtin)
+            skipped.extend(
+                _skip(
+                    product.gtin,
+                    language,
+                    SkipReason.BLANK_HERO_IMAGE,
+                    "blank source image (held; require_hero_image)",
+                )
+                for language in languages
+            )
             continue
         for language in languages:
             if language not in product.product_name.values:  # E18
-                _log.warning(
-                    "SKIPPED %s (%s): missing product_name.%s", product.gtin, language, language
+                skipped.append(
+                    _skip(
+                        product.gtin,
+                        language,
+                        SkipReason.MISSING_PRODUCT_NAME,
+                        f"missing product_name.{language}",
+                    )
                 )
                 continue
             tagline = product.generated_tagline
             if require_generated_copy and not (tagline and tagline.values.get(language)):  # E21
-                _log.warning(
-                    "SKIPPED %s (%s): no generated copy (held for missing input)",
-                    product.gtin,
-                    language,
+                skipped.append(
+                    _skip(
+                        product.gtin,
+                        language,
+                        SkipReason.NO_GENERATED_COPY,
+                        "no generated copy (held for missing input)",
+                    )
                 )
                 continue
             slug = slug_pattern.format(gtin=product.gtin, gtin14=product.gtin14)
@@ -348,4 +400,4 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                     product=product,
                 )
             )
-    return rows
+    return PlanDiff(rows=rows, skipped=skipped)

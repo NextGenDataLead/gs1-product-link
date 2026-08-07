@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`plan.json` now records the units it dropped.** Three checks remove a
+  `(GTIN, language)` *before* classification — E18 (no `product_name` in that language),
+  E21 (a generator is configured but the unit has no generated copy yet) and E22
+  (`require_hero_image` with a blank source image). They left no trace but a
+  `WARNING SKIPPED …` line, and since `Plan.total` is `len(rows)` the plan under-reported
+  the work by exactly the units that had gone missing. A plan that dropped *everything*
+  for want of copy was byte-comparable to a plan with nothing to do, and the run after it
+  reported success having published nothing.
+
+  `Plan.skipped` is now a list of `SkippedUnit(gtin, language, reason, detail)`, with
+  `reason` one of `missing_product_name` / `no_generated_copy` / `blank_hero_image`. It
+  sits *beside* `counts` rather than inside it: a skipped unit is not a fifth
+  classification but an absence, and folding it in would change what every existing reader
+  of a count believes it is reading. `total` and `counts` keep their exact meaning, and
+  `skipped` defaults to empty so a `plan.json` or `plan.confirmed.json` written before it
+  existed still validates.
+
+  `run_plan`'s summary gains `; 6 skipped (4 no_generated_copy, 2 missing_product_name)` —
+  the reason, not just the count, because "6 skipped" is a number to shrug at and
+  "4 no generated copy" is an instruction. `flow-orchestrator` step 5 now has to show the
+  same line above its menu.
+
+  `lib.state.diff_against_state` returns a `PlanDiff(rows, skipped)` pair rather than a
+  bare row list, so a caller cannot take the rows and leave the drops behind — which is
+  what every caller did for as long as the drops were only a log line.
+
 ### Changed
 - **The run log is written as the run goes, not once at the end.** `run_execute` used to
   collect every `RunOutcome` in memory and write `output/{client}/runs/{ts}.jsonl` after

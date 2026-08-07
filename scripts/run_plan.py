@@ -33,6 +33,7 @@ import argparse
 import json
 import logging
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -45,7 +46,14 @@ from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError
 from lib.generator import load_cache, merge_generated
 from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
 from lib.process_list import load_process_list
-from lib.records import Plan, PlanClassification, ProductRecord, SourceIssue, State
+from lib.records import (
+    Plan,
+    PlanClassification,
+    ProductRecord,
+    SkippedUnit,
+    SourceIssue,
+    State,
+)
 from lib.state import diff_against_state, load_state
 
 _log = logging.getLogger("scripts.run_plan")
@@ -237,7 +245,7 @@ def _build_plan(
     candidates, category_issues = _assign_categories(cfg, candidates)
     candidates, generated_issues = _generate_content(cfg, candidates)
 
-    rows = diff_against_state(
+    rows, skipped = diff_against_state(
         candidates,
         state,
         cfg.wordpress.languages,
@@ -252,6 +260,7 @@ def _build_plan(
         total=len(rows),
         counts=counts,
         rows=rows,
+        skipped=skipped,
     )
     return plan, excluded, state.reset_from_corrupt, category_issues, generated_issues
 
@@ -296,6 +305,8 @@ def _summary(
             f"{excluded['not_mapped']} no confirmed video in every language, "
             f"{excluded['already_present']} already have a page)"
         )
+    if plan.skipped:
+        line += f"; {len(plan.skipped)} skipped ({_skip_tally(plan.skipped)})"
     if unmapped_categories:
         line += f"; {unmapped_categories} product(s) with unmapped category (left unset)"
     if generated_issues:
@@ -303,6 +314,16 @@ def _summary(
     if state_was_reset:
         line = f"{_STATE_RESET_WARNING}\n{line}"
     return line
+
+
+def _skip_tally(skipped: list[SkippedUnit]) -> str:
+    """``"4 no_generated_copy, 2 missing_product_name"`` — commonest reason first.
+
+    The reason is named, not just counted. "6 skipped" is a number an operator can shrug at;
+    "6 no generated copy" is an instruction to go and generate it.
+    """
+    counts = Counter(unit.reason for unit in skipped)
+    return ", ".join(f"{n} {reason.value}" for reason, n in counts.most_common())
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

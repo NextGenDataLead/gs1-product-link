@@ -159,8 +159,55 @@ class PlanRow(BaseModel):
     product: ProductRecord
 
 
+class SkipReason(StrEnum):
+    """Why a ``(GTIN, language)`` never became a :class:`PlanRow` at all (§8.2).
+
+    Distinct from :class:`PlanClassification`, and deliberately so: a classification is a
+    judgement about a unit that *is* in the plan, while these units are absent from it. They
+    have no title, slug, hash or target URL to classify — that is precisely what is missing.
+    """
+
+    #: E18 — the product carries no ``product_name`` in this language.
+    MISSING_PRODUCT_NAME = "missing_product_name"
+    #: E21 — a generator is configured but this unit has no generated tagline yet.
+    NO_GENERATED_COPY = "no_generated_copy"
+    #: E22 — ``media.require_hero_image`` is set and the source ``image_url`` is blank.
+    BLANK_HERO_IMAGE = "blank_hero_image"
+
+
+class SkippedUnit(BaseModel):
+    """One ``(GTIN, language)`` dropped before classification, and why (§8.2).
+
+    These used to leave no trace but three ``WARNING SKIPPED …`` lines. Nothing counted them,
+    nothing wrote them down, and ``Plan.total`` — being ``len(rows)`` — under-reported the work
+    by exactly the units that had gone missing. A plan that dropped every row for want of
+    generated copy (E21) looked identical to a plan with nothing to do, and the run that
+    followed reported success having published nothing. That is the failure mode this whole
+    project keeps designing against, so the drops are now part of the plan document.
+
+    ``detail`` is the same sentence the warning log carries, kept verbatim so a reader of
+    ``plan.json`` needs no second source.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    gtin: str
+    language: str
+    reason: SkipReason
+    detail: str
+
+
 class Plan(BaseModel):
-    """A full run plan for one client (§2.2)."""
+    """A full run plan for one client (§2.2).
+
+    ``total`` and ``counts`` describe ``rows`` only — the executable work — and mean exactly
+    what they always meant. ``skipped`` sits beside them rather than inside them: a skipped
+    unit is not a fifth classification but an absence, and folding it into the counts would
+    change what every existing reader of a count believes it is reading.
+
+    ``skipped`` defaults to empty so a ``plan.json`` or ``plan.confirmed.json`` written before
+    it existed still validates.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -169,6 +216,7 @@ class Plan(BaseModel):
     total: int
     counts: dict[PlanClassification, int]
     rows: list[PlanRow]
+    skipped: list[SkippedUnit] = Field(default_factory=list)
 
 
 class ConfirmedPlan(BaseModel):
