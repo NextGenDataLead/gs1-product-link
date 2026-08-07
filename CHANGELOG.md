@@ -8,6 +8,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`python -m scripts.doctor` — a preflight, so failures arrive before the work instead of
+  during it.** Credentials resolved lazily at the first API call, so a
+  `MissingCredentialError` could fire *after* parse, plan and a clean dry-run had all passed.
+  A `clients.yml` with four blank fields reported them one run at a time, because
+  `load_clients` raises on the first violation and discards its `json_path`. And a
+  generated-copy cache that no longer matched the export reported nothing at all — those
+  units simply vanished from the plan (E21).
+
+  The checks live in `lib/preflight.py` as pure functions from configuration to a
+  `CheckResult(name, title, status, detail, remedy)`, so a UI, a test and the CLI can run the
+  same checks and disagree only about how to display them. `scripts/doctor.py` is the
+  argument parsing, the `.env` load and the rendering; `--offline` stops before any check that
+  reads a credential or opens a socket, `--json` emits the results for a caller to parse. Exit
+  `1` on any failure; warnings do not fail the run, because a warning that stops you is a
+  warning you learn to disable.
+
+  What it checks, and the specific trap each one is for:
+
+  - **Config** — validated with `jsonschema.iter_errors` directly, so **every** offending
+    field is named with its path, not just the first.
+  - **Scope** — how many products a run would actually touch after the process list and
+    `media.restrict_to_mapped_gtins`. The number an operator most needs and is least often
+    given: every gate between "38 GTINs listed" and "15 a run can publish" is silent by
+    design. Every check below it reports on that scope rather than the whole catalogue —
+    a report full of findings about work nobody asked for is a report people stop reading.
+  - **Generator block** — a `generator:` block deleted as unused cleanup does not raise; it
+    sets `require_generated_copy=False` and copy-less units publish blank taglines instead of
+    being held. Reported as a failure when a generated-copy cache exists, which is proof one
+    was configured.
+  - **Cache coverage** — the fingerprint covers `{inputs, language, prompt_version}`, so any
+    feed edit or version bump makes those units pending again, and a pending unit with no
+    producer is an E21 omission.
+  - **Process list, category coverage, video mapping, ffmpeg** — the existing `--check` gates,
+    offline. An unconfirmed video is a *warning* even under `restrict_to_mapped_gtins`, and
+    especially then: the restriction is what makes the gap safe.
+  - **Site reachable / WordPress credential / GS1 resolver** — separate checks, so "the site
+    is down", "the password is wrong" and "the account has no contract" are three different
+    answers rather than one confusing one. A 401 names the six-groups truncation trap by name.
+    A GS1 `21011` says outright that it cannot be fixed in code or config.
+
+  The GS1 check refuses one specific false pass: a GTIN the resolver has never seen answers
+  with the same `400 "No valid contract found for Gtin with id: …"` as the 21011 blocker, so a
+  clean "no record" is reported as *credentials accepted* and explicitly **not** as
+  contract-present. It also will not invent a GTIN to probe with — a GS1 record can never be
+  deleted, so a typo would be permanent.
+
+  Nothing here writes anything the pipeline reads, and nothing calls `load_state`: an idle
+  peek at a corrupt state file quarantines it (E19), and a diagnostic must not change what the
+  next run does. There is a test for exactly that.
+
+  `WordPressClient` gains `whoami()` — `GET /wp/v2/users/me?context=edit`, the read-only check
+  `docs/troubleshooting.md` has documented as a shell one-liner, now in code. The
+  `context=edit` is load-bearing: a bare `users/me` answers 200 for any credential that
+  authenticates and omits `roles`, so it cannot tell a working password from a working
+  password on a demoted account — and those fail at very different moments.
+
 - **`run_plan` writes `plan.summary.json` beside the plan.** Everything the run concluded
   but did not put *in* the plan — the process-list and pilot-gate exclusions, the tally of
   units dropped before classification, and the E19 state reset — existed only as prose on

@@ -4,6 +4,20 @@ Every error this tool raises, plus the traps that have already cost real debuggi
 pilot. If you are mid-incident, start with [Traps that have actually bitten](#traps-that-have-actually-bitten)
 — the failure is more likely there than in the reference tables.
 
+## Before you debug: run the doctor
+
+```bash
+python -m scripts.doctor             # or --offline, for the checks that need no network
+```
+
+One line per check, a remedy under each failure, exit `1` if anything failed. It catches the
+config errors, missing secrets, stale copy caches and empty-scope conditions described below
+*before* a run, which is the only time they are cheap. `--json` emits the same results for a
+caller to parse.
+
+It never writes anything and never reads `state.json` — an idle read of a corrupt one
+quarantines it (E19), and a diagnostic must not change what the next run does.
+
 ## How to read a failure
 
 **Exit codes** are uniform across the scripts:
@@ -69,6 +83,10 @@ unquoted form correctly, so this bites only when you source `.env` by hand, as t
 require. Keep the quotes and both paths work.
 
 ### `MissingCredentialError` when you expected the credentials to be there
+
+Credentials resolve **lazily, at the first API call**, so this can fire after parse, plan and a
+clean dry-run have all passed. `python -m scripts.doctor` resolves them eagerly instead, which is
+the whole reason it exists — run it first.
 
 `python -m scripts.<name>` loads `.env` for you — `load_env()` in `lib/env.py`, called from each
 script's `if __name__ == "__main__":` block. So if a credential is missing, work through this order:
