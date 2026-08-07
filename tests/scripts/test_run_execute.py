@@ -1139,8 +1139,95 @@ def test_production_refusal_for_pages_claims_no_permanent_record(
     assert "--i-understand-production" in err  # still gated: it is a live site
 
 
+# --- The run log -------------------------------------------------------------
+
+
+def test_a_crash_mid_run_keeps_the_rows_that_already_finished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that dies part-way leaves the completed rows on disk, not an empty file.
+
+    The log used to be written once, after every GTIN had finished, so anything that killed
+    the process discarded the whole record — including rows already committed to
+    ``state.json``. The operator was then left with live pages, permanent GS1 records, and
+    no account of which ones.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_B, "nl")))
+
+    real = run_execute._execute_gtin
+
+    def die_on_b(cfg_: Any, gtin: str, *args: Any, **kw: Any) -> Any:
+        if gtin == GTIN_B:
+            raise KeyboardInterrupt  # stands in for any hard stop: ^C, OOM, a killed shell
+        return real(cfg_, gtin, *args, **kw)
+
+    monkeypatch.setattr(run_execute, "_execute_gtin", die_on_b)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_execute.main(["acme", "--plan", str(plan)])
+
+    outcomes = _read_outcomes(tmp_path)
+    assert [(o["gtin"], o["status"]) for o in outcomes] == [(GTIN_A, "ok")]
+
+
+def test_the_log_path_is_announced_before_the_run_not_only_after(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The path is printed at the start too, so it can be tailed while the run is in flight.
+
+    It is derived from a timestamp only this process knows, so a parent that is not told
+    cannot work out where the run is reporting to — and a run that dies never reaches the
+    closing line.
+    """
+    monkeypatch.chdir(tmp_path)
+    _install(monkeypatch, _make_config())
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    opening, closing = capsys.readouterr().err.strip().splitlines()
+    logs = list((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
+    assert str(logs[0].relative_to(tmp_path)) in opening
+    assert "error(s)" not in opening  # the count is not known yet — do not imply it is
+    assert "1 row(s), 0 error(s)" in closing
+
+
+def test_two_runs_in_the_same_second_do_not_share_a_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The filename is a timestamp to the second; two runs inside one must not interleave.
+
+    This does not make concurrent runs supported (E20) — ``state.json`` still races. It
+    stops one run's log from being scrambled by another's, which incremental writing would
+    otherwise make routine rather than rare.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "links"]) == 0
+
+    logs = sorted((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"), key=_mtime)
+    assert len(logs) == 2
+    assert all(len(path.read_text().splitlines()) == 1 for path in logs)
+
+
 def _read_outcomes(tmp_path: Path, *, newest: bool = False) -> list[dict[str, Any]]:
-    """The RunOutcome dicts from the run log (the newest one, when several runs happened)."""
-    logs = sorted((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
+    """The RunOutcome dicts from the run log (the newest one, when several runs happened).
+
+    Ordered by mtime, not by name: two runs inside one test start in the same second, so
+    the second one's log is the collision-suffixed ``…Z-1.jsonl`` — which sorts *before*
+    ``…Z.jsonl`` lexicographically because ``-`` precedes ``.``.
+    """
+    logs = sorted((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"), key=_mtime)
     path = logs[-1] if newest else logs[0]
     return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def _mtime(path: Path) -> int:
+    return path.stat().st_mtime_ns

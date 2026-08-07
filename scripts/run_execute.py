@@ -22,9 +22,12 @@ the missing language's link, and persisting the survivor's state would make the 
 classify it UNCHANGED and never retry.
 
 Each row's :class:`~lib.records.RunOutcome` is appended to
-``output/{client_id}/runs/{ts}.jsonl`` regardless of success, and successful rows update
-``output/{client_id}/state.json``. The run is idempotent (§6.5) and resumable: re-running
-the same confirmed plan yields the same final state.
+``output/{client_id}/runs/{ts}.jsonl`` **as it completes**, regardless of success, and
+successful rows update ``output/{client_id}/state.json``. Writing the log incrementally
+means a run that dies part-way still leaves a record of what it managed to do, and gives a
+parent process something to tail — this script has no other progress channel. The path is
+printed to stderr at the start of the run as well as at the end. The run is idempotent
+(§6.5) and resumable: re-running the same confirmed plan yields the same final state.
 
 ``--only`` runs one leg instead of both. ``pages`` writes the WordPress pages and links
 them as translations, and stops — nothing permanent happens, so the run is reversible by
@@ -66,10 +69,11 @@ import hashlib
 import json
 import logging
 import sys
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import NamedTuple
+from typing import Final, NamedTuple
 
 from pydantic import ValidationError
 
@@ -696,22 +700,26 @@ def _execute(  # noqa: PLR0913 — one collaborator per step; bundling them only
     state: State,
     ts: datetime,
     mode: _Mode,
-) -> list[RunOutcome]:
-    """Execute the confirmed rows grouped by GTIN, returning outcomes in plan order.
+) -> Iterator[RunOutcome]:
+    """Execute the confirmed rows grouped by GTIN, yielding outcomes as each GTIN finishes.
+
+    A generator rather than a list so the caller can write each outcome to the run log the
+    moment it is final — and *final* means when its GTIN finishes, not when its row does: a
+    row's outcome stays mutable until then, because a later language failing blocks the whole
+    GTIN and rewrites every one of its rows to ``error``.
 
     Grouped with a dict rather than by walking runs of adjacent rows: rows for one GTIN
     happen to be adjacent today only because ``diff_against_state`` builds them in a nested
-    loop, and :class:`~lib.records.Plan` promises no such ordering.
+    loop, and :class:`~lib.records.Plan` promises no such ordering. Outcomes therefore come
+    out in completion order, which for any GTIN-grouped plan — every plan this tool writes —
+    is also plan order.
     """
     by_gtin: dict[str, list[PlanRow]] = {}
     for row in rows:
         by_gtin.setdefault(row.gtin, []).append(row)
 
-    done: dict[tuple[str, str], RunOutcome] = {}
     for gtin, gtin_rows in by_gtin.items():
-        for outcome in _execute_gtin(cfg, gtin, gtin_rows, wp, gs1, engine, state, ts, mode):
-            done[(outcome.gtin, outcome.language)] = outcome
-    return [done[(row.gtin, row.language)] for row in rows]
+        yield from _execute_gtin(cfg, gtin, gtin_rows, wp, gs1, engine, state, ts, mode)
 
 
 def _render_qr_for(cfg: ClientConfig, row: PlanRow) -> list[Path]:
@@ -845,12 +853,54 @@ def _restrict_to_pilot(rows: list[PlanRow], allowlist: frozenset[str] | None) ->
     return [row for row in rows if canon_gtin(row.gtin) in allowlist]
 
 
-def _write_log(log_path: Path, outcomes: list[RunOutcome]) -> None:
-    """Append each outcome as one JSON line to the run log."""
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as handle:
-        for outcome in outcomes:
-            handle.write(json.dumps(outcome.model_dump(mode="json"), ensure_ascii=False) + "\n")
+class _RunLog:
+    """The run's JSONL, written a row at a time rather than all at once at the end.
+
+    Two things follow from writing incrementally. A run that dies part-way — a crashed
+    process, a killed terminal, an unhandled error building the clients — used to lose the
+    *entire* log, including the rows that had already succeeded and been committed to
+    ``state.json``; now it keeps them. And a parent process has a file it can tail while the
+    run is in flight, which is the only progress channel this script offers.
+
+    The file is created with ``"x"`` (atomic exclusive create) and disambiguated on
+    collision, because the name is ``datetime.now(UTC)`` to the second: two runs started in
+    the same second would otherwise share one file and interleave their rows into nonsense.
+    That does **not** make concurrent runs supported (E20) — ``state.json`` still races —
+    it only stops one run's log from being corrupted by another's.
+
+    Each row is flushed as it is written, so a hard kill loses nothing already reported.
+    """
+
+    #: How many same-second suffixes to try before giving up.
+    _MAX_COLLISIONS: Final = 100
+
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for n in range(self._MAX_COLLISIONS):
+            candidate = path if n == 0 else path.with_stem(f"{path.stem}-{n}")
+            try:
+                self._handle = candidate.open("x", encoding="utf-8")
+            except FileExistsError:
+                continue
+            self.path = candidate
+            return
+        raise OSError(f"cannot create a run log at {path}: {self._MAX_COLLISIONS} names taken")
+
+    def append(self, outcome: RunOutcome) -> RunOutcome:
+        """Write one outcome as a JSON line and flush; returns it for convenient chaining."""
+        self._handle.write(json.dumps(outcome.model_dump(mode="json"), ensure_ascii=False) + "\n")
+        self._handle.flush()
+        return outcome
+
+    def append_all(self, outcomes: Iterable[RunOutcome]) -> list[RunOutcome]:
+        """Consume ``outcomes``, writing each as it arrives, and return them all."""
+        return [self.append(outcome) for outcome in outcomes]
+
+    def __enter__(self) -> _RunLog:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._handle.close()
 
 
 def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per policy switch
@@ -868,26 +918,31 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
     )
     engine = TemplateEngine(cfg.client_id, cfg.template)
     ts = datetime.now(UTC)
-    log_path = Path("output") / cfg.client_id / "runs" / f"{ts.strftime(_TS_FORMAT)}.jsonl"
-
-    if dry_run or resolved_gs1 is None:
-        outcomes = [_preview_row(cfg, row, engine, ts, mode) for row in rows]
-    else:
-        state = load_state(cfg.client_id)
-        with (
-            WordPressClient(cfg.wordpress) as wp,
-            GS1DigitalLinkClient(resolved_gs1) as gs1,
-        ):
-            outcomes = _execute(cfg, rows, wp, gs1, engine, state, ts, mode)
-        save_state(state)
-
-    _write_log(log_path, outcomes)
-    errors = sum(1 for o in outcomes if o.status == "error")
-    _log.info("run complete: %d ok, %d error(s)", len(outcomes) - errors, errors)
     prefix = "[dry-run] " if dry_run else ""
     leg = "" if mode is _Mode.BOTH else f" ({mode} only)"
+
+    # Announced up front, not just at the end: the name is derived from a timestamp only this
+    # process knows, so nothing outside it can compute where the run is reporting to — and a
+    # run that dies never reaches the closing line at all.
+    with _RunLog(
+        Path("output") / cfg.client_id / "runs" / f"{ts.strftime(_TS_FORMAT)}.jsonl"
+    ) as log:
+        print(f"{prefix}{len(rows)} row(s){leg}; log: {log.path}", file=sys.stderr)
+        if dry_run or resolved_gs1 is None:
+            outcomes = log.append_all(_preview_row(cfg, row, engine, ts, mode) for row in rows)
+        else:
+            state = load_state(cfg.client_id)
+            with (
+                WordPressClient(cfg.wordpress) as wp,
+                GS1DigitalLinkClient(resolved_gs1) as gs1,
+            ):
+                outcomes = log.append_all(_execute(cfg, rows, wp, gs1, engine, state, ts, mode))
+            save_state(state)
+
+    errors = sum(1 for o in outcomes if o.status == "error")
+    _log.info("run complete: %d ok, %d error(s)", len(outcomes) - errors, errors)
     print(
-        f"{prefix}{len(outcomes)} row(s){leg}, {errors} error(s); log: {log_path}",
+        f"{prefix}{len(outcomes)} row(s){leg}, {errors} error(s); log: {log.path}",
         file=sys.stderr,
     )
     return _EXIT_ERRORS if errors else _EXIT_OK
