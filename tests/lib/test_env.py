@@ -55,12 +55,52 @@ def test_env_path_resolves_to_the_repository_root() -> None:
 # --- the constraint that makes this safe -------------------------------------
 
 
+def _reads_dotenv(path: Path) -> bool:
+    """Whether ``path`` imports or calls anything that reads ``.env``.
+
+    Walks the AST rather than scanning the text, which the sibling check below has always done.
+    A text scan forbids *mentioning* the rule as well as breaking it, so a module that documents
+    why it must not load ``.env`` — or one that tests for exactly this — could not be written.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in _DOTENV_MODULES:
+            return True
+        if isinstance(node, ast.Import) and any(a.name in _DOTENV_MODULES for a in node.names):
+            return True
+        if isinstance(node, ast.Call):
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name in _DOTENV_CALLS:
+                return True
+    return False
+
+
+_DOTENV_MODULES = {"lib.env", "dotenv"}
+_DOTENV_CALLS = {"load_env", "load_dotenv", "dotenv_values"}
+
+
 def test_no_test_module_or_conftest_loads_env() -> None:
     """``.env`` must never reach the test path — it would arm the live-writing staging tests."""
     offenders = [
         str(path.relative_to(_REPO_ROOT))
         for path in [*(_REPO_ROOT / "tests").rglob("*.py"), *_REPO_ROOT.glob("conftest.py")]
-        if path.name != "test_env.py" and "load_env" in path.read_text(encoding="utf-8")
+        if path.name != "test_env.py" and _reads_dotenv(path)
+    ]
+    assert offenders == []
+
+
+def test_the_ui_shell_never_loads_env_either() -> None:
+    """It subprocesses the scripts, and each of those loads ``.env`` in its own ``__main__``.
+
+    Loading it in the shell would put production credentials into a long-lived desktop process
+    for no benefit, and would arm the four staging-guard variables inside it. Checked here rather
+    than in ``tests/ui/`` so every rule about ``.env`` lives in the file that owns it.
+    """
+    package = _REPO_ROOT / "ui"
+    if not package.is_dir():  # the [ui] extra is optional; the package may not be installed
+        return
+    offenders = [
+        str(path.relative_to(_REPO_ROOT)) for path in package.rglob("*.py") if _reads_dotenv(path)
     ]
     assert offenders == []
 
