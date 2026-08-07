@@ -3,7 +3,7 @@
 One-screen overview tying the two planning axes together. **Not** the source of truth for phase
 Definition-of-Done — that stays in [`IMPLEMENTATION_SPEC.md §12`](IMPLEMENTATION_SPEC.md) (the `[x]`
 checkboxes). This file gives the big picture and tracks the generator commit-by-commit, which §12
-does not. Last updated 2026-07-30.
+does not. Last updated 2026-08-08.
 
 **New here?** Read [`../README.md`](../README.md) for what the tool does, then
 [`setup.md`](setup.md) to run it. This file is for tracking build status.
@@ -103,6 +103,37 @@ private, so that DoD box is unticked by choice rather than left as outstanding w
 
 Also resolved alongside the release: [OD-1](OPEN_DECISIONS.md) — `.env` is now the single source of
 truth for credentials, and the ambient `~/.claude/settings.json` `env` block is gone.
+
+## Post-v0.1.0: the operator shell (a third axis)
+
+A separate, self-contained track — making the tool operable by someone who is not an engineer. It
+does not extend the numbered phases and has no DoD boxes in §12; it has its own four phases. The
+plan behind it is not in the repo (it is a working document); what matters here is the state.
+
+| Phase | What | Status |
+|---|---|---|
+| 1 | Observability + preflight — incremental run log, `Plan.skipped`, `plan.summary.json`, `lib/preflight.py` + `scripts/doctor.py` | **Built** |
+| 2 | `lib/gates.py` (the gate contract, drift-checked against `SKILL.md`) + the `ui/` shell | **Built** |
+| 3 | Guided config forms over `.env` and the operator half of `clients.yml`, landing in `ui/pages/setup.py` | **Not started** |
+| 4 | Packaging — `install.command` / `start.command` via `uv`, and committing `uv.lock` | **Not started** |
+
+Two decisions inside it are settled and should not be reopened:
+
+- **The operator's machine is LLM-free.** No `ANTHROPIC_API_KEY`, no Anthropic egress, never runs
+  `run_generate`. Content generation stays on the maintainer's machine and `generated_cache.json`
+  is handed over as a file. This removes a class of IT objection and a per-token cost, at the price
+  of one file changing hands per batch.
+- **`claude -p` is ruled out on the publish path, permanently.** It cannot hold a gate — there is no
+  streaming *input* mode and no permission callback to a parent, so it hangs or aborts. And skills
+  load headless, so `claude -p "/gs1-publish {client}"` would run the entire gated sequence with
+  every gate answered by the model or skipped.
+
+Phase 3 notes for whoever picks it up: hand-write the ~15 fields rather than generating the form
+from `schema/clients.schema.json`. The schema is strong for *validation* and weak for *generation* —
+no `default` anywhere, no `title` on any property, descriptions missing exactly where a per-client
+form needs them, and the `defaults`-block merge is not expressible in it. `gdsn_map`, `acf_map`,
+`brick_category_map` and `generator` stay read-only and validated: the first three need a field walk
+against the live site, and `generator` carries the E21 guard.
 
 **Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows). The
 exposed WordPress application password was **rotated on 2026-07-30** and the old one revoked.
