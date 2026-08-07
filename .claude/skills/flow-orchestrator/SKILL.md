@@ -69,6 +69,29 @@ updates.
 - For a client with a `generator` config, the generated-content cache at
   `output/{client}/data/generated_cache.json` (filled in step 3; `run_plan` reads it).
 
+## Gate index
+
+The nine operator touchpoints, with the id each carries in `lib/gates.py`. **This table is
+checked by a test** (`tests/lib/test_gates.py`), in both directions: a gate here with no entry
+there, or there with no entry here, fails CI. It exists because the gates are prose and prose
+drifts — and a gate that quietly stops being shown raises nothing.
+
+`lib/gates.py` holds the structure (which gates exist, at which step, which are non-negotiable,
+which apply in which mode) so a second consumer can render them as forms. This file keeps the
+verbatim prompt text. Neither is the copy; both are checked against the table.
+
+| Gate id | Step | Required | Modes |
+|---|---|---|---|
+| `intent` | 0 | **yes** | all |
+| `languages` | 2 | no | all |
+| `content_review` | 3 | **yes** | all, when a `generator` is configured |
+| `missing_field` | 4 | no | all |
+| `plan_review` | 5 | **yes** | all |
+| `row_diff` | 6 | no | all |
+| `production` | 8 | **yes — never skippable** | `links`, `both`, on production only |
+| `dry_run` | 8.5 | **yes — always runs** | all |
+| `post_run` | 11 | no | all |
+
 ## Steps
 
 Numbered from **0**, and the numbering is load-bearing: step 0 was added after the rest and the
