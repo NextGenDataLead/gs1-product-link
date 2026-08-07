@@ -221,6 +221,23 @@ The general lesson generalises past this one bug: **a filter that runs before cl
 hide rows that classification would have surfaced.** Both halves passed their own unit tests; only
 the interaction failed. See [`verifying-live.md`](verifying-live.md) for the live check that caught it.
 
+### The plan is empty and nothing says why
+
+Check `skipped` in `output/{client_id}/plan.json`, and the `; N skipped (…)` clause on `run_plan`'s
+summary line. Three checks drop a `(GTIN, language)` **before** it is ever classified, so it lands in
+neither `rows` nor `counts` and `total` — which is `len(rows)` — does not see it either:
+
+| Reason | Edge | What to do |
+|---|---|---|
+| `no_generated_copy` | E21 | Generate the copy (`generate content for {client}`), or fix the blank source field it came from |
+| `missing_product_name` | E18 | Fill `product_name` for that language in MyGS1 |
+| `blank_hero_image` | E22 | Fill `image_url` in MyGS1, or turn `media.require_hero_image` off |
+
+Each drop also logs one `WARNING SKIPPED …` line naming the same reason, but a real run logs at
+`WARNING` and the operator may never see it — the plan document is the durable record. A plan of
+`0 new, 0 unchanged, 0 changed` with a non-empty `skipped` array means there **is** work; it means
+the work is upstream. A plan with an *empty* `skipped` array genuinely has nothing to do.
+
 ### A page returns 200 but shows no content
 
 **The ACF write path fails silently.** A `200` from WordPress means the post exists — it does not
@@ -470,11 +487,11 @@ Startup config/credential errors abort immediately with exit 2.
 | E15 | `clients.yml` names an unset env var | `MissingCredentialError` at first API call (lazy) |
 | E16 | More columns than `column_map` | WARN per unmapped column |
 | E17 | Fewer columns than expected | `ExportParseError` if required, WARN if optional |
-| E18 | Language has no `product_name.{lang}` for a GTIN | That language's row classified SKIPPED, surfaced in chat |
+| E18 | Language has no `product_name.{lang}` for a GTIN | That unit is dropped before classification, recorded in `plan.json` under `skipped`, and surfaced in chat |
 | E19 | State file is corrupt JSON | Backed up to `state.json.corrupt.{ts}`, fresh state, ERROR logged, **and the reset surfaced above the plan counts** |
 | E20 | Two `run_execute` runs interleave | **Not supported.** No lockfile in v0.1. Same-second runs do at least get separate log files (`{ts}-1.jsonl`) |
-| E21 | Generator on, but a `(GTIN, language)` has no generated tagline | Row SKIPPED so a blank page can never publish; gap reported via `missing_generation_input` |
-| E22 | `media.require_hero_image` set, source `image_url` blank | GTIN held out of the plan; reported via `value_blank`. A runtime fetch failure still degrades per E7 |
+| E21 | Generator on, but a `(GTIN, language)` has no generated tagline | Unit dropped so a blank page can never publish; recorded under `skipped`; gap also reported via `missing_generation_input` |
+| E22 | `media.require_hero_image` set, source `image_url` blank | GTIN held out of the plan, one `skipped` entry per language; reported via `value_blank`. A runtime fetch failure still degrades per E7 |
 
 ### E19 in full — why the reset is safe, and why it must stay loud
 
