@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **The run log is written as the run goes, not once at the end.** `run_execute` used to
+  collect every `RunOutcome` in memory and write `output/{client}/runs/{ts}.jsonl` after
+  the last GTIN finished, so anything that killed the process — `^C`, a dropped terminal,
+  an error escaping the client setup — discarded the *entire* record, including rows that
+  had already published live pages, registered permanent GS1 records, and been committed
+  to `state.json`. Each outcome is now appended and flushed the moment it is final, which
+  is when its GTIN completes (a row's outcome stays mutable until then: one language
+  failing rewrites every row of that GTIN to `error`).
+
+  Two things follow. A crashed run leaves an account of what it managed to do. And the
+  file is tailable, which is the only progress channel this script has — a real run logs
+  at `WARNING`, so a clean one emits nothing at all until its closing line. The log path
+  is therefore now printed to stderr at the **start** of the run as well as at the end;
+  nothing outside the process could previously work it out, since the name comes from a
+  timestamp the process picks.
+
+  Rows land in completion order rather than plan order. For every plan this tool writes
+  those are the same thing — `diff_against_state` builds rows grouped by GTIN — but a
+  hand-shuffled plan will now log grouped by GTIN.
+
+  Same-second runs no longer share a file: the name is a timestamp to the second, so the
+  second run gets `{ts}-1.jsonl`, claimed with an exclusive create so two processes cannot
+  both take it. Concurrent runs remain unsupported (**E20**) — `state.json` still races —
+  this only stops one run's log from being scrambled by another's.
+
 - **BREAKING — `website_status` is now `process_list`, and every GTIN in the file is
   processed.** The old control file carried "already on website" / "already in GS1"
   columns read by *presence*: any non-blank cell meant `True`. That is correct only for
