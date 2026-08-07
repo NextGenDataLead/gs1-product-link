@@ -212,6 +212,28 @@ def test_the_dry_run_argv_matches_the_real_one_but_for_the_two_flags() -> None:
     ]
 
 
+def test_every_gate_offers_a_way_out(  # noqa: D401 — the name is the assertion
+) -> None:
+    """A required gate with no non-proceeding option is not a gate, it is a notification."""
+    for gate in GATES:
+        if gate.required and gate.options:
+            assert any(not option.proceeds for option in gate.options), gate.id
+
+
+def test_cancel_never_reads_as_consent() -> None:
+    """The one wrong answer that would be catastrophic, so it is asserted rather than assumed."""
+    for gate in GATES:
+        for option in gate.options:
+            if option.value in {"cancel", "fail-run", "switch-to-test"}:
+                assert not option.proceeds, f"{gate.id}/{option.value}"
+
+
+def test_changed_review_proceeds_even_though_it_reads_like_a_detour() -> None:
+    """It confirms rows one at a time; it does not abort. Inferring from the word gets it wrong."""
+    plan_review = next(gate for gate in GATES if gate.id == "plan_review")
+    assert next(o for o in plan_review.options if o.value == "changed-review").proceeds
+
+
 def test_gate_ids_are_unique() -> None:
     ids = [gate.id for gate in GATES]
     assert len(ids) == len(set(ids))

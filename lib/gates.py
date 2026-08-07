@@ -84,11 +84,18 @@ class GateOption(NamedTuple):
 
     ``value`` is the token ``SKILL.md`` prints between the brackets, kept identical so an operator
     who has used one surface recognises the other.
+
+    ``proceeds`` says whether this answer lets the run go on. It is data rather than something a
+    consumer infers from the word, because the inference is not obvious in either direction:
+    ``changed-review`` proceeds and ``switch-to-test`` does not, and both read like the opposite
+    at a glance. A UI that guesses wrong here either blocks a legitimate run or — far worse —
+    treats ``cancel`` as consent.
     """
 
     value: str
     label: str
     consequence: str
+    proceeds: bool = True
 
 
 @dataclass(frozen=True)
@@ -144,8 +151,8 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("confirm", "Confirm", "Proceed with this mode"),
-            GateOption("change-mode", "Change mode", "Re-present with a different mode"),
-            GateOption("cancel", "Cancel", "Abort; nothing runs"),
+            GateOption("change-mode", "Change mode", "Re-present with a different mode", False),
+            GateOption("cancel", "Cancel", "Abort; nothing runs", False),
         ),
         required=True,
         modes=_ALL_MODES,
@@ -175,8 +182,8 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("confirm", "Copy is good", "Proceed to planning"),
-            GateOption("regenerate", "Regenerate", "Fill the cache again before planning"),
-            GateOption("cancel", "Cancel", "Abort; nothing runs"),
+            GateOption("regenerate", "Regenerate", "Fill the cache again before planning", False),
+            GateOption("cancel", "Cancel", "Abort; nothing runs", False),
         ),
         required=True,
         modes=_ALL_MODES,  # links mode too: an empty cache still empties the plan
@@ -192,8 +199,10 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("skip-row", "Skip this unit", "Other languages proceed"),
-            GateOption("ask-me-later", "Ask me later", "Batch the prompts, present at the end"),
-            GateOption("fail-run", "Stop the run", "Abort before execute"),
+            GateOption(
+                "ask-me-later", "Ask me later", "Batch the prompts, present at the end", True
+            ),
+            GateOption("fail-run", "Stop the run", "Abort before execute", False),
         ),
         required=False,
         modes=_ALL_MODES,
@@ -214,7 +223,7 @@ GATES: Final[tuple[Gate, ...]] = (
             GateOption("all", "All", "Confirm every NEW and CHANGED row"),
             GateOption("new-only", "New only", "Confirm NEW rows; skip CHANGED"),
             GateOption("changed-review", "Review changed", "Walk each CHANGED row's diff"),
-            GateOption("cancel", "Cancel", "Abort; nothing is written"),
+            GateOption("cancel", "Cancel", "Abort; nothing is written", False),
         ),
         required=True,
         modes=_ALL_MODES,
@@ -232,8 +241,8 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("apply", "Apply", "Include this row in the run"),
-            GateOption("skip", "Skip", "Leave this row unchanged"),
-            GateOption("show-full-diff", "Show full diff", "Print every field, then re-ask"),
+            GateOption("skip", "Skip", "Leave this row unchanged", True),
+            GateOption("show-full-diff", "Show full diff", "Print every field, then re-ask", False),
         ),
         required=False,
         modes=_ALL_MODES,
@@ -250,8 +259,10 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("confirm", "Confirm", "Execute against production"),
-            GateOption("switch-to-test", "Switch to test", "Re-resolve to the test environment"),
-            GateOption("cancel", "Cancel", "Abort; nothing is written"),
+            GateOption(
+                "switch-to-test", "Switch to test", "Re-resolve to the test environment", False
+            ),
+            GateOption("cancel", "Cancel", "Abort; nothing is written", False),
         ),
         required=True,
         modes=_PERMANENT_MODES,
@@ -270,7 +281,7 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("proceed", "Proceed", "Run it for real"),
-            GateOption("cancel", "Cancel", "Abort; nothing is written"),
+            GateOption("cancel", "Cancel", "Abort; nothing is written", False),
         ),
         required=True,
         modes=_ALL_MODES,
