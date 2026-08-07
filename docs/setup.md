@@ -2,7 +2,7 @@
 
 From a clean machine to a validated dry run, then onboarding a client of your own.
 
-**This tool is operated from Claude Code** — see [How you run this](#how-you-run-this-claude-code-not-raw-python) before anything else, because it changes how you should read the rest of this file.
+**This tool is driven from Claude Code or from the local operator shell — not by typing the script commands yourself** — see [Two ways to drive it](#two-ways-to-drive-it) before anything else, because it changes how you should read the rest of this file.
 
 Every command here is verified against the code at HEAD, not against a plan. If a command in this file does not do what it says, the file is wrong — please fix it.
 
@@ -15,27 +15,31 @@ Every command here is verified against the code at HEAD, not against a plan. If 
 
 The tool turns a GS1 Data Source export into (a) WordPress product pages, one per `(GTIN, language)`, and (b) GS1 Digital Link resolver entries whose QR codes point at those pages. There is **no server and nothing to host** — everything runs locally, against your own WordPress site and your own GS1 account, with your own credentials.
 
-## How you run this: Claude Code, not raw Python
+## Two ways to drive it
 
-> **This tool is operated from Claude Code. That is a deliberate decision, not a preference.**
+> **Two sanctioned surfaces, one set of gates. Typing the script commands yourself is neither of them.**
 >
-> You drive it from chat — normally with a slash command, **`/gs1-publish`** (or `/gs1-pages` / `/gs1-links` for one leg) — which loads the `flow-orchestrator` skill, walks you through the operator gates, and invokes the Python scripts for you. **You are not expected to type the script commands yourself.** Plain language works too (*"publish {client_id} to GS1"*), but the slash command is preferred: it pins the mode instead of leaving it to be inferred. See [Which flow do you need?](#which-flow-do-you-need).
+> **From Claude Code** — normally with a slash command, **`/gs1-publish`** (or `/gs1-pages` / `/gs1-links` for one leg) — which loads the `flow-orchestrator` skill, walks you through the operator gates, and invokes the Python scripts for you. Plain language works too (*"publish {client_id} to GS1"*), but the slash command is preferred: it pins the mode instead of leaving it to be inferred. See [Which flow do you need?](#which-flow-do-you-need).
 >
-> **Claude.ai, Claude Desktop, and Claude Cowork are explicitly out of scope.** Cowork was evaluated and removed: it executes in a remote cloud sandbox, which would mean handing production WordPress and GS1 credentials to an environment outside your control, and its network egress to `www.democlient.nl`. Claude Code runs on your machine with your credentials staying on it.
+> **From the local operator shell** — `python -m ui`, a desktop window over the same commands, for the recurring loop when a terminal is not the right surface. It subprocesses the same scripts, renders the same gates from the same source, and **refuses to build a run command while any required gate is unanswered**. It holds no LLM credential and never talks to Anthropic. See [`ui-operator-shell.md`](ui-operator-shell.md).
+>
+> Pick by who is doing the work, not by capability. The shell is for an operator repeating a known loop; Claude Code is for onboarding a client, diagnosing something odd, or any step where the answer is not already known.
+>
+> **Claude.ai, Claude Desktop, and Claude Cowork are explicitly out of scope.** Cowork was evaluated and removed: it executes in a remote cloud sandbox, which would mean handing production WordPress and GS1 credentials to an environment outside your control, and its network egress to `www.democlient.nl` was unproven. Both sanctioned surfaces run on your machine with your credentials staying on it.
 
 So why does this document list Python commands at all? Three reasons, and none of them is "type these during a normal run":
 
 1. **Verifying the install** — §1 and §2 below are genuinely something you run once, by hand.
-2. **Knowing what Claude Code is doing on your behalf** — the gates it presents map onto these commands. When something fails, [`troubleshooting.md`](troubleshooting.md) talks about them by name.
+2. **Knowing what is being run on your behalf** — both surfaces invoke exactly these commands, and the gates they present map onto them. When something fails, [`troubleshooting.md`](troubleshooting.md) talks about them by name.
 3. **Onboarding a new client**, where the read-only inspect/parse loop is iterative and hands-on.
 
-For a real publishing run, **drive it from chat** — see [Running it](#4-running-it).
+For a real publishing run, use one of the two surfaces above — see [Running it](#4-running-it).
 
 ## Prerequisites
 
 | | Requirement | Notes |
 |---|---|---|
-| **Claude Code** | required | The operating surface. See the note above. |
+| **Claude Code** | required for onboarding; optional for a routine wave | One of the two operating surfaces. The other is the local shell (`.[ui]` extra), which needs no Claude Code. Onboarding a client still wants it. See the note above. |
 | Python | **3.11 or newer** | `requires-python = ">=3.11"` in `pyproject.toml`. CI pins 3.11; the suite also passes on 3.14. |
 | Node.js | 20 or newer | Only needed to build the MCP servers in `mcps/`. The Python pipeline does not need it. |
 | Git | any recent | |
@@ -65,6 +69,11 @@ pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
+Add `ui` to that if you want the local operator shell — `pip install -e ".[dev,ui]"`. It is an
+optional extra rather than a dependency: NiceGUI pulls FastAPI, uvicorn, pywebview and bundled
+Vue/Quasar assets, none of which any publishing path touches, and the test suite and
+`mypy --strict lib` both pass without it. See [Two ways to drive it](#two-ways-to-drive-it) below.
+
 ## 2. Verify the install
 
 These are the four commands CI runs (`.github/workflows/ci.yml`). All four must pass before you trust anything else.
@@ -82,7 +91,7 @@ Expected, on a clean checkout:
 All checks passed!
 103 files already formatted
 Success: no issues found in 22 source files
-550 passed, 2 skipped, 5 deselected
+663 passed, 2 skipped, 5 deselected
 ```
 
 **Only the last two lines are worth comparing.** The formatted-file count moves whenever anyone adds
