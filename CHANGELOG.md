@@ -8,6 +8,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A local operator shell — `pip install -e ".[ui]"` then `python -m ui`.** A desktop window
+  over the same commands a person would type, so the recurring loop (drop an export, prune the
+  process list, import the copy, run the flow, read the result) needs no terminal, no
+  virtualenv, and no knowledge of which of nine scripts to call. Six screens: Setup, Preflight,
+  Data, Content, Publish, Runs. Bound to `127.0.0.1`, native window, no shareable URL.
+  Documented in [`docs/ui-operator-shell.md`](docs/ui-operator-shell.md).
+
+  **It subprocesses the scripts; it never imports their `main()`.** `load_env()` lives in each
+  script's `__main__` block by design, so an in-process call would have no credentials — and
+  calling `load_env()` in the shell would put production secrets into a long-lived desktop
+  process and arm the four staging-guard variables inside it. Subprocessing also inherits the
+  production refusal, the `state.json` writes, the run JSONL and the `--only links`
+  target-serves check unchanged, since all of those live in `scripts/`. `tests/lib/test_env.py`
+  now asserts no module under `ui/` reads `.env` either.
+
+  **It has no LLM, no `ANTHROPIC_API_KEY` and no Anthropic egress.** Content generation stays on
+  the maintainer's machine; `generated_cache.json` is handed over as a file and uploaded on the
+  Content screen, which reports coverage against the *current* export and names the pending
+  units — a cache goes stale on any feed edit, and a pending unit with no producer is an E21
+  omission.
+
+  **`ui/session.py` refuses to build the run command while any required gate is outstanding.**
+  Not a warning — a function that raises. That is the one thing prose cannot do: a paragraph can
+  be paraphrased, compressed or skipped when the context is long. An empty plan is refused for
+  the same reason, since publishing nothing successfully is the outcome indistinguishable from
+  success.
+
+  The `ui` extra is optional and nothing under `lib/` or `scripts/` imports it, so the suite and
+  `mypy --strict lib` run unchanged without NiceGUI installed. `ui/` is **not** covered by
+  `mypy --strict` yet.
+
+- **`lib/gates.py` — the operator gates as data.** The gates are the safety mechanism and they
+  now have two consumers: prose a model reads in `flow-orchestrator/SKILL.md`, and structure the
+  shell renders as forms. Two implementations of one safety contract drift, and this one drifts
+  *silently* — a gate that quietly stops being shown raises nothing.
+
+  So the structure lives in one place — which gates exist, at which step, which are
+  non-negotiable, which apply in which mode, and one sentence on why each is there — and
+  `SKILL.md` gains a **Gate index** table that `tests/lib/test_gates.py` checks in **both
+  directions**. Adding a gate to either without the other fails CI.
+
+  `run_execute_argv` lives there too, because the command is part of the contract: `--only`
+  comes from the intent gate, `--i-understand-production` from the production gate, and getting
+  either wrong turns a reviewed decision into an unreviewed write. `production_acknowledged` is
+  a positive statement that someone confirmed rather than an `is_production` fact derived from
+  config — deriving it would make the flag a description of the environment instead of a record
+  of a decision. A dry run never carries it.
+
 - **`python -m scripts.doctor` — a preflight, so failures arrive before the work instead of
   during it.** Credentials resolved lazily at the first API call, so a
   `MissingCredentialError` could fire *after* parse, plan and a clean dry-run had all passed.
