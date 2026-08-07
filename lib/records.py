@@ -219,6 +219,45 @@ class Plan(BaseModel):
     skipped: list[SkippedUnit] = Field(default_factory=list)
 
 
+class PlanSummary(BaseModel):
+    """Everything ``run_plan`` concluded about a plan that is not inside the plan (§8.2).
+
+    The plan document says what *will* be executed. This says what happened on the way to it:
+    how many products the gates removed, how many units were dropped and why, and — the one
+    that changes the meaning of every other number here — whether prior state was reset from
+    a corrupt file (E19), which silently turns an incremental re-run into a full rewrite.
+
+    All of that existed only as prose on stderr, so the only way to read it was to be the
+    process that ran the command. A UI, a later step, or an operator returning to a plan an
+    hour old had nothing to go on. ``text`` carries the stderr line verbatim so a second
+    reader renders the same words rather than a paraphrase of them.
+
+    ``skipped`` and ``excluded`` are tallies, not lists: the per-unit detail lives in
+    ``Plan.skipped``, and duplicating it here would create two records that can disagree.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    client_id: str
+    generated_at: datetime
+    total: int
+    counts: dict[PlanClassification, int]
+    skipped: dict[SkipReason, int] = Field(default_factory=dict)
+    excluded: dict[str, int] = Field(default_factory=dict)
+    unmapped_categories: int = 0
+    generated_issues: int = 0
+
+    #: E19. Named in full rather than as ``reset``: a reader who skims must not have to
+    #: guess which of several things was reset, or whether ``False`` is the alarming value.
+    state_reset_from_corrupt: bool = False
+    #: Where the corrupt file was quarantined — the evidence, and the only proof the reset
+    #: was real. ``None`` unless a reset happened.
+    state_corrupt_backup: str | None = None
+
+    #: The stderr summary line, verbatim, including the E19 warning that leads it.
+    text: str = ""
+
+
 class ConfirmedPlan(BaseModel):
     """A :class:`Plan` plus the operator-confirmed subset to execute (§2.2)."""
 
@@ -337,11 +376,17 @@ class State(BaseModel):
     load, not the persisted state. It exists so the reset reaches the operator in the plan
     summary they actually read: a reset silently turns an incremental re-run into a full
     rewrite (every row reclassifies as NEW), and an ERROR log line is too quiet for that.
+
+    ``corrupt_backup`` is where the bad file was quarantined, carried alongside for the same
+    reason and excluded for the same reason. The path is knowable only inside ``load_state``
+    — it is stamped with the moment of the reset — so a caller that wants to *show* the
+    evidence, rather than assert it exists, has to be handed it.
     """
 
     client_id: str
     entries: dict[str, dict[str, StateEntry]]
     reset_from_corrupt: bool = Field(default=False, exclude=True)
+    corrupt_backup: str | None = Field(default=None, exclude=True)
 
 
 # --- Flat single-sheet row parsing (§4.9) ------------------------------------

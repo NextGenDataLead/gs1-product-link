@@ -42,6 +42,7 @@ from lib.records import (
     LocalisedText,
     Plan,
     PlanClassification,
+    PlanSummary,
     ProductRecord,
     SkipReason,
     State,
@@ -124,6 +125,12 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, cfg: ClientConfig) -> None:
 def _read_plan() -> Plan:
     return Plan.model_validate(
         json.loads(Path("output/acme/plan.json").read_text(encoding="utf-8"))
+    )
+
+
+def _read_summary() -> PlanSummary:
+    return PlanSummary.model_validate(
+        json.loads(Path("output/acme/plan.summary.json").read_text(encoding="utf-8"))
     )
 
 
@@ -732,6 +739,94 @@ def test_summary_names_the_reason_not_just_the_count(
     err = capsys.readouterr().err
     assert "0 new, 0 unchanged, 0 changed" in err  # an empty plan...
     assert "2 skipped (2 no_generated_copy)" in err  # ...and why, on the same line
+
+
+# --- The machine-readable summary ---------------------------------------------
+
+
+def test_summary_file_carries_the_stderr_line_verbatim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One wording, two readers. A paraphrase in a second place is a paraphrase that drifts."""
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    assert _read_summary().text == capsys.readouterr().err.strip()
+
+
+def test_summary_file_is_written_even_when_there_is_nothing_to_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing file must mean "run_plan did not run", so an empty tally can mean "found none"."""
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    summary = _read_summary()
+    assert summary.skipped == {} and summary.excluded == {}
+    assert summary.state_reset_from_corrupt is False
+    assert summary.state_corrupt_backup is None
+
+
+def test_summary_file_records_the_e19_reset_and_where_the_bad_file_went(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reset reaches a reader who was not at the terminal — with the evidence.
+
+    An operator told a reset happened asks where the old file went, and only ``load_state``
+    knows: the name is stamped with the moment of the reset.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+    state_file = tmp_path / "output" / "acme" / "state.json"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text("{ truncated", encoding="utf-8")
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    summary = _read_summary()
+    assert summary.state_reset_from_corrupt is True
+    assert summary.state_corrupt_backup is not None
+    assert Path(summary.state_corrupt_backup).read_text(encoding="utf-8") == "{ truncated"
+    assert summary.text.startswith("WARNING:")  # the reset leads, above the counts
+
+
+def test_summary_file_tallies_skips_and_exclusions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        wordpress=_bilingual_wp(),
+        generator=GeneratorConfig(enabled=True),
+        process_list=ProcessListConfig(
+            path=_write_process_list(tmp_path, [[GTIN_A, "keep"]]), gtin_column="Barcode"
+        ),
+    )
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(
+        products,
+        [
+            _product(GTIN_A, product_name={"nl": "Rugsteun", "fr": "Support"}),
+            _product(GTIN_B),  # not on the list
+        ],
+    )
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    summary = _read_summary()
+    assert summary.skipped == {SkipReason.NO_GENERATED_COPY: 2}  # cache empty -> E21 ×2
+    assert summary.excluded == {"not_listed": 1}
+    assert summary.total == 0  # and the plan itself is empty, which alone would say nothing
 
 
 def test_a_plan_written_before_skipped_existed_still_loads(tmp_path: Path) -> None:

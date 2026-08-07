@@ -714,6 +714,7 @@ Usage: python -m scripts.run_plan CLIENT_ID [--products PATH]
 --products:   default output/{client_id}/data/products.json
 
 Emits:  output/{client_id}/plan.json (a Plan as JSON)
+        output/{client_id}/plan.summary.json (a PlanSummary as JSON, always)
 Exit codes: 0 success, 2 config/state error
 ```
 
@@ -722,9 +723,12 @@ Behaviour:
 2. For each (product, language in client.languages):
    - Compute content hash, target URL
    - Compare against state
-   - Emit `PlanRow` with classification and diff
+   - Emit `PlanRow` with classification and diff, or a `SkippedUnit` when E18/E21/E22 drops it
 3. Write `plan.json`
-4. Print summary: `N new, M unchanged, K changed`
+4. Write `plan.summary.json` — the gate exclusions, the skip tally, the E19 reset flag and the
+   quarantine path, plus the summary line verbatim. Written unconditionally, so a missing file
+   means the step did not run and an empty tally means it ran and found nothing.
+5. Print summary: `N new, M unchanged, K changed`
 
 ### 8.3 `scripts/run_execute.py`
 
