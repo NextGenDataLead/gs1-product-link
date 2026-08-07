@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable
 from http import HTTPStatus
 from pathlib import Path
-from typing import Final, Literal, TypedDict, cast
+from typing import Final, Literal, NamedTuple, TypedDict, cast
 
 import httpx
 
@@ -121,6 +121,19 @@ class WordPressMedia(TypedDict, total=False):
     source_url: str
     title: dict[str, str]
     meta: dict[str, object]
+
+
+class WordPressIdentity(NamedTuple):
+    """Who the configured credential authenticates as, and what it may do.
+
+    ``roles`` is only populated under ``context=edit``, which is why :meth:`whoami` asks for
+    it: without the roles the answer proves the password works but not that the account can
+    still publish, and those fail at very different moments.
+    """
+
+    id: int
+    slug: str
+    roles: list[str]
 
 
 MultilingualPlugin = Literal["polylang", "wpml", "none"]
@@ -250,6 +263,33 @@ class WordPressClient:
         if language and self.multilingual_plugin in ("wpml", "polylang"):
             return {"lang": language}
         return {}
+
+    def whoami(self) -> WordPressIdentity:
+        """Return the authenticated user, proving the credential *and* its capability (§4.4).
+
+        ``GET /wp/v2/users/me?context=edit``. The ``context=edit`` is load-bearing: a bare
+        ``users/me`` answers 200 for any credential that authenticates and omits ``roles``
+        entirely, so it cannot tell "the password works" from "the password works *and* the
+        account can still publish". A demoted or capability-stripped bot passes the naive
+        check and then fails mid-run, after some rows have already published.
+
+        Read-only, and the cheapest way to answer "is this password actually good?" without
+        writing anything. ``docs/troubleshooting.md`` documents the same request as a shell
+        one-liner; this is that check, in code, so a preflight can make it.
+
+        Raises:
+            MissingCredentialError: The application-password env var is unset.
+            WordPressAPIError: On a non-2xx response — notably 401 (bad credential) and 403
+                (authenticated but lacking edit capability), after retries.
+        """
+        body = self._request(
+            "GET", f"{_WP_API_PREFIX}/users/me", params={"context": "edit"}, label="users/me"
+        ).json()
+        return WordPressIdentity(
+            id=int(body.get("id", 0)),
+            slug=str(body.get("slug", "")),
+            roles=[str(role) for role in body.get("roles", [])],
+        )
 
     def find_by_slug(
         self, post_type: str, slug: str, language: str | None = None
