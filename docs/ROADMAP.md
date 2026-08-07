@@ -36,7 +36,7 @@ does not. Last updated 2026-08-08.
 | 9.5 | Media (images + video) | **Code merged (PR #7) + proven live (2026-07-20).** Image+video render on pilot 1449/1450; media idempotent (content-addressed slug). **Open:** the drafted name→GTIN mapping (166 files) needs **client sign-off** (§12 boxes 1/3) |
 | 9.8 | Operator flow (Claude Code) | **Done** (§12 all 4 [x], PR #29 `071f8fe`, 2026-07-30). `flow-orchestrator` driven end-to-end in a fresh Claude Code session with the operator answering every gate, via a reversible dry-run harness (nothing written; `state.json` verified byte-identical after teardown). Ticked the open **Phase 8 box #4** |
 | 10 | Docs | **Done** (§12 all 3 [x], 2026-07-30). Seven `docs/*.md` written **from the code at HEAD**; README status corrected; drift fixed (§4.1, §4.5, §8, PREPARATION §3.18). `setup.md` proven by **executing it verbatim from a fresh clone** — which surfaced and got a real `inspect_export --help` crash fixed |
-| 11 | Release | **Not started — the last phase.** Version bump (`pyproject.toml` is still `0.0.1`, `package.json`), `CHANGELOG.md`, `v0.1.0` tag, MCP registry entry, announcement |
+| 11 | Release | **Done (2026-07-30) — 4 of 5 boxes.** `v0.1.0` tagged and released; `CHANGELOG.md` reconstructed. The **MCP registry entry is unticked by choice**, not outstanding ([OD-2](OPEN_DECISIONS.md#resolved)); the announcement is drafted and unpublished. See [the critical path](#the-critical-path) below |
 
 "Gated"/"deferred" = code is written, the DoD step needs a live environment (staging WP, a real DL
 contract, a printed QR) not yet available.
