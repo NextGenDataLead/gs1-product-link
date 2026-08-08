@@ -179,6 +179,10 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    When run_plan reported process-list exclusions, add one line beneath the counts, e.g.
    `Excluded: 89 not on the process list.` That number is products in the catalogue the
    operator did not list — it is expected, not a warning.
+   `output/{client}/plan.summary.json` carries all of this as data — counts, exclusions, the
+   skip tally, the E19 flag and the quarantine path, and the stderr line verbatim under `text`.
+   Read it rather than re-deriving any of it, and if the stderr has scrolled away, read it
+   instead of re-running run_plan.
    When `plan.json` carries a non-empty **`skipped`** array, add a line beneath the counts
    naming each reason and its count, e.g. `Skipped: 6 no generated copy, 2 missing
    product_name (not in the plan at all).` These are units that never became rows — E18 (no

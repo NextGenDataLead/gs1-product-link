@@ -20,7 +20,14 @@ A *corrupt* state file is not fatal (E19): ``load_state`` moves it aside and sta
 and the summary leads with a warning — every row then re-plans as NEW, which is idempotent
 to execute but rewrites live pages and resolver targets. An *unreadable* one still exits 2.
 
+Everything the run concluded but did not put *in* the plan — the gate exclusions, the tally
+of units dropped before classification, the E19 reset and where the corrupt file went — is
+also written to ``plan.summary.json``, and the stderr line is carried in it verbatim. It used
+to exist only as prose on a stream, so the only reader that could ever see it was the process
+that ran the command.
+
 Emits:  output/{client_id}/plan.json (a Plan as JSON)
+        output/{client_id}/plan.summary.json (a PlanSummary as JSON, always)
 Exit codes:
     0  plan written
     2  config/state error (bad client id, unreadable products/state/control file,
@@ -36,6 +43,7 @@ import sys
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from pydantic import ValidationError
 
@@ -49,6 +57,7 @@ from lib.process_list import load_process_list
 from lib.records import (
     Plan,
     PlanClassification,
+    PlanSummary,
     ProductRecord,
     SkippedUnit,
     SourceIssue,
@@ -224,15 +233,28 @@ def _write_issue_report(client_id: str, filename: str, issues: list[SourceIssue]
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _build_plan(
-    cfg: ClientConfig, products: list[ProductRecord]
-) -> tuple[Plan, dict[str, int], bool, list[SourceIssue], list[SourceIssue]]:
+class _PlanResult(NamedTuple):
+    """A plan and everything the caller must report about how it was arrived at.
+
+    ``state`` is carried whole rather than reduced to its ``reset_from_corrupt`` flag,
+    because the quarantine path beside it is the *evidence* for that flag — an operator
+    told a reset happened will ask where the old file went, and only ``load_state`` knows.
+    """
+
+    plan: Plan
+    excluded: dict[str, int]
+    state: State
+    category_issues: list[SourceIssue]
+    generated_issues: list[SourceIssue]
+
+
+def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> _PlanResult:
     """Gate, assign categories, merge generated copy, classify, and assemble the :class:`Plan`.
 
-    Returns the plan, the gate-exclusion tally, whether prior state was reset from a corrupt
-    file (E19) — which the caller must surface, because it means every row re-plans as NEW —
-    the category-mapping issues (unmapped bricks left unset), and the generated-content issues
-    (one per generated/adjusted value and per blank marketing message).
+    Returns the plan, the gate-exclusion tally, the loaded state (whose ``reset_from_corrupt``
+    the caller must surface, because it means every row re-plans as NEW), the category-mapping
+    issues (unmapped bricks left unset), and the generated-content issues (one per
+    generated/adjusted value and per blank marketing message).
     """
     if cfg.process_list is not None:
         candidates, excluded = _gate(products, load_process_list(cfg.process_list))
@@ -262,7 +284,7 @@ def _build_plan(
         rows=rows,
         skipped=skipped,
     )
-    return plan, excluded, state.reset_from_corrupt, category_issues, generated_issues
+    return _PlanResult(plan, excluded, state, category_issues, generated_issues)
 
 
 def _write_plan(client_id: str, plan: Plan) -> Path:
@@ -270,6 +292,49 @@ def _write_plan(client_id: str, plan: Plan) -> Path:
     path = Path("output") / client_id / "plan.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(plan.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    path.write_text(payload, encoding="utf-8")
+    return path
+
+
+def _summarise(result: _PlanResult) -> PlanSummary:
+    """Assemble the machine-readable summary, ``text`` included.
+
+    Built from the same values the stderr line is built from, and carrying that line
+    verbatim, so a second reader shows the operator the same words rather than a
+    reconstruction that can drift from them.
+    """
+    plan = result.plan
+    return PlanSummary(
+        client_id=plan.client_id,
+        generated_at=plan.generated_at,
+        total=plan.total,
+        counts=plan.counts,
+        skipped=dict(Counter(unit.reason for unit in plan.skipped)),
+        excluded={reason: n for reason, n in result.excluded.items() if n},
+        unmapped_categories=len(result.category_issues),
+        generated_issues=len(result.generated_issues),
+        state_reset_from_corrupt=result.state.reset_from_corrupt,
+        state_corrupt_backup=result.state.corrupt_backup,
+        text=_summary(
+            plan,
+            result.excluded,
+            result.state.reset_from_corrupt,
+            len(result.category_issues),
+            len(result.generated_issues),
+        ),
+    )
+
+
+def _write_summary(client_id: str, summary: PlanSummary) -> Path:
+    """Write ``plan.summary.json`` beside the plan and return its path.
+
+    Written on every run, never conditionally: a missing file has to mean "run_plan did not
+    run", so that an empty tally can mean "it ran and found nothing". Those are different
+    facts and a reader that cannot tell them apart is the E21 trap in another costume.
+    """
+    path = Path("output") / client_id / "plan.summary.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(summary.model_dump(mode="json"), ensure_ascii=False, indent=2)
     path.write_text(payload, encoding="utf-8")
     return path
 
@@ -350,9 +415,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
         products = _load_products(products_path)
-        plan, excluded, state_was_reset, category_issues, generated_issues = _build_plan(
-            cfg, products
-        )
+        result = _build_plan(cfg, products)
     except (
         ConfigError,
         GeneratorError,
@@ -365,16 +428,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config error: {exc}", file=sys.stderr)
         return _EXIT_CONFIG_ERROR
 
-    path = _write_plan(cfg.client_id, plan)
+    path = _write_plan(cfg.client_id, result.plan)
     if cfg.categories is not None:
-        _write_issue_report(cfg.client_id, "category_issues.json", category_issues)
+        _write_issue_report(cfg.client_id, "category_issues.json", result.category_issues)
     if cfg.generator is not None:
-        _write_issue_report(cfg.client_id, "generated_issues.json", generated_issues)
-    _log.info("wrote plan for %s (%d rows) to %s", cfg.client_id, plan.total, path)
-    print(
-        _summary(plan, excluded, state_was_reset, len(category_issues), len(generated_issues)),
-        file=sys.stderr,
-    )
+        _write_issue_report(cfg.client_id, "generated_issues.json", result.generated_issues)
+    summary = _summarise(result)
+    _write_summary(cfg.client_id, summary)
+    _log.info("wrote plan for %s (%d rows) to %s", cfg.client_id, result.plan.total, path)
+    print(summary.text, file=sys.stderr)
     return _EXIT_OK
 
 
