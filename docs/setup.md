@@ -139,6 +139,19 @@ Note also that **environment variables do not survive between separate Claude Co
 
 **Most steps need no credentials at all.** Parse, plan, report, and the map builders are entirely local; only `run_execute` and `run_unpublish` talk to WordPress and GS1. You can get a long way before credentials matter.
 
+### Check it before you need it
+
+```bash
+python -m scripts.doctor              # everything, including credentials and reachability
+python -m scripts.doctor --offline    # only what needs no network and no secrets
+```
+
+Prints one line per check with what to do about each failure, and exits `1` if anything failed. Run it after editing `.env` or `clients.yml`, after a credential rotation, and before any wave.
+
+It exists because the alternative is finding out late. A missing secret used to surface at the *first API call*, so parse, plan and a clean dry-run could all pass before it fired. A stale generated-copy cache surfaced not at all — those units simply vanished from the plan (E21). The doctor checks: the config against its schema (**every** offending field, not just the first), how many products are actually in scope after the process list and the video allowlist, cache coverage over those, the process list, category and video mapping, `ffmpeg` when it is used, and — unless `--offline` — that the site serves, that the WordPress credential authenticates *and* can still publish, and that the GS1 resolver accepts your credentials.
+
+It writes nothing, and it deliberately never reads `state.json`: an idle peek at a corrupt one would quarantine it (E19), and a diagnostic must not change what the next run does.
+
 ### Client configuration
 
 `clients.yml` is validated against `schema/clients.schema.json` and parsed into the Pydantic models in `lib/config.py` — that module is the authoritative field list, including defaults. The blocks:
@@ -208,6 +221,8 @@ Read-only until the final step. This is the one workflow where working hands-on 
    Repeat until there are no warnings on required fields. `brand` and `product_name` are mandatory. Then drop `--dry-run` to write `products.json`.
 
 5. **Review data quality** — `python -m scripts.report_quality`. Fix what belongs in MyGS1 at the source. Blank or wrong source data must not be invented downstream.
+
+   Run `python -m scripts.doctor` here too, before you go near credentials. It will tell you how many products are actually in scope and what is removing the rest — the number an operator most needs and is least often given.
 
 6. **Map the page fields.** Set `wordpress.acf_map` (or a template) so every page slot has a source. See [`template-variables.md`](template-variables.md).
 
