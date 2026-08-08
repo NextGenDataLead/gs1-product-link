@@ -50,6 +50,12 @@ operator repeating a known loop. It **subprocesses the scripts and must never im
 `main()`** (see the `.env` rule below), and `ui/session.py` **raises** rather than building a run
 command while a required gate is unanswered. It holds no LLM credential and never reaches Anthropic.
 
+It is also the only thing that **writes `clients.yml` and `.env`**, on the Setup screen.
+`ui/config_edit.py` edits the YAML **as text** — that file is a document whose comments are often
+the only record of why a value is what it is, so it is never round-tripped through a YAML dumper —
+and validates the candidate with `lib/preflight.check_config` before replacing anything. It still
+does not *load* `.env`; it reads it only far enough to say whether a name has a value.
+
 The gates themselves live in **`lib/gates.py`** as data, and `flow-orchestrator/SKILL.md` carries a
 **Gate index** table that `tests/lib/test_gates.py` checks in both directions. Adding a gate to one
 without the other fails CI — that check exists because two implementations of one safety contract

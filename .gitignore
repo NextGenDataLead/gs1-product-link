@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 clients.yml
+# The operator shell keeps the previous version beside the file it rewrites, and writes a
+# candidate there while validating one. Both hold whatever clients.yml holds.
+clients.yml.*
 *.key
 *.pem
 *.p12

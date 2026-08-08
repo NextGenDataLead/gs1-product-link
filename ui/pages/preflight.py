@@ -19,8 +19,9 @@ from nicegui import ui
 
 from ui import context, runner, theme
 
-_TAG = {"ok": "tag-ok", "warn": "tag-warn", "fail": "tag-fail", "n/a": "tag-na"}
-_WORD = {"ok": "ok", "warn": "warn", "fail": "FAIL", "n/a": "—"}
+#: The four statuses, only for tallying here — the rendering of a check lives in the theme, so
+#: this screen and the Setup screen's Test buttons cannot start showing the same check differently.
+_STATUSES = ("ok", "warn", "fail", "n/a")
 
 
 def render() -> None:
@@ -44,7 +45,12 @@ def render() -> None:
                     return
                 _summary(payload)
                 for check in payload:
-                    _check(check)
+                    theme.check_row(
+                        str(check["status"]),
+                        str(check["title"]),
+                        str(check["detail"]),
+                        str(check.get("remedy") or ""),
+                    )
             status.text = f"exit {result.returncode} · {result.display_command}"
 
         def go(*, offline: bool) -> None:
@@ -71,7 +77,7 @@ def render() -> None:
 
 def _summary(payload: list[dict[str, Any]]) -> None:
     """The verdict first, so the list below is read as detail rather than as news."""
-    tally = {key: sum(1 for c in payload if c["status"] == key) for key in _TAG}
+    tally = {key: sum(1 for c in payload if c["status"] == key) for key in _STATUSES}
     with ui.row().classes("gap-12 mb-6"):
         theme.figure(str(tally["ok"]), "passed")
         if tally["warn"]:
@@ -87,14 +93,3 @@ def _summary(payload: list[dict[str, Any]]) -> None:
         theme.band("Ready, but read the warnings below first.", "warn")
     else:
         theme.band("Ready.", "quiet")
-
-
-def _check(check: dict[str, Any]) -> None:
-    status = str(check["status"])
-    with ui.element("div").classes("check w-full"):
-        ui.label(_WORD[status]).classes(f"tag {_TAG[status]}")
-        with ui.column().classes("gap-1"):
-            ui.label(str(check["title"])).classes("font-medium")
-            ui.label(str(check["detail"])).classes("note")
-            if check.get("remedy"):
-                ui.label(str(check["remedy"])).classes("remedy")

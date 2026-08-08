@@ -130,6 +130,17 @@ body { background: var(--paper) !important; color: var(--ink) !important;
 .remedy    { font-size: var(--text-small); color: var(--ink-soft); margin-top: var(--space-1);
              padding-left: var(--space-3); border-left: 2px solid var(--rule); }
 
+/* A form row: label left, control right, reason underneath. The reason is part of the row and
+   not a tooltip — every field on the Setup screen has a wrong value that costs a live mistake,
+   and a control with no stated consequence is one an operator changes to see what happens. */
+.field        { display: grid; grid-template-columns: 12rem minmax(0, 1fr); gap: var(--space-4);
+                padding: var(--space-2) 0; align-items: baseline; }
+.field-label  { font-size: var(--text-small); color: var(--ink-soft); padding-top: var(--space-2); }
+.field-hint   { font-size: var(--text-micro); color: var(--ink-faint); line-height: 1.55;
+                max-width: 44rem; }
+.field-edited > .field-label { color: var(--accent); font-weight: 600; }
+@media (max-width: 55rem) { .field { grid-template-columns: 1fr; gap: var(--space-1); } }
+
 .band         { padding: var(--space-3) var(--space-4); font-size: var(--text-small);
                 border-left: 3px solid; line-height: 1.5; }
 .band-danger  { border-color: var(--danger); color: var(--danger);
@@ -233,6 +244,27 @@ def figure(value: str, label: str) -> None:
     with ui.column().classes("gap-0"):
         ui.label(value).classes("figure")
         ui.label(label).classes("figure-label")
+
+
+#: Status → the class that colours it, and the word that carries it without colour.
+_CHECK_TAG: Final = {"ok": "tag-ok", "warn": "tag-warn", "fail": "tag-fail", "n/a": "tag-na"}
+_CHECK_WORD: Final = {"ok": "ok", "warn": "warn", "fail": "FAIL", "n/a": "—"}
+
+
+def check_row(status: str, title: str, detail: str, remedy: str = "") -> None:
+    """One preflight check, rendered the same way wherever it appears.
+
+    The Preflight screen shows every check and the Setup screen shows the two or three that
+    answer the field the operator just edited. Same data, same source, so it renders here rather
+    than twice — a check that looked different in two places would read as two different checks.
+    """
+    with ui.element("div").classes("check w-full"):
+        ui.label(_CHECK_WORD.get(status, status)).classes(f"tag {_CHECK_TAG.get(status, 'tag-na')}")
+        with ui.column().classes("gap-1"):
+            ui.label(title).classes("font-medium")
+            ui.label(detail).classes("note")
+            if remedy:
+                ui.label(remedy).classes("remedy")
 
 
 def command(argv: list[str]) -> None:

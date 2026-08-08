@@ -114,7 +114,7 @@ plan behind it is not in the repo (it is a working document); what matters here 
 |---|---|---|
 | 1 | Observability + preflight — incremental run log, `Plan.skipped`, `plan.summary.json`, `lib/preflight.py` + `scripts/doctor.py` | **Built** |
 | 2 | `lib/gates.py` (the gate contract, drift-checked against `SKILL.md`) + the `ui/` shell | **Built** |
-| 3 | Guided config forms over `.env` and the operator half of `clients.yml`, landing in `ui/pages/setup.py` | **Not started** |
+| 3 | Guided config forms over `.env` and the operator half of `clients.yml`, in `ui/pages/setup.py` | **Built** |
 | 4 | Packaging — `install.command` / `start.command` via `uv`, and committing `uv.lock` | **Not started** |
 
 Two decisions inside it are settled and should not be reopened:
@@ -128,12 +128,15 @@ Two decisions inside it are settled and should not be reopened:
   load headless, so `claude -p "/gs1-publish {client}"` would run the entire gated sequence with
   every gate answered by the model or skipped.
 
-Phase 3 notes for whoever picks it up: hand-write the ~15 fields rather than generating the form
-from `schema/clients.schema.json`. The schema is strong for *validation* and weak for *generation* —
-no `default` anywhere, no `title` on any property, descriptions missing exactly where a per-client
-form needs them, and the `defaults`-block merge is not expressible in it. `gdsn_map`, `acf_map`,
-`brick_category_map` and `generator` stay read-only and validated: the first three need a field walk
-against the live site, and `generator` carries the E21 guard.
+Phase 3 as built: the ~15 fields are hand-written rather than generated from
+`schema/clients.schema.json`, which is strong for *validation* and weak for *generation* — no
+`default` anywhere, no `title` on any property, descriptions missing exactly where a per-client form
+needs them, and the `defaults`-block merge not expressible in it. So the schema validates the
+candidate (via `lib/preflight.check_config`) and renders nothing. `gdsn_map`, `acf_map`,
+`brick_category_map` and `generator` stay read-only: the first three need a field walk against the
+live site, and `generator` carries the E21 guard. `ui/config_edit.py` edits `clients.yml` as text
+rather than round-tripping it, because most of that file is comments and several of them are the
+only record of why a value is what it is. See [`ui-operator-shell.md`](ui-operator-shell.md).
 
 **Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows). The
 exposed WordPress application password was **rotated on 2026-07-30** and the old one revoked.
