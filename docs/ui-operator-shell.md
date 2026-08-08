@@ -39,7 +39,7 @@ through `flow-orchestrator`. The shell is a second surface over the same gates, 
 
 | # | Screen | What it is for |
 |---|---|---|
-| 1 | **Setup** | What this machine is configured to publish, where, and with which credential *names*. Read-only. |
+| 1 | **Setup** | The operator-facing half of `clients.yml` and `.env`, as a form, with live Test buttons. |
 | 2 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
 | 3 | **Data** | Upload the export, prune the process list, read the data-quality report. |
 | 4 | **Content** | Import `generated_cache.json`, check its coverage, read the copy. |
@@ -48,11 +48,46 @@ through `flow-orchestrator`. The shell is a second surface over the same gates, 
 
 ### Setup
 
-Shows the client, the site, the environment, and every configured file with **how long ago it was
-modified**. The export path is authoritative and has no command-line override, so a workbook saved
-somewhere new is invisible to the tool — the date beside it is the fastest way to notice.
+The client, the site, the environment, the credentials, and every configured file with **how long
+ago it was modified**. The export path is authoritative and has no command-line override, so a
+workbook saved somewhere new is invisible to the tool — the date beside it is the fastest way to
+notice.
 
-Credential *names* only, never values. Whether a name resolves is the preflight's question.
+The two most expensive mistakes in this pipeline are both *config* mistakes that nothing downstream
+notices: pointing at the wrong export, and pointing at production. Both were previously made in a
+text editor, in a file whose rules are not visible from inside it. Hence the form, and five things
+about it:
+
+- **Only changed fields are written.** The screen shows the *resolved* config, with the `defaults`
+  block merged in. Saving all of it would freeze every inherited default into this client's own
+  block, so an untouched form writes nothing at all.
+- **Everything else in `clients.yml` survives byte for byte** — comments, alignment, quoting style,
+  and every block the form does not show. The file is a document, and several of its comments are
+  the only record of why a value is what it is.
+- **The result is validated before it replaces the file**, by the same `check_config` the doctor
+  runs, which reports every offending field rather than the first. A candidate that would not load
+  is refused and the file is left alone. The previous version is kept as `clients.yml.bak`.
+- **Switching to production asks for the client id, typed in full** — the same decision the
+  production gate asks about, made once here instead of once per run. Two further inconsistencies
+  the schema cannot express are refused too: a default language that is not in the language list,
+  and `production` with no production account or credential names.
+- **The client id is not editable.** It is the path to `output/{client}/state.json`, which records
+  every GTIN already published. Renaming it orphans that file rather than moving it, and every
+  published GTIN would classify as new on the next run.
+
+**Credentials are write-only.** The fields set values in `.env` and never show one back; an empty
+box means *leave this one alone*. Values are always quoted, because the commonest credential
+failure here is an application password that lost its quotes and was truncated at the first space —
+which the screen also reports, as a group count, without disclosing anything. There is **no
+Anthropic key field**, and there will not be one.
+
+`gdsn_map`, `acf_map`, `brick_category_map` and `generator` stay read-only, each with the reason
+beside it. The first three were settled by a field walk against the live site; `generator` is the
+E21 switch, not a preference.
+
+The Test buttons run `python -m scripts.doctor` and show the checks that answer for that part of
+the form. They are the preflight's own checks rather than a second opinion — and when the run as a
+whole fails on a check the button did not ask about, it says so instead of showing green.
 
 ### Preflight
 
@@ -117,6 +152,7 @@ permanent GS1 records may already exist for the rows that landed.
 | Refuses a real production run without `--i-understand-production` | `scripts/run_execute.py` |
 | Refuses a `--only links` GTIN whose target does not serve | `scripts/run_execute.py` |
 | Refuses to build a command past an unanswered required gate | `ui/session.py` |
+| Refuses to replace `clients.yml` with a file that would not load | `ui/config_edit.py`, via `lib/preflight.check_config` |
 | Which gates exist, and which are non-negotiable | `lib/gates.py`, checked against `SKILL.md` |
 | The prompt text a model reads | `.claude/skills/flow-orchestrator/SKILL.md` |
 
@@ -136,6 +172,9 @@ the staging-guard variables inside it. A test asserts no module under `ui/` does
   image hosts named in the product feed. That last one is currently unconstrained by an allowlist,
   which is a fair question to ask about.
 - **Credentials** are the pre-existing `.env` at `chmod 600` — a WordPress application password
-  with editor rights and GS1 production OAuth credentials. The shell does not read them; the
-  subprocesses do.
+  with editor rights and GS1 production OAuth credentials. The shell never *loads* them: it does
+  not call `load_env()` or any dotenv reader, so no secret enters this long-lived process's
+  environment and the staging-guard variables are never armed inside it. The subprocesses load the
+  file themselves. The Setup screen writes to it and re-applies mode 600, and reads it only far
+  enough to say whether a name has a value.
 - **No auto-update, no telemetry, no network listener beyond the loopback socket.**
