@@ -179,6 +179,14 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    When run_plan reported process-list exclusions, add one line beneath the counts, e.g.
    `Excluded: 89 not on the process list.` That number is products in the catalogue the
    operator did not list — it is expected, not a warning.
+   When `plan.json` carries a non-empty **`skipped`** array, add a line beneath the counts
+   naming each reason and its count, e.g. `Skipped: 6 no generated copy, 2 missing
+   product_name (not in the plan at all).` These are units that never became rows — E18 (no
+   `product_name` in that language), E21 (generator on, no generated copy yet) or E22
+   (`require_hero_image`, blank source image) — so they are **not** in the totals above and
+   `all` will not publish them. Never present the counts without this line when the array is
+   non-empty: an operator reading `New: 0` alone concludes there is nothing to do, when in
+   fact there is copy to generate.
    When run_plan's stderr leads with the **state-reset warning** (E19 — prior state was
    corrupt and has been reset), put it **above** the counts, not below, and say what it
    means before offering the menu:
