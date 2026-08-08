@@ -1,0 +1,179 @@
+"""Screen 3 — the export, the process list, and what the data quality report says.
+
+The recurring loop starts here: drop a new export, prune the process list, look at what the parse
+found. Two deliberate constraints:
+
+**The upload goes to the configured ``export.path``, never to a new path.** ``parse_export`` has no
+input-path override, so a file dropped anywhere else is invisible to the tool — the single most
+common novice failure. Writing to the configured path is what makes the upload mean anything, and
+it is also what gate 0's cross-check is guarding.
+
+**Pruning the process list is a deletion, so the previous version is kept.** There is no undo in a
+web form, and losing a pruned list means redoing the pruning.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from nicegui import events, ui
+
+from lib.errors import ProcessListError
+from ui import REPO_ROOT, context, process_list_edit, runner, theme
+
+
+def render() -> None:
+    cid = context.client_id()
+    cfg = context.client_config(cid)
+
+    with theme.page("Data", client_id=cid, environment=cfg.gs1.environment if cfg else None):
+        theme.heading(
+            "Step 3",
+            "Data",
+            "The product export and the list of GTINs this run may touch.",
+        )
+        if cfg is None or cid is None:
+            theme.band("clients.yml did not load. Fix that on the Setup screen first.", "danger")
+            return
+
+        _export(cfg, cid)
+        _process_list(cfg)
+        _quality(cid)
+
+
+# --- Export -------------------------------------------------------------------
+
+
+def _export(cfg: Any, cid: str) -> None:
+    target = Path(cfg.export.path)
+    if not target.is_absolute():
+        target = REPO_ROOT / target
+
+    with theme.section("Product export"):
+        fact = context.file_fact(cfg.export.path)
+        with ui.row().classes("gap-12 items-end mb-4"):
+            theme.figure(str(context.product_count(cid) or 0), "products parsed")
+            theme.figure(fact.age, "export modified")
+
+        ui.label(
+            f"Uploading replaces {cfg.export.path} in place. That path is fixed in clients.yml and "
+            "has no command-line override, so a workbook saved anywhere else is invisible to the "
+            "tool — this is the single most common way a run silently uses last quarter's data."
+        ).classes("note")
+
+        def upload(event: events.UploadEventArguments) -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                target.with_suffix(f".bak{target.suffix}").write_bytes(target.read_bytes())
+            target.write_bytes(event.content.read())
+            ui.notify(f"Saved to {cfg.export.path} (previous kept as .bak)", type="positive")
+
+        ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(
+            'accept=".xlsx" flat bordered'
+        ).classes("w-full max-w-xl")
+
+        output = ui.log().classes("console mt-4").style("display:none")
+
+        def parse(*, dry_run: bool) -> None:
+            argv = runner.parse_export_argv(cid, dry_run=dry_run)
+            output.style("display:block")
+            output.clear()
+            result = runner.run(argv)
+            output.push(result.display_command)
+            output.push(result.stderr or result.stdout or "(no output)")
+            ui.notify(
+                "Parse finished with errors" if not result.ok else "Parse clean",
+                type="warning" if not result.ok else "positive",
+            )
+
+        with ui.row().classes("gap-3 mt-4"):
+            theme.quiet_action("Check the parse (writes nothing)", lambda: parse(dry_run=True))
+            theme.action("Parse and save products.json", lambda: parse(dry_run=False))
+
+
+# --- Process list -------------------------------------------------------------
+
+
+def _process_list(cfg: Any) -> None:
+    if cfg.process_list is None:
+        with theme.section("Process list"):
+            ui.label("No `process_list` block — every product in the export is planned.").classes(
+                "note"
+            )
+        return
+
+    with theme.section("Process list"):
+        ui.label(
+            "Every GTIN in this file is processed. The tool reads no other column and interprets "
+            "no cell value: being on the list is the whole meaning, so preparing a batch means "
+            "deleting the rows that should not run. Your other columns are kept untouched."
+        ).classes("note")
+
+        try:
+            sheet = process_list_edit.read_sheet(cfg.process_list)
+        except ProcessListError as exc:
+            theme.band(str(exc), "danger")
+            return
+
+        state: dict[str, Any] = {"sheet": sheet}
+        rows = [
+            {"_row": n, **{col: value for col, value in zip(sheet.header, row, strict=False)}}
+            for n, row in enumerate(sheet.rows)
+        ]
+        columns = [
+            {"name": col, "label": col, "field": col, "align": "left"} for col in sheet.header
+        ]
+        table = ui.table(columns=columns, rows=rows, row_key="_row", selection="multiple").classes(
+            "w-full"
+        )
+        count = ui.label(f"{len(rows)} GTIN(s) will be processed").classes("note mt-2")
+
+        def remove() -> None:
+            selected = {int(row["_row"]) for row in table.selected}
+            if not selected:
+                ui.notify("Select the rows to remove first", type="warning")
+                return
+            state["sheet"] = state["sheet"].without(selected)
+            table.rows = [row for row in table.rows if int(row["_row"]) not in selected]
+            table.selected = []
+            table.update()
+            count.text = f"{len(table.rows)} GTIN(s) will be processed — not saved yet"
+
+        def save() -> None:
+            try:
+                backup = process_list_edit.save_sheet(state["sheet"])
+            except ProcessListError as exc:
+                ui.notify(str(exc), type="negative", timeout=10000)
+                return
+            ui.notify(f"Saved. Previous version kept at {backup.name}", type="positive")
+            count.text = f"{len(table.rows)} GTIN(s) will be processed"
+
+        with ui.row().classes("gap-3 mt-3"):
+            theme.quiet_action("Remove selected rows", remove)
+            theme.action("Save the list", save, danger=True)
+
+
+# --- Quality ------------------------------------------------------------------
+
+
+def _quality(cid: str) -> None:
+    with theme.section("Data quality"):
+        ui.label(
+            "Blank or wrong source values get fixed in MyGS1, at the source — never invented "
+            "here. This report is the work list."
+        ).classes("note")
+
+        body = ui.column().classes("w-full mt-4")
+
+        def show() -> None:
+            result = runner.run(runner.report_quality_argv(cid))
+            body.clear()
+            report = REPO_ROOT / "output" / cid / "data-quality-report.md"
+            with body:
+                if not result.ok or not report.is_file():
+                    theme.band(result.stderr or "The report could not be built.", "warn")
+                    return
+                ui.markdown(report.read_text(encoding="utf-8")).classes("prose max-w-none")
+
+        theme.action("Rebuild and show the report", show)

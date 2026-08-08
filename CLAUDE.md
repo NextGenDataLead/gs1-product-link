@@ -43,13 +43,31 @@ Digital Link, QR) and have their own trigger phrases.
 - **Never invent product data.** Blank or wrong source values get fixed in MyGS1, not filled in
   downstream. `python -m scripts.report_quality` is how they surface.
 
+## There is a second surface: the local operator shell
+
+`pip install -e ".[dev,ui]"` then `python -m ui` — a desktop window over the same commands, for an
+operator repeating a known loop. It **subprocesses the scripts and must never import their
+`main()`** (see the `.env` rule below), and `ui/session.py` **raises** rather than building a run
+command while a required gate is unanswered. It holds no LLM credential and never reaches Anthropic.
+
+The gates themselves live in **`lib/gates.py`** as data, and `flow-orchestrator/SKILL.md` carries a
+**Gate index** table that `tests/lib/test_gates.py` checks in both directions. Adding a gate to one
+without the other fails CI — that check exists because two implementations of one safety contract
+drift silently. Read `docs/ui-operator-shell.md` before changing either.
+
 ## Layout
 
-- `lib/` — the library. `scripts/` — nine CLI entry points. `mcps/` — three TypeScript MCP servers
-  (unpublished by choice, see `docs/OPEN_DECISIONS.md` OD-2).
+- `lib/` — the library. `scripts/` — ten CLI entry points. `ui/` — the operator shell (optional
+  `[ui]` extra; nothing in `lib/` or `scripts/` imports it, and the suite passes without it).
+  `mcps/` — three TypeScript MCP servers (unpublished by choice, see `docs/OPEN_DECISIONS.md` OD-2).
+- **Run `python -m scripts.doctor` before a wave.** It is the preflight: config, scope, cache
+  coverage, credentials, reachability. Exit 1 on any failure; `--offline` skips everything needing
+  a secret or a socket, `--json` is what the shell parses.
 - **Credentials come from `.env`**, loaded by `lib/env.py` `load_env()` from each script's
-  `if __name__ == "__main__":` block — **never from `main()`**, which the tests call directly.
-  `tests/lib/test_env.py` enforces this; it is not boilerplate.
+  `if __name__ == "__main__":` block — **never from `main()`**, which the tests call directly, and
+  **never from anywhere under `ui/`**, which would put production secrets in a long-lived desktop
+  process and arm the staging guards inside it. `tests/lib/test_env.py` enforces both with an AST
+  check; it is not boilerplate.
 - `clients.yml` (gitignored) holds config and the **names** of env vars, never values. `client_id` is
   optional on every script when exactly one client is defined.
 - CI: `ruff check`, `ruff format --check`, `mypy --strict lib`, `pytest`.

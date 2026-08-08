@@ -63,7 +63,7 @@ explanation was wrong**:
 
 That `env` block is **residue from the abandoned Claude Cowork experiment** — Cowork needed
 credentials supplied through Claude's own configuration rather than a local file. Cowork was
-subsequently removed (see `docs/setup.md` → *How you run this*), but the credential block stayed
+subsequently removed (see `docs/setup.md` → *Two ways to drive it*), but the credential block stayed
 behind and became, silently, the real source of truth.
 
 ### Evidence gathered (2026-07-30)

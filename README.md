@@ -66,6 +66,17 @@ The Python scripts underneath (`inspect_export`, `parse_export`, `report_quality
 `run_plan`, `run_execute`, …) are what Claude Code invokes for you. You run them directly
 for install verification and when mapping a new client's export, not to publish.
 
+There is also a **local operator shell** — a desktop window over the same commands, for the
+recurring loop when a terminal is not the right surface:
+
+```bash
+pip install -e ".[ui]" && python -m ui
+```
+
+It subprocesses the same scripts, renders the same gates, and refuses to build a run command
+while any required one is unanswered. It holds no LLM credential and never talks to Anthropic.
+See [`docs/ui-operator-shell.md`](docs/ui-operator-shell.md).
+
 **Full walkthrough, including onboarding a new client: [`docs/setup.md`](docs/setup.md).**
 
 ## Documentation

@@ -22,13 +22,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-httpx>=0.30", "mypy>=1.9", "ruff>=0.4"]
+# The local operator shell (`python -m ui`). An extra rather than a dependency so `lib` stays
+# light: NiceGUI pulls FastAPI, uvicorn, pywebview and bundled Vue/Quasar assets, none of which
+# any publishing path touches. Nothing under lib/ or scripts/ imports it.
+ui = ["nicegui>=2.0", "pywebview>=5.0"]
 
 [project.urls]
 Homepage = "https://github.com/NextGenDataLead/gs1-product-link"
 Repository = "https://github.com/NextGenDataLead/gs1-product-link"
 
 [tool.setuptools]
-packages = ["lib", "scripts"]
+packages = ["lib", "scripts", "ui", "ui.pages"]
 
 [tool.ruff]
 line-length = 100
@@ -51,7 +55,7 @@ strict = true
 python_version = "3.11"
 
 [[tool.mypy.overrides]]
-module = ["openpyxl.*", "yaml.*", "jsonschema.*", "pystache.*", "qrcode.*"]
+module = ["openpyxl.*", "yaml.*", "jsonschema.*", "pystache.*", "qrcode.*", "nicegui.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
