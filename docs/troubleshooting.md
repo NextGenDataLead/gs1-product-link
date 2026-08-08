@@ -18,7 +18,7 @@ pilot. If you are mid-incident, start with [Traps that have actually bitten](#tr
 
 | What | Path |
 |---|---|
-| Per-row outcome of every mutating run | `output/{client_id}/runs/{ts}.jsonl` — one `RunOutcome` per row, written whether the row succeeded or failed |
+| Per-row outcome of every mutating run | `output/{client_id}/runs/{ts}.jsonl` — one `RunOutcome` per row, written whether the row succeeded or failed, and appended **as each row completes**, so a run that died part-way still accounts for what it did. `run_execute` prints the path at the start of the run as well as at the end; `tail -f` it to watch a run in progress |
 | What the tool believes is already published | `output/{client_id}/state.json` |
 | Source-data problems | `output/{client_id}/data-quality-report.md` (`python -m scripts.report_quality`) |
 | What was actually published, per wave | `docs/clients/{client_id}-live-log.md`, where a client keeps one |
@@ -260,6 +260,11 @@ understanding why the reset happened.
 Not supported. There is no lockfile in v0.1 (**E20**). Concurrent runs for the same client will
 interleave state writes and lose updates. Run them one at a time.
 
+The one thing that *is* handled is the log filename: it is a timestamp to the second, so two runs
+started inside the same second would have shared one file and interleaved their rows. The second
+one gets `{ts}-1.jsonl` instead (created with an exclusive open, so the two processes cannot both
+win). That keeps each run's own account readable — it does not make the runs safe to overlap.
+
 ### A GS1 record can never be deleted
 
 The v2 API has **no DELETE**. `run_unpublish` / `retract` deactivates the entry (`isEnabled` →
@@ -467,7 +472,7 @@ Startup config/credential errors abort immediately with exit 2.
 | E17 | Fewer columns than expected | `ExportParseError` if required, WARN if optional |
 | E18 | Language has no `product_name.{lang}` for a GTIN | That language's row classified SKIPPED, surfaced in chat |
 | E19 | State file is corrupt JSON | Backed up to `state.json.corrupt.{ts}`, fresh state, ERROR logged, **and the reset surfaced above the plan counts** |
-| E20 | Two `run_execute` runs interleave | **Not supported.** No lockfile in v0.1 |
+| E20 | Two `run_execute` runs interleave | **Not supported.** No lockfile in v0.1. Same-second runs do at least get separate log files (`{ts}-1.jsonl`) |
 | E21 | Generator on, but a `(GTIN, language)` has no generated tagline | Row SKIPPED so a blank page can never publish; gap reported via `missing_generation_input` |
 | E22 | `media.require_hero_image` set, source `image_url` blank | GTIN held out of the plan; reported via `value_blank`. A runtime fetch failure still degrades per E7 |
 
