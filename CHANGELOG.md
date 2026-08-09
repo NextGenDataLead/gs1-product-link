@@ -190,6 +190,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bare row list, so a caller cannot take the rows and leave the drops behind — which is
   what every caller did for as long as the drops were only a log line.
 
+### Fixed
+- **Both uploads in the operator shell wrote nothing, silently.** NiceGUI 2 handed the
+  handler `event.content`, read synchronously; NiceGUI 3 replaced it with `event.file`,
+  whose read methods are awaitable. The `ui` extra allowed `nicegui>=2.0`, so a fresh
+  install resolved 3.x against code written for 2.x and broke the export upload on the
+  Data screen and the copy-cache import on the Content screen at the same time.
+
+  The shape of the failure was the problem. The handler raised inside NiceGUI, which
+  logged it to the terminal; the browser showed the file at 100% with a checkmark and no
+  error; nothing reached disk. An operator saw a successful upload followed by a parse
+  insisting the file did not exist. Reporting success while doing nothing is the outcome
+  refused everywhere else in this project — `ui/session.py` raises rather than build a
+  command past an unanswered gate, and an empty plan is refused rather than run — so it
+  should not have been reachable here.
+
+  Both handlers are now `async` and `await event.file.save(path)`. The extra is bounded to
+  `nicegui>=3.0,<4`: an unbounded major range on the one dependency the screens are written
+  against buys nothing the lockfile does not already give. `tests/ui/test_upload_contract.py`
+  asserts both sides — an **AST** check that every handler taking an upload event is `async`
+  and never reads the removed `.content` (no NiceGUI needed, so it runs in CI), and a live
+  check that the installed NiceGUI still offers `file` and an awaitable `save` (skipped
+  where the extra is absent).
+
+  Found on the first from-scratch operator install, which is the argument for doing one.
+  Note also that CI does not exercise the screens at all: it installs `.[dev]`, which is
+  what keeps `lib` provably free of a UI dependency, and leaves `ui/pages/` uncovered.
+
 ### Changed
 - **The run log is written as the run goes, not once at the end.** `run_execute` used to
   collect every `RunOutcome` in memory and write `output/{client}/runs/{ts}.jsonl` after

@@ -25,7 +25,12 @@ dev = ["pytest>=8.0", "pytest-httpx>=0.30", "mypy>=1.9", "ruff>=0.4"]
 # The local operator shell (`python -m ui`). An extra rather than a dependency so `lib` stays
 # light: NiceGUI pulls FastAPI, uvicorn, pywebview and bundled Vue/Quasar assets, none of which
 # any publishing path touches. Nothing under lib/ or scripts/ imports it.
-ui = ["nicegui>=2.0", "pywebview>=5.0"]
+# Bounded to one major version on purpose. It was `nicegui>=2.0`, and NiceGUI 3 replaced the
+# upload event's `content` with an awaitable `file` — which broke both of the shell's uploads
+# *silently*: the handler raised where NiceGUI logs it, the browser showed a completed upload,
+# and nothing was written. An unbounded major range on the one dependency the screens are
+# written against buys nothing that the lockfile does not already give.
+ui = ["nicegui>=3.0,<4", "pywebview>=5.0"]
 
 [project.urls]
 Homepage = "https://github.com/NextGenDataLead/gs1-product-link"
