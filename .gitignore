@@ -39,7 +39,10 @@ venv/
 *.egg-info/
 .coverage
 htmlcov/
-uv.lock
+# uv.lock is deliberately NOT ignored. The operator's machine installs from it via
+# install.command / install.bat, so it is the record of exactly which versions that
+# machine gets — and the thing an IT reviewer can vet before approving the install.
+# A CI step (`uv lock --check`) fails if it drifts from pyproject.toml.
 
 # === Node / TypeScript ===
 node_modules/

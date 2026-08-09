@@ -4,6 +4,8 @@
 **Status:** nothing has been built. This document is context and constraints only.
 **Repo:** `gs1-product-link` (working copy `Noviplast_Wordpress_GS1DataLink`), `main` @ `492e8b2`, v0.1.0 released, clean.
 
+> **This is the brief as written, kept for provenance — it describes the repository at `492e8b2`, not today.** All four phases it fed have since been built, so several "current state" facts below are now history: `uv.lock` is committed, there is a `ui/` package, and `lib/preflight.py` and `lib/gates.py` exist. For the state of the work see [`ROADMAP.md`](ROADMAP.md#post-v010-the-operator-shell-a-third-axis); for the result, [`ui-operator-shell.md`](ui-operator-shell.md) and [`operator-install.md`](operator-install.md).
+
 ---
 
 ## 0. The question being researched

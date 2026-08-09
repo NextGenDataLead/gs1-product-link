@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A double-click install for the operator's machine — `install.command` / `install.bat`, then
+  `start.command` / `start.bat`.** The shell existed but still needed a clone, a virtualenv and
+  `pip`, which is most of the 33-step install the shell was built to avoid. The installer fetches
+  `uv` (one static binary), has `uv` fetch its own CPython 3.11, and builds `.venv` from the
+  committed lockfile. Nothing is preinstalled, nothing is typed, no administrator rights, and
+  nothing is written outside the folder and the user's home directory.
+  [`docs/operator-install.md`](docs/operator-install.md) covers the handover, the two ways a
+  managed machine refuses to open an unsigned file, and what IT is being asked to allow.
+
+  **`uv.lock` is now committed** — it was gitignored. It is what the operator installs *from*:
+  `uv sync --locked` refuses to resolve anything the lockfile does not already hold, so that
+  machine gets the versions that were tested rather than whatever resolves that day, and there is
+  one reviewable artifact (86 packages, with hashes) for a security team to vet before any of it
+  is installed. It also closes a real reproducibility gap: CI pinned 3.11 while the development
+  venv had drifted to 3.14.5, with `requires-python = ">=3.11"` permitting both.
+
+  A lockfile is only worth having if it cannot silently go stale, so drift is checked twice: CI
+  runs `uv lock --check` (authoritative, needs `uv`), and `tests/test_packaging.py` compares the
+  lock's recorded requirements against `pyproject.toml` offline — a dependency added without
+  re-locking installs fine on the maintainer's machine and *fails* on the operator's, which is
+  the worst place to find out.
+
+  The `uv` version and the Python version are written out in all four scripts and in
+  `.github/workflows/ci.yml`; the same test fails if one copy moves alone. There is deliberately
+  **no `.python-version` file** — pyenv reads that file too, and it would break `python` in this
+  directory for anyone who has pyenv without 3.11 installed.
+
+  CI still installs with `pip`. Adding a lockfile changed what the *operator* resolves, not what
+  CI resolves, and conflating the two would have been an unannounced change to the thing that
+  gates every merge.
+
 - **A local operator shell — `pip install -e ".[ui]"` then `python -m ui`.** A desktop window
   over the same commands a person would type, so the recurring loop (drop an export, prune the
   process list, import the copy, run the flow, read the result) needs no terminal, no

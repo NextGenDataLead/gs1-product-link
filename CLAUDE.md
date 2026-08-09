@@ -50,6 +50,13 @@ operator repeating a known loop. It **subprocesses the scripts and must never im
 `main()`** (see the `.env` rule below), and `ui/session.py` **raises** rather than building a run
 command while a required gate is unanswered. It holds no LLM credential and never reaches Anthropic.
 
+On the operator's machine it installs by double-click instead — `install.command` / `install.bat`,
+then `start.command` / `start.bat` — from the **committed `uv.lock`**. Do not run those in a
+development clone: they replace `.venv` with a 3.11 environment that has `ui` but not `dev`. After
+touching `pyproject.toml`, run **`uv lock`** and commit it, or the operator's `uv sync --locked`
+refuses to install; `tests/test_packaging.py` and CI's `uv lock --check` both catch that.
+`docs/operator-install.md` is the operator-facing doc.
+
 It is also the only thing that **writes `clients.yml` and `.env`**, on the Setup screen.
 `ui/config_edit.py` edits the YAML **as text** — that file is a document whose comments are often
 the only record of why a value is what it is, so it is never round-tripped through a YAML dumper —
