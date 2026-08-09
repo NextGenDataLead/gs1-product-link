@@ -4,6 +4,13 @@ A local desktop window over the same commands you would otherwise type. It exist
 recurring loop — drop a new export, prune the process list, import the copy, run the flow, read
 the result — does not require a terminal, a virtualenv, or knowing which of nine scripts to call.
 
+On the operator's machine there is nothing to install first and nothing to type: double-click
+**`install.command`** (macOS) or **`install.bat`** (Windows), then **`start.command`** /
+**`start.bat`**. See [`operator-install.md`](operator-install.md), which also covers the two ways a
+managed machine refuses to open an unsigned file.
+
+From a development clone it is the same program, started the usual way:
+
 ```bash
 pip install -e ".[ui]"
 python -m ui
@@ -167,6 +174,9 @@ the staging-guard variables inside it. A test asserts no module under `ui/` does
 ## For IT
 
 - **Loopback only.** Port 8477, `127.0.0.1`, native window — no shareable URL.
+- **The install is user-scope and version-pinned** — `uv` at a pinned version, CPython 3.11, and
+  86 packages resolved in the committed `uv.lock` with hashes. No administrator rights, no service.
+  [`operator-install.md`](operator-install.md#for-it) has the detail.
 - **No Anthropic egress and no LLM credential** on this machine.
 - **Outbound**: the client's WordPress site, `gs1nl-api.gs1.nl` (or its acceptance host), and the
   image hosts named in the product feed. That last one is currently unconstrained by an allowlist,

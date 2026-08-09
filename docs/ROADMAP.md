@@ -115,7 +115,7 @@ plan behind it is not in the repo (it is a working document); what matters here 
 | 1 | Observability + preflight — incremental run log, `Plan.skipped`, `plan.summary.json`, `lib/preflight.py` + `scripts/doctor.py` | **Built** |
 | 2 | `lib/gates.py` (the gate contract, drift-checked against `SKILL.md`) + the `ui/` shell | **Built** |
 | 3 | Guided config forms over `.env` and the operator half of `clients.yml`, in `ui/pages/setup.py` | **Built** |
-| 4 | Packaging — `install.command` / `start.command` via `uv`, and committing `uv.lock` | **Not started** |
+| 4 | Packaging — `install.command` / `start.command` via `uv`, and committing `uv.lock` | **Built** |
 
 Two decisions inside it are settled and should not be reopened:
 
@@ -137,6 +137,18 @@ candidate (via `lib/preflight.check_config`) and renders nothing. `gdsn_map`, `a
 live site, and `generator` carries the E21 guard. `ui/config_edit.py` edits `clients.yml` as text
 rather than round-tripping it, because most of that file is comments and several of them are the
 only record of why a value is what it is. See [`ui-operator-shell.md`](ui-operator-shell.md).
+
+Phase 4 as built: two double-clicks (`install.command` / `install.bat`, then `start.command` /
+`start.bat`) that fetch `uv`, have it fetch CPython 3.11, and build `.venv` **from the now-committed
+`uv.lock`** with `--locked` — so the operator's machine cannot resolve its way to a different set of
+versions, and there is one hashed artifact for IT to vet. That also closes the reproducibility gap
+this track inherited (CI on 3.11, the development venv drifted to 3.14.5, `requires-python` allowing
+both). Drift is checked from both sides: CI runs `uv lock --check`, and `tests/test_packaging.py`
+compares the lock against `pyproject.toml` offline, because a missing re-lock is invisible on the
+maintainer's machine and fatal on the operator's. There is no `.python-version` file on purpose —
+pyenv reads it too, and it would break `python` in this directory for anyone lacking that version.
+Not verified: the two `.bat` files have never been run on Windows. See
+[`operator-install.md`](operator-install.md).
 
 **Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows). The
 exposed WordPress application password was **rotated on 2026-07-30** and the old one revoked.

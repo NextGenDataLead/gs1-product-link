@@ -77,6 +77,11 @@ It subprocesses the same scripts, renders the same gates, and refuses to build a
 while any required one is unanswered. It holds no LLM credential and never talks to Anthropic.
 See [`docs/ui-operator-shell.md`](docs/ui-operator-shell.md).
 
+On a machine with no Python it installs by double-click instead — `install.command` /
+`install.bat` fetches `uv`, has it fetch Python 3.11, and builds the environment from the
+committed `uv.lock`; `start.command` / `start.bat` opens the window. See
+[`docs/operator-install.md`](docs/operator-install.md).
+
 **Full walkthrough, including onboarding a new client: [`docs/setup.md`](docs/setup.md).**
 
 ## Documentation
@@ -86,6 +91,13 @@ Start here:
 - **[docs/setup.md](docs/setup.md)** — install, configure, run, and onboard a client.
 - **[docs/troubleshooting.md](docs/troubleshooting.md)** — every error type, and the traps
   already paid for on a live site.
+
+The operator's machine:
+
+- [docs/operator-install.md](docs/operator-install.md) — the double-click install, and what IT is
+  being asked to allow.
+- [docs/ui-operator-shell.md](docs/ui-operator-shell.md) — the six screens, and where the safety
+  actually lives.
 
 The two external systems:
 

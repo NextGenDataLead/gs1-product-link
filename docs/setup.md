@@ -21,7 +21,7 @@ The tool turns a GS1 Data Source export into (a) WordPress product pages, one pe
 >
 > **From Claude Code** — normally with a slash command, **`/gs1-publish`** (or `/gs1-pages` / `/gs1-links` for one leg) — which loads the `flow-orchestrator` skill, walks you through the operator gates, and invokes the Python scripts for you. Plain language works too (*"publish {client_id} to GS1"*), but the slash command is preferred: it pins the mode instead of leaving it to be inferred. See [Which flow do you need?](#which-flow-do-you-need).
 >
-> **From the local operator shell** — `python -m ui`, a desktop window over the same commands, for the recurring loop when a terminal is not the right surface. It subprocesses the same scripts, renders the same gates from the same source, and **refuses to build a run command while any required gate is unanswered**. It holds no LLM credential and never talks to Anthropic. See [`ui-operator-shell.md`](ui-operator-shell.md).
+> **From the local operator shell** — `python -m ui`, a desktop window over the same commands, for the recurring loop when a terminal is not the right surface. It subprocesses the same scripts, renders the same gates from the same source, and **refuses to build a run command while any required gate is unanswered**. It holds no LLM credential and never talks to Anthropic. See [`ui-operator-shell.md`](ui-operator-shell.md), and [`operator-install.md`](operator-install.md) for the double-click install that puts it on a machine with no Python.
 >
 > Pick by who is doing the work, not by capability. The shell is for an operator repeating a known loop; Claude Code is for onboarding a client, diagnosing something odd, or any step where the answer is not already known.
 >
@@ -74,6 +74,18 @@ optional extra rather than a dependency: NiceGUI pulls FastAPI, uvicorn, pywebvi
 Vue/Quasar assets, none of which any publishing path touches, and the test suite and
 `mypy --strict lib` both pass without it. See [Two ways to drive it](#two-ways-to-drive-it) below.
 
+> **This is the development install, and it is not what the operator does.** On their machine
+> nothing is preinstalled and nothing is typed: `install.command` (macOS) or `install.bat`
+> (Windows) fetches `uv`, has `uv` fetch Python 3.11, and builds `.venv` from the committed
+> `uv.lock` — so that machine gets the versions that were tested rather than whatever resolves
+> that day. Then `start.command` / `start.bat` opens the shell. See
+> [`operator-install.md`](operator-install.md).
+>
+> **Do not run `install.command` in this clone.** It replaces `.venv` with a Python 3.11
+> environment holding the `ui` extra and *not* `dev`, so `pytest`, `mypy` and `ruff` vanish from
+> it. And after changing `pyproject.toml`, run **`uv lock`** and commit the result — the
+> operator's install refuses to resolve anything the lockfile does not already have.
+
 ## 2. Verify the install
 
 These are the four commands CI runs (`.github/workflows/ci.yml`). All four must pass before you trust anything else.
@@ -89,15 +101,19 @@ Expected, on a clean checkout:
 
 ```
 All checks passed!
-103 files already formatted
-Success: no issues found in 22 source files
-663 passed, 2 skipped, 5 deselected
+142 files already formatted
+Success: no issues found in 24 source files
+725 passed, 2 skipped, 5 deselected
 ```
 
 **Only the last two lines are worth comparing.** The formatted-file count moves whenever anyone adds
-a file — ruff 0.16 formats Python blocks inside Markdown, so all 23 documents are counted alongside
-the 67 Python files. A different number there means the docs changed, not that anything is wrong.
-What matters is that each command exits **0**.
+a file — ruff 0.16 formats Python blocks inside Markdown, so every document is counted alongside the
+Python files. A different number there means the docs changed, not that anything is wrong. What
+matters is that each command exits **0**.
+
+CI runs one more check after these four: **`uv lock --check`**, which fails if `uv.lock` has drifted
+from `pyproject.toml`. It needs `uv` installed, so it is not in the list above; `pytest` covers the
+same drift offline in `tests/test_packaging.py`.
 
 **Why a bare `pytest` is safe.** `pyproject.toml` sets `addopts = "-m 'not staging'"`. The 5 deselected tests are the staging integration tests — they write to a **live** WordPress site and the **GS1 production** resolver. They are deselected by default deliberately, because relying on their `skipif` env-var guard was not enough: a shell that had sourced `.env` satisfied that guard, and a bare `pytest` then hit production. Do not run `pytest -m staging` unless you have read `.env.example`'s staging block in full and understand that a GS1 record **cannot be deleted**.
 
@@ -270,6 +286,8 @@ Read-only until the final step. This is the one workflow where working hands-on 
 
 ## Next
 
+- [`operator-install.md`](operator-install.md) — the two-double-click install for the operator's machine.
+- [`ui-operator-shell.md`](ui-operator-shell.md) — the six screens of that shell, and where its safety lives.
 - [`troubleshooting.md`](troubleshooting.md) — every error type, and the traps already paid for.
 - [`verifying-live.md`](verifying-live.md) — how to prove the flows still write to production, without degrading a live product.
 - [`gs1-nl-onboarding.md`](gs1-nl-onboarding.md) · [`wordpress-onboarding.md`](wordpress-onboarding.md) — the two external systems.

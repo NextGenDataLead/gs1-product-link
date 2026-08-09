@@ -41,6 +41,20 @@ jobs:
       - name: Tests
         run: pytest
 
+      # The operator's machine installs from uv.lock, not from a fresh resolution, so a lock
+      # that has drifted from pyproject.toml means that machine gets something nobody tested.
+      # This job keeps installing with pip above — the check asserts the lockfile is current,
+      # it does not change what CI resolves. uv is pinned to the version that wrote the lock;
+      # bump it here, in install.command and in install.bat together.
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.6/install.sh \
+            | env UV_INSTALL_DIR="$HOME/.local/bin" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Lockfile matches pyproject
+        run: uv lock --check
+
   gs1-nl-mcp:
     name: Build and test gs1-nl MCP
     runs-on: ubuntu-latest
