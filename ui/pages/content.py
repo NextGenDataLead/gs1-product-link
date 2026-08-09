@@ -57,11 +57,12 @@ def _import(cache_path: Path) -> None:
             "connection to Anthropic — and it is why the file arrives by hand."
         ).classes("note")
 
-        def upload(event: events.UploadEventArguments) -> None:
+        # Async for the same reason as the export upload — see ui/pages/data.py.
+        async def upload(event: events.UploadEventArguments) -> None:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             if cache_path.exists():
                 cache_path.with_suffix(".bak.json").write_bytes(cache_path.read_bytes())
-            cache_path.write_bytes(event.content.read())
+            await event.file.save(cache_path)
             ui.notify("Cache imported. Re-check coverage below.", type="positive")
 
         ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(

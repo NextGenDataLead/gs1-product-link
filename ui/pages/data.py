@@ -62,11 +62,16 @@ def _export(cfg: Any, cid: str) -> None:
             "tool — this is the single most common way a run silently uses last quarter's data."
         ).classes("note")
 
-        def upload(event: events.UploadEventArguments) -> None:
+        # Async because NiceGUI 3 reads an upload through awaitable methods on ``event.file``.
+        # The 2.x form — a synchronous ``event.content.read()`` — raises AttributeError *inside*
+        # the handler, where NiceGUI logs it and the browser still shows a completed upload. That
+        # failure wrote nothing while looking exactly like success, which is the one outcome this
+        # project refuses everywhere else.
+        async def upload(event: events.UploadEventArguments) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
                 target.with_suffix(f".bak{target.suffix}").write_bytes(target.read_bytes())
-            target.write_bytes(event.content.read())
+            await event.file.save(target)
             ui.notify(f"Saved to {cfg.export.path} (previous kept as .bak)", type="positive")
 
         ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(

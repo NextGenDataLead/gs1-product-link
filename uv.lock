@@ -528,7 +528,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.21" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.9" },
-    { name = "nicegui", marker = "extra == 'ui'", specifier = ">=2.0" },
+    { name = "nicegui", marker = "extra == 'ui'", specifier = ">=3.0,<4" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pystache", specifier = ">=0.6" },
