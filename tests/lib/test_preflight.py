@@ -14,6 +14,7 @@ a corrupt ``state.json``. That is what makes it safe to run at any time.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -309,6 +310,93 @@ def test_unconfirmed_videos_warn_rather_than_fail_under_the_restriction(tmp_path
 
     assert result.status is Status.WARN
     assert "only those can be published" in result.detail
+
+
+def test_absent_video_files_are_reported_as_absent_files(tmp_path: Path) -> None:
+    """The mapping arrived and the multi-gigabyte library did not — a day-one operator machine.
+
+    It used to read ``284 of 0 video file(s) are not yet confirmed against a GTIN``: every gap of
+    every kind over the number of files on disk. The fix for "the folders are empty" is to copy
+    them across, which is nothing like the fix for "the client has not confirmed these rows", so
+    the two say different things now.
+    """
+    folder = tmp_path / "videos" / "nl"
+    folder.mkdir(parents=True)  # exists, but empty — as it is before the library is copied
+    cfg = _make_config(
+        media=MediaConfig(
+            restrict_to_mapped_gtins=True,
+            video_map_path=_write_video_map(tmp_path, [GTIN_A], ["nl"]),
+            video_folders={"nl": str(folder)},
+        )
+    )
+
+    result = check_video_coverage(cfg)
+
+    assert result.status is Status.WARN
+    assert "no video files found" in result.detail
+    assert "not yet confirmed" not in result.detail, "the mapping is confirmed; the files are gone"
+    assert "media.video_folders" in result.remedy
+    assert result.data["files"] == 0
+
+
+def test_the_video_check_never_counts_more_than_it_measured(tmp_path: Path) -> None:
+    """A regression guard on the shape of the sentence, not on one wording of it.
+
+    ``N of M`` with N > M is not a cosmetic defect: a count that cannot be true teaches its
+    reader to skip the line, on the one screen they are meant to work down. Whatever this line
+    says in future, it must not claim more of something than it found.
+    """
+    folder = tmp_path / "videos" / "nl"
+    folder.mkdir(parents=True)
+    cfg = _make_config(
+        media=MediaConfig(
+            restrict_to_mapped_gtins=True,
+            video_map_path=_write_video_map(tmp_path, [GTIN_A, GTIN_B], ["nl"]),
+            video_folders={"nl": str(folder)},
+        )
+    )
+
+    (folder / "one.mp4").write_bytes(b"x")
+    result = check_video_coverage(cfg)
+
+    # True of the wording as it stands: the files it reports are the files it found.
+    assert result.data["files"] == 1
+    assert "1 video file(s) found" in result.detail
+
+    # And true of any future wording: no ratio may claim more than it measured.
+    for numerator, denominator in re.findall(r"(\d+) of (\d+)", result.detail):
+        assert int(numerator) <= int(denominator), f"impossible count in: {result.detail}"
+
+
+def test_a_hand_edited_mapping_fails_with_a_position_not_a_traceback(tmp_path: Path) -> None:
+    """A missing file already reported cleanly; the file a human edits is the one that crashed."""
+    path = tmp_path / "mapping.yml"
+    path.write_text('nl:\n  - {file: "a.mp4", gtin: ""}\n\tstray tab\n', encoding="utf-8")
+    cfg = _make_config(media=MediaConfig(video_map_path=str(path)))
+
+    result = check_video_coverage(cfg)
+
+    assert result.status is Status.FAIL
+    assert "line 3" in result.detail
+    assert result.remedy, "a failure an operator can act on needs to say how"
+
+
+def test_a_hand_edited_mapping_does_not_crash_the_checks_that_run_first(tmp_path: Path) -> None:
+    """``check_scope`` reads the same file, earlier, and used to take the whole doctor down.
+
+    That is why a stray tab produced a traceback instead of one red line: the crash happened
+    before the check that would have reported it ever ran.
+    """
+    path = tmp_path / "mapping.yml"
+    path.write_text('nl:\n  - {file: "a.mp4", gtin: ""}\n\tstray tab\n', encoding="utf-8")
+    cfg = _make_config(
+        media=MediaConfig(restrict_to_mapped_gtins=True, video_map_path=str(path)),
+        process_list=None,
+    )
+
+    scope = check_scope(cfg, [_product(GTIN_A)])
+
+    assert scope.status in {Status.OK, Status.WARN, Status.FAIL}  # a verdict, not an exception
 
 
 # --- ffmpeg -------------------------------------------------------------------

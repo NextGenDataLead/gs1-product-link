@@ -49,16 +49,19 @@ from lib.errors import (
     MissingCredentialError,
     OrchestratorError,
     ProcessListError,
+    VideoMapError,
     WordPressAPIError,
 )
 from lib.generator import load_cache, pending_requests, prefill_from_feed
 from lib.gs1_dl_client import GS1DigitalLinkClient
 from lib.media_video import (
+    VideoMapSummary,
     canon_gtin,
     check_video_map,
     fully_mapped_gtins,
     list_video_files,
     load_video_map,
+    summarize_video_map,
 )
 from lib.process_list import load_process_list
 from lib.records import ProductRecord
@@ -265,7 +268,7 @@ def in_scope(cfg: ClientConfig, products: list[ProductRecord]) -> list[ProductRe
             allow = fully_mapped_gtins(
                 load_video_map(Path(media.video_map_path)), cfg.wordpress.languages
             )
-        except (OSError, ValueError):
+        except VideoMapError:
             return scoped  # check_video_coverage reports this
         scoped = [product for product in scoped if canon_gtin(product.gtin) in allow]
     return scoped
@@ -455,7 +458,12 @@ def check_category_coverage(cfg: ClientConfig, products: list[ProductRecord]) ->
 
 
 def check_video_coverage(cfg: ClientConfig) -> CheckResult:
-    """Run the ``build_video_map --check`` gate offline: every video file maps to a GTIN."""
+    """Run the ``build_video_map --check`` gate offline: every video file maps to a GTIN.
+
+    Four outcomes, because they have four different fixes: no mapping configured (NA), a mapping
+    that will not load (FAIL), the folders empty (WARN — copy the library across), and gaps in a
+    mapping whose files are present (WARN — the client confirms them).
+    """
     media = cfg.media
     if media is None or not media.video_map_path:
         return CheckResult(
@@ -466,33 +474,39 @@ def check_video_coverage(cfg: ClientConfig) -> CheckResult:
         )
     try:
         vmap = load_video_map(Path(media.video_map_path))
-    except (OSError, ValueError) as exc:
+    except VideoMapError as exc:
         return CheckResult(
             "video_map",
             "Video mapping",
             Status.FAIL,
-            f"cannot read {media.video_map_path}: {exc}",
-            remedy="Check the path in clients.yml under media.video_map_path.",
+            str(exc),
+            remedy="A missing file is a path problem — check media.video_map_path in clients.yml. "
+            "A syntax error is an edit: the position above is where to look.",
         )
     files = {
         language: [p.name for p in list_video_files(Path(folder))]
         for language, folder in media.video_folders.items()
     }
-    issues = check_video_map(vmap, files)
-    confirmed = len(fully_mapped_gtins(vmap, cfg.wordpress.languages))
-    total_files = sum(len(names) for names in files.values())
+    summary = summarize_video_map(vmap, files, cfg.wordpress.languages)
     data: dict[str, object] = {
-        "confirmed_gtins": confirmed,
-        "files": total_files,
-        "issues": [issue.model_dump(mode="json") for issue in issues[:20]],
+        "confirmed_gtins": summary.confirmed_gtins,
+        "files": summary.files,
+        "entries": summary.entries,
+        "unconfirmed": summary.unconfirmed,
+        "ambiguous": summary.ambiguous,
+        "missing_from_map": summary.missing_from_map,
+        "file_missing": summary.file_missing,
+        "issues": [
+            issue.model_dump(mode="json") for issue in check_video_map(vmap, files)[:_ISSUE_SAMPLE]
+        ],
     }
-    if not issues:
+    if not summary.gaps:
         return CheckResult(
             "video_map",
             "Video mapping",
             Status.OK,
-            f"{total_files} video file(s), all mapped and confirmed; {confirmed} GTIN(s) have "
-            "a confirmed video in every language",
+            f"{summary.files} video file(s), all mapped and confirmed; "
+            f"{summary.confirmed_gtins} GTIN(s) have a confirmed video in every language",
             data=data,
         )
     # A gap is a WARN even under restrict_to_mapped_gtins, and especially then: the restriction
@@ -503,17 +517,57 @@ def check_video_coverage(cfg: ClientConfig) -> CheckResult:
         "video_map",
         "Video mapping",
         Status.WARN,
-        f"{len(issues)} of {total_files} video file(s) are not yet confirmed against a GTIN; "
-        f"{confirmed} GTIN(s) have a confirmed video in every language"
-        + (
-            " — and only those can be published, because media.restrict_to_mapped_gtins is on"
-            if media.restrict_to_mapped_gtins
-            else ""
-        ),
-        remedy="`python -m scripts.build_video_map --check` lists each gap and writes "
-        "video_map_issues.json. Confirming a mapping is the client's call, not the tool's.",
+        _video_gap_detail(summary, restricted=media.restrict_to_mapped_gtins),
+        remedy=_VIDEO_FILES_REMEDY if summary.no_files_found else _VIDEO_GAP_REMEDY,
         data=data,
     )
+
+
+#: How many example gaps to carry in the check's payload for a screen to render.
+_ISSUE_SAMPLE = 20
+
+_VIDEO_FILES_REMEDY = (
+    "Copy the video folders named under media.video_folders onto this machine — the mapping is "
+    "the index to them, not a substitute. Nothing here is wrong with the mapping itself."
+)
+
+_VIDEO_GAP_REMEDY = (
+    "`python -m scripts.build_video_map --check` lists each gap and writes "
+    "video_map_issues.json. Confirming a mapping is the client's call, not the tool's."
+)
+
+
+def _video_gap_detail(summary: VideoMapSummary, *, restricted: bool) -> str:
+    """Say what is actually missing, counting each kind against its own denominator.
+
+    This line used to read ``284 of 0 video file(s) are not yet confirmed``: every gap of every
+    kind, over the number of files on disk. With the mapping handed over and the multi-gigabyte
+    video library not yet copied — a day-one operator machine — each of the 166 rows also
+    reported the file it names as absent, so the numerator counted a different thing from the
+    denominator and comfortably exceeded it. A count that cannot be true teaches its reader to
+    stop reading the line, which is expensive on the one screen they are meant to work down.
+    """
+    if summary.no_files_found:
+        return (
+            f"no video files found, but the mapping has {summary.entries} row(s) — the video "
+            "folders are empty or not on this machine yet, so nothing can be attached to a page"
+        )
+
+    parts = [f"{summary.files} video file(s) found"]
+    if summary.unconfirmed:
+        parts.append(f"{summary.unconfirmed} mapping row(s) with no GTIN yet")
+    if summary.missing_from_map:
+        parts.append(f"{summary.missing_from_map} file(s) not in the mapping")
+    if summary.file_missing:
+        parts.append(f"{summary.file_missing} row(s) naming a file that is not there")
+    if summary.ambiguous:
+        parts.append(f"{summary.ambiguous} GTIN(s) mapped to more than one file")
+    parts.append(f"{summary.confirmed_gtins} GTIN(s) confirmed in every language")
+
+    detail = "; ".join(parts)
+    if restricted:
+        detail += " — and only those can be published, because media.restrict_to_mapped_gtins is on"
+    return detail
 
 
 def check_ffmpeg(cfg: ClientConfig) -> CheckResult:

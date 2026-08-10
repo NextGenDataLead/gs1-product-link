@@ -32,13 +32,14 @@ from pathlib import Path
 
 from lib.config import ClientConfig, get_client
 from lib.env import load_env
-from lib.errors import ConfigError
+from lib.errors import ConfigError, VideoMapError
 from lib.media_video import (
     check_video_map,
     list_video_files,
     load_video_map,
     normalize_video_name,
     rank_candidates,
+    summarize_video_map,
 )
 from lib.records import ProductRecord, SourceIssue
 
@@ -95,14 +96,30 @@ def _run_check(cfg: ClientConfig) -> int:
         print(f"client {cfg.client_id!r} has no media.video_map_path to check", file=sys.stderr)
         return _EXIT_USAGE
 
-    vmap = load_video_map(Path(cfg.media.video_map_path))
-    issues = check_video_map(vmap, _folder_files(cfg))
+    try:
+        vmap = load_video_map(Path(cfg.media.video_map_path))
+    except VideoMapError as exc:
+        # The docstring has always promised exit 1 on a read error; until now a missing file
+        # raised FileNotFoundError here and a hand-edited one a yaml traceback, both uncaught.
+        print(f"error: {exc}", file=sys.stderr)
+        return _EXIT_ERROR
+
+    files = _folder_files(cfg)
+    issues = check_video_map(vmap, files)
     _write_issues(_issues_path(cfg.client_id), issues)
 
-    confirmed = sum(
-        1 for entries in vmap.by_language.values() for e in entries if e.gtin and e.gtin != "skip"
+    summary = summarize_video_map(vmap, files, cfg.wordpress.languages)
+    print(
+        f"video map: {summary.entries} row(s), {summary.files} file(s) on disk, "
+        f"{summary.confirmed_gtins} GTIN(s) confirmed in every language, {summary.gaps} gap(s)",
+        file=sys.stderr,
     )
-    print(f"video map: {confirmed} confirmed, {len(issues)} gap(s)", file=sys.stderr)
+    if summary.no_files_found:
+        print(
+            "  no video files found — the folders under media.video_folders are empty or not on "
+            "this machine, so every row below reports its file as missing",
+            file=sys.stderr,
+        )
     for issue in issues:
         print(f"  {issue.issue} [{issue.field}] {issue.value}: {issue.detail}", file=sys.stderr)
     return _EXIT_OK if not issues else _EXIT_ERROR

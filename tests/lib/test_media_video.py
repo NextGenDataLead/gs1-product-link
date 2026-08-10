@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from lib.errors import VideoMapError
 from lib.media_video import (
     VideoMap,
     canon_gtin,
@@ -17,6 +18,7 @@ from lib.media_video import (
     normalize_video_name,
     prepare_video,
     rank_candidates,
+    summarize_video_map,
 )
 from lib.records import LocalisedText, ProductRecord
 
@@ -170,6 +172,96 @@ def test_load_video_map_roundtrip(tmp_path: Path) -> None:
     vmap = load_video_map(path)
     assert vmap.resolve("08713195001234", "nl") == "DrainSticks_NL.mpeg"
     assert vmap.resolve("08713195001234", "fr") == "DrainSticks_FR.mpeg"
+
+
+def test_a_missing_mapping_says_so_rather_than_raising_oserror(tmp_path: Path) -> None:
+    """Every caller used to catch ``OSError`` for this. Now the loader owns the message."""
+    with pytest.raises(VideoMapError) as caught:
+        load_video_map(tmp_path / "nope.yml")
+    assert "cannot read" in str(caught.value)
+    assert "nope.yml" in str(caught.value)
+
+
+def test_a_hand_edited_mapping_reports_where_the_syntax_error_is(tmp_path: Path) -> None:
+    """The one failure that cannot happen unless a human edited the file used to be a traceback.
+
+    ``yaml.YAMLError`` inherits from ``Exception`` alone, so it escaped every ``except (OSError,
+    ValueError)`` in the codebase — and this file is one the design requires a human to edit and
+    a client to sign off. A tab pasted by a text editor was enough to produce 25 lines of Python.
+    """
+    path = tmp_path / "mapping.yml"
+    path.write_text(
+        'nl:\n  - {file: "DrainSticks_NL.mpeg", gtin: ""}\n\tstray tab\n', encoding="utf-8"
+    )
+
+    with pytest.raises(VideoMapError) as caught:
+        load_video_map(path)
+
+    message = str(caught.value)
+    assert "line 3" in message, f"the operator has to be told where to look: {message}"
+    assert "column 1" in message
+    assert "\n" not in message, "one line, so it survives a table cell or a log record"
+
+
+def test_a_mapping_of_the_wrong_shape_says_what_was_expected(tmp_path: Path) -> None:
+    path = tmp_path / "mapping.yml"
+    path.write_text("nl: 42\n", encoding="utf-8")
+
+    with pytest.raises(VideoMapError) as caught:
+        load_video_map(path)
+
+    message = str(caught.value)
+    assert "not a video mapping" in message
+    assert "by_language.nl" in message
+    assert "\n" not in message
+
+
+# --- summarize_video_map -----------------------------------------------------
+
+
+def test_the_summary_counts_each_kind_of_gap_separately() -> None:
+    vmap = _map(
+        {
+            "nl": [
+                {"file": "unset.mpg", "gtin": ""},
+                {"file": "gone.mpg", "gtin": "8713195000001"},
+                {"file": "here.mpg", "gtin": "8713195000002"},
+            ]
+        }
+    )
+
+    summary = summarize_video_map(vmap, {"nl": ["here.mpg", "extra.mpg"]}, ["nl"])
+
+    assert summary.files == 2
+    assert summary.entries == 3
+    assert summary.unconfirmed == 1  # unset.mpg
+    assert summary.file_missing == 2  # unset.mpg and gone.mpg name files not on disk
+    assert summary.missing_from_map == 1  # extra.mpg
+    assert summary.ambiguous == 0
+    assert summary.confirmed_gtins == 2
+    assert summary.gaps == 4
+
+
+def test_the_summary_distinguishes_an_empty_folder_from_an_unconfirmed_mapping() -> None:
+    """The day-one operator machine: the mapping was handed over, the video library was not.
+
+    Counting that as unconfirmed mappings sends someone to edit a file that is already correct —
+    and produced the "284 of 0" line, whose numerator was a different quantity from its
+    denominator.
+    """
+    vmap = _map({"nl": [{"file": "a.mpg", "gtin": "8713195000001"}]})
+
+    absent = summarize_video_map(vmap, {"nl": []}, ["nl"])
+    present = summarize_video_map(vmap, {"nl": ["a.mpg"]}, ["nl"])
+
+    assert absent.no_files_found is True
+    assert present.no_files_found is False
+    assert present.gaps == 0
+
+
+def test_an_empty_mapping_and_empty_folders_is_not_the_missing_files_case() -> None:
+    """Nothing configured yet is not the same as a library that has not been copied."""
+    assert summarize_video_map(_map({}), {}, ["nl"]).no_files_found is False
 
 
 # --- check_video_map ---------------------------------------------------------
