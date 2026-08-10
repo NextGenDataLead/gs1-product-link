@@ -151,6 +151,14 @@ to hang the translation group (`trid`) off. Fewer than two languages is a no-op.
 Polylang sites need no helper — `PolylangAdapter` posts to `/wp-json/pll/v1/translations` directly.
 Single-language sites use `NoOpAdapter`.
 
+> **Silent failure #5 — every count you read is per-language, and nothing says which one.** WPML
+> filters by the current language, so listing the product post type returns *one language's* posts.
+> In the pilot that is **88** for `nl` and **59** for `fr`: neither number is the catalogue, and
+> neither is wrong. Anyone eyeballing wp-admin or the REST API to confirm what is live is seeing
+> half the truth, and which half depends on a language setting they did not choose. Pass the
+> language explicitly (`?lang=fr`, or the admin's switcher) and read both — or read
+> `output/{client}/state.json`, which is keyed by `(GTIN, language)` and does not have this problem.
+
 ## Taxonomies
 
 ```yaml
@@ -237,6 +245,11 @@ For every page in a first wave:
 2. **Check the translation link** — the other language's page is reachable via the site's switcher.
 3. **Check resolution with GET** — `curl -sS -o /dev/null -w '%{http_code}' -L
    https://id.gs1.org/01/{gtin14}` → 307 → 200. The resolver **404s to HEAD**.
+
+**Counting, rather than checking one page, needs the language named.** A multilingual site answers
+"how many products are live?" one language at a time (silent failure #5 above), so a list that looks
+short is more often a language filter than a failed run. Ask each language separately, or read
+`output/{client}/state.json`.
 
 ## Taking a page down
 

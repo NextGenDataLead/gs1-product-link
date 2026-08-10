@@ -49,9 +49,10 @@ modes above applies. For a client with a
 `scripts/run_plan.py` to classify each `(GTIN, language)` — which merges that cache — and presents
 the plan (review gate 2), collects the operator's confirmation in chat, writes a `ConfirmedPlan` to
 `output/{client}/plan.confirmed.json`, and invokes `scripts/run_execute.py` on the confirmed subset
-— then reports the outcome. Generated content is **never auto-published**: it is reviewed twice and
-executed draft-first. Tone is **concise and business-like, not conversational** (§10.6): verbose
-text creates fatigue during batch runs.
+— then reports the outcome. Generated content is reviewed **twice before it can reach a page** (the
+cache, then `plan.json`); execute then writes at `wordpress.post_status`, which ships as `publish`,
+so a page is **live the moment it is written**. Tone is **concise and business-like, not
+conversational** (§10.6): verbose text creates fatigue during batch runs.
 
 For the pilot the flow is **create-only**: `run_plan.py` gates products through the
 **process list**, so only the GTINs the operator listed are candidates. Every GTIN in
@@ -162,7 +163,8 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    Then eyeball a sample of `output/{client}/data/generated_cache.json` (nl **and** fr) and the
    `output/{client}/data/generated_issues.json` work list. **This pipeline fails silently — verify
    the copy against the real product, not the "ingested N" count.** Generation never publishes; the
-   second gate is `plan.json` (step 5) and execute is draft-first.
+   second gate is `plan.json` (step 5), and there is no third — execute writes each page at
+   `wordpress.post_status`, `publish` by default, so it is live immediately.
 
    This step runs in **`links` mode too**, even though no page is written. Not for the copy itself —
    for the plan: with a `generator` configured, `run_plan` omits any `(GTIN, language)` that has no

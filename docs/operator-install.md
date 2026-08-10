@@ -47,17 +47,60 @@ would rather stop than quietly install a different set.
 
 Re-run it any time. It is idempotent, and re-running it is how you pick up an updated folder.
 
-## 3. The two files that are not in the download
+## 3. The five files that are not in the download
 
-`clients.yml` (the site settings) and `.env` (the credentials) are deliberately never committed,
-so they are not in a zip or a clone either. The maintainer supplies them, and they go in the top
-level of the folder beside `install.command`.
+Everything in this list is gitignored, so none of it is in a zip or a clone. The maintainer sends
+each one separately, and **a missing one does not always announce itself** — the first two stop the
+shell dead, the last three fail in three different and much quieter ways.
 
-Without them the shell still starts — the Setup screen says the config did not load, and shows
-why — but nothing can run. `.env` should be `chmod 600`; see [`setup.md`](setup.md#secrets).
+| File | Goes | What it is | Missing it |
+|---|---|---|---|
+| `clients.yml` | top level, beside `install.command` | the site settings | Setup says the config did not load; nothing runs |
+| `.env` | top level, `chmod 600` | the credentials | every live check fails; nothing runs |
+| `input/{client}/process-list.xlsx` | the path in `process_list.path` | the GTINs this run may touch | Data shows a red band, and **there is no upload for it** — see below |
+| `output/{client}/state.json` | exactly there — the path is not configurable | **the ledger of what is already published** | **see the warning below. This is the expensive one.** |
+| `input/{client}/videos/mapping.yml` | the path in `media.video_map_path` | which video belongs to which product | the preflight **fails** (`cannot read …`); the machine cannot reach a runnable state |
 
-The rest of what an operator needs arrives through the app itself: the export and the process list
-on the **Data** screen, `generated_cache.json` on the **Content** screen.
+> **`state.json` is the one to get right.** It records every `(GTIN, language)` this tool has
+> already published. Without it, a run classifies **every already-published GTIN as NEW** — a
+> second WordPress page for each, and another **permanent** GS1 Digital Link record for each. A GS1
+> record can never be deleted, only disabled. Nothing downstream notices: the plan looks like a
+> normal first run, and the counts are the only clue.
+
+`.env` should be `chmod 600`; see [`setup.md`](setup.md#secrets).
+
+**If this client publishes video, the video files come too** — the folders named under
+`media.video_folders`, usually several gigabytes, so they travel on a disk rather than by mail. The
+mapping above is only the index to them. And with `media.restrict_to_mapped_gtins` on, a product
+with no confirmed video in **every** language is silently out of scope: it never reaches the plan,
+and the run reports success having skipped it.
+
+### What arrives through the app, and what does not
+
+Three files change hands every batch — the export, the process list, and the copy cache. Two of
+them have an upload control. The third does not, and looking for one is time wasted:
+
+- **The product export** — uploaded on **Data**. It replaces the configured `export.path` in place,
+  keeping the previous file as `.bak.xlsx`.
+- **`generated_cache.json`** — uploaded on **Content**.
+- **`process-list.xlsx` — copied by hand.** There is no upload control for it anywhere in the app.
+  The Data screen only *edits* a list that is already on disk (deleting rows), and renders a red
+  band when the file is absent. Put it at the path `process_list.path` names before starting.
+
+### Returning the ledger
+
+`state.json` travels **both ways**. After a publish from the operator's machine, that copy knows
+things the maintainer's does not — new page ids, new URLs, new GS1 link hashes — and it is the only
+record of them.
+
+**The machine that published owns the file.** Send it back after every wave, and let it overwrite
+the other copy rather than merging by hand. Two divergent ledgers is how the same product gets
+published twice, which costs a duplicate page and a second permanent GS1 record. If you are unsure
+which copy is newer, the safe move is to check the live site before running anything — see
+[`verifying-live.md`](verifying-live.md).
+
+The human-readable live log (`docs/clients/{client}-live-log.md`) is a convenience, not the source
+of truth. Where the two disagree, `state.json` wins: it is what the pipeline actually wrote.
 
 ## 4. Start it
 

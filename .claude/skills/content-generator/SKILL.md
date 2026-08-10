@@ -23,8 +23,11 @@ per-language copy following the versioned voice template, writes
 validates each result into `output/{client}/data/generated_cache.json`. Determinism lives in the
 cache, not here: a unit is only generated once per input fingerprint, and this producer is
 interchangeable with the headless API backend. Tone is **concise and business-like, not
-conversational** — the operator is reviewing copy, not reading prose. Generated content is **never
-auto-published**: it is reviewed here (cache) and again in `plan.json`, then executed draft-first.
+conversational** — the operator is reviewing copy, not reading prose. Generated content is reviewed
+**twice before it can reach a page** — here (the cache) and again in `plan.json`. There is no third
+look: execute writes each page at `wordpress.post_status`, which ships as `publish`, so the page is
+**live the moment it is written**. `post_status: draft` is the opt-in staged variant, and it is a
+config change the operator makes deliberately — see `docs/wordpress-onboarding.md`.
 
 ## Inputs
 

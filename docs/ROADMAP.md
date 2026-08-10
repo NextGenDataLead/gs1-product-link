@@ -162,27 +162,27 @@ enough to have made the shell unusable for its main job:
 | [#52](https://github.com/NextGenDataLead/gs1-product-link/pull/52) | **Both uploads wrote nothing, silently.** NiceGUI 3 replaced the upload event's `content` with an awaitable `file`, and the extra allowed `nicegui>=2.0`. The browser showed 100% and a checkmark; nothing reached disk. |
 | [#53](https://github.com/NextGenDataLead/gs1-product-link/pull/53) | **Pruning the process list twice saved rows other than the ones on screen** — a live page and a permanent GS1 record for a product nobody chose, reported as success. |
 | [#54](https://github.com/NextGenDataLead/gs1-product-link/pull/54) | **`pages` mode could never run against a production client.** `run_execute` demands `--i-understand-production` in every mode; the production gate is absent from the `pages` walk, so the flag could not be set. The *reversible* half of a publish was the unreachable one. |
+| [#64](https://github.com/NextGenDataLead/gs1-product-link/pull/64) | **CI never exercised the screens** (#59), which is why the three above shipped green. A second job now installs `.[dev,ui]` and runs `tests/ui`, with new tests that import every screen against the installed NiceGUI and check the routes and the rail agree in both directions. Also de-flaked the sigkill state test, which raced interpreter startup on a fixed 400 ms sleep. |
+| [#65](https://github.com/NextGenDataLead/gs1-product-link/pull/65) | **The handover named two files and needs five** (#55) — `state.json` among the missing three, without which every published GTIN re-classifies as NEW. Also: the process list has no upload path, the ledger has to travel back, and "executed draft-first" was never true. |
 
-The rest are filed: **[#51](https://github.com/NextGenDataLead/gs1-product-link/issues/51)** (no UI
-for the video mapping), **[#55](https://github.com/NextGenDataLead/gs1-product-link/issues/55)** (the
-handover names two files and needs five, including `state.json` — without it every published GTIN
-re-classifies as NEW), **[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)**
+Still filed: **[#51](https://github.com/NextGenDataLead/gs1-product-link/issues/51)** (no UI
+for the video mapping), **[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)**
 (screens showing the catalogue where they mean the batch),
 **[#57](https://github.com/NextGenDataLead/gs1-product-link/issues/57)** (a count that prints
 "284 of 0", and a hand-editable file that answers a syntax error with a stack trace),
 **[#58](https://github.com/NextGenDataLead/gs1-product-link/issues/58)** (preflight feedback, screen
 order, and nothing reconciling live pages against `state.json`),
-**[#59](https://github.com/NextGenDataLead/gs1-product-link/issues/59)** (CI never exercises the
-screens; a flaky state test), **[#60](https://github.com/NextGenDataLead/gs1-product-link/issues/60)**
+**[#60](https://github.com/NextGenDataLead/gs1-product-link/issues/60)**
 (media uploads: a deterministic `403` from the site's firewall, and a truncated upload treated as
 success).
 
-**#59 is the one that explains the other three.** CI installs `.[dev]` — which is exactly what keeps
-`lib` provably free of a UI dependency — and therefore never touches `ui/pages/`. Three production
-bugs shipped without a single test going red, and one of them had a test that *asserted the broken
-behaviour* and passed, because it checked the shape of an argv and never that the command would be
-accepted. Each fix added an AST-based contract test that runs without NiceGUI, which helps; AST
-checks can only assert the shape of the source, never that a screen works.
+**#59 was the one that explained the other three.** CI installed `.[dev]` — which is exactly what
+keeps `lib` provably free of a UI dependency — and therefore never touched `ui/pages/`. Three
+production bugs shipped without a single test going red, and one of them had a test that *asserted
+the broken behaviour* and passed, because it checked the shape of an argv and never that the command
+would be accepted. Each fix added an AST-based contract test that runs without NiceGUI, which helps;
+AST checks can only assert the shape of the source, never that a screen works. The second CI job is
+the other half, and the required job still installs `.[dev]` so the proof it carries survives.
 
 **The publish completed, and finding it took the longest.** One product published in Dutch and
 failed in French: the site refused its video upload with a bare HTML `403`. The first investigation
