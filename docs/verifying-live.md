@@ -55,6 +55,11 @@ server-side evidence:
 | **GS1** | **Nothing, by default** | `DigitalLinkRecord` carries no timestamp, version or revision field, and `_finish_links` never reads back — it hashes the links it *sent*. An identical-content upsert is indistinguishable from a no-op. |
 | Resolution | Regression check only | 307 → 200 passes before the run too |
 
+**Read WordPress one language at a time, and say which.** On a WPML site a listing returns only the
+current language's posts — in the pilot, 88 for `nl` and 59 for `fr` — so a page can be missing from
+what you are looking at and live all the same. Verify each `(GTIN, language)` explicitly rather than
+counting; see [`wordpress-onboarding.md`](wordpress-onboarding.md#multilingual), silent failure #5.
+
 ### Making the GS1 write observable
 
 Perturb the resolution target before the run, and require the run to restore it.
