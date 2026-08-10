@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -192,11 +193,45 @@ def test_save_state_replace_failure_preserves_original(
     assert not list(path.parent.glob("*.tmp"))  # temp cleaned up
 
 
+#: Generous: this only has to be longer than a cold interpreter takes to start, import pydantic
+#: via lib.records, and write. It is never waited out on a healthy run.
+_CHILD_DEADLINE_SECONDS = 60.0
+_POLL_SECONDS = 0.01
+
+#: One 3000-entry state is ~1 MB; the child's first write holds a single entry, a few hundred
+#: bytes. Anything past this is the large-write loop, whenever we happen to start looking.
+_BIG_WRITE_BYTES = 100_000
+
+
+def _size(path: Path) -> int:
+    """Size of ``path``, or 0 while it does not exist yet."""
+    return path.stat().st_size if path.is_file() else 0
+
+
+def _wait_for(proc: subprocess.Popen[bytes], predicate: Callable[[], bool], *, what: str) -> None:
+    """Poll ``predicate`` until it holds — failing fast if the child dies first.
+
+    A fixed sleep here would be a wall-clock race against interpreter startup, which is what
+    made this test flaky: the same commit passed on ``push`` and failed on ``pull_request``.
+    """
+    deadline = time.monotonic() + _CHILD_DEADLINE_SECONDS
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        assert proc.poll() is None, f"the child exited (rc={proc.returncode}) before {what}"
+        time.sleep(_POLL_SECONDS)
+    raise AssertionError(f"timed out after {_CHILD_DEADLINE_SECONDS:.0f}s waiting for {what}")
+
+
 def test_save_state_survives_sigkill_mid_write(tmp_path: Path) -> None:
     """SIGKILL a process hammering save_state; the file must never be corrupt.
 
     Because save_state writes to a temp file then ``os.replace``s it, the target is
     always either the old or a fully-written new state — never a partial one.
+
+    The kill lands once the child is demonstrably *inside* the loop of large writes, rather
+    than after a fixed wait. That is both the point of the test — a kill mid-write — and what
+    stops it racing a cold interpreter on a loaded runner.
     """
     child = tmp_path / "hammer.py"
     child.write_text(
@@ -213,12 +248,15 @@ def test_save_state_survives_sigkill_mid_write(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     env = {**os.environ, "PYTHONPATH": str(_REPO_ROOT)}
-    proc = subprocess.Popen([sys.executable, str(child)], cwd=tmp_path, env=env)  # noqa: S603
-    time.sleep(0.4)
-    proc.kill()
-    proc.wait()
-
     path = tmp_path / "output" / "k" / "state.json"
+    proc = subprocess.Popen([sys.executable, str(child)], cwd=tmp_path, env=env)  # noqa: S603
+    try:
+        _wait_for(proc, path.is_file, what="the child's first write")
+        _wait_for(proc, lambda: _size(path) > _BIG_WRITE_BYTES, what="the large writes to begin")
+    finally:
+        proc.kill()
+        proc.wait()
+
     assert path.is_file()
     parsed = State.model_validate(json.loads(path.read_text(encoding="utf-8")))
     assert parsed.client_id == "k"  # loads cleanly: old or new, never corrupt

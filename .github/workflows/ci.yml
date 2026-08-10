@@ -55,6 +55,35 @@ jobs:
       - name: Lockfile matches pyproject
         run: uv lock --check
 
+  # The job above installs `.[dev]` deliberately: that is what proves lib and scripts never grow
+  # a NiceGUI dependency, and that the suite passes without one. The side effect was that every
+  # module under ui/pages/ went untested — which is how three production bugs shipped green in a
+  # single week (#52, #53, #54), one of them with a test asserting the broken behaviour. This job
+  # is the other half. Keep them separate: merging them would cost the proof above.
+  ui:
+    name: Operator shell (ui extra)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ui]"
+
+      # Bare, with no -m: a command-line -m *replaces* the `-m 'not staging'` in pyproject.toml
+      # rather than adding to it, which would arm the tests that write to live WordPress and GS1.
+      - name: Operator shell tests
+        run: pytest tests/ui
+
   gs1-nl-mcp:
     name: Build and test gs1-nl MCP
     runs-on: ubuntu-latest
