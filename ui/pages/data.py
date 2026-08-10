@@ -139,10 +139,14 @@ def _process_list(cfg: Any) -> None:
             if not selected:
                 ui.notify("Select the rows to remove first", type="warning")
                 return
-            state["sheet"] = state["sheet"].without(selected)
             table.rows = [row for row in table.rows if int(row["_row"]) not in selected]
             table.selected = []
             table.update()
+            # Rebuilt from the surviving `_row` keys against the sheet as first read, never by
+            # applying each removal to the previous result. `_row` is fixed when the grid is
+            # built; a sheet renumbers on every edit, so accumulating removals drifts from the
+            # second one onward — and drifts silently, saving rows other than the ones on screen.
+            state["sheet"] = sheet.keeping({int(row["_row"]) for row in table.rows})
             count.text = f"{len(table.rows)} GTIN(s) will be processed — not saved yet"
 
         def save() -> None:

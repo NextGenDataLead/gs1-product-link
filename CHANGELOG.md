@@ -191,6 +191,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **Pruning the process list in more than one pass saved rows other than the ones on
+  screen.** The Data screen's grid keys each row by its position when the grid was built,
+  and that key never changes; a `ProcessListSheet` renumbers on every edit. `remove()` fed
+  those fixed keys into `without()` on the *previous result*, so the first removal was
+  correct and every one after it deleted the wrong row.
+
+  Remove row 0, then row 3: the grid shows rows 1, 2, 4 and the file receives rows 1, 2, 3.
+  The save then reports success. Since the process list *is* the scope of a run, that is a
+  live page and a permanent, undeletable GS1 record for a product the operator did not
+  choose — with nothing on screen to suggest anything went wrong.
+
+  `remove()` now rebuilds from the surviving keys against the sheet as first read, via a new
+  `ProcessListSheet.keeping()`, so nothing accumulates and drift is not expressible. The
+  regression is covered from both sides: the new form agrees with the grid after two passes,
+  and the incremental form is asserted to disagree, so the test cannot quietly stop testing
+  anything. `without()` keeps its behaviour and gains a docstring saying what it is for.
+
+  Found while rehearsing a from-scratch operator install, one selection away from being
+  invisible: pruning 37 rows in a single pass — which is what the operator did — takes the
+  correct path.
+
 - **Both uploads in the operator shell wrote nothing, silently.** NiceGUI 2 handed the
   handler `event.content`, read synchronously; NiceGUI 3 replaced it with `event.file`,
   whose read methods are awaitable. The `ui` extra allowed `nicegui>=2.0`, so a fresh
