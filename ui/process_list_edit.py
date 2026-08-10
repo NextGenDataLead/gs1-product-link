@@ -47,8 +47,26 @@ class ProcessListSheet:
     gtin_index: int
 
     def without(self, indices: set[int]) -> ProcessListSheet:
-        """A copy with the given row positions removed. Immutable, like everything else here."""
+        """A copy with the given row positions removed. Immutable, like everything else here.
+
+        Positions are **into this sheet**, so the result is renumbered. Applying it twice with
+        positions taken from the original sheet removes the wrong rows the second time — see
+        :meth:`keeping`, which is what an editing surface wants.
+        """
         kept = [row for n, row in enumerate(self.rows) if n not in indices]
+        return ProcessListSheet(self.path, self.header, kept, self.gtin_index)
+
+    def keeping(self, indices: set[int]) -> ProcessListSheet:
+        """A copy holding only these row positions, in their original order.
+
+        The counterpart to :meth:`without`, and the one a grid should use. A grid identifies a row
+        by a key fixed when it was built; this sheet renumbers on every edit. Feeding those fixed
+        keys back into a renumbered sheet is silently wrong from the second edit onward, and the
+        symptom is the worst kind: the screen shows one set of rows and the file receives another,
+        with a success message either way. Deriving the sheet from the surviving keys against the
+        *original* cannot drift, because nothing accumulates.
+        """
+        kept = [row for n, row in enumerate(self.rows) if n in indices]
         return ProcessListSheet(self.path, self.header, kept, self.gtin_index)
 
 

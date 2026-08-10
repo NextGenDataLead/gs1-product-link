@@ -108,3 +108,52 @@ def test_without_does_not_mutate_the_original(tmp_path: Path) -> None:
 
     assert len(sheet.rows) == 2
     assert len(pruned.rows) == 1
+
+
+# --- Pruning in more than one pass --------------------------------------------
+#
+# The Data screen's grid keys each row by its position when the grid was built, and that key never
+# changes. A sheet renumbers on every edit. Feeding fixed keys into a renumbered sheet is correct
+# once and wrong from the second removal onward — and wrong in the way that matters least visibly:
+# the grid shows one set of rows, the file receives another, and the save reports success. That is
+# a live page and a permanent GS1 record for a product the operator did not choose.
+
+
+def _rows(n: int) -> list[list[object]]:
+    return [[f"art-{i}", f"871319500{i:04d}", f"name-{i}"] for i in range(n)]
+
+
+def test_keeping_selects_by_original_position_and_holds_the_order(tmp_path: Path) -> None:
+    sheet = read_sheet(_config(_write(tmp_path, _rows(5))))
+
+    kept = sheet.keeping({0, 2, 4})
+
+    assert [row[1] for row in kept.rows] == [sheet.rows[i][1] for i in (0, 2, 4)]
+    assert len(sheet.rows) == 5, "the original is untouched"
+
+
+def test_two_removals_leave_the_file_agreeing_with_the_grid(tmp_path: Path) -> None:
+    """The regression. Remove one row, then another, exactly as the screen does it."""
+    sheet = read_sheet(_config(_write(tmp_path, _rows(5))))
+    grid = [{"_row": n, "gtin": row[1]} for n, row in enumerate(sheet.rows)]
+
+    for selection in ({0}, {3}):  # two passes, keys taken from the original grid both times
+        grid = [row for row in grid if row["_row"] not in selection]
+        pruned = sheet.keeping({int(row["_row"]) for row in grid})
+
+    assert [row[1] for row in pruned.rows] == [row["gtin"] for row in grid], (
+        "the file would receive rows other than the ones left on screen"
+    )
+
+
+def test_the_incremental_form_is_the_one_that_drifts(tmp_path: Path) -> None:
+    """Why ``keeping`` exists, asserted rather than described — ``without`` renumbers."""
+    sheet = read_sheet(_config(_write(tmp_path, _rows(5))))
+    grid = [{"_row": n, "gtin": row[1]} for n, row in enumerate(sheet.rows)]
+
+    drifting = sheet
+    for selection in ({0}, {3}):
+        grid = [row for row in grid if row["_row"] not in selection]
+        drifting = drifting.without(selection)
+
+    assert [row[1] for row in drifting.rows] != [row["gtin"] for row in grid]
