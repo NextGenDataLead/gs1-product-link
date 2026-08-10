@@ -849,12 +849,16 @@ class WordPressClient:
         # Name the stored file after the content-addressed slug so re-uploads of the same
         # bytes reuse (before reaching here) and the physical filename never churns -N suffixes.
         filename = f"{slug}{path.suffix}"
-        headers = {
-            "Content-Type": mime,
-            "Content-Disposition": f'attachment; filename="{filename}"',
-        }
+        # multipart/form-data, not a raw body with Content-Disposition. Both are accepted by
+        # WordPress, but a security plugin on a live site inspected the raw form and refused an
+        # ordinary H.264 video with a bare HTML 403 — while the identical bytes sent as multipart
+        # were accepted. The raw form put arbitrary binary where a scanner reads a request body;
+        # multipart is also the conventional way to post to /wp/v2/media.
         resp = self._request(
-            "POST", _MEDIA_PATH, content=data, extra_headers=headers, label=f"upload media {slug}"
+            "POST",
+            _MEDIA_PATH,
+            files={"file": (filename, data, mime)},
+            label=f"upload media {slug}",
         )
         media = cast(WordPressMedia, resp.json())
         media_id = media["id"]
@@ -892,6 +896,7 @@ class WordPressClient:
         json_body: object = None,
         content: bytes | None = None,
         extra_headers: dict[str, str] | None = None,
+        files: dict[str, tuple[str, bytes, str]] | None = None,
     ) -> httpx.Response:
         """Issue one HTTP call with the retry policy in §5.1.
 
@@ -924,7 +929,7 @@ class WordPressClient:
                 headers.update(extra_headers)
             started = time.monotonic()
             try:
-                resp = self._send(method, url, params, json_body, content, headers)
+                resp = self._send(method, url, params, json_body, content, headers, files)
             except (httpx.ConnectError, httpx.ReadTimeout) as exc:
                 attempts_5xx += 1
                 if attempts_5xx >= _RETRY_5XX_MAX_ATTEMPTS:
@@ -996,8 +1001,11 @@ class WordPressClient:
         json_body: object,
         content: bytes | None,
         headers: dict[str, str],
+        files: dict[str, tuple[str, bytes, str]] | None = None,
     ) -> httpx.Response:
-        """Issue the underlying HTTP request (json xor raw content)."""
+        """Issue the underlying HTTP request (multipart xor json xor raw content)."""
+        if files is not None:
+            return self._http.request(method, url, params=params, files=files, headers=headers)
         if content is not None:
             return self._http.request(method, url, params=params, content=content, headers=headers)
         if json_body is not None:

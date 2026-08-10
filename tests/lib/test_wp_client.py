@@ -694,9 +694,15 @@ def test_upload_media_uploads_with_content_addressed_slug(
         if r.method == "POST" and r.url.path == "/wp-json/wp/v2/media"
     ]
     assert len(creates) == 1
-    assert creates[0].content == b"PNGDATA"
+    # multipart/form-data, not a raw body: a security plugin on a live site inspected the raw
+    # form and refused an ordinary video with an HTML 403, while the identical bytes sent as
+    # multipart were accepted. The bytes and the filename are both inside the encoded body.
+    assert creates[0].headers["content-type"].startswith("multipart/form-data; boundary=")
+    assert b"PNGDATA" in creates[0].content
     # the physical filename is content-addressed too, so re-uploads don't churn -N suffixes
-    assert f"{slug}.png" in creates[0].headers.get("content-disposition", "")
+    assert f'filename="{slug}.png"'.encode() in creates[0].content
+    assert b"image/png" in creates[0].content
+    assert "content-disposition" not in creates[0].headers
     finalise = next(r for r in httpx_mock.get_requests() if r.url.path == "/wp-json/wp/v2/media/5")
     body = json.loads(finalise.content)
     assert body["slug"] == slug
