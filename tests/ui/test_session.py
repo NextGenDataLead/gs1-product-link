@@ -144,7 +144,14 @@ def test_a_test_environment_run_never_carries_the_production_flag() -> None:
 
 
 def test_pages_mode_needs_no_production_gate_and_still_runs() -> None:
-    """Gate 0 already named the environment, and nothing irreversible follows."""
+    """Gate 0 already named the environment, and nothing irreversible follows.
+
+    The flag is still required. ``run_execute`` refuses **every** real run against a production
+    client without ``--i-understand-production`` — its condition does not look at ``--only`` — so
+    a pages command without it is refused at exit 2 and nothing publishes. This test previously
+    asserted the flag was absent, and passed, because it checked the shape of the argv and never
+    that the argv would be accepted.
+    """
     session = _session(mode=Mode.PAGES)
     session.answer("intent", "confirm")
     session.answer("content_review", "confirm")
@@ -153,8 +160,40 @@ def test_pages_mode_needs_no_production_gate_and_still_runs() -> None:
 
     argv = session.execute_argv(_CONFIRMED, dry_run=False)
 
-    assert argv[-2:] == ["--only", "pages"]
-    assert "--i-understand-production" not in argv
+    assert "--only" in argv and argv[argv.index("--only") + 1] == "pages"
+    assert "--i-understand-production" in argv
+
+
+def test_pages_mode_takes_the_acknowledgement_from_gate_zero() -> None:
+    """Gate 0 is the substitute, so an unanswered gate 0 is not an acknowledgement."""
+    session = _session(mode=Mode.PAGES)
+
+    assert not session.production_acknowledged()
+
+    session.answer("intent", "confirm")
+
+    assert session.production_acknowledged()
+
+
+def test_cancelling_gate_zero_is_not_an_acknowledgement() -> None:
+    session = _session(mode=Mode.PAGES)
+    session.answer("intent", "cancel")
+
+    assert not session.production_acknowledged()
+
+
+def test_links_mode_still_requires_its_own_production_gate() -> None:
+    """The substitution applies only where the production gate is absent from the walk."""
+    session = _session(mode=Mode.LINKS)
+    session.answer("intent", "confirm")
+
+    assert not session.production_acknowledged(), (
+        "gate 0 must not stand in for the production gate when that gate is being asked"
+    )
+
+    session.answer("production", "confirm")
+
+    assert session.production_acknowledged()
 
 
 def test_a_client_without_a_generator_skips_the_copy_review() -> None:

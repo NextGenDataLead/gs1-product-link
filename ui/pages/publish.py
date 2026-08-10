@@ -56,6 +56,9 @@ class _Flow:
             is_production=self.production,
             languages=list(cfg.wordpress.languages),
         )
+        #: Whether the dry run has been run at all. Its Proceed/Cancel buttons appear only after
+        #: there is output to approve — offering them beforehand invites approving nothing.
+        self.has_run_dry = False
         self.body = ui.column().classes("w-full gap-6")
 
     # -- assembly -------------------------------------------------------------
@@ -277,10 +280,17 @@ class _Flow:
             log.push(" ".join(["python", *argv]))
             result = await runner.stream(argv, log.push)
             ui.notify(
-                "Dry run finished" if result.ok else f"Dry run exited {result.returncode}",
+                "Dry run finished — now read it, then Proceed or Cancel"
+                if result.ok
+                else f"Dry run exited {result.returncode}",
                 type="positive" if result.ok else "warning",
             )
-            self.session.answers["dry_run"] = "proceed"
+            # Running it is not answering it. The output is the thing to be approved, so the
+            # answer comes from the operator below — this used to set "proceed" here, which made
+            # the gate self-answering and left Cancel unreachable at the one gate whose whole
+            # purpose is to be read before the real write.
+            self.has_run_dry = True
+            self._redraw()
 
         ui.label(
             "It builds no clients, needs no credentials and writes nothing. It cannot verify that "
@@ -289,6 +299,10 @@ class _Flow:
         ).classes("note mb-3")
         theme.action("Run the dry run", go)
         log = ui.log().classes("console mt-4").style("display:none")
+        if self.has_run_dry:
+            self._options(gate)
+        else:
+            ui.label("Run it, read the output, then answer.").classes("note mt-3")
 
     def _gate_post_run(self, gate: Gate) -> None:
         ui.link("Every run, with its per-row outcomes →", "/runs").classes("mono")

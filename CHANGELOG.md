@@ -191,6 +191,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **The operator shell could not publish pages to a production client at all.**
+  `run_execute` refuses every real run against `gs1.environment: production` without
+  `--i-understand-production`, and its condition does not look at `--only` — `pages` is
+  treated exactly like `links`. But the production gate is deliberately absent from the
+  `pages` walk, so `PublishSession` had no answer to derive the flag from and never appended
+  it. Every real pages run from the shell ended at exit 2. The *reversible* half of a publish
+  was the unreachable one.
+
+  `CLAUDE.md` already described the intended behaviour — "in `pages` mode that confirmation
+  is gate 0" — and nothing implemented it. `PublishSession.production_acknowledged()` now
+  makes the substitution explicit: the production gate's answer where that gate is in the
+  walk, gate 0's where it is not, and never anything derived from `gs1.environment`, because
+  the flag records that a person confirmed rather than a fact about config.
+
+  The existing test asserted the broken behaviour and passed, because it checked the shape of
+  the argv and never that `run_execute` would accept it. It now asserts the flag is present,
+  and says in its docstring why the old assertion looked reasonable.
+
+- **The dry-run gate answered itself, and offered no way to decline.** `lib/gates.py`
+  declares `Proceed` and `Cancel` for step 8.5; the screen rendered neither and set
+  `answers["dry_run"] = "proceed"` when the subprocess finished. So the gate was answered by
+  the run *completing* rather than by anyone approving what it printed, and Cancel was
+  unreachable at the one gate whose whole purpose is to be read before the real write. It
+  also never redrew, so the "still to answer" banner stayed on screen and the write button
+  never appeared — the state was right and only the display was stale.
+
+  The buttons now appear once there is output to approve, and running the dry run no longer
+  answers it.
+
+  `tests/ui/test_publish_contract.py` guards the class rather than the instance: no gate that
+  declares options may write its own answer, and every *required* one must offer a way to
+  answer it. Both checks are AST-only, so they run in CI where NiceGUI is absent. They also
+  surfaced two more gates — `row_diff` and `post_run` — that declare options the screen never
+  renders; those are informational and not required, and their declared options promise
+  behaviour that does not exist (`show-full-diff` renders no fuller diff), so they are pinned
+  in a named set rather than papered over with buttons that would lie.
+
 - **Pruning the process list in more than one pass saved rows other than the ones on
   screen.** The Data screen's grid keys each row by its position when the grid was built,
   and that key never changes; a `ProcessListSheet` renumbers on every edit. `remove()` fed
