@@ -76,6 +76,28 @@ class PublishSession:
             return None
         return next((o for o in BY_ID[gate_id].options if o.value == value), None)
 
+    def production_acknowledged(self) -> bool:
+        """Whether someone confirmed, at a gate, that this run writes to production.
+
+        In ``links`` and ``both`` the production gate asks outright, and this is its answer.
+
+        In ``pages`` that gate is **not in the walk** — nothing irreversible follows, so making
+        the operator type the client id for a reversible run would be ceremony — and gate 0
+        stands in: it is required, and it states the environment and the mode before anything
+        else. That substitution is what ``CLAUDE.md`` already describes, and until it was
+        implemented here the flag could never be set in ``pages`` mode, so ``run_execute``
+        refused every real pages run against a production client. The reversible half of a
+        publish was unreachable from this shell.
+
+        Never derived from ``gs1.environment``. The flag records that a person confirmed, not a
+        fact about the config — deriving it would turn a decision into a description.
+        """
+        if not self.is_production:
+            return False
+        if any(gate.id == "production" for gate in self.gates):
+            return self.proceeded("production")
+        return self.proceeded("intent")
+
     def proceeded(self, gate_id: str) -> bool:
         """Whether ``gate_id`` was answered with an option that lets the run continue.
 
@@ -126,6 +148,6 @@ class PublishSession:
             mode=self.mode,
             confirmed_path=confirmed_path,
             dry_run=dry_run,
-            production_acknowledged=self.proceeded("production") if self.is_production else False,
+            production_acknowledged=self.production_acknowledged(),
             revive=revive,
         )
