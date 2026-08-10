@@ -176,9 +176,15 @@ def test_the_macos_entry_point_is_executable(script: Path) -> None:
 
 
 def _pinned(path: Path, pattern: str) -> str:
-    match = re.search(pattern, path.read_text("utf-8"))
-    assert match, f"no pin matching {pattern!r} in {path.name}"
-    return match.group(1)
+    """The single pinned value in ``path``, asserting every copy inside that file agrees.
+
+    ``re.search`` would return the first match and ignore the rest, so a second CI job pinned to
+    a different Python would drift silently — the exact failure this file exists to prevent.
+    """
+    found = re.findall(pattern, path.read_text("utf-8"))
+    assert found, f"no pin matching {pattern!r} in {path.name}"
+    assert len(set(found)) == 1, f"{path.name} pins more than one value: {sorted(set(found))}"
+    return str(found[0])
 
 
 def test_the_uv_version_is_pinned_to_one_value() -> None:

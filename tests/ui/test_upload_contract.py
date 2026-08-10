@@ -18,9 +18,11 @@ Two checks, deliberately split by what they need:
 
 * :func:`test_every_upload_handler_is_async` and
   :func:`test_no_upload_handler_reads_the_removed_2x_attribute` are **AST** checks. They need no
-  NiceGUI, so they run in CI, which installs only ``.[dev]``.
+  NiceGUI, so they run in the required CI job, which installs only ``.[dev]``.
 * :func:`test_the_installed_nicegui_still_offers_the_api_the_handlers_use` checks the other side of
-  the contract against the real package, and skips where it is absent.
+  the contract against the real package, and skips where it is absent. It runs in the
+  ``Operator shell (ui extra)`` job — added in #59, because until then nothing in CI ever ran it,
+  and this is the check that would have caught the break above.
 """
 
 from __future__ import annotations
@@ -100,8 +102,8 @@ def test_no_upload_handler_reads_the_removed_2x_attribute() -> None:
 def test_the_installed_nicegui_still_offers_the_api_the_handlers_use() -> None:
     """The other half of the contract, against the real package.
 
-    Skipped where NiceGUI is absent — which includes CI, since ``lib`` must stay installable
-    without the ``ui`` extra. That is a known gap: the screens are not exercised by CI at all.
+    Skipped where NiceGUI is absent, which the required job still is — ``lib`` must stay
+    installable without the ``ui`` extra. The second job installs it and runs this.
     """
     pytest.importorskip("nicegui", reason="the ui extra is not installed here")
     # Imported here, not at module scope, so the AST checks above still collect and run where
