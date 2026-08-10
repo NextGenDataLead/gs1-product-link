@@ -150,6 +150,46 @@ pyenv reads it too, and it would break `python` in this directory for anyone lac
 Not verified: the two `.bat` files have never been run on Windows. See
 [`operator-install.md`](operator-install.md).
 
+### The first install rehearsal (2026-08-09/10), and what it cost
+
+The four phases were built and merged before anyone had installed the result the way an operator
+would. Doing that once — a clone on a separate machine, the gitignored files handed over by hand,
+`install.command` double-clicked, then a real publish — **found 25 defects**, three of them serious
+enough to have made the shell unusable for its main job:
+
+| Fixed | What was wrong |
+|---|---|
+| [#52](https://github.com/NextGenDataLead/gs1-product-link/pull/52) | **Both uploads wrote nothing, silently.** NiceGUI 3 replaced the upload event's `content` with an awaitable `file`, and the extra allowed `nicegui>=2.0`. The browser showed 100% and a checkmark; nothing reached disk. |
+| [#53](https://github.com/NextGenDataLead/gs1-product-link/pull/53) | **Pruning the process list twice saved rows other than the ones on screen** — a live page and a permanent GS1 record for a product nobody chose, reported as success. |
+| [#54](https://github.com/NextGenDataLead/gs1-product-link/pull/54) | **`pages` mode could never run against a production client.** `run_execute` demands `--i-understand-production` in every mode; the production gate is absent from the `pages` walk, so the flag could not be set. The *reversible* half of a publish was the unreachable one. |
+
+The rest are filed: **[#51](https://github.com/NextGenDataLead/gs1-product-link/issues/51)** (no UI
+for the video mapping), **[#55](https://github.com/NextGenDataLead/gs1-product-link/issues/55)** (the
+handover names two files and needs five, including `state.json` — without it every published GTIN
+re-classifies as NEW), **[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)**
+(screens showing the catalogue where they mean the batch),
+**[#57](https://github.com/NextGenDataLead/gs1-product-link/issues/57)** (a count that prints
+"284 of 0", and a hand-editable file that answers a syntax error with a stack trace),
+**[#58](https://github.com/NextGenDataLead/gs1-product-link/issues/58)** (preflight feedback, screen
+order, and nothing reconciling live pages against `state.json`),
+**[#59](https://github.com/NextGenDataLead/gs1-product-link/issues/59)** (CI never exercises the
+screens; a flaky state test), **[#60](https://github.com/NextGenDataLead/gs1-product-link/issues/60)**
+(media uploads: a deterministic `403` from the site's firewall, and a truncated upload treated as
+success).
+
+**#59 is the one that explains the other three.** CI installs `.[dev]` — which is exactly what keeps
+`lib` provably free of a UI dependency — and therefore never touches `ui/pages/`. Three production
+bugs shipped without a single test going red, and one of them had a test that *asserted the broken
+behaviour* and passed, because it checked the shape of an argv and never that the command would be
+accepted. Each fix added an AST-based contract test that runs without NiceGUI, which helps; AST
+checks can only assert the shape of the source, never that a screen works.
+
+**The publish itself is half-finished and live.** One product published in Dutch and failed in
+French: its video upload is refused by a rule in front of WordPress with a bare `403 Forbidden`,
+ruled out by probe as size, name, language, credential, rate or sequence. The Dutch page is live and
+correct; its row was recorded as an error, so `state.json` does not know it exists. That divergence
+is the tool's own doing and nothing detects it — see #58 and #60 before resuming.
+
 **Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows). The
 exposed WordPress application password was **rotated on 2026-07-30** and the old one revoked.
 
