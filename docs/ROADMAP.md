@@ -184,11 +184,21 @@ behaviour* and passed, because it checked the shape of an argv and never that th
 accepted. Each fix added an AST-based contract test that runs without NiceGUI, which helps; AST
 checks can only assert the shape of the source, never that a screen works.
 
-**The publish itself is half-finished and live.** One product published in Dutch and failed in
-French: its video upload is refused by a rule in front of WordPress with a bare `403 Forbidden`,
-ruled out by probe as size, name, language, credential, rate or sequence. The Dutch page is live and
-correct; its row was recorded as an error, so `state.json` does not know it exists. That divergence
-is the tool's own doing and nothing detects it — see #58 and #60 before resuming.
+**The publish completed, and finding it took the longest.** One product published in Dutch and
+failed in French: the site refused its video upload with a bare HTML `403`. The first investigation
+bisected 8 MB of video, ruled out size, name, language, credential, rate and sequence, and concluded
+the cause was a firewall outside the project and therefore not actionable here. That was wrong on
+both counts. The response headers — never captured until someone pushed back on the conclusion —
+carried `access-control-allow-origin: *`, the REST API's own CORS header, so PHP produced the 403.
+And the identical bytes upload fine as `multipart/form-data` while being refused as a raw body.
+[#62](https://github.com/NextGenDataLead/gs1-product-link/pull/62) changes the uploader accordingly;
+the product is now live in both languages, with GS1 untouched and both rows planning as CHANGED,
+which is the pages→links handoff working as designed.
+
+The lesson is worth more than the fix: **capture what the failing response actually said before
+concluding who refused it.** `WordPressAPIError` carries the body and drops it from `__str__`, so
+the run log recorded only `'WordPress API error 403'` and the HTML that identified the culprit lived
+in a console nobody would have on a scheduled run — see #60.
 
 **Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows). The
 exposed WordPress application password was **rotated on 2026-07-30** and the old one revoked.
