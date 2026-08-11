@@ -497,6 +497,7 @@ Startup config/credential errors abort immediately with exit 2.
 | E5 | GTIN with no `product_name` in the default language | `ExportParseError` naming the GTIN |
 | E6 | `column_map` target that is not a `ProductRecord` field | `ExportParseError` at config load |
 | E7 | `image_url` 404s or times out | Featured media skipped; **page still created**; noted on the `RunOutcome` |
+| E7b | Upload succeeds but WordPress stored fewer bytes than were sent | `MediaIntegrityError` — the attachment is deleted and the **row fails**. Not E7: that is media which was never available, this is media which is *wrong*, and a half-uploaded video the site serves happily is worse than a failed one. Deleted before the call that would claim the content-addressed slug, or the fragment would be adopted by every later run |
 | E8 | Page's `meta.gtin` ≠ row's GTIN | `GtinMismatchError` — log ERROR, skip the row |
 | E9 | GS1 upsert succeeds, WP later 500s | GS1 state kept; WP failure logged; run continues |
 | E10 | NL succeeds, FR fails | State reflects NL; FR retried next run |

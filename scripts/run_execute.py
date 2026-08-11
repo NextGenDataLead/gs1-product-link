@@ -84,6 +84,7 @@ from lib.errors import (
     ConfigError,
     GS1APIError,
     LLMAPIError,
+    MediaIntegrityError,
     StateError,
     VideoMapError,
     WordPressAPIError,
@@ -376,10 +377,18 @@ _NO_MEDIA = _RowMedia(None, None, None)
 def _row_media(cfg: ClientConfig, row: PlanRow, wp: WordPressClient) -> _RowMedia:
     """Resolve the hero image and video for a row, uploading each to WP media.
 
-    Returns all-``None`` when the client has no ``media`` config, so clients without media are
-    untouched. Every failure (a 404 image, an undecodable file, a missing video, an ffmpeg
-    error) degrades to ``None`` (edge E7): media must never stop the page publishing. Uploads
-    are idempotent — ``upload_media`` dedupes by content hash and the converters are
+    Every failure to *resolve* media — a 404 image, an undecodable file, a missing video, an
+    ffmpeg error — degrades to ``None`` (edge E7): a source problem must never stop the page
+    publishing. Returns all-``None`` when the client has no ``media`` config, so clients without
+    media are untouched.
+
+    **The upload itself is not in that category and deliberately propagates.** A refused upload
+    (``WordPressAPIError``) or one WordPress stored short (``MediaIntegrityError``) fails the
+    row, because the alternative is publishing a page whose video is absent or truncated while
+    reporting success — and a half-uploaded video that the site serves happily is worse than a
+    failed one. E7 is about media that was never available; this is about media that is wrong.
+
+    Uploads are idempotent — ``upload_media`` dedupes by content hash and the converters are
     deterministic — so re-runs reuse attachments rather than duplicating them.
     """
     media = cfg.media
@@ -527,7 +536,7 @@ def _failed_call(exc: BaseException) -> str | None:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, WordPressAPIError | GS1APIError | LLMAPIError):
+        if isinstance(current, WordPressAPIError | GS1APIError | LLMAPIError | MediaIntegrityError):
             return current.call
         current = current.__cause__
     return None

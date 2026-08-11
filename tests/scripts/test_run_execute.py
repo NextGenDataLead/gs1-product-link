@@ -30,7 +30,7 @@ from lib.config import (
     TemplateConfig,
     WordPressConfig,
 )
-from lib.errors import WordPressAPIError
+from lib.errors import MediaIntegrityError, WordPressAPIError
 from lib.records import LocalisedText, Plan, PlanClassification, PlanRow, ProductRecord, State
 from lib.state import load_state
 from scripts import run_execute
@@ -153,6 +153,7 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
     wp_error_languages: tuple[str, ...] = ("nl", "fr"),
     unverifiable: tuple[str, ...] = (),
     findable_slugs: dict[tuple[str, str], int] | None = None,
+    upload_error: Exception | None = None,
 ) -> _Recorder:
     """Patch the two clients with recording fakes.
 
@@ -163,6 +164,10 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
     client does on a non-2xx — it never returns ``False``. ``findable_slugs`` maps
     ``(slug, language)`` to the page id ``find_by_slug`` should report, so a ``--only links``
     test can choose between the three ways a target gets resolved.
+
+    ``upload_error`` makes ``upload_media`` raise. Unlike the media *resolution* steps, which
+    degrade to ``None`` under E7, an upload failure is meant to fail the row — publishing a page
+    whose video is missing or truncated while reporting success is the worse outcome.
     """
     rec = _Recorder()
 
@@ -210,6 +215,9 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
 
         def upload_media(self, file_path: Any, title: str | None = None) -> int:
             key = str(file_path)
+            if upload_error is not None:
+                rec.uploaded.append({"path": key, "title": title, "id": None})
+                raise upload_error
             mid = 5000 + int.from_bytes(hashlib.sha256(key.encode()).digest()[:2], "big")
             rec.uploaded.append({"path": key, "title": title, "id": mid})
             return mid
@@ -793,6 +801,41 @@ def test_media_rerun_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     # deterministic converter + content-hash dedupe → the same attachment id both runs.
     assert rec1.uploaded[0]["id"] == rec2.uploaded[0]["id"]
     assert rec2.wp[0]["featured_media"] == rec1.uploaded[0]["id"]
+
+
+def test_a_truncated_upload_fails_the_row_instead_of_publishing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No page at all, rather than a page whose media is a fragment.
+
+    The media *resolution* steps degrade to ``None`` under E7 so a source problem cannot stop a
+    publish. An upload that WordPress stored short is the opposite case: the file is wrong, and
+    a page published against it looks entirely healthy — 200, QR resolves — until someone
+    presses play.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    _fake_convert(monkeypatch)
+    rec = _install(
+        monkeypatch,
+        cfg,
+        upload_error=MediaIntegrityError(
+            Path("x.jpg"), 8_000_000, 1_500_000, 42, deleted=True, call="POST /wp-json/wp/v2/media"
+        ),
+    )
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    code = run_execute.main(["acme", "--plan", str(plan)])
+
+    assert code == 1
+    assert rec.wp == []  # no page written
+    assert load_state("acme").entries == {}  # and nothing recorded as published
+    outcome = _read_outcomes(tmp_path, newest=True)[0]
+    assert outcome["status"] == "error"
+    assert outcome["failed_call"] == "POST /wp-json/wp/v2/media"
+    assert "1500000 bytes" in outcome["error"]  # says what was stored vs sent
 
 
 def _pilot_map(tmp_path: Path, both: list[str]) -> str:

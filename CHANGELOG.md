@@ -191,6 +191,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **A truncated upload was reported as a success, and dedup then made it permanent.** A live
+  transfer was cut off mid-upload, leaving a 1.5 MB fragment of an 8 MB video in the media
+  library. WordPress answered `201`, the run called it done, and the page published against a
+  video that would not play — 200, QR resolving, everything looking healthy until someone
+  pressed play.
+
+  The half that made this more than a one-off: dedup is a lookup on a content-addressed slug
+  folded from the SHA-256 of the *local* bytes, and `_find_media_by_slug` returned the first hit
+  without checking anything about it. So the fragment was stored under the hash of the whole
+  file and returned by every subsequent run as a content match. **Re-running could not repair
+  it**, which is what makes this load-bearing rather than tidy-up.
+
+  `upload_media` now compares the stored byte count against what it sent, on both paths. On the
+  create path the check sits **between the upload and the finalise call** — the finalise is what
+  claims the content-addressed slug, so a fragment never becomes the answer to its own hash; it
+  is deleted and `MediaIntegrityError` is raised. On the dedup path a hit whose size disagrees is
+  deleted and re-uploaded, which is what reaches the fragment already sitting on the site.
+
+  The size comes from `media_details.filesize` on the create response, falling back to a `HEAD`
+  on `source_url` for the attachment types and WordPress versions that do not supply it. When
+  neither will say, the upload is logged as **unverified** and allowed — never silently, and
+  never deleted: `delete_media` has no ownership guard, so treating "no number" as "wrong number"
+  would remove a live page's media because a proxy omitted a header. A cleanup that itself fails
+  is reported as part of the integrity error rather than replacing it, so the operator is told
+  both what was wrong with the file and that the fragment is still there.
+
+  An upload failure deliberately fails the row rather than degrading to `None` like the media
+  *resolution* steps do under E7. E7 is media that was never available; this is media that is
+  wrong, and publishing a page against it while reporting success is the worse outcome. The
+  `_row_media` docstring claimed the opposite and has been corrected.
+
 - **A failed row said only that it failed, not which call failed or what the server said.**
   A live publish stopped on a video upload that WordPress answered with a bare HTML `403`, and
   the run log — the only durable per-row record this tool keeps — recorded exactly this:

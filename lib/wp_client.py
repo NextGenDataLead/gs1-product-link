@@ -36,6 +36,7 @@ from lib.config import WordPressConfig
 from lib.errors import (
     ERROR_BODY_LIMIT,
     GtinMismatchError,
+    MediaIntegrityError,
     MissingCredentialError,
     WordPressAPIError,
 )
@@ -124,13 +125,20 @@ class WordPressPage(TypedDict, total=False):
 
 
 class WordPressMedia(TypedDict, total=False):
-    """A WordPress media attachment as returned by the REST API."""
+    """A WordPress media attachment as returned by the REST API.
+
+    ``media_details`` is WordPress's own read of the stored file — for images the original's
+    dimensions and ``filesize``, for video the ID3 block. It is how an upload is checked against
+    what was sent; it is not guaranteed for every attachment type on every version, hence the
+    ``HEAD`` fallback in :meth:`WordPressClient._stored_bytes`.
+    """
 
     id: int
     slug: str
     source_url: str
     title: dict[str, str]
     meta: dict[str, object]
+    media_details: dict[str, object]
 
 
 class WordPressIdentity(NamedTuple):
@@ -458,6 +466,12 @@ class WordPressClient:
         ``content_sha256`` meta being exposed in REST) and cannot be defeated by a stale
         same-base attachment squatting the base slug — the two failure modes seen live.
 
+        **A content match is checked for length before it is trusted.** The slug proves what the
+        bytes were *meant* to be, not what arrived: an upload cut off mid-transfer leaves a
+        fragment stored under the hash of the whole file, and the lookup below would then return
+        it forever, so re-running could never repair it. A hit whose stored size disagrees is
+        deleted and re-uploaded rather than reused.
+
         Edge E7 (a source ``image_url`` that 404s or times out) is handled *before*
         this method by the run loop via :meth:`download_image`, which returns ``None``
         so the caller skips featured media and still creates the page.
@@ -471,6 +485,7 @@ class WordPressClient:
 
         Raises:
             WordPressAPIError: On a non-2xx response after retries.
+            MediaIntegrityError: WordPress stored a different number of bytes than were sent.
         """
         path = Path(file_path)
         data = path.read_bytes()
@@ -478,7 +493,7 @@ class WordPressClient:
         slug = _content_slug(_media_slug(title, path), digest)
 
         existing = self._find_media_by_slug(slug)
-        if existing is not None:
+        if existing is not None and self._is_whole(existing, path, len(data), slug):
             _log.info(
                 "WP media %r already uploaded (content match), reusing id %s", slug, existing["id"]
             )
@@ -924,14 +939,16 @@ class WordPressClient:
         # ordinary H.264 video with a bare HTML 403 — while the identical bytes sent as multipart
         # were accepted. The raw form put arbitrary binary where a scanner reads a request body;
         # multipart is also the conventional way to post to /wp/v2/media.
+        label = f"upload media {slug}"
         resp = self._request(
-            "POST",
-            _MEDIA_PATH,
-            files={"file": (filename, data, mime)},
-            label=f"upload media {slug}",
+            "POST", _MEDIA_PATH, files={"file": (filename, data, mime)}, label=label
         )
         media = cast(WordPressMedia, resp.json())
         media_id = media["id"]
+        # Before the finalise call, not after: the finalise is what claims the content-addressed
+        # slug, and a fragment that holds that slug is returned by every later run as a content
+        # match. Checking here means a truncated upload never becomes the answer to its own hash.
+        self._assert_whole(media, media_id, path, len(data), call=f"POST {_MEDIA_PATH} ({label})")
         update_body: dict[str, object] = {
             "slug": slug,
             "meta": {_CONTENT_HASH_META_KEY: digest},
@@ -945,6 +962,141 @@ class WordPressClient:
             label=f"finalise media {media_id}",
         )
         return media_id
+
+    def _is_whole(self, existing: WordPressMedia, path: Path, sent: int, slug: str) -> bool:
+        """Whether a deduped attachment may be reused, discarding it if it is a fragment.
+
+        The counterpart to :meth:`_assert_whole` on the path that does *no* upload. It returns
+        rather than raises, because the caller has the bytes in hand and can simply upload them
+        again — a stale fragment is repairable here, and only here.
+
+        Unverifiable is reuse, not deletion. ``_stored_bytes`` returns ``None`` when nothing will
+        say how large the file is, and :meth:`delete_media` has no ownership guard, so deleting
+        on a number nobody supplied would remove a live page's media on a guess. The bytes match
+        by hash; absent evidence to the contrary, the attachment is the file.
+        """
+        media_id = existing["id"]
+        stored = self._stored_bytes(existing)
+        if stored is None or stored == sent:
+            return True
+        _log.warning(
+            "WP media %r matches by content hash but holds %d bytes, not %d — deleting the "
+            "fragment (attachment %s) and re-uploading %s",
+            slug,
+            stored,
+            sent,
+            media_id,
+            path.name,
+        )
+        if self._discard_media(media_id):
+            return False
+        raise MediaIntegrityError(
+            path,
+            sent,
+            stored,
+            media_id,
+            deleted=False,
+            call=f"DELETE {_MEDIA_PATH}/{media_id} (discard fragment {slug})",
+        )
+
+    def _assert_whole(  # noqa: PLR0913 — every argument is part of the failure it reports
+        self,
+        media: WordPressMedia,
+        media_id: int,
+        path: Path,
+        sent: int,
+        *,
+        call: str,
+    ) -> None:
+        """Delete and raise if WordPress stored fewer (or more) bytes than were sent.
+
+        A live upload was cut off mid-transfer and answered ``201`` anyway, leaving a 1.5 MB
+        fragment of an 8 MB video that WordPress then served happily. A half-uploaded video is
+        worse than a failed one: the page publishes, the QR resolves, and the product looks fine
+        until someone presses play.
+        """
+        stored = self._stored_bytes(media)
+        if stored is None:
+            _log.warning(
+                "WP stored size of media %s (%s) could not be established; upload unverified",
+                media_id,
+                path.name,
+            )
+            return
+        if stored == sent:
+            return
+        _log.error(
+            "WP stored %d bytes of %s but %d were sent; deleting attachment %s",
+            stored,
+            path.name,
+            sent,
+            media_id,
+        )
+        raise MediaIntegrityError(
+            path,
+            sent,
+            stored,
+            media_id,
+            deleted=self._discard_media(media_id),
+            call=call,
+        )
+
+    def _stored_bytes(self, media: WordPressMedia) -> int | None:
+        """How many bytes WordPress holds for an attachment, or ``None`` if it will not say.
+
+        ``media_details.filesize`` is the cheap answer — it rides along on the create response,
+        and it is the size of the *original* file rather than of any derivative. It is not
+        guaranteed for every attachment type on every WordPress version, so a ``HEAD`` on the
+        public ``source_url`` is the fallback: the webserver's ``Content-Length`` is an
+        independent measurement, and does not depend on WordPress having parsed the file.
+
+        ``None`` is a real answer and callers must treat it as one — "unverified", never "fine".
+        Deleting on a number nobody supplied would be deleting on inference, and
+        :meth:`delete_media` has no ownership guard.
+        """
+        details = media.get("media_details")
+        if isinstance(details, dict):
+            filesize = details.get("filesize")
+            if isinstance(filesize, int):
+                return filesize
+        source_url = media.get("source_url")
+        if isinstance(source_url, str) and source_url:
+            return self._content_length(source_url)
+        return None
+
+    def _content_length(self, url: str) -> int | None:
+        """``Content-Length`` of ``url`` via HEAD, or ``None`` if it cannot be established.
+
+        Unauthenticated and deliberately forgiving: this is a second opinion, and a proxy that
+        answers without the header, or does not answer at all, must not turn into an upload
+        failure. It only ever adds certainty.
+        """
+        try:
+            resp = self._http.request("HEAD", url)
+        except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+            _log.warning("WP HEAD %s failed (%r); upload size unverified", url, exc)
+            return None
+        if not _HTTP_SUCCESS_MIN <= resp.status_code < _HTTP_SUCCESS_MAX:
+            _log.warning("WP HEAD %s -> %d; upload size unverified", url, resp.status_code)
+            return None
+        try:
+            return int(resp.headers["Content-Length"])
+        except (KeyError, ValueError):
+            _log.warning("WP HEAD %s gave no usable Content-Length", url)
+            return None
+
+    def _discard_media(self, media_id: int) -> bool:
+        """Delete an attachment we know is corrupt, without masking why we are deleting it.
+
+        :meth:`delete_media` raises on any non-2xx, and that exception would replace the
+        integrity failure it is cleaning up after — leaving the operator with a delete error and
+        no statement of what was wrong with the file.
+        """
+        try:
+            return self.delete_media(media_id)
+        except WordPressAPIError as exc:
+            _log.error("WP could not delete corrupt media %s: %r", media_id, exc)
+            return False
 
     def _probe(self, path: str) -> bool:
         """Return whether a GET to ``path`` succeeds (2xx) — used for plugin detection."""
