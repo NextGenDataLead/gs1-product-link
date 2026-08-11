@@ -117,6 +117,10 @@ def test_the_dot_env_rule_is_enforced_elsewhere() -> None:
             lambda: runner.build_video_map_argv(None),
             ["-m", "scripts.build_video_map", "--check"],
         ),
+        (
+            lambda: runner.reconcile_argv("acme"),
+            ["-m", "scripts.reconcile", "acme", "--json"],
+        ),
     ],
 )
 def test_the_named_commands_are_what_a_person_would_type(

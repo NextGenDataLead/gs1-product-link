@@ -216,3 +216,13 @@ def build_video_map_argv(client_id: str | None, *, check: bool = True) -> list[s
     if check:
         argv.append("--check")
     return argv
+
+
+def reconcile_argv(client_id: str | None) -> list[str]:
+    """Compare the live site against ``state.json``.
+
+    Always ``--json``: the screen renders the findings itself, and a report an operator has to
+    read out of a console is a report they will not read. Read-only either way — the script only
+    issues GETs, and reads state without quarantining a corrupt one.
+    """
+    return ["-m", "scripts.reconcile", *([client_id] if client_id else []), "--json"]

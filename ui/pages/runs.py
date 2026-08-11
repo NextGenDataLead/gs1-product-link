@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from nicegui import ui
 
-from ui import REPO_ROOT, context, theme
+from ui import REPO_ROOT, context, runner, theme
 
 
 def render() -> None:
@@ -29,6 +29,8 @@ def render() -> None:
             theme.band("clients.yml did not load. Fix that on the Setup screen first.", "danger")
             return
 
+        _reconcile(cid)
+
         runs = context.recent_runs(cid)
         if not runs:
             ui.label("No runs yet.").classes("note")
@@ -36,6 +38,66 @@ def render() -> None:
 
         for run in runs:
             _run(run)
+
+
+def _reconcile(cid: str) -> None:
+    """Ask the site what is actually there, and compare it to the ledger.
+
+    Everything below this on the screen is what *this machine* recorded, which cannot show a page
+    created by anything else — another machine, a hand edit, or a run that failed part-way and
+    logged the row as an error after the page was already live. That last one is not hypothetical:
+    it is what the first real publish through this shell did, leaving ten entries in the ledger
+    and eleven pages on the site.
+
+    Read-only. It only GETs, and it reads state without quarantining a corrupt one.
+    """
+    with theme.section("Does the site match the ledger?"):
+        ui.label(
+            "Everything below is what this machine recorded. This asks the site instead, and "
+            "compares the two in both directions — the only way to see a page that exists "
+            "without a state entry, or an entry whose page is gone. Nothing is written."
+        ).classes("note")
+
+        argv = runner.reconcile_argv(cid)
+        theme.command(argv)
+        body = ui.column().classes("w-full mt-3")
+
+        def run() -> None:
+            payload, result = runner.run_json(argv)
+            body.clear()
+            with body:
+                if payload is None or not isinstance(payload, dict):
+                    theme.band(
+                        result.stderr or "The reconciliation did not return readable results.",
+                        "danger",
+                    )
+                    return
+                _report(payload)
+
+        theme.action("Compare against the site", run)
+
+
+def _report(payload: dict[str, object]) -> None:
+    """Render the comparison: the summary first, then a row per divergence."""
+    findings = payload.get("findings")
+    findings = findings if isinstance(findings, list) else []
+    theme.band(
+        str(payload.get("summary", "")),
+        "quiet" if payload.get("agrees") else "warn",
+    )
+    for finding in findings[:_MAX_FINDINGS]:
+        if not isinstance(finding, dict):
+            continue
+        theme.check_row(
+            "warn",
+            f"{finding.get('gtin')} · {finding.get('language')} · {finding.get('kind')}",
+            str(finding.get("detail", "")),
+            str(finding.get("explanation", "")),
+        )
+    if len(findings) > _MAX_FINDINGS:
+        ui.label(
+            f"…and {len(findings) - _MAX_FINDINGS} more. The full list is in the command's output."
+        ).classes("note")
 
 
 def _run(run: context.RunLog) -> None:
@@ -97,3 +159,6 @@ def _run(run: context.RunLog) -> None:
 
 
 _MAX_ERRORS = 25
+
+#: Divergences rendered inline before pointing at the command's own output.
+_MAX_FINDINGS = 40

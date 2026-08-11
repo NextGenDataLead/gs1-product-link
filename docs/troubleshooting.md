@@ -35,6 +35,7 @@ quarantines it (E19), and a diagnostic must not change what the next run does.
 | Per-row outcome of every mutating run | `output/{client_id}/runs/{ts}.jsonl` — one `RunOutcome` per row, written whether the row succeeded or failed, and appended **as each row completes**, so a run that died part-way still accounts for what it did. `run_execute` prints the path at the start of the run as well as at the end; `tail -f` it to watch a run in progress |
 | Why a plan came out the way it did | `output/{client_id}/plan.summary.json` — the gate exclusions, the tally of units dropped before classification, the E19 reset flag and where the corrupt file went, plus `run_plan`'s summary line verbatim. Written on every run, so a *missing* file means `run_plan` never ran |
 | What the tool believes is already published | `output/{client_id}/state.json` |
+| Whether that belief is **true** | `python -m scripts.reconcile` — lists every page on the site carrying a `meta.gtin`, per language, and diffs it against `state.json` both ways. Read-only. A run that fails part-way creates this divergence itself: the page is written, the row is logged as an error, and nothing is recorded |
 | Source-data problems | `output/{client_id}/data-quality-report.md` (`python -m scripts.report_quality`) |
 | What was actually published, per wave | `docs/clients/{client_id}-live-log.md`, where a client keeps one |
 
