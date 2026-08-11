@@ -252,11 +252,15 @@ def _is_held(prior: StateEntry) -> bool:
     """Whether this entry records a product that was deliberately taken down.
 
     Either half counts. ``run_unpublish`` retracts the resolver before drafting the pages,
-    so an interrupted run leaves entries with ``gs1_enabled=False`` and a still-published
+    so an interrupted run leaves entries with ``retracted=True`` and a still-published
     page; treating that as held is what lets the next run finish the job rather than
     reverse it.
+
+    The OR is also what keeps a *partial revive* honest: writing the resolver record back
+    clears ``retracted``, and a product whose pages are still drafts stays held on the
+    other half until they are published again.
     """
-    return prior.wp_status != _PUBLISHED_STATUS or not prior.gs1_enabled
+    return prior.wp_status != _PUBLISHED_STATUS or prior.retracted
 
 
 def _has_no_resolver_link(prior: StateEntry) -> bool:

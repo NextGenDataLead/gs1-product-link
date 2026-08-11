@@ -733,8 +733,14 @@ def _commit_state(  # noqa: PLR0913 — the merge needs both legs' output plus w
             )
             continue
         if link_hash is not None:
-            # per-GTIN: every language shares the one link set
-            entry = entry.model_copy(update={"gs1_link_set_hash": link_hash, "last_run": ts})
+            # per-GTIN: every language shares the one link set. ``retracted`` is cleared
+            # with it because the write that produced this hash passed ``is_enabled=True``
+            # — the record is back. A held row only reaches here under ``--revive``
+            # (:func:`_drop_held`), so this cannot un-hold anything on its own, and
+            # ``_is_held`` is an OR: a product whose pages are still drafts stays held.
+            entry = entry.model_copy(
+                update={"gs1_link_set_hash": link_hash, "retracted": False, "last_run": ts}
+            )
         state.entries.setdefault(gtin, {})[row.language] = entry
 
 

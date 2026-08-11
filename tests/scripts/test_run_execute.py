@@ -619,7 +619,7 @@ def test_held_gtin_is_not_republished_end_to_end(
 def test_revive_republishes_a_held_gtin_and_clears_the_hold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # --revive writes a fresh StateEntry, whose wp_status/gs1_enabled defaults are the
+    # --revive writes a fresh StateEntry, whose wp_status/retracted defaults are the
     # published condition — so a successful revive clears the hold with no extra code.
     monkeypatch.chdir(tmp_path)
     rec = _install(monkeypatch, _make_config())
@@ -631,7 +631,10 @@ def test_revive_republishes_a_held_gtin_and_clears_the_hold(
     assert [c["meta"]["gtin"] for c in rec.wp] == [GTIN_A]
     entry = load_state("acme").entries[GTIN_A]["nl"]
     assert entry.wp_status == "publish"
-    assert entry.gs1_enabled is True
+    assert entry.retracted is False
+    # This run wrote the resolver record too, so the row is fully linked again — the
+    # revived-but-still-unresolvable state is what `--revive --only pages` leaves.
+    assert entry.gs1_link_set_hash
 
 
 # --- Config / setup errors ---------------------------------------------------

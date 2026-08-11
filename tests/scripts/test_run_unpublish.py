@@ -179,7 +179,11 @@ def test_records_the_takedown_in_state(tmp_path: Path, monkeypatch: pytest.Monke
 
     entries = load_state("acme").entries[GTIN_A]
     assert [e.wp_status for e in entries.values()] == ["draft", "draft"]
-    assert not any(e.gs1_enabled for e in entries.values())
+    assert all(e.retracted for e in entries.values())
+    # The link-set hash goes with the retraction, because retraction deletes the links.
+    # A stale hash here is what made `--revive --only pages` classify UNCHANGED and leave
+    # the resolver record retracted for good.
+    assert not any(e.gs1_link_set_hash for e in entries.values())
     # The page ids survive: a held product must still be findable to revive it.
     assert entries["nl"].wp_page_id == 1447
 
@@ -272,7 +276,7 @@ def test_unknown_gtin_is_a_config_error_and_writes_nothing(
 def test_page_already_gone_leaves_status_unclaimed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The id 404s. gs1_enabled still flips (the resolver was retracted), but wp_status
+    # The id 404s. `retracted` still flips (the resolver was retracted), but wp_status
     # must not claim "draft" for a page that no longer exists.
     monkeypatch.chdir(tmp_path)
     _install(monkeypatch, _make_config(), page_gone=("nl",))
@@ -283,7 +287,7 @@ def test_page_already_gone_leaves_status_unclaimed(
     assert code == 0
     entry = load_state("acme").entries[GTIN_A]["nl"]
     assert entry.wp_status == "publish"
-    assert entry.gs1_enabled is False
+    assert entry.retracted is True
 
 
 # --- Dry run -----------------------------------------------------------------

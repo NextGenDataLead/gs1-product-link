@@ -217,6 +217,21 @@ def _present_state(*gtins: str) -> None:
     save_state(State(client_id="acme", entries={g: {"nl": entry} for g in gtins}))
 
 
+def _retracted_state(*gtins: str) -> None:
+    """State as ``run_unpublish`` leaves it: pages drafted, retracted, no link-set hash."""
+    entry = StateEntry(
+        wp_page_id=1,
+        wp_url="https://wp.test/x",
+        wp_featured_media_id=None,
+        content_hash="h",
+        gs1_link_set_hash="",
+        last_run=datetime(2026, 1, 1, tzinfo=UTC),
+        wp_status="draft",
+        retracted=True,
+    )
+    save_state(State(client_id="acme", entries={g: {"nl": entry} for g in gtins}))
+
+
 def test_pilot_gate_restricts_to_mapped_and_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -289,6 +304,31 @@ def test_pilot_gate_drops_gtin_once_resolver_link_exists(
 
     assert run_plan.main(["acme", "--products", str(products)]) == 0
     assert _read_plan().rows == []
+
+
+def test_pilot_gate_returns_a_retracted_gtin_to_the_queue_as_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A knock-on of ``run_unpublish`` blanking the link-set hash, and the better outcome.
+
+    The gate calls a GTIN finished when every language carries a link-set hash. A retracted
+    one no longer does, so instead of disappearing into the ``already_present`` tally it
+    reaches ``_classify`` and reports **HELD** — which is the thing the operator is actually
+    looking at when they read the plan-review gate. ``run_execute`` still drops it without
+    ``--revive``, so nothing about what runs has changed.
+    """
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    _retracted_state(GTIN_A)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+
+    rows = _read_plan().rows
+    assert {r.classification for r in rows} == {PlanClassification.HELD}
 
 
 def test_pilot_gate_noop_when_flag_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
