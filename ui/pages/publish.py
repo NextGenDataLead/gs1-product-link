@@ -31,7 +31,7 @@ def render() -> None:
 
     with theme.page("Publish", client_id=cid, environment=cfg.gs1.environment if cfg else None):
         theme.heading(
-            "Step 5",
+            theme.step("Publish"),
             "Publish",
             "One gate at a time. Nothing is written until every required one is answered.",
         )

@@ -173,14 +173,45 @@ body { background: var(--paper) !important; color: var(--ink) !important;
 
 #: Left rail: label, route, and the pipeline step it belongs to. Numbered because the order is
 #: the workflow, and an operator who has lost their place needs to see where they are in it.
+#:
+#: **The order is an assertion, so it has to be true.** Preflight used to sit at 2, ahead of Data
+#: and Content — yet four of its checks answer "Run `parse_export` first", which was step 3. Step 2
+#: told you to go and do step 3 and come back, and on a machine being set up from scratch most of
+#: the list could not answer its own questions yet. The doctor's headline is "N of M in scope",
+#: a statement *about the export just loaded*, so it belongs after the loading rather than before.
+#: The credential half is not lost by moving it: the Setup screen's Test buttons run those same
+#: checks, at the moment the field is edited.
+#:
+#: Configure the machine · load this wave's inputs · check *this wave* · publish it · read what ran.
 NAV: Final = (
     ("Setup", "/", "1"),
-    ("Preflight", "/preflight", "2"),
-    ("Data", "/data", "3"),
-    ("Content", "/content", "4"),
+    ("Data", "/data", "2"),
+    ("Content", "/content", "3"),
+    ("Preflight", "/preflight", "4"),
     ("Publish", "/publish", "5"),
     ("Runs", "/runs", "6"),
 )
+
+
+def step(label: str) -> str:
+    """The eyebrow for a screen — ``"Step 4"`` — read from :data:`NAV`.
+
+    Every screen used to spell its own number into ``theme.heading``, which meant the rail and
+    the headings were two lists that had to be renumbered together. They are one list now: a
+    reorder is an edit to ``NAV`` and nothing else, and a screen that is not in the rail (the
+    video mapping) borrows the step of the screen that links to it rather than inventing one.
+
+    Args:
+        label: The rail label of the screen, or of the screen this one belongs to.
+
+    Returns:
+        ``"Step N"``, or an empty eyebrow if the label is not in the rail — a missing number is
+        a cosmetic loss, and raising here would take a screen down over one.
+    """
+    for entry_label, _route, number in NAV:
+        if entry_label == label:
+            return f"Step {number}"
+    return ""
 
 
 def install() -> None:

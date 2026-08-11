@@ -21,7 +21,7 @@ def render() -> None:
 
     with theme.page("Runs", client_id=cid, environment=cfg.gs1.environment if cfg else None):
         theme.heading(
-            "Step 6",
+            theme.step("Runs"),
             "Runs",
             "Every row of every run, as it was recorded at the time.",
         )

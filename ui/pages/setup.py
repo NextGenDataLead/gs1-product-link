@@ -53,7 +53,7 @@ def render() -> None:
 
     with theme.page("Setup", client_id=cid, environment=cfg.gs1.environment if cfg else None):
         theme.heading(
-            "Step 1",
+            theme.step("Setup"),
             "Setup",
             "What this machine is configured to publish, where, and with which credentials.",
         )

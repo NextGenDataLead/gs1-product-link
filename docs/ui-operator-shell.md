@@ -47,11 +47,21 @@ through `flow-orchestrator`. The shell is a second surface over the same gates, 
 | # | Screen | What it is for |
 |---|---|---|
 | 1 | **Setup** | The operator-facing half of `clients.yml` and `.env`, as a form, with live Test buttons. |
-| 2 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
-| 3 | **Data** | Upload the export, prune the process list, edit the video mapping, read the data-quality report. |
-| 4 | **Content** | Import `generated_cache.json`, check its coverage, read the copy. |
+| 2 | **Data** | Upload the export, prune the process list, edit the video mapping, read the data-quality report. |
+| 3 | **Content** | Import `generated_cache.json`, check its coverage, read the copy. |
+| 4 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
 | 5 | **Publish** | The nine gates, one at a time. |
-| 6 | **Runs** | Every row of every run, as it was recorded at the time. |
+| 6 | **Runs** | Every row of every run, as it was recorded at the time, and whether the site agrees. |
+
+Configure the machine · load this wave's inputs · check *this wave* · publish it · read what ran.
+
+**Preflight used to sit at 2, and that was wrong.** Four of the doctor's checks have the remedy
+"Run `parse_export` first" — which is the Data screen — so step 2 told an operator to go and do
+step 3 and come back, and on a machine being set up from scratch most of the list could not answer
+its own questions yet. Its headline is "N of M in scope", a statement *about the export just
+loaded*, so it belongs after the loading. Nothing is lost by moving it: the credential checks it
+also carries are on the Setup screen's Test buttons, at the moment the field is edited. The order
+lives in `ui/theme.py`'s `NAV` and nowhere else — each screen reads its own number from it.
 
 ### Setup
 
@@ -102,6 +112,13 @@ Runs the doctor in a subprocess and renders each check with its remedy. Two butt
 credentials, no sockets) and everything. The full run authenticates against WordPress and mints a
 GS1 token; both are read-only.
 
+It runs the offline checks on arrival, so the screen is never blank — which is also why the
+buttons need to *look* like they did something. The subprocess runs off the event loop and the
+buttons disable while it does; without that, a blocking `subprocess.run` in a click handler held
+the loop until it had already finished, so "running…" never reached the browser and the screen
+looked identical from click to result. Each result carries the time it finished, because on a
+healthy machine an identical list is exactly what a working re-run produces.
+
 The first line to read is **"What a run would touch"** — how many products survive the process list
 and the video allowlist. Every check below it reports on that scope rather than the whole
 catalogue.
@@ -143,6 +160,14 @@ fingerprint covers `{inputs, language, prompt_version}`, so editing one product 
 that unit *pending* again — and a pending unit with no producer on this machine is dropped from the
 plan (E21). The screen lists the pending units by GTIN and language, so "request a fresh cache" is
 an instruction rather than a hunch.
+
+**Asking for that cache is a conversation, not a button, and deliberately so.** This machine never
+runs `run_generate` — no API key, no Anthropic egress — so it cannot produce
+`generation_requests.json` either; that command runs on the maintainer's machine, in a Claude Code
+session with the `content-generator` skill, which reads the pending units itself from the same
+export. What the operator sends is the list this screen already shows. A file written here for
+someone else to run `--emit` against would add a hand-off without removing one, which is why there
+is no export button.
 
 ### Publish
 

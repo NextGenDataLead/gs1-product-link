@@ -57,7 +57,7 @@ def render() -> None:
 
     with theme.page("Data", client_id=cid, environment=cfg.gs1.environment if cfg else None):
         theme.heading(
-            "Step 3",
+            theme.step("Data"),
             "Video mapping",
             "Which video belongs to which product, in each language.",
         )
