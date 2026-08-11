@@ -1314,7 +1314,9 @@ start of the phase (like the export and control file). See `docs/clients/democli
 >
 > The end-to-end chat flow was driven in a Claude Code session on the real Democlient operator files
 > (`input/democlient/products.xlsx` + the process list): `parse_export` (127 products, 11
-> warnings) → `run_generate --emit` (246 pending) → `content-generator` write + `--ingest` (review
+> warnings) → `run_generate --emit` (246 pending — recorded as it ran; `--emit` has since been
+> narrowed to the in-scope products, so the same run today emits the doctor's pending figure
+> instead) → `content-generator` write + `--ingest` (review
 > gate 1) → `run_plan` (72 new, 2 held, 90 excluded — review gate 2) → confirm gate. Every §10.6
 > gate presented correctly. Each skill loads on its documented trigger phrase (all 6 phrases are
 > distinct and non-colliding).
