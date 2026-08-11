@@ -33,7 +33,7 @@ from lib.config import (
 )
 from lib.errors import MediaIntegrityError, WordPressAPIError
 from lib.records import LocalisedText, Plan, PlanClassification, PlanRow, ProductRecord, State
-from lib.state import load_state
+from lib.state import load_state, save_state
 from lib.wp_client import MediaUpload
 from scripts import run_execute
 
@@ -1220,6 +1220,66 @@ def test_pages_then_links_lands_the_same_state_as_one_run(
     assert run_execute.main(["acme", "--plan", str(plan), "--only", "links"]) == 0
 
     assert _entry_without_timestamp(load_state("acme")) == in_one_go
+
+
+def test_only_links_revive_clears_the_retraction_it_just_undid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An interrupted ``run_unpublish``: resolver retracted, pages never drafted.
+
+    ``safe_upsert(is_enabled=True)`` writes the record back, so after this the product is
+    fully live. ``_commit_state`` used to update the hash and leave ``retracted`` set, so
+    the row classified HELD on every later run and only ``--revive`` got it through — each
+    time, forever. Driven through ``main`` rather than by copying the entry by hand: the
+    claim is about what the command writes.
+    """
+    monkeypatch.chdir(tmp_path)
+    _install(monkeypatch, _make_config())
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+
+    state = load_state("acme")
+    entry = state.entries[GTIN_A]["nl"]
+    assert entry.retracted is False  # precondition: a pages run records no retraction
+    state.entries[GTIN_A]["nl"] = entry.model_copy(
+        update={"retracted": True, "gs1_link_set_hash": ""}
+    )
+    save_state(state)
+
+    held = _write_json(tmp_path / "held.json", _plan(_held(_row())))
+    code = run_execute.main(["acme", "--plan", str(held), "--only", "links", "--revive"])
+
+    assert code == 0
+    written = load_state("acme").entries[GTIN_A]["nl"]
+    assert written.retracted is False, "the resolver record was written back and enabled"
+    assert written.gs1_link_set_hash
+
+
+def test_only_links_revive_leaves_a_drafted_product_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of the OR, and why clearing the flag above is safe.
+
+    Writing the resolver record back says nothing about the pages. A fully unpublished
+    product revived one leg at a time must stay held on ``wp_status`` until the pages are
+    published too.
+    """
+    monkeypatch.chdir(tmp_path)
+    _install(monkeypatch, _make_config())
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+
+    state = load_state("acme")
+    entry = state.entries[GTIN_A]["nl"]
+    state.entries[GTIN_A]["nl"] = entry.model_copy(
+        update={"retracted": True, "wp_status": "draft", "gs1_link_set_hash": ""}
+    )
+    save_state(state)
+
+    held = _write_json(tmp_path / "held.json", _plan(_held(_row())))
+    assert run_execute.main(["acme", "--plan", str(held), "--only", "links", "--revive"]) == 0
+
+    assert load_state("acme").entries[GTIN_A]["nl"].wp_status == "draft"
 
 
 def test_only_links_refuses_a_target_that_does_not_serve(
