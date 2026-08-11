@@ -169,12 +169,14 @@ enough to have made the shell unusable for its main job:
 | [#68](https://github.com/NextGenDataLead/gs1-product-link/pull/68) | **Nothing compared the site against `state.json`** (#58) — and a run that fails part-way creates that divergence itself: the page is written, the row is logged as an error, and nothing is recorded. `python -m scripts.reconcile`, read-only, also on the Runs screen. |
 | [#69](https://github.com/NextGenDataLead/gs1-product-link/pull/69) | **The preflight buttons looked dead** (#58) — a blocking subprocess held the event loop, so "running…" never painted — and Preflight was numbered *before* the screens four of its checks tell you to run first. Now `Setup · Data · Content · Preflight · Publish · Runs`, with the order held by tests. |
 | [#70](https://github.com/NextGenDataLead/gs1-product-link/pull/70) | **Two gates declared options no screen rendered** (#58, closing it). Marked `chat_only` in the data rather than deleted — the shell having no model is no reason for the chat flow to lose *Explain each error* — and `show-full-diff` built. The hand-maintained exception list is gone. |
+| [#71](https://github.com/NextGenDataLead/gs1-product-link/pull/71) | **A failed row named neither the call nor the answer** (#60, parts 3 and 4). `_api_error` had the endpoint, the label and the body in hand, logged all three to a console nobody keeps, and built the exception with none of them — so `runs/*.jsonl` recorded `WordPressAPIError('WordPress API error 403')` for a video upload it never identified as one. The three API errors now carry the call and a scrubbed, bounded body excerpt in their message; `RunOutcome` gains `failed_call`. |
 
 Still filed: **[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)**
 (screens showing the catalogue where they mean the batch) and
 **[#60](https://github.com/NextGenDataLead/gs1-product-link/issues/60)**
-(media uploads: a deterministic `403` from the site's own PHP, and a truncated upload treated as
-success).
+(media uploads). #60's blocker was fixed by #62 and its observability half by #71; what remains
+of it is the media half — a truncated upload treated as success, and orphaned attachments never
+cleaned up.
 
 **#59 was the one that explained the other three.** CI installed `.[dev]` — which is exactly what
 keeps `lib` provably free of a UI dependency — and therefore never touched `ui/pages/`. Three
@@ -196,9 +198,11 @@ the product is now live in both languages, with GS1 untouched and both rows plan
 which is the pages→links handoff working as designed.
 
 The lesson is worth more than the fix: **capture what the failing response actually said before
-concluding who refused it.** `WordPressAPIError` carries the body and drops it from `__str__`, so
+concluding who refused it.** `WordPressAPIError` carried the body and dropped it from `__str__`, so
 the run log recorded only `'WordPress API error 403'` and the HTML that identified the culprit lived
-in a console nobody would have on a scheduled run — see #60.
+in a console nobody would have on a scheduled run. [#71](https://github.com/NextGenDataLead/gs1-product-link/pull/71)
+closes that: the message now names the failing call and quotes what the server said, scrubbed and
+bounded, and the row records `failed_call`.
 
 **Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows). The
 exposed WordPress application password was **rotated on 2026-07-30** and the old one revoked.

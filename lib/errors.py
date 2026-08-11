@@ -4,9 +4,61 @@ Every module raises exceptions from this hierarchy rather than bare
 ``Exception`` (see ``docs/IMPLEMENTATION_SPEC.md`` §1 and §4.1). Callers can
 catch :class:`OrchestratorError` to handle any tool-originated failure, or a
 specific subclass for finer control.
+
+**The three API errors put the failing call and the server's answer in their message.**
+``run_execute`` records a failed row as ``repr(exc)``, so whatever is *not* in the message is
+not in ``runs/*.jsonl`` — and the run log is the only durable per-row record this tool keeps.
+For a long time the message was the status code alone, which is how a live ``403`` came to be
+recorded as ``WordPressAPIError('WordPress API error 403')``: the HTML naming the culprit went
+to a console nobody has on a scheduled run, and the row never said *which* of a page write, an
+ACF write and two media uploads had failed. Diagnosing that cost hours and one wrong conclusion.
+
+The body is scrubbed by :func:`lib.logging_setup.scrub_response_body` and bounded by
+:data:`ERROR_BODY_LIMIT` before it goes anywhere near the message; ``response_body`` still holds
+the raw text for programmatic inspection.
 """
 
 from __future__ import annotations
+
+from typing import Final
+
+from lib.logging_setup import scrub_response_body
+
+#: Longest response-body excerpt carried in an error message or a log line, in characters.
+#: Shared by the API clients so a body is bounded identically wherever it surfaces.
+ERROR_BODY_LIMIT: Final = 500
+
+#: Appended to an excerpt that was cut, so a truncated body never reads as a complete one.
+_TRUNCATION_MARKER: Final = "…"
+
+
+def _body_excerpt(response_body: str) -> str:
+    """Scrub, collapse whitespace in, and bound a response body for use in a message.
+
+    Whitespace is collapsed because the bodies that matter most here are HTML error pages —
+    a security plugin's block page runs to many indented lines, of which only the first few
+    identify it. Collapsed, the useful part fits inside the bound and the message stays one
+    line in both the console and the JSONL run log.
+    """
+    scrubbed = " ".join(scrub_response_body(response_body).split())
+    if len(scrubbed) <= ERROR_BODY_LIMIT:
+        return scrubbed
+    return scrubbed[:ERROR_BODY_LIMIT] + _TRUNCATION_MARKER
+
+
+def _api_detail(
+    summary: str, response_body: str, *, call: str | None = None, extra: str | None = None
+) -> str:
+    """Compose the message an API error carries into ``repr()``, hence into the run log."""
+    detail = summary
+    if call:
+        detail += f" on {call}"
+    if extra:
+        detail += f" ({extra})"
+    excerpt = _body_excerpt(response_body)
+    if excerpt:
+        detail += f": {excerpt}"
+    return detail
 
 
 class OrchestratorError(Exception):
@@ -30,31 +82,38 @@ class GS1APIError(OrchestratorError):
 
     Attributes:
         status_code: The HTTP status code of the failing response.
-        response_body: The raw response body (first-500-char, PII-scrubbed
-            variants are produced by the caller for logging; this holds the
-            unscrubbed body for programmatic inspection).
+        response_body: The raw, unscrubbed response body, for programmatic inspection.
+            The message carries a scrubbed, bounded excerpt of it.
         error_results: The parsed ``ErrorResult[]`` payload when the 400 body
             follows the standard v2 shape
             ``[{"identifier": ..., "errors": [{"code": ..., "message": ...}]}]``;
             ``None`` when the body is not in that shape (see §5.1).
         request_id: The server-assigned request id, when the API returns one.
+        call: The request that failed, e.g. ``POST /digital-link/v2/... (gtin 087...)``,
+            or ``None`` when the failure is not tied to one call.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — one param per attribute; bundling them only hides them
         self,
         status_code: int,
         response_body: str,
         error_results: list[dict[str, object]] | None = None,
         request_id: str | None = None,
+        call: str | None = None,
     ) -> None:
         self.status_code = status_code
         self.response_body = response_body
         self.error_results = error_results
         self.request_id = request_id
-        detail = f"GS1 API error {status_code}"
-        if request_id:
-            detail += f" (request_id={request_id})"
-        super().__init__(detail)
+        self.call = call
+        super().__init__(
+            _api_detail(
+                f"GS1 API error {status_code}",
+                response_body,
+                call=call,
+                extra=f"request_id={request_id}" if request_id else None,
+            )
+        )
 
 
 class WordPressAPIError(OrchestratorError):
@@ -62,13 +121,20 @@ class WordPressAPIError(OrchestratorError):
 
     Attributes:
         status_code: The HTTP status code of the failing response.
-        response_body: The raw response body.
+        response_body: The raw, unscrubbed response body, for programmatic inspection.
+            The message carries a scrubbed, bounded excerpt of it.
+        call: The request that failed, e.g.
+            ``POST /wp-json/wp/v2/media (upload media hero-a1b2c3d4e5f6)``, or ``None`` when
+            the failure is a guard rather than a call.
     """
 
-    def __init__(self, status_code: int, response_body: str) -> None:
+    def __init__(self, status_code: int, response_body: str, call: str | None = None) -> None:
         self.status_code = status_code
         self.response_body = response_body
-        super().__init__(f"WordPress API error {status_code}")
+        self.call = call
+        super().__init__(
+            _api_detail(f"WordPress API error {status_code}", response_body, call=call)
+        )
 
 
 class OverwriteError(OrchestratorError):
@@ -180,9 +246,20 @@ class LLMAPIError(OrchestratorError):
     Attributes:
         status_code: The HTTP status of the failing response, or ``0`` for a transport failure.
         response_body: The raw response body (already sliced to a bounded length by the caller).
+        call: The request that failed, or ``None`` when the call itself succeeded and it is the
+            response that could not be used.
     """
 
-    def __init__(self, status_code: int, response_body: str, message: str | None = None) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        response_body: str,
+        message: str | None = None,
+        call: str | None = None,
+    ) -> None:
         self.status_code = status_code
         self.response_body = response_body
-        super().__init__(message or f"Anthropic API error {status_code}")
+        self.call = call
+        super().__init__(
+            _api_detail(message or f"Anthropic API error {status_code}", response_body, call=call)
+        )

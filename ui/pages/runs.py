@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from nicegui import ui
 
+from lib.records import RunOutcome
 from ui import REPO_ROOT, context, runner, theme
 
 
@@ -127,9 +128,7 @@ def _run(run: context.RunLog) -> None:
         if errors:
             with ui.element("div").classes("mt-2"):
                 for outcome in errors[:_MAX_ERRORS]:
-                    ui.label(f"{outcome.gtin} ({outcome.language}): {outcome.error}").classes(
-                        "note mono scroll-x"
-                    )
+                    ui.label(_error_line(outcome)).classes("note mono scroll-x")
             ui.label(
                 "In a links-only run, 'refusing to point a permanent GS1 record at it' means the "
                 "target URL did not serve — the page is not where the plan thinks it is. That is "
@@ -156,6 +155,17 @@ def _run(run: context.RunLog) -> None:
                 rows=rows,
                 row_key="gtin",
             ).classes("w-full")
+
+
+def _error_line(outcome: RunOutcome) -> str:
+    """One failed row, naming the request that failed when the run recorded one.
+
+    The call goes first because it is what the reader needs first: "which of this row's five
+    HTTP calls broke" is a different question from "what did it say", and a row that only said
+    ``failed: 403`` sent someone re-running with the output piped to a file to answer it.
+    """
+    call = f"{outcome.failed_call}: " if outcome.failed_call else ""
+    return f"{outcome.gtin} ({outcome.language}): {call}{outcome.error}"
 
 
 _MAX_ERRORS = 25

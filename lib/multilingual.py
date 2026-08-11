@@ -119,6 +119,7 @@ class WPMLAdapter(MultilingualAdapter):
                 f"WPML source language {self._source_language!r} is not among the linked "
                 f"languages {sorted(translations)}; cannot form a translation group"
             )
+        label = f"wpml link {sorted(translations)}"
         resp = wp._request(  # noqa: SLF001 — adapters intentionally reuse the client's transport
             "POST",
             self._helper_path,
@@ -126,12 +127,12 @@ class WPMLAdapter(MultilingualAdapter):
                 "translations": translations,
                 "source_language": self._source_language,
             },
-            label=f"wpml link {sorted(translations)}",
+            label=label,
         )
-        self._assert_linked(resp.json(), translations)
+        self._assert_linked(resp.json(), translations, call=f"POST {self._helper_path} ({label})")
 
     @staticmethod
-    def _assert_linked(body: object, requested: dict[str, int]) -> None:
+    def _assert_linked(body: object, requested: dict[str, int], *, call: str) -> None:
         """Fail unless the helper reports back exactly the group that was requested."""
         linked: dict[str, int] = {}
         if isinstance(body, dict):
@@ -143,6 +144,7 @@ class WPMLAdapter(MultilingualAdapter):
                 int(HTTPStatus.CONFLICT),
                 f"WPML helper reported translation group {linked or '(none)'}, expected "
                 f"{requested} — the link was not applied",
+                call=call,
             )
 
 

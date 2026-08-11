@@ -80,7 +80,14 @@ from pydantic import ValidationError
 from lib.acf import build_acf_payload
 from lib.config import ClientConfig, GS1LinkConfig, MediaConfig, get_client
 from lib.env import load_env
-from lib.errors import ConfigError, StateError, VideoMapError, WordPressAPIError
+from lib.errors import (
+    ConfigError,
+    GS1APIError,
+    LLMAPIError,
+    StateError,
+    VideoMapError,
+    WordPressAPIError,
+)
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
 from lib.media import convert_image_for_web
@@ -504,6 +511,35 @@ def _item_description(cfg: ClientConfig, rows: list[PlanRow], pages: dict[str, _
     return rows[0].title
 
 
+def _failed_call(exc: BaseException) -> str | None:
+    """The request an exception blames, following ``__cause__`` when it was wrapped.
+
+    A row issues a page write, an ACF write, a URL verification and up to two media uploads,
+    and the exception alone does not say which. The API clients record it on the error; this
+    reads it back for the run log.
+
+    The chain walk is not defensive padding: :func:`_verify_targets` deliberately re-raises a
+    :class:`WordPressAPIError` as a ``RuntimeError`` to explain *why* a non-serving target
+    refuses a permanent GS1 write, so the one path that already adds context is the one that
+    would otherwise drop the call identity.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, WordPressAPIError | GS1APIError | LLMAPIError):
+            return current.call
+        current = current.__cause__
+    return None
+
+
+def _record_failure(outcome: RunOutcome, exc: BaseException) -> None:
+    """Mark a row failed, recording both what went wrong and which call it was."""
+    outcome.status = "error"
+    outcome.error = repr(exc)
+    outcome.failed_call = _failed_call(exc)
+
+
 def _block_gtin(gtin: str, rows: list[PlanRow], outcomes: dict[str, RunOutcome]) -> None:
     """Fail every row of a GTIN whose sibling failed phase 1, writing no state.
 
@@ -664,8 +700,7 @@ def _execute_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them
                     cfg, row, wp, engine, state, outcomes[row.language]
                 )
             except Exception as exc:  # noqa: BLE001 — one bad row must not abort the run
-                outcomes[row.language].status = "error"
-                outcomes[row.language].error = repr(exc)
+                _record_failure(outcomes[row.language], exc)
                 _log.error("row %s/%s failed: %r", gtin, row.language, exc)
         if len(fresh) != len(rows):
             _block_gtin(gtin, rows, outcomes)
@@ -681,8 +716,7 @@ def _execute_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them
         _commit_state(state, gtin, rows, page_entries, link_hash, ts)
     except Exception as exc:  # noqa: BLE001 — one bad GTIN must not abort the run
         for row in rows:
-            outcomes[row.language].status = "error"
-            outcomes[row.language].error = repr(exc)
+            _record_failure(outcomes[row.language], exc)
         _log.error("gtin %s failed its per-product writes: %r", gtin, exc)
         return [outcomes[row.language] for row in rows]
 
@@ -750,8 +784,7 @@ def _preview_row(
         # gets one resolver write carrying both languages' links, not one write per line.
         _log.info("[dry-run] %s/%s: %s", row.gtin, row.language, _preview_text(cfg, row, mode))
     except Exception as exc:  # noqa: BLE001 — surface template errors as a failed preview row
-        outcome.status = "error"
-        outcome.error = repr(exc)
+        _record_failure(outcome, exc)
         _log.error("dry-run row %s/%s failed: %r", row.gtin, row.language, exc)
     return outcome
 

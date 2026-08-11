@@ -271,7 +271,19 @@ class ConfirmedPlan(BaseModel):
 
 
 class RunOutcome(BaseModel):
-    """The result of processing one (GTIN, language) during a run (§2.3)."""
+    """The result of processing one (GTIN, language) during a run (§2.3).
+
+    ``failed_call`` names the request that failed — method, path, and the client's own label,
+    e.g. ``POST /wp-json/wp/v2/media (upload media hero-a1b2c3d4e5f6)``. A row runs a page
+    write, an ACF write, a URL verification and up to two media uploads, and ``error`` alone
+    does not distinguish them: a live ``403`` reported as "failed: 403" took a re-run with the
+    output captured to a file before anyone knew it was a video upload rather than the page.
+
+    Optional because run logs written before the field exists have none, and because not every
+    failure is a call (a template error, a blocked sibling). ``None`` means "not recorded", and
+    readers omit it rather than guessing — the same back-compat move :class:`StateEntry` makes
+    with ``title``.
+    """
 
     gtin: str
     language: str
@@ -283,6 +295,7 @@ class RunOutcome(BaseModel):
     gs1_set: bool = False
     qr_paths: list[str] = Field(default_factory=list)
     error: str | None = None
+    failed_call: str | None = None
 
 
 class SourceIssue(BaseModel):

@@ -281,7 +281,10 @@ class AnthropicClient:
             except httpx.HTTPError as exc:
                 if attempt >= _RETRY_MAX_ATTEMPTS:
                     raise LLMAPIError(
-                        0, str(exc)[:_MAX_ERROR_BODY], f"Anthropic API request failed: {exc}"
+                        0,
+                        str(exc)[:_MAX_ERROR_BODY],
+                        f"Anthropic API request failed: {exc}",
+                        call=f"POST {self._url}",
                     ) from exc
                 self._sleep(_backoff(attempt))
                 continue
@@ -293,5 +296,9 @@ class AnthropicClient:
                 )
                 self._sleep(_backoff(attempt))
                 continue
-            raise LLMAPIError(response.status_code, response.text[:_MAX_ERROR_BODY])
+            raise LLMAPIError(
+                response.status_code,
+                response.text[:_MAX_ERROR_BODY],
+                call=f"POST {self._url}",
+            )
         raise LLMAPIError(0, "", "Anthropic API retries exhausted")  # pragma: no cover

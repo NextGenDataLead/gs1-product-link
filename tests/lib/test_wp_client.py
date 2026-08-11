@@ -865,6 +865,40 @@ def test_network_error_retried_then_status_zero(httpx_mock: HTTPXMock) -> None:
     with pytest.raises(WordPressAPIError) as exc:
         client.find_by_slug(POST_TYPE, "p-1")
     assert exc.value.status_code == 0  # network-error sentinel
+    assert exc.value.call is not None  # a network error still knows what it was attempting
+
+
+def test_media_403_names_the_upload_and_carries_the_html(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    """The failure from issue #60, as the run log would record it.
+
+    A live site refused a video upload with a bare HTML ``403`` — not WordPress REST, which
+    answers JSON. The row said only ``failed: 403``, so it took a re-run with the output piped
+    to a file to learn this was ``POST /wp-json/wp/v2/media`` for one video rather than the page
+    write, and the HTML naming the culprit was never written down at all.
+    """
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"VIDEODATA")
+    slug = f"clip-{hashlib.sha256(b'VIDEODATA').hexdigest()[:12]}"
+
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])  # content-slug lookup: miss
+    httpx_mock.add_response(
+        method="POST",
+        url=MEDIA_URL,
+        status_code=403,
+        text="<!DOCTYPE html><html><head><title>403 Forbidden</title></head></html>",
+    )
+
+    with pytest.raises(WordPressAPIError) as exc:
+        client.upload_media(video)
+
+    assert exc.value.call == f"POST /wp-json/wp/v2/media (upload media {slug})"
+    recorded = repr(exc.value)  # what run_execute writes into runs/*.jsonl
+    assert "POST /wp-json/wp/v2/media" in recorded
+    assert "403 Forbidden" in recorded  # the HTML that identifies the refuser
+    assert slug in recorded  # and which file it was
 
 
 # --- PII scrubbing DoD (§5.2) ------------------------------------------------
@@ -886,7 +920,7 @@ def test_secrets_never_appear_in_logs(
 
     with (
         caplog.at_level(logging.DEBUG, logger="lib.wp_client"),
-        pytest.raises(WordPressAPIError),
+        pytest.raises(WordPressAPIError) as exc,
     ):
         client.upsert_page(POST_TYPE, "p-1", "T", "B", "nl", meta={"gtin": "1"})
 
@@ -894,6 +928,12 @@ def test_secrets_never_appear_in_logs(
     assert APP_PASS_VALUE not in log_text
     assert "leaked-in-body" not in log_text
     assert "[REDACTED]" in log_text
+    # The error message carries the body too, and it reaches runs/*.jsonl — a file, not a
+    # console. It must be scrubbed by the same rule, or this test's contract has a way around it.
+    message = repr(exc.value)
+    assert APP_PASS_VALUE not in message
+    assert "leaked-in-body" not in message
+    assert "[REDACTED]" in message
 
 
 # --- Enumerating a post type (reconciliation) --------------------------------
