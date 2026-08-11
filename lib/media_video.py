@@ -23,13 +23,15 @@ import logging
 import re
 import subprocess  # noqa: S404 — ffmpeg is invoked with a fixed, non-shell argv
 from collections import Counter
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import NamedTuple
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
+from lib.errors import VideoMapError
 from lib.records import ProductRecord, SourceIssue
 
 _log = logging.getLogger(__name__)
@@ -202,9 +204,136 @@ def fully_mapped_gtins(vmap: VideoMap, languages: list[str]) -> frozenset[str]:
 
 
 def load_video_map(path: Path) -> VideoMap:
-    """Load and validate the confirmed mapping YAML (``{lang: [{file, gtin}]}``)."""
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return VideoMap.model_validate({"by_language": raw})
+    """Load and validate the confirmed mapping YAML (``{lang: [{file, gtin}]}``).
+
+    Args:
+        path: The ``mapping.yml`` named by ``media.video_map_path``.
+
+    Returns:
+        The parsed mapping.
+
+    Raises:
+        VideoMapError: The file is missing, unreadable, not valid YAML, or not the expected
+            shape. A YAML syntax error carries its line and column through, because the operator
+            has to find it in a file they edited by hand.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise VideoMapError(f"cannot read the video mapping at {path}: {exc}") from exc
+
+    try:
+        raw = yaml.safe_load(text) or {}
+    except yaml.YAMLError as exc:
+        raise VideoMapError(f"{path} is not valid YAML {_yaml_detail(exc)}") from exc
+
+    try:
+        return VideoMap.model_validate({"by_language": raw})
+    except ValidationError as exc:
+        raise VideoMapError(
+            f"{path} is valid YAML but not a video mapping — expected "
+            f"{{language: [{{file, gtin}}]}} — {_shape_detail(exc)}"
+        ) from exc
+
+
+def _shape_detail(exc: ValidationError) -> str:
+    """The first validation failure as one line, located by key path.
+
+    Same reason as :func:`_yaml_detail`: pydantic's own rendering is a paragraph, and this
+    message has to survive being put in a table cell.
+    """
+    errors = exc.errors()
+    if not errors:  # pragma: no cover - pydantic always reports at least one
+        return str(exc)
+    first = errors[0]
+    where = ".".join(str(part) for part in first["loc"]) or "the document"
+    return f"{where}: {first['msg']} ({len(errors)} problem(s))"
+
+
+def _yaml_detail(exc: yaml.YAMLError) -> str:
+    """A YAML error as one line: where it is, then what it is.
+
+    PyYAML's own ``str()`` is a multi-line block with a caret diagram. That is fine in a terminal
+    and wrong everywhere else this message goes — a preflight row, a run log, a notification —
+    so the position and the problem are pulled out and the diagram left behind.
+    """
+    mark = getattr(exc, "problem_mark", None)
+    problem = getattr(exc, "problem", None)
+    if mark is None or problem is None:  # a YAMLError that carries no mark; keep it on one line
+        return f"— {' '.join(str(exc).split())}"
+
+    context = getattr(exc, "context", None)
+    what = f"{context}, {problem}" if context else str(problem)
+    return f"at line {mark.line + 1}, column {mark.column + 1} — {what}"
+
+
+@dataclass(frozen=True)
+class VideoMapSummary:
+    """The mapping's coverage, counted once so every surface reports the same numbers.
+
+    It exists because two of them did not. The preflight compared *every* gap — including one per
+    map row when the folders are absent — against the number of files on disk, and printed
+    "284 of 0 video file(s) are not yet confirmed": a ratio whose numerator is a different
+    quantity from its denominator, on exactly the machine where it is read first. ``build_video_map
+    --check`` counted differently again, by entries rather than GTINs.
+
+    Attributes:
+        files: Video files found on disk, across every configured language folder.
+        entries: Rows in the mapping, across every language.
+        unconfirmed: Rows with no GTIN filled in yet.
+        ambiguous: GTINs confirmed to more than one file in one language.
+        missing_from_map: Files on disk with no row in the mapping.
+        file_missing: Rows naming a file that is not on disk.
+        confirmed_gtins: GTINs confirmed in **every** requested language — the runnable set.
+    """
+
+    files: int
+    entries: int
+    unconfirmed: int
+    ambiguous: int
+    missing_from_map: int
+    file_missing: int
+    confirmed_gtins: int
+
+    @property
+    def gaps(self) -> int:
+        """Every gap, of any kind."""
+        return self.unconfirmed + self.ambiguous + self.missing_from_map + self.file_missing
+
+    @property
+    def no_files_found(self) -> bool:
+        """Whether the mapping has rows but the folders hold nothing.
+
+        A distinct condition, and a different fix: the mapping arrived and the (multi-gigabyte)
+        video library did not. Reporting it as unconfirmed mappings sends the operator to edit a
+        file that is already correct.
+        """
+        return self.files == 0 and self.entries > 0
+
+
+def summarize_video_map(
+    vmap: VideoMap, files_by_language: dict[str, list[str]], languages: list[str]
+) -> VideoMapSummary:
+    """Count what is mapped, what is missing, and what is runnable.
+
+    Args:
+        vmap: The confirmed mapping.
+        files_by_language: Filenames found in each configured video folder.
+        languages: The languages a product must be confirmed in to be runnable.
+
+    Returns:
+        The counts, per gap kind rather than as one total — so no caller has to invent a ratio.
+    """
+    kinds = Counter(issue.issue for issue in check_video_map(vmap, files_by_language))
+    return VideoMapSummary(
+        files=sum(len(names) for names in files_by_language.values()),
+        entries=sum(len(entries) for entries in vmap.by_language.values()),
+        unconfirmed=kinds["video_unconfirmed"],
+        ambiguous=kinds["video_ambiguous"],
+        missing_from_map=kinds["video_missing_from_map"],
+        file_missing=kinds["video_file_missing"],
+        confirmed_gtins=len(fully_mapped_gtins(vmap, languages)),
+    )
 
 
 def check_video_map(vmap: VideoMap, files_by_language: dict[str, list[str]]) -> list[SourceIssue]:

@@ -120,6 +120,56 @@ def test_check_exits_0_when_all_confirmed(tmp_path: Path, monkeypatch: pytest.Mo
     assert build_video_map.main(["acme", "--check"]) == 0
 
 
+def test_check_of_a_hand_edited_mapping_exits_1_with_a_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The docstring has always promised exit 1 on a read error. It used to raise instead.
+
+    ``yaml.YAMLError`` escaped every handler in the codebase, so the one file a human is
+    required to edit answered a stray tab with a Python stack trace.
+    """
+    mapping = tmp_path / "mapping.yml"
+    mapping.write_text('nl:\n  - {file: "A_NL.mpeg", gtin: ""}\n\tstray tab\n', encoding="utf-8")
+    _patch_client(monkeypatch, _make_config(_media(tmp_path, map_path=str(mapping))))
+    _make_folder(tmp_path, "nl", ["A_NL.mpeg"])
+    monkeypatch.chdir(tmp_path)
+
+    code = build_video_map.main(["acme", "--check"])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "not valid YAML" in err
+    assert "line 3" in err
+    assert "Traceback" not in err
+
+
+def test_check_of_a_missing_mapping_exits_1_rather_than_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _patch_client(monkeypatch, _make_config(_media(tmp_path, map_path=str(tmp_path / "nope.yml"))))
+    _make_folder(tmp_path, "nl", [])
+    monkeypatch.chdir(tmp_path)
+
+    assert build_video_map.main(["acme", "--check"]) == 1
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_check_says_the_files_are_absent_rather_than_blaming_the_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A confirmed mapping and no video library: the fix is a file copy, not an edit."""
+    mapping = tmp_path / "mapping.yml"
+    mapping.write_text('nl:\n  - {file: "A_NL.mpeg", gtin: "08713195001234"}\n', encoding="utf-8")
+    _patch_client(monkeypatch, _make_config(_media(tmp_path, map_path=str(mapping))))
+    _make_folder(tmp_path, "nl", [])
+    _make_folder(tmp_path, "fr", [])
+    monkeypatch.chdir(tmp_path)
+
+    build_video_map.main(["acme", "--check"])
+
+    assert "no video files found" in capsys.readouterr().err
+
+
 def test_check_writes_video_map_issues_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -142,6 +142,23 @@ class ProcessListError(OrchestratorError):
     """
 
 
+class VideoMapError(OrchestratorError):
+    """The video mapping is missing, unreadable, or not valid YAML.
+
+    Raised by ``lib.media_video.load_video_map`` for the operator's ``mapping.yml``. The sibling
+    of :class:`ProcessListError`, and for the same reason: it is a hand-edited input file, so its
+    failures belong to the operator rather than to a stack trace.
+
+    **The malformed case is the one that matters.** A *missing* file already reported cleanly,
+    because every caller caught :class:`OSError`; a *hand-edited* one raised ``yaml.YAMLError``,
+    which inherits from ``Exception`` alone and so escaped all of them. That put a 25-line
+    traceback in front of an operator for the single failure that cannot happen unless a human
+    edited the file — and this is a file the design requires a human to edit and a client to sign
+    off. A stray tab from a text editor was enough. The YAML error already carries the line and
+    column; this wraps it so that reaches the operator instead.
+    """
+
+
 class GeneratorError(OrchestratorError):
     """The generated-content cache could not be loaded, parsed, written, or validated.
 

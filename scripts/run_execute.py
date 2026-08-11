@@ -80,7 +80,7 @@ from pydantic import ValidationError
 from lib.acf import build_acf_payload
 from lib.config import ClientConfig, GS1LinkConfig, MediaConfig, get_client
 from lib.env import load_env
-from lib.errors import ConfigError, StateError, WordPressAPIError
+from lib.errors import ConfigError, StateError, VideoMapError, WordPressAPIError
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
 from lib.media import convert_image_for_web
@@ -423,8 +423,8 @@ def _video_media_id(
         return None
     try:
         vmap = load_video_map(Path(media.video_map_path))
-    except (OSError, ValueError) as exc:
-        _log.warning("could not load video map %s: %r (skipping video)", media.video_map_path, exc)
+    except VideoMapError as exc:
+        _log.warning("could not load video map %s: %s (skipping video)", media.video_map_path, exc)
         return None
     filename = vmap.resolve(row.gtin, row.language)
     if not filename:
@@ -825,9 +825,9 @@ def _pilot_allowlist(cfg: ClientConfig) -> frozenset[str] | None:
         return None
     try:
         vmap = load_video_map(Path(media.video_map_path))
-    except (OSError, ValueError) as exc:
+    except VideoMapError as exc:
         _log.error(
-            "cannot load video map %s for the pilot allowlist: %r — blocking every GTIN",
+            "cannot load video map %s for the pilot allowlist: %s — blocking every GTIN",
             media.video_map_path,
             exc,
         )

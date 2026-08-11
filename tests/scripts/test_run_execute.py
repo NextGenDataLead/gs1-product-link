@@ -800,6 +800,28 @@ def test_pilot_restrict_all_blocked_writes_nothing(
     assert rec.wp == []  # nothing published
 
 
+def test_a_mapping_that_will_not_load_blocks_every_gtin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The allowlist fails safe: unreadable mapping, empty allowlist, nothing written.
+
+    Asserted rather than assumed, because the property is easy to lose. It survived only as
+    long as the handler's exception tuple happened to match what the loader raised — and it did
+    not: a malformed mapping raised ``yaml.YAMLError``, which ``except (OSError, ValueError)``
+    never caught. Publishing the whole catalogue is one wrong except-clause away.
+    """
+    monkeypatch.chdir(tmp_path)
+    mapping = tmp_path / "broken.yml"
+    mapping.write_text(f'nl:\n  - {{file: "a.mp4", gtin: "{GTIN_A}"}}\n\tstray tab\n', "utf-8")
+    cfg = _media_config(video_map_path=str(mapping), restrict_to_mapped_gtins=True)
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_B, "nl")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    assert rec.wp == [], "an unreadable allowlist must block everything, not nothing"
+
+
 def test_dry_run_uploads_no_media(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     cfg = _media_config()

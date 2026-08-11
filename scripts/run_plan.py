@@ -50,7 +50,7 @@ from pydantic import ValidationError
 from lib.categories import resolve_category
 from lib.config import ClientConfig, get_client
 from lib.env import load_env
-from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError
+from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError, VideoMapError
 from lib.generator import load_cache, merge_generated
 from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
 from lib.process_list import load_process_list
@@ -421,6 +421,11 @@ def main(argv: list[str] | None = None) -> int:
         GeneratorError,
         StateError,
         ProcessListError,
+        # Same class of fault as the process list: an operator input file that will not load.
+        # It reaches here from the pilot allowlist, where proceeding is not an option — an
+        # allowlist that cannot be read would either publish everything or nothing, and both
+        # are wrong answers to "which GTINs did the client confirm a video for?".
+        VideoMapError,
         FileNotFoundError,
         json.JSONDecodeError,
         ValidationError,
