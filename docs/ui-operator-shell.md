@@ -202,6 +202,17 @@ it. The screen renders `shell_options`, so such an option cannot become a button
 what it says, and the contract test derives what must be rendered from the gates instead of from a
 hand-maintained list of exceptions.
 
+**And the data says what each answer *does*, in three states rather than two.** `GateOutcome` is
+`ADVANCES`, `STOPS`, or `REDISPLAYS`, because one boolean was answering two questions — *does this
+carry the flow on* and *does this stop the run* — which coincide everywhere except on a detour.
+Gate 6's *Show full diff* is the detour: in the chat flow it prints the rest and re-prompts, so it
+does not advance; on a form it is the terminal answer to its gate, and it is the **only** option
+that gate can render here. Read as a refusal, that one button ended the run with nothing on the
+screen to undo it — reached by answering *Review changed*, the most careful answer on offer. It now
+lifts the row cap and means nothing else. *Change mode* and *Regenerate* are detours too, at gates
+that are required, so the run is still held — but held as **unanswered**, which is what the screen
+says, instead of reporting a cancellation nobody made.
+
 `ui/session.py` **refuses to build the command** while any required gate is outstanding. Not a
 warning: a function that raises. That is the improvement over prose, which can be paraphrased,
 compressed, or skipped.

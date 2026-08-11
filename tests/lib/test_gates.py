@@ -434,12 +434,21 @@ def test_a_redisplay_option_is_never_read_as_a_refusal() -> None:
     that an answer which only changes what is on screen is never read as a refusal — and the gap
     is what shipped issue #76: ``show-full-diff`` is the only option the shell can render at gate
     6, and answering it cancelled the run.
+
+    Named options rather than "everything already marked ``REDISPLAYS``", mirroring that test down
+    to its shape: a check derived from the flag it is checking passes the moment someone changes
+    the flag, which is precisely the edit that must fail here.
     """
-    redisplays = [(g, o) for g in GATES for o in g.options if o.outcome is GateOutcome.REDISPLAYS]
-    assert redisplays, "nothing redisplays — this check would pass vacuously"
-    for gate, option in redisplays:
-        assert not option.refuses, f"{gate.id}/{option.value} reads as a refusal"
-        assert not option.proceeds, f"{gate.id}/{option.value} reads as consent"
+    detours = {"show-full-diff", "change-mode", "regenerate", "detail"}
+    seen = set()
+    for gate in GATES:
+        for option in gate.options:
+            if option.value in detours:
+                seen.add(option.value)
+                assert option.outcome is GateOutcome.REDISPLAYS, f"{gate.id}/{option.value}"
+                assert not option.refuses, f"{gate.id}/{option.value} reads as a refusal"
+                assert not option.proceeds, f"{gate.id}/{option.value} reads as consent"
+    assert seen == detours, f"never checked: {sorted(detours - seen)}"
 
 
 def test_no_gate_is_a_dead_end_in_the_shell() -> None:

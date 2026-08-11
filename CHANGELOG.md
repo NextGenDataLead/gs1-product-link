@@ -191,6 +191,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **The only button gate 6 could render cancelled the run, irrecoverably.** `apply` and `skip` are
+  `chat_only` — they belong to the conversational per-row walk — so the Publish screen's per-row
+  diff gate offers exactly one control, *Show full diff*, and clicking it ended the run. It was
+  marked `proceeds=False` for the chat flow, where it prints the rest of the diff and re-prompts,
+  so "does not advance" is true of it there. On a form surface it is the **terminal** answer to the
+  gate: `PublishSession.cancelled` counted every answered-and-not-proceeded gate, and the execute
+  panel then refused with *"A gate was answered with cancel."* Nothing un-answers a gate, so the
+  only way on was to reload the page and answer every gate again — reached by choosing *Review
+  changed*, the most careful answer the plan-review gate offers.
+
+  One boolean was answering two questions — *does this advance the flow* and *does this stop the
+  run* — which coincide everywhere except on a detour. `GateOutcome` splits them into `ADVANCES`,
+  `STOPS` and `REDISPLAYS`, in `lib/gates.py` where the contract lives rather than as a special
+  case in the screen; `proceeds` and `refuses` are derived properties, so no call site changed, and
+  the bare positional `False` that made this hard to see at a glance is gone from every option.
+
+  Four options are detours, not refusals: `show-full-diff`, `change-mode`, `regenerate`, `detail`.
+  The middle two sit at **required** gates, so the run is held either way — what changes is that
+  the screen now says *"Still to answer: Intent confirmation"* instead of repeating the same false
+  claim about a cancellation nobody made. The band that does report a refusal names the gate and
+  the answer rather than describing an unnamed one.
+
+  Also closed: `execute_argv` consulted only `outstanding`, which is **required** gates, and a
+  refusal is *answered* — so gate 4's *Stop the run*, on a gate that is deliberately not required,
+  built a command. Its documented "abort before execute" was enforced by the publish screen
+  returning early, which is display logic standing in for the function whose entire docstring is
+  about refusing. Both checks exempt the dry-run gate, since the preview writes nothing and must
+  stay re-runnable after being cancelled.
+
+  `grep -rn show-full-diff tests/` was empty, which is what let this through. Six tests, two of
+  them pinning the class rather than the instance: **no gate whose every shell option refuses**,
+  and a redisplay option is never read as a refusal — the mirror of the existing
+  `test_cancel_never_reads_as_consent`, which had no converse. That test and the one asserting
+  every required gate offers a way out are
+  strengthened from `not proceeds` to `refuses`: with a third outcome the weaker form would accept
+  a `cancel` quietly turned into a redisplay, which is the failure that would make `cancelled`
+  return `False` on a cancel.
+
 - **`run_generate` had no idea what scope was, and asked for copy the run would never publish.**
   `grep process_list scripts/run_generate.py` returned nothing: the products file was taken whole,
   so `pending_requests` ran over the entire catalogue. The doctor and `--emit` answered the same

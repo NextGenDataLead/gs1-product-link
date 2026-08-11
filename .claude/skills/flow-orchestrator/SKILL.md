@@ -81,6 +81,12 @@ drifts — and a gate that quietly stops being shown raises nothing.
 which apply in which mode) so a second consumer can render them as forms. This file keeps the
 verbatim prompt text. Neither is the copy; both are checked against the table.
 
+It also records **what each answer does** — `advances`, `stops`, or `redisplays`. The third is not
+a nicety: an answer like `show-full-diff` prints more and asks again, so it neither carries the
+flow on nor stops the run, and a surface that had only the first two to choose from read it as a
+cancellation. Here that distinction is carried by the prose ("then re-prompts"); a form has to be
+told.
+
 | Gate id | Step | Required | Modes |
 |---|---|---|---|
 | `intent` | 0 | **yes** | all |
