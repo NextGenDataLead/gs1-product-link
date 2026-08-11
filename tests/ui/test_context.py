@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ui.context import Scope, doctor_check, scope_from
+from ui.context import Scope, doctor_check, scope_from, split_cache
 
 
 def _payload(**overrides: Any) -> list[dict[str, Any]]:
@@ -29,7 +29,7 @@ def _payload(**overrides: Any) -> list[dict[str, Any]]:
         "status": "ok",
         "detail": "15 of 127 product(s) in the export are in scope, after process list (x.xlsx).",
         "remedy": "",
-        "data": {"in_scope": 15, "total": 127},
+        "data": {"in_scope": 15, "total": 127, "in_scope_gtins": ["08713195000001"]},
     }
     scope.update(overrides)
     return [{"name": "config", "status": "ok", "data": {}}, scope]
@@ -63,6 +63,7 @@ def test_reads_the_two_numbers_and_the_sentence() -> None:
         total=127,
         detail="15 of 127 product(s) in the export are in scope, after process list (x.xlsx).",
         empty=False,
+        gtins=frozenset({"08713195000001"}),
     )
 
 
@@ -72,7 +73,9 @@ def test_an_empty_scope_is_flagged_so_gate_zero_can_say_so() -> None:
     A run against an empty scope writes nothing and reports success — the one outcome
     indistinguishable from working, and the failure this project keeps designing against.
     """
-    scope = scope_from(_payload(status="fail", data={"in_scope": 0, "total": 127}))
+    scope = scope_from(
+        _payload(status="fail", data={"in_scope": 0, "total": 127, "in_scope_gtins": []})
+    )
     assert scope is not None
     assert scope.empty
     assert scope.in_scope == 0
@@ -111,3 +114,104 @@ def test_a_missing_detail_sentence_costs_the_sentence_and_nothing_else() -> None
     assert scope is not None
     assert scope.in_scope == 15
     assert scope.detail == ""
+
+
+# --- the in-scope GTIN list ----------------------------------------------------
+
+
+def test_carries_the_gtins_so_a_screen_can_filter_by_them() -> None:
+    """Counts let a screen *report* scope; the list lets it *filter* by it.
+
+    The Content screen needs the second. Without it, showing this run's copy rather than every
+    unit ever generated would mean re-deriving scope in the shell — a second implementation of
+    the thing `lib.preflight.in_scope` exists to be the only one of.
+    """
+    scope = scope_from(_payload(data={"in_scope": 2, "total": 9, "in_scope_gtins": ["a", "b"]}))
+    assert scope is not None
+    assert scope.gtins == frozenset({"a", "b"})
+
+
+def test_a_doctor_that_never_reported_gtins_yields_an_empty_set_not_a_crash() -> None:
+    """Back-compat, and the caller's contract: empty means *unknown*, never *nothing in scope*.
+
+    A screen that filtered to an empty set here would hide the whole cache and read as "there is
+    no copy" — the opposite of the truth, and a worse failure than the one being fixed.
+    """
+    scope = scope_from(_payload(data={"in_scope": 15, "total": 127}))
+    assert scope is not None
+    assert scope.gtins == frozenset()
+    assert scope.in_scope == 15
+
+
+def test_junk_in_the_gtin_list_is_dropped_rather_than_carried() -> None:
+    """It is used as a set-membership filter, so a non-string can only ever fail to match."""
+    scope = scope_from(_payload(data={"in_scope": 1, "total": 1, "in_scope_gtins": ["a", 7, None]}))
+    assert scope is not None
+    assert scope.gtins == frozenset({"a"})
+
+
+def test_a_gtin_list_that_is_not_a_list_is_treated_as_unknown() -> None:
+    scope = scope_from(_payload(data={"in_scope": 1, "total": 1, "in_scope_gtins": "08713195"}))
+    assert scope is not None
+    assert scope.gtins == frozenset()
+
+
+# --- splitting the cache into this run and everything else ---------------------
+
+
+def _scope(*gtins: str) -> Scope:
+    return Scope(in_scope=len(gtins), total=99, detail="", empty=False, gtins=frozenset(gtins))
+
+
+_CACHE: dict[str, Any] = {"a": {"nl": {}}, "b": {"nl": {}}, "c": {"nl": {}}}
+
+
+def test_the_batch_is_separated_from_everything_else_in_the_cache() -> None:
+    """The defect: the review listed every GTIN the cache had ever accumulated.
+
+    The cache is never pruned, so on a long-lived machine a two-product batch ends up under a
+    list of hundreds — beneath a coverage figure that *was* correctly scoped, with nothing to
+    tell the two apart.
+    """
+    split = split_cache(_CACHE, _scope("a", "c"))
+
+    assert set(split.in_scope) == {"a", "c"}
+    assert set(split.others) == {"b"}
+    assert split.scoped
+
+
+def test_in_scope_gtins_with_no_copy_are_named() -> None:
+    """Absent from the cache is the interesting case: it is the copy that still has to be made."""
+    split = split_cache(_CACHE, _scope("a", "zz", "yy"))
+
+    assert split.missing == ("yy", "zz")
+
+
+def test_an_unknown_scope_shows_everything_rather_than_nothing() -> None:
+    """Wrong in the safe direction, and the direction matters.
+
+    Filtering to an empty set would hide the whole cache and read as "there is no copy" — worse
+    than the unscoped list being replaced, because it stops the operator looking. ``scoped`` is
+    what lets the screen label it honestly instead.
+    """
+    for scope in (None, _scope()):
+        split = split_cache(_CACHE, scope)
+        assert split.in_scope == _CACHE
+        assert split.others == {}
+        assert split.missing == ()
+        assert not split.scoped
+
+
+def test_a_batch_with_no_generated_copy_at_all_is_empty_not_unscoped() -> None:
+    """Distinct from an unknown scope: here the answer is known, and the answer is none."""
+    split = split_cache(_CACHE, _scope("zz"))
+
+    assert split.in_scope == {}
+    assert split.scoped
+    assert split.missing == ("zz",)
+
+
+def test_the_split_does_not_mutate_the_cache_it_was_given() -> None:
+    original = dict(_CACHE)
+    split_cache(_CACHE, _scope("a"))
+    assert original == _CACHE

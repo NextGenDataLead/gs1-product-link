@@ -180,6 +180,10 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    - **In-session (no API key):** run `python -m scripts.run_generate {client} --emit`, then invoke the
      `content-generator` skill to write the copy and `--ingest` it; that skill presents the review.
    - **Headless:** run `python -m scripts.run_generate {client} --backend api` (needs the API key).
+   **That file is not this run's batch.** Nothing prunes it, so it holds every unit ever generated
+   for this client; intersect it with the in-scope GTINs (`doctor --json`, check `scope`,
+   `data.in_scope_gtins`) before concluding anything from its size. The shell's Content screen
+   does exactly that.
    Then eyeball a sample of `output/{client}/data/generated_cache.json` (nl **and** fr) and the
    `output/{client}/data/generated_issues.json` work list. **This pipeline fails silently — verify
    the copy against the real product, not the "ingested N" count.** Generation never publishes; the
