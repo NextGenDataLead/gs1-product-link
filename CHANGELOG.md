@@ -191,6 +191,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **A gate asked about nothing, on every run, and its only live control was the destructive one.**
+  `lib/gates.py` filtered the nine gates on mode, generator and environment and never on the plan,
+  so the missing-field prompt (step 4) rendered whether or not `run_plan` had dropped anything: a
+  card headed *"one per unit dropped for a missing `product_name`"* above a button reading *"Skip
+  this unit"*, with no unit. The pilot client's own plan is the case — 10 dropped units, every one
+  of them E21 `no_generated_copy`, not a single E18 — and the gate rendered over it.
+
+  Of its three answers, `skip-row` and `ask-me-later` proceed and do nothing; only `fail-run` has
+  an effect, setting `PublishSession.cancelled`, which makes the execute panel refuse. So the one
+  operable control on a question about nothing was the one that stops the run. That is worse than
+  clutter: this screen's entire safety argument is that gates are *read*, and a gate that appears
+  with nothing to ask teaches answering without reading — a habit spent at the gates that matter.
+
+  `Gate` gains `needs_missing_product_name`, and `applies`/`gates_for` a matching keyword-only
+  `has_missing_product_name` with **no default**. A defaulted applicability input is precisely the
+  drift this module exists to prevent — a caller that forgets one gets a walk quietly missing a
+  gate, and a gate that stops being shown raises nothing — so a handful of call sites is a cheap
+  price for a `TypeError` instead of a silence, and a signature test now pins that for all three
+  inputs rather than leaving it to be re-argued. `lib/gates.py` stays stdlib-only: a `bool` crosses
+  the boundary, never a `Plan`.
+
+  `PublishSession` carries the dropped units themselves rather than a flag, so the value that hides
+  the gate and the value that names them are one value and cannot disagree — two reads of
+  `plan.json` could, and the way they would is the gate rendering over an empty list, the same
+  defect with a condition on top. The Publish screen refreshes it at the top of **every redraw**,
+  not in `__init__`: the plan is built at step 5, in the middle of the walk, so a fact read once
+  when the screen was built is the fact from before there was a plan.
+
+  The screen now names each dropped unit by GTIN, language and `run_plan`'s own wording, and says
+  outright that nothing here can supply the name — it is filled in MyGS1 and re-exported. Building
+  a plan that drops units toasts that the gate has appeared above, since a gate materialising above
+  the one your hands are on should be announced rather than noticed.
+
+  **The Gate index's Modes column is now machine-checked**, in both directions. It is prose, it
+  said `all`, and only the ids and step numbers were ever compared to the code — which is how this
+  shipped. A flag a cell does not name, and a cell naming a condition its gate does not carry, now
+  both fail CI.
+
 - **`delete_media` would delete any attachment it was given an id for, and orphans were never
   cleaned up.** Two halves of one gap, found by asking a question the code could not answer:
   *is there anything stopping us destroying content that was on the site before this project?*

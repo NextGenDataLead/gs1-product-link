@@ -137,6 +137,16 @@ class Gate:
     needs_generator: bool = False
     #: Only applicable when the resolved GS1 environment is ``production``.
     needs_production: bool = False
+    #: Only applicable when this run's plan actually dropped a unit for a missing
+    #: ``product_name`` (E18). The first applicability input that is a fact about the *plan*
+    #: rather than about configuration, and the difference is operational: the other two are
+    #: settled before the walk begins, this one is not. The plan is built at step 5 — in the
+    #: middle of the walk — so a consumer that reads this once when the run starts reads it
+    #: from before there was a plan, and the gate it decides then never appears at all.
+    needs_missing_product_name: bool = False
+    # When a fourth applicability input arrives, fold these into a frozen `RunFacts` with no
+    # defaults rather than adding a fifth keyword: one bundle to keep exhaustive beats four
+    # parameters to keep in sync. Three still read at a glance; five would not.
 
     @property
     def shell_options(self) -> tuple[GateOption, ...]:
@@ -149,13 +159,33 @@ class Gate:
         """
         return tuple(option for option in self.options if option.in_shell)
 
-    def applies(self, *, mode: Mode, has_generator: bool, is_production: bool) -> bool:
-        """Whether this gate fires for a given run."""
+    def applies(
+        self,
+        *,
+        mode: Mode,
+        has_generator: bool,
+        is_production: bool,
+        has_missing_product_name: bool,
+    ) -> bool:
+        """Whether this gate fires for a given run.
+
+        Every input is keyword-only and **none has a default**, deliberately. A defaulted
+        applicability input is precisely the failure this module exists to prevent: a caller
+        that forgets one gets a walk quietly missing a gate, and a gate that stops being shown
+        raises nothing at all. A handful of call sites is a cheap price for a ``TypeError``
+        instead of a silence.
+
+        ``has_missing_product_name`` is a plain ``bool`` rather than the plan itself because
+        this module reads no file and imports nothing from ``lib``: the caller does the
+        derivation, and only the conclusion crosses the boundary.
+        """
         if mode not in self.modes:
             return False
         if self.needs_generator and not has_generator:
             return False
-        return not (self.needs_production and not is_production)
+        if self.needs_production and not is_production:
+            return False
+        return not (self.needs_missing_product_name and not has_missing_product_name)
 
 
 _ALL_MODES: Final = frozenset(Mode)
@@ -219,8 +249,14 @@ GATES: Final[tuple[Gate, ...]] = (
         step="4",
         title="Missing-field prompt",
         purpose=(
-            "One per unit dropped for a missing `product_name` in that language (E18). Decide "
-            "whether to accept the omission, batch the decision, or stop the run."
+            "The units `run_plan` dropped because the product carries no `product_name` in that "
+            "language (E18), named one by one. **This gate appears only when a unit was actually "
+            "dropped.** It used to appear on every run, asking whether to skip a unit it could "
+            "not name, on runs where nothing had been skipped — and of its answers only *stop "
+            "the run* did anything, so the one live control on a question about nothing was the "
+            "destructive one. A gate that asks about nothing teaches answering without reading, "
+            "which is the habit this flow cannot afford. Nothing here can supply the missing "
+            "name: it is filled in MyGS1 and re-exported."
         ),
         options=(
             GateOption("skip-row", "Skip this unit", "Other languages proceed"),
@@ -231,6 +267,7 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         required=False,
         modes=_ALL_MODES,
+        needs_missing_product_name=True,
     ),
     Gate(
         id="plan_review",
@@ -339,12 +376,25 @@ GATES: Final[tuple[Gate, ...]] = (
 BY_ID: Final[dict[str, Gate]] = {gate.id: gate for gate in GATES}
 
 
-def gates_for(*, mode: Mode, has_generator: bool, is_production: bool) -> tuple[Gate, ...]:
-    """The gates that fire for one run, in step order."""
+def gates_for(
+    *, mode: Mode, has_generator: bool, is_production: bool, has_missing_product_name: bool
+) -> tuple[Gate, ...]:
+    """The gates that fire for one run, in step order.
+
+    ``has_missing_product_name`` is the caller's answer to "did this run's plan drop a unit for
+    a missing ``product_name``?". Required rather than defaulted for the reason
+    :meth:`Gate.applies` gives — and unlike the other two it is not settled when the run begins,
+    so a caller must re-ask it whenever the plan changes rather than resolving it once.
+    """
     return tuple(
         gate
         for gate in GATES
-        if gate.applies(mode=mode, has_generator=has_generator, is_production=is_production)
+        if gate.applies(
+            mode=mode,
+            has_generator=has_generator,
+            is_production=is_production,
+            has_missing_product_name=has_missing_product_name,
+        )
     )
 
 

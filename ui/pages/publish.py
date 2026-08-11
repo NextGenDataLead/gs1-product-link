@@ -20,7 +20,7 @@ from typing import Any
 from nicegui import ui
 
 from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Gate, Mode
-from lib.records import PlanClassification
+from lib.records import PlanClassification, SkipReason
 from ui import REPO_ROOT, context, runner, theme
 from ui.session import GateNotAnsweredError, PublishSession
 
@@ -67,6 +67,17 @@ class _Flow:
         self._redraw()
 
     def _redraw(self) -> None:
+        # Before anything reads `session.gates`, and here rather than in `__init__`: the plan is
+        # built *during* this walk, at gate 5, so a fact captured once when the screen was
+        # constructed is the fact from before there was a plan — and the gate it decides would
+        # never appear. Every path that can change the plan ends in a redraw (an answer, the mode
+        # toggle, "Build the plan"), so this is the one place that has to be right.
+        plan = context.load_plan(self.cid)
+        self.session.units_missing_product_name = tuple(
+            unit
+            for unit in (plan.skipped if plan else ())
+            if unit.reason is SkipReason.MISSING_PRODUCT_NAME
+        )
         self.body.clear()
         with self.body:
             if self.session.mode.is_permanent:
@@ -150,6 +161,37 @@ class _Flow:
         ui.link("Read the copy on the Content screen →", "/content").classes("mono mb-3")
         self._options(gate)
 
+    def _gate_missing_field(self, gate: Gate) -> None:
+        """Name every unit the plan dropped for a missing ``product_name``.
+
+        The gate exists at all only because there is something to name — ``lib.gates`` does not
+        return it otherwise — so this renderer never has to describe an empty case. That is the
+        fix: it used to render on every run, offering "Skip this unit" beside no unit, where the
+        only answer with any effect was the one that stops the run.
+
+        Capped and counted rather than truncated silently, so a list longer than the cap reads as
+        one. ``detail`` is printed verbatim: it is the sentence ``run_plan`` logged and wrote into
+        ``plan.json``, and a second wording here would give the operator two records to reconcile.
+        """
+        units = self.session.units_missing_product_name
+        theme.band(
+            f"{len(units)} unit(s) were dropped before the plan was classified: the product "
+            "carries no product_name in that language, so there is no title to publish under. "
+            "They are not in the plan's counts, and confirming will not publish them.",
+            "warn",
+        )
+        for unit in units[:_MAX_MISSING_LISTED]:
+            ui.label(f"{unit.gtin} · {unit.language} — {unit.detail}").classes("mono")
+        if len(units) > _MAX_MISSING_LISTED:
+            ui.label(
+                f"…and {len(units) - _MAX_MISSING_LISTED} more, all for the same reason."
+            ).classes("note")
+        ui.label(
+            "Nothing in this tool can supply the name. Fixing it means filling product_name for "
+            "that language in MyGS1, re-exporting, and building the plan again."
+        ).classes("note my-3")
+        self._options(gate)
+
     def _gate_plan_review(self, gate: Gate) -> None:
         plan = context.load_plan(self.cid)
         summary = context.load_plan_summary(self.cid)
@@ -162,6 +204,18 @@ class _Flow:
                 timeout=8000,
             )
             self._redraw()
+            # A gate that materialises *above* the one your hands are on is fine if it is
+            # announced and bad if it is not: everything below it has just shifted down,
+            # including the buttons this gate only now grew. Step 4 is not required, so nothing
+            # else forces a look at it — which is exactly why it is said out loud.
+            dropped = self.session.units_missing_product_name
+            if dropped:
+                ui.notify(
+                    f"{len(dropped)} unit(s) have no product_name in their language. The "
+                    "missing-field gate (step 4) is now above this one and names them.",
+                    type="warning",
+                    timeout=12000,
+                )
 
         theme.command(runner.run_plan_argv(self.cid))
         theme.action("Build the plan", build_plan)
@@ -208,7 +262,17 @@ class _Flow:
             theme.band(
                 f"{len(plan.skipped)} unit(s) never became rows and are NOT in the counts above: "
                 + ", ".join(f"{n} {reason}" for reason, n in reasons.items())
-                + ". Confirming will not publish them.",
+                + ". Confirming will not publish them."
+                # The overlap with step 4 is deliberate. This band's job is completeness against
+                # the counts directly above it, so dropping the E18 units from its total would
+                # make it disagree with `plan.skipped`, with `plan.summary.json` and with
+                # run_plan's own stderr line, with nothing here to explain the gap. Step 4's job
+                # is the decision. A pointer turns the duplication into navigation.
+                + (
+                    " The missing_product_name ones are named individually at step 4 above."
+                    if self.session.units_missing_product_name
+                    else ""
+                ),
                 "warn",
             )
         if summary.excluded:
@@ -441,6 +505,10 @@ class _Flow:
 
 
 _MAX_DIFFS = 50
+#: Its own constant rather than a reuse of `_MAX_DIFFS`: the row-diff cap can be lifted by that
+#: gate's `show-full-diff` option, and this one cannot, so sharing a number would imply a
+#: symmetry that does not exist.
+_MAX_MISSING_LISTED = 50
 
 
 def _confirmed_classifications(choice: str | None) -> set[PlanClassification]:
