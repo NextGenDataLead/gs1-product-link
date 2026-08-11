@@ -98,7 +98,14 @@ def _unpublish_gtin(
         state.entries[gtin][language] = entry.model_copy(
             update={
                 "wp_status": _DOWN_STATUS if page is not None else entry.wp_status,
-                "gs1_enabled": False,
+                "retracted": True,
+                # Retraction *deletes the links* — it clears the array and disables the
+                # record — so the hash of "the link set we wrote" is no longer true of
+                # anything. Blanking it is what makes `lib.state._has_no_resolver_link`
+                # fire if this GTIN is ever revived: `--revive --only pages` carries the
+                # prior hash forward, so a stale one made the revived row classify
+                # UNCHANGED and the resolver record was never written back.
+                "gs1_link_set_hash": "",
                 "last_run": datetime.now(UTC),
             }
         )

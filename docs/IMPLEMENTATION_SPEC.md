@@ -233,6 +233,8 @@ class StateEntry(BaseModel):
     gs1_link_set_hash: str
     last_run: datetime
     title: str | None = None
+    wp_status: str = "publish"
+    retracted: bool = False
 ```
 
 `failed_call` names the request a failed row blames — method, path, and the client's own label,
@@ -245,6 +247,21 @@ exception itself — see `lib/errors.py` — and `run_execute` reads it back, fo
 so the deliberate `RuntimeError` wrap in `_verify_targets` does not lose it. Optional because run
 logs predating the field have none and because not every failure is a call: `None` means "not
 recorded", and readers omit it rather than guessing.
+
+`wp_status` and `retracted` record a **deliberate take-down**, which the hashes cannot express:
+they describe what was written, not whether it is still serving. `lib.state._is_held` reads both,
+and either half alone is enough — `run_unpublish` retracts the resolver *before* it drafts the
+pages, so an interrupted take-down must still read as held or the next run would reverse it
+instead of finishing it. Both default to the published condition, so state files written before
+they existed load unchanged.
+
+`retracted` was called `gs1_enabled` and read as "is the resolver record enabled", which it never
+was: `run_unpublish` is the only writer and `_is_held` the only reader, and both mean *somebody
+took this down on purpose*. Under the old name a `--only pages` run recorded `gs1_enabled: true`
+with no GS1 record in existence. Whether a resolver record exists is already recorded one field
+up — an empty `gs1_link_set_hash` — which is why the rename adds no state. A file carrying the old
+key is **translated on the way in, inverted**, rather than ignored: pydantic drops unknown keys by
+default, and dropping this one would put every deliberately retracted product back on the site.
 
 `title` is the page title as last written — the one product field state keeps verbatim, so a
 re-run can show a real before/after in a CHANGED row's diff (§10.6.2). `content_hash` proves

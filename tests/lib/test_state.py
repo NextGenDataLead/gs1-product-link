@@ -436,8 +436,8 @@ def _held_state(product: ProductRecord, baseline_hash: str, url: str, **down: ob
         ({"wp_status": "draft"}, "pages drafted"),
         # An interrupted run_unpublish: the resolver is retracted but the pages are still
         # up. Held too — the next run must finish taking it down, not put it back.
-        ({"gs1_enabled": False}, "resolver retracted, pages still published"),
-        ({"wp_status": "draft", "gs1_enabled": False}, "fully unpublished"),
+        ({"retracted": True}, "resolver retracted, pages still published"),
+        ({"wp_status": "draft", "retracted": True}, "fully unpublished"),
     ],
 )
 def test_diff_held_when_product_was_unpublished(down: dict[str, object], why: str) -> None:
@@ -468,8 +468,42 @@ def test_diff_held_outranks_changed() -> None:
     assert rows[0].classification is PlanClassification.HELD
 
 
+def test_a_legacy_gs1_enabled_false_entry_is_still_held() -> None:
+    """The migration, and the one place getting this wrong puts a product back on the site.
+
+    ``gs1_enabled`` was renamed to ``retracted`` and inverted. ``StateEntry`` sets no
+    ``extra`` policy, so pydantic's default is to **ignore** an unknown key: without a
+    translating validator this legacy entry loads with ``retracted`` defaulting to
+    ``False``, classifies UNCHANGED, and the next confirmed run republishes something an
+    operator deliberately took down — silently, since nothing in the file looks wrong.
+
+    Written against a raw dict rather than ``_entry()``, because the point is a payload no
+    current version of the model would ever produce.
+    """
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    ).rows[0]
+    legacy = _entry().model_dump(mode="json")
+    del legacy["retracted"]
+    legacy["gs1_enabled"] = False  # the old spelling of retracted=True
+    legacy["content_hash"] = baseline.content_hash
+    legacy["wp_url"] = baseline.target_url
+    entry = StateEntry.model_validate(legacy)
+    assert entry.retracted is True
+
+    rows, _ = diff_against_state(
+        [product],
+        State(client_id="noviplast", entries={product.gtin: {"nl": entry}}),
+        ["nl"],
+        _wp(),
+    )
+
+    assert rows[0].classification is PlanClassification.HELD
+
+
 def test_legacy_state_without_status_fields_is_not_held() -> None:
-    # Back-compat: entries written before wp_status/gs1_enabled existed default to the
+    # Back-compat: entries written before wp_status/retracted existed default to the
     # published condition. If they defaulted the other way, every pre-existing product
     # in every client's state would silently classify HELD and stop being updated.
     product = _product()
@@ -478,7 +512,7 @@ def test_legacy_state_without_status_fields_is_not_held() -> None:
     ).rows[0]
     legacy = _entry().model_dump(mode="json")
     del legacy["wp_status"]
-    del legacy["gs1_enabled"]
+    del legacy["retracted"]
     legacy["content_hash"] = baseline.content_hash
     legacy["wp_url"] = baseline.target_url
     state = State(
@@ -511,6 +545,110 @@ def test_diff_changed_when_page_published_without_a_resolver_link() -> None:
     # A named diff row, so the §10.6.2 prompt says what is missing rather than printing a
     # bare "Changes:" header the operator has to guess at.
     assert rows[0].diff == {"gs1_link": ("not written", "will be written")}
+
+
+def test_a_pages_only_revive_leaves_a_row_that_still_needs_its_resolver_link() -> None:
+    """The defect this rename came with: the revived row read as fully published.
+
+    ``_finish_pages`` carries the **prior** ``gs1_link_set_hash`` forward, and
+    ``run_unpublish`` used to leave a real one there — so a ``--revive --only pages`` run
+    produced an entry that looked completely linked. Its content hash matches, so the row
+    classified UNCHANGED and the resolver record stayed retracted for good, with no gate,
+    plan or report saying so. Now the retraction blanks the hash, and the existing
+    ``_has_no_resolver_link`` rule does the rest.
+    """
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    ).rows[0]
+    # After run_unpublish: pages drafted, resolver retracted, link-set hash blanked.
+    state = _held_state(
+        product,
+        baseline.content_hash,
+        baseline.target_url,
+        wp_status="draft",
+        retracted=True,
+        gs1_link_set_hash="",
+    )
+    taken_down = state.entries[product.gtin]["nl"]
+    # `--revive --only pages` writes a fresh entry at the published defaults, carrying the
+    # prior link-set hash forward — exactly what `_finish_pages` builds.
+    state.entries[product.gtin]["nl"] = _entry().model_copy(
+        update={
+            "content_hash": baseline.content_hash,
+            "wp_url": baseline.target_url,
+            "gs1_link_set_hash": taken_down.gs1_link_set_hash,
+        }
+    )
+
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.CHANGED
+    assert rows[0].diff == {"gs1_link": ("not written", "will be written")}
+
+
+def test_a_links_only_revive_releases_a_product_whose_pages_never_came_down() -> None:
+    """``run_unpublish`` retracts before it drafts, so an interrupted one leaves this.
+
+    The product is fully live — page published, resolver record written back and enabled —
+    and it used to stay HELD forever, because ``_commit_state`` updated the hash and left
+    the retraction flag alone. Every later run dropped it as held, and only ``--revive``
+    got it through, each time.
+    """
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    ).rows[0]
+    state = _held_state(
+        product,
+        baseline.content_hash,
+        baseline.target_url,
+        retracted=True,
+        gs1_link_set_hash="",
+    )
+    assert diff_against_state([product], state, ["nl"], _wp()).rows[0].classification is (
+        PlanClassification.HELD
+    ), "precondition: retracted with its pages still up is held"
+
+    # `--revive --only links`: _commit_state writes the new hash and clears the retraction.
+    entry = state.entries[product.gtin]["nl"]
+    state.entries[product.gtin]["nl"] = entry.model_copy(
+        update={"gs1_link_set_hash": "g" * _HASH_LEN, "retracted": False}
+    )
+
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.UNCHANGED
+
+
+def test_a_links_only_revive_does_not_release_a_product_whose_pages_are_drafts() -> None:
+    """The other half of the OR, and the reason clearing the flag is safe.
+
+    Writing the resolver record back says nothing about the pages. A fully unpublished
+    product revived one leg at a time must stay held until the pages are published too,
+    or a partial revive would quietly re-enter the ordinary update flow with its pages
+    still drafted.
+    """
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    ).rows[0]
+    state = _held_state(
+        product,
+        baseline.content_hash,
+        baseline.target_url,
+        wp_status="draft",
+        retracted=True,
+        gs1_link_set_hash="",
+    )
+    entry = state.entries[product.gtin]["nl"]
+    state.entries[product.gtin]["nl"] = entry.model_copy(
+        update={"gs1_link_set_hash": "g" * _HASH_LEN, "retracted": False}
+    )
+
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.HELD
 
 
 def test_diff_held_outranks_a_missing_resolver_link() -> None:

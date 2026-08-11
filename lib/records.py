@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Final
+from typing import Any, Final
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from lib.errors import ExportParseError
 
@@ -348,18 +348,29 @@ class StateEntry(BaseModel):
     titles were persisted have none; ``None`` means "not recorded", and the diff omits
     the title rather than guessing an old value.
 
-    ``wp_status`` and ``gs1_enabled`` record whether the product is actually *reachable*,
-    which the hashes cannot express: they describe what was written, not whether it is
-    still serving. Without them an unpublished product is indistinguishable from a
-    published one, so the next run reads its unchanged hashes, classifies it UNCHANGED,
-    and leaves a drafted page carrying an enabled Digital Link — or, if the entry were
-    deleted instead, silently republishes what somebody deliberately took down.
+    ``wp_status`` and ``retracted`` record a **deliberate take-down**, which the hashes
+    cannot express: they describe what was written, not whether it is still serving.
+    Without them an unpublished product is indistinguishable from a published one, so the
+    next run reads its unchanged hashes, classifies it UNCHANGED, and leaves a drafted page
+    carrying an enabled Digital Link — or, if the entry were deleted instead, silently
+    republishes what somebody deliberately took down.
+
+    ``retracted`` was called ``gs1_enabled`` and read as "is the resolver record enabled",
+    which it never was. ``run_unpublish`` is the only thing that sets it, and
+    ``lib.state._is_held`` is the only thing that reads it — both meaning *somebody took
+    this down on purpose*. Under the old name a ``--only pages`` run recorded
+    ``gs1_enabled: true`` with no GS1 record in existence, which was simply false; under
+    this one the same entry says ``retracted: false``, which is true, because the product
+    was never retracted. Whether a resolver record *exists* is already recorded, one field
+    down: an empty ``gs1_link_set_hash``.
 
     Both default to the published condition so state files written before they existed
-    load unchanged, the same back-compat move ``title`` makes. ``gs1_enabled`` describes
-    the GTIN, not the language, but is stored per-language because state is keyed
-    ``(gtin, language)`` — mirroring ``gs1_link_set_hash``, which is already duplicated
-    across an entry's languages for exactly that reason.
+    load unchanged, the same back-compat move ``title`` makes — and a file carrying the old
+    ``gs1_enabled`` key is translated on the way in rather than ignored, which is what
+    :meth:`_accept_legacy_gs1_enabled` is for. ``retracted`` describes the GTIN, not the
+    language, but is stored per-language because state is keyed ``(gtin, language)`` —
+    mirroring ``gs1_link_set_hash``, which is already duplicated across an entry's
+    languages for exactly that reason.
 
     An **empty** ``gs1_link_set_hash`` means "page published, resolver link never written"
     — what ``run_execute --only pages`` leaves behind. It is a real value, not a missing
@@ -376,7 +387,27 @@ class StateEntry(BaseModel):
     last_run: datetime
     title: str | None = None
     wp_status: str = "publish"
-    gs1_enabled: bool = True
+    retracted: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_gs1_enabled(cls, data: Any) -> Any:
+        """Translate the old ``gs1_enabled`` key, inverted, instead of ignoring it.
+
+        This model sets no ``extra`` policy, so pydantic's default is to **drop** an
+        unknown key. A state file written before the rename carries ``gs1_enabled``, and
+        dropping it would let ``retracted`` fall to its default — turning every
+        deliberately taken-down product back into an ordinary publishable one, silently,
+        on the next run. That is the one migration failure with a live consequence, so it
+        is translated here and asserted by a test rather than left to a default.
+
+        An explicit ``retracted`` wins: it is the newer spelling, and a file carrying both
+        was written by a newer version.
+        """
+        if isinstance(data, dict) and "gs1_enabled" in data:
+            legacy = data.pop("gs1_enabled")
+            data.setdefault("retracted", not legacy)
+        return data
 
 
 class State(BaseModel):

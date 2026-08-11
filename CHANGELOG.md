@@ -191,6 +191,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **`state.json` said `gs1_enabled: true` for products with no GS1 record at all**, and two
+  `--revive` paths left a product half-restored. The field was **overloaded**: written by
+  `run_unpublish` as *"was this deliberately retracted"*, read by `lib.state._is_held` the same
+  way, and named and documented as *"is the resolver record enabled"*. Those readings diverge
+  exactly in the pages-only case, where `run_execute` writes an entry that takes the default. The
+  naive fix — recording `False` after a pages-only run — would have classified every one of those
+  products HELD and made `--only links` refuse to write the records it exists to write: the
+  pages→links handoff breaking, the same class of bug as #38.
+
+  It is now `retracted: bool = False`, which is what it records. The complaint **evaporates rather
+  than being documented around**: a pages-only run's entry says `retracted: false`, which is true,
+  because the product was never retracted. Whether a resolver record exists is already recorded one
+  field up — an empty `gs1_link_set_hash` — so the rename adds no state. A state file carrying the
+  old key is translated on the way in, inverted; pydantic drops unknown keys by default, and
+  dropping this one would put every deliberately retracted product back on the site. That is the
+  one migration failure with a live consequence, so a test asserts it rather than a default.
+
+  **Two defects found while verifying it**, both reachable through `--revive` — which no skill
+  passes, but which `docs/troubleshooting.md` and `docs/wordpress-onboarding.md` both point
+  operators at:
+
+  `--revive --only pages` on a retracted GTIN classified **UNCHANGED** afterwards. `_finish_pages`
+  carries the *prior* `gs1_link_set_hash` forward and the retraction never cleared it, so the
+  revived row read as fully linked — its content hash matches, which is what made the gap
+  invisible. The resolver record stayed retracted for good, with no gate, plan or report saying
+  so. Retraction now blanks the hash, because retraction **deletes the links**, and the existing
+  `_has_no_resolver_link` rule reports the row CHANGED with the `gs1_link` diff the operator
+  already reads at gate 6.
+
+  `--revive --only links` after an *interrupted* take-down — resolver retracted, pages still
+  published, the case `_is_held`'s docstring is about — left the product **HELD permanently**
+  though `safe_upsert(is_enabled=True)` had just written the record back. `_commit_state` updated
+  the hash and left the flag. It now clears `retracted` alongside, which is safe in both
+  directions: a held row only reaches there under `--revive`, and `_is_held` is an OR, so a
+  product whose pages are still drafts stays held. All three are asserted.
+
+  One knock-on, checked rather than left to chance: `run_plan`'s pilot gate calls a GTIN finished
+  when every language carries a link-set hash, so a retracted one now re-enters the plan as HELD
+  instead of vanishing into the `already_present` tally — the better outcome, since the plan-review
+  gate names it, and `run_execute` still drops it without `--revive`. Invisible on live data: all
+  20 entries are published, enabled and linked.
+
 - **The only button gate 6 could render cancelled the run, irrecoverably.** `apply` and `skip` are
   `chat_only` — they belong to the conversational per-row walk — so the Publish screen's per-row
   diff gate offers exactly one control, *Show full diff*, and clicking it ended the run. It was
