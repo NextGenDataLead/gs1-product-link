@@ -33,7 +33,12 @@ from typing import Final, Literal, NamedTuple, TypedDict, cast
 import httpx
 
 from lib.config import WordPressConfig
-from lib.errors import GtinMismatchError, MissingCredentialError, WordPressAPIError
+from lib.errors import (
+    ERROR_BODY_LIMIT,
+    GtinMismatchError,
+    MissingCredentialError,
+    WordPressAPIError,
+)
 from lib.logging_setup import scrub_response_body
 from lib.multilingual import MultilingualAdapter, make_adapter
 
@@ -83,9 +88,6 @@ _RETRY_5XX_MAX_SECONDS: Final = 30.0
 
 #: Default per-operation timeouts (§4.4): read 60s (WordPress renders can be slow).
 _DEFAULT_TIMEOUT: Final = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=10.0)
-
-#: Abbreviate error bodies to this many characters when logging.
-_ERROR_BODY_LOG_LIMIT: Final = 500
 
 #: Sentinel status code used when an error originates below HTTP (network error).
 _NETWORK_ERROR_STATUS: Final = 0
@@ -545,12 +547,14 @@ class WordPressClient:
         except (httpx.ConnectError, httpx.ReadTimeout) as exc:
             _log.error("WP verify_url network error for %s: %r", url, exc)
             raise WordPressAPIError(
-                _NETWORK_ERROR_STATUS, f"verify_url network error: {exc!r}"
+                _NETWORK_ERROR_STATUS,
+                f"verify_url network error: {exc!r}",
+                call=f"HEAD {url}",
             ) from exc
         if _HTTP_SUCCESS_MIN <= resp.status_code < _HTTP_REDIRECT_MAX:
             return True
         _log.error("WP verify_url %s -> %d", url, resp.status_code)
-        raise WordPressAPIError(resp.status_code, resp.text)
+        raise WordPressAPIError(resp.status_code, resp.text, call=f"HEAD {url}")
 
     def link_translations(self, translations: dict[str, int]) -> None:
         """Link per-language page ids as translations of one another (§4.5).
@@ -1001,7 +1005,9 @@ class WordPressClient:
                 if attempts_5xx >= _RETRY_5XX_MAX_ATTEMPTS:
                     _log.error("WP %s (%s) network error, giving up: %r", endpoint, label, exc)
                     raise WordPressAPIError(
-                        _NETWORK_ERROR_STATUS, f"network error: {exc!r}"
+                        _NETWORK_ERROR_STATUS,
+                        f"network error: {exc!r}",
+                        call=f"{endpoint} ({label})",
                     ) from exc
                 backoff = _backoff_5xx(attempts_5xx)
                 _log.warning(
@@ -1083,7 +1089,7 @@ class WordPressClient:
     ) -> WordPressAPIError:
         """Build a :class:`WordPressAPIError`, logging it scrubbed (§5.2)."""
         body = resp.text
-        error = WordPressAPIError(resp.status_code, body)
+        error = WordPressAPIError(resp.status_code, body, call=f"{endpoint} ({label})")
         if final:
             if resp.status_code == HTTPStatus.NOT_FOUND:
                 _log.info("WP %s (%s) -> not found (404)", endpoint, label)
@@ -1093,7 +1099,7 @@ class WordPressClient:
                     endpoint,
                     label,
                     resp.status_code,
-                    scrub_response_body(body)[:_ERROR_BODY_LOG_LIMIT],
+                    scrub_response_body(body)[:ERROR_BODY_LIMIT],
                 )
         return error
 

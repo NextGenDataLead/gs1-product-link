@@ -222,6 +222,7 @@ class RunOutcome(BaseModel):
     gs1_set: bool = False
     qr_paths: list[str] = Field(default_factory=list)
     error: str | None = None
+    failed_call: str | None = None
 
 
 class StateEntry(BaseModel):
@@ -233,6 +234,17 @@ class StateEntry(BaseModel):
     last_run: datetime
     title: str | None = None
 ```
+
+`failed_call` names the request a failed row blames — method, path, and the client's own label,
+e.g. `POST /wp-json/wp/v2/media (upload media clip-a1b2c3d4e5f6)`. A row issues a page write, an
+ACF write, a URL verification and up to two media uploads, and `error` alone does not tell them
+apart: a live `403` recorded as `WordPressAPIError('WordPress API error 403')` took a re-run with
+the output captured to a file before anyone knew it was a video upload rather than the page. The
+API clients now carry the call (and a scrubbed, bounded excerpt of the response body) on the
+exception itself — see `lib/errors.py` — and `run_execute` reads it back, following `__cause__`
+so the deliberate `RuntimeError` wrap in `_verify_targets` does not lose it. Optional because run
+logs predating the field have none and because not every failure is a call: `None` means "not
+recorded", and readers omit it rather than guessing.
 
 `title` is the page title as last written — the one product field state keeps verbatim, so a
 re-run can show a real before/after in a CHANGED row's diff (§10.6.2). `content_hash` proves

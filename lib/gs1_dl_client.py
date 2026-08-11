@@ -23,7 +23,13 @@ from typing import Final, Literal, NotRequired, TypedDict, cast
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from lib.errors import ConfigError, GS1APIError, MissingCredentialError, OverwriteError
+from lib.errors import (
+    ERROR_BODY_LIMIT,
+    ConfigError,
+    GS1APIError,
+    MissingCredentialError,
+    OverwriteError,
+)
 from lib.logging_setup import scrub_response_body
 
 _log = logging.getLogger(__name__)
@@ -53,9 +59,6 @@ _RETRY_5XX_MAX_SECONDS: Final = 30.0
 
 #: Default per-operation timeouts (§4.3): connect 10s, read/write 30s.
 _DEFAULT_TIMEOUT: Final = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
-
-#: Abbreviate error bodies to this many characters when logging (§4.3).
-_ERROR_BODY_LOG_LIMIT: Final = 500
 
 #: Sentinel status code used when an error originates below HTTP (network error).
 _NETWORK_ERROR_STATUS: Final = 0
@@ -261,23 +264,26 @@ class GS1DigitalLinkClient:
             "client_id": _require_env(self.config.client_id_env),
             "client_secret": _require_env(self.config.client_secret_env),
         }
+        token_call = f"POST {_TOKEN_PATH}"
         try:
             resp = self._http.request("POST", self._base_url + _TOKEN_PATH, headers=headers)
         except (httpx.ConnectError, httpx.ReadTimeout) as exc:
-            raise GS1APIError(_NETWORK_ERROR_STATUS, f"token network error: {exc!r}") from exc
+            raise GS1APIError(
+                _NETWORK_ERROR_STATUS, f"token network error: {exc!r}", call=token_call
+            ) from exc
 
         if resp.status_code != HTTPStatus.OK:
-            body = scrub_response_body(resp.text)[:_ERROR_BODY_LOG_LIMIT]
+            body = scrub_response_body(resp.text)[:ERROR_BODY_LIMIT]
             if HTTPStatus.BAD_REQUEST <= resp.status_code < _HTTP_SERVER_ERROR_MIN:
                 raise ConfigError(
                     f"GS1 authorization rejected the credentials ({resp.status_code}): {body}"
                 )
-            raise GS1APIError(resp.status_code, resp.text)
+            raise GS1APIError(resp.status_code, resp.text, call=token_call)
 
         data = resp.json()
         token = data.get("access_token")
         if not isinstance(token, str) or not token:
-            raise GS1APIError(resp.status_code, resp.text)
+            raise GS1APIError(resp.status_code, resp.text, call=token_call)
         expires_in = float(data.get("expires_in", _DEFAULT_TOKEN_TTL_SECONDS))
         self._token = token
         self._token_expiry = time.monotonic() + expires_in
@@ -532,7 +538,11 @@ class GS1DigitalLinkClient:
                 attempts_5xx += 1
                 if attempts_5xx >= _RETRY_5XX_MAX_ATTEMPTS:
                     _log.error("GS1 %s (%s) network error, giving up: %r", endpoint, gtin, exc)
-                    raise GS1APIError(_NETWORK_ERROR_STATUS, f"network error: {exc!r}") from exc
+                    raise GS1APIError(
+                        _NETWORK_ERROR_STATUS,
+                        f"network error: {exc!r}",
+                        call=f"{endpoint} (gtin {gtin})",
+                    ) from exc
                 backoff = _backoff_5xx(attempts_5xx)
                 _log.warning(
                     "GS1 %s (%s) network error, retry %d/%d in %.1fs: %r",
@@ -608,6 +618,7 @@ class GS1DigitalLinkClient:
             response_body=body,
             error_results=error_results,
             request_id=request_id,
+            call=f"{endpoint} (gtin {gtin})",
         )
         if final:
             # A "not found" (400 no-valid-contract) is normal for get() — log INFO,
@@ -620,7 +631,7 @@ class GS1DigitalLinkClient:
                     endpoint,
                     gtin,
                     resp.status_code,
-                    scrub_response_body(body)[:_ERROR_BODY_LOG_LIMIT],
+                    scrub_response_body(body)[:ERROR_BODY_LIMIT],
                 )
         return error
 

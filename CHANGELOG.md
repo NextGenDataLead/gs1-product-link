@@ -191,6 +191,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **A failed row said only that it failed, not which call failed or what the server said.**
+  A live publish stopped on a video upload that WordPress answered with a bare HTML `403`, and
+  the run log — the only durable per-row record this tool keeps — recorded exactly this:
+
+  ```json
+  "error": "WordPressAPIError('WordPress API error 403')"
+  ```
+
+  A row issues a page write, an ACF write, a URL verification and up to two media uploads, and
+  nothing distinguished them: learning it was `POST /wp-json/wp/v2/media` for one video took a
+  re-run with the output captured to a file. The HTML naming the culprit — a security plugin
+  inside WordPress, not a firewall in front of it — went to stderr and nowhere else, and there
+  is no file logger, so on a scheduled run it would simply not exist. That absence is most of
+  why the first diagnosis was wrong in both of its conclusions.
+
+  Both halves were already in hand and thrown away one line apart. `_api_error` receives the
+  endpoint and the label of every request (`upload media clip-a1b2c3d4e5f6`), logs them with
+  the scrubbed body, and then built the exception with neither. `WordPressAPIError`,
+  `GS1APIError` and `LLMAPIError` now carry a `call` and fold it, plus a scrubbed and bounded
+  excerpt of the response body, into the message — which is what `repr(exc)` renders and
+  therefore what reaches `runs/*.jsonl`. `RunOutcome` gains `failed_call`, and the Runs screen
+  leads with it.
+
+  Three details worth stating. The excerpt is scrubbed by the same `scrub_response_body` the
+  logger uses and the existing "secrets never appear in logs" test was extended to cover this
+  new path, because it ends in a *file*; `response_body` still holds the raw text. Whitespace
+  is collapsed, so an HTML block page's identifying first lines fit inside the bound instead of
+  being spent on indentation. And `run_execute` follows `__cause__` when reading the call back,
+  because `_verify_targets` deliberately re-raises as a `RuntimeError` — the one path that
+  already adds context would otherwise have been the one to lose it.
+
+  `failed_call` is optional, the same back-compat move `StateEntry.title` makes: `ui.context`
+  counts an unparseable run-log line as *unreadable* rather than raising, so a required field
+  would have quietly hollowed out every log already on disk. `lib/errors.py` also gained its
+  first dedicated test module, and the 500-character bound, which had been declared twice
+  independently, is now defined once.
+
 - **The operator shell could not publish pages to a production client at all.**
   `run_execute` refuses every real run against `gs1.environment: production` without
   `--i-understand-production`, and its condition does not look at `--only` — `pages` is

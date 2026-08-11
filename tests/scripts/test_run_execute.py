@@ -187,7 +187,9 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
         def verify_url(self, url: str) -> bool:
             rec.verified.append(url)
             if url in unverifiable:
-                raise WordPressAPIError(404, "Not Found")
+                # Shaped like the real client's: it names the call, which _verify_targets
+                # then re-raises as a RuntimeError explaining the GS1 refusal.
+                raise WordPressAPIError(404, "Not Found", call=f"HEAD {url}")
             return verify
 
         def find_by_slug(
@@ -444,6 +446,56 @@ def test_verify_failure_marks_error_and_skips_state(
     outcomes = [json.loads(line) for line in logs[0].read_text().splitlines()]
     assert outcomes[0]["status"] == "error"
     assert "did not return 200" in outcomes[0]["error"]
+
+
+def test_failed_row_records_which_call_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row runs five HTTP calls; the run log has to say which one broke.
+
+    Reproduces issue #60: the row reported ``failed: 403`` and it took a re-run with the
+    output captured to a file to learn the failure was a video upload rather than the page.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    call = "POST /wp-json/wp/v2/media (upload media clip-a1b2c3d4e5f6)"
+    _install(
+        monkeypatch,
+        cfg,
+        wp_error=WordPressAPIError(403, "<html><title>403 Forbidden</title></html>", call=call),
+    )
+    plan = _write_json(tmp_path / "plan.json", _plan(_row()))
+
+    code = run_execute.main(["acme", "--plan", str(plan)])
+
+    assert code == 1
+    outcome = _read_outcomes(tmp_path, newest=True)[0]
+    assert outcome["failed_call"] == call
+    assert "403 Forbidden" in outcome["error"]  # the body, not just the status code
+
+
+def test_failed_call_survives_the_verify_targets_wrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_verify_targets`` re-raises as ``RuntimeError``; the call identity must not be lost.
+
+    That wrap is the one path that already adds context — why a non-serving target refuses a
+    permanent GS1 write — so it would be the worst one to drop the call from.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    dead = f"https://wp.test/product/p-{GTIN_A}/"
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A)))
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+    _install(monkeypatch, cfg, unverifiable=(dead,))
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--only", "links"])
+
+    assert code == 1
+    outcome = _read_outcomes(tmp_path, newest=True)[0]
+    assert outcome["failed_call"] == f"HEAD {dead}"
+    assert "refusing to point a permanent GS1 record" in outcome["error"]
 
 
 # --- Dry run -----------------------------------------------------------------

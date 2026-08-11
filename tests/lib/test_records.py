@@ -14,6 +14,7 @@ from lib.records import (
     PlanClassification,
     PlanRow,
     ProductRecord,
+    RunOutcome,
     State,
     StateEntry,
     is_valid_target_path,
@@ -108,6 +109,39 @@ def test_state_entry_round_trips() -> None:
         last_run=datetime(2026, 7, 11, 12, 0, 0),
     )
     assert StateEntry.model_validate_json(entry.model_dump_json()) == entry
+
+
+def test_run_outcome_line_written_before_failed_call_still_loads() -> None:
+    """A run log predating ``failed_call`` must keep loading, not become unreadable.
+
+    ``ui.context.load_run`` counts a line that fails validation as ``unreadable`` rather than
+    raising, so a *required* new field would silently hollow out every log already on disk
+    instead of failing loudly. This is the same back-compat move ``StateEntry.title`` makes.
+    """
+    old_line = (
+        '{"gtin": "08713195007717", "language": "fr", "ts": "2026-08-11T09:00:00Z", '
+        '"status": "error", "wp_page_id": null, "wp_url": null, "wp_featured_media_id": null, '
+        '"gs1_set": false, "qr_paths": [], '
+        '"error": "WordPressAPIError(\'WordPress API error 403\')"}'
+    )
+
+    outcome = RunOutcome.model_validate_json(old_line)
+
+    assert outcome.failed_call is None  # "not recorded", not a guess
+    assert outcome.status == "error"
+
+
+def test_run_outcome_round_trips_with_the_failing_call() -> None:
+    outcome = RunOutcome(
+        gtin="08713195007717",
+        language="fr",
+        ts=datetime(2026, 8, 11, 9, 0, 0),
+        status="error",
+        error="WordPressAPIError('WordPress API error 403 …')",
+        failed_call="POST /wp-json/wp/v2/media (upload media clip-a1b2c3d4e5f6)",
+    )
+
+    assert RunOutcome.model_validate_json(outcome.model_dump_json()) == outcome
 
 
 # --- Target-path helper ------------------------------------------------------
