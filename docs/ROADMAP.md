@@ -164,12 +164,11 @@ enough to have made the shell unusable for its main job:
 | [#54](https://github.com/NextGenDataLead/gs1-product-link/pull/54) | **`pages` mode could never run against a production client.** `run_execute` demands `--i-understand-production` in every mode; the production gate is absent from the `pages` walk, so the flag could not be set. The *reversible* half of a publish was the unreachable one. |
 | [#64](https://github.com/NextGenDataLead/gs1-product-link/pull/64) | **CI never exercised the screens** (#59), which is why the three above shipped green. A second job now installs `.[dev,ui]` and runs `tests/ui`, with new tests that import every screen against the installed NiceGUI and check the routes and the rail agree in both directions. Also de-flaked the sigkill state test, which raced interpreter startup on a fixed 400 ms sleep. |
 | [#65](https://github.com/NextGenDataLead/gs1-product-link/pull/65) | **The handover named two files and needs five** (#55) — `state.json` among the missing three, without which every published GTIN re-classifies as NEW. Also: the process list has no upload path, the ledger has to travel back, and "executed draft-first" was never true. |
+| [#66](https://github.com/NextGenDataLead/gs1-product-link/pull/66) | **Two failure paths reported unreadably** (#57): the video check printed "284 of 0 video file(s)" — every gap of every kind over the files on disk — and a hand-edited `mapping.yml` answered a stray tab with a 25-line traceback, because `yaml.YAMLError` escaped every `except (OSError, ValueError)` in the codebase. |
+| [#67](https://github.com/NextGenDataLead/gs1-product-link/pull/67) | **The video mapping had no screen** (#51), so the one input that decides whether a product can be published at all was terminal-only. Now an editor on Data that writes the file a row at a time, keeping the hint comments and the confirmed rows. |
 
-Still filed: **[#51](https://github.com/NextGenDataLead/gs1-product-link/issues/51)** (no UI
-for the video mapping), **[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)**
+Still filed: **[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)**
 (screens showing the catalogue where they mean the batch),
-**[#57](https://github.com/NextGenDataLead/gs1-product-link/issues/57)** (a count that prints
-"284 of 0", and a hand-editable file that answers a syntax error with a stack trace),
 **[#58](https://github.com/NextGenDataLead/gs1-product-link/issues/58)** (preflight feedback, screen
 order, and nothing reconciling live pages against `state.json`),
 **[#60](https://github.com/NextGenDataLead/gs1-product-link/issues/60)**

@@ -19,8 +19,15 @@ from typing import Any
 
 from nicegui import events, ui
 
-from lib.errors import ProcessListError
+from lib.errors import ProcessListError, VideoMapError
+from lib.media_video import list_video_files, load_video_map, summarize_video_map
 from ui import REPO_ROOT, context, process_list_edit, runner, theme
+
+
+def _resolve(path: str) -> Path:
+    """A configured path, against the repository root — every path in clients.yml is relative."""
+    resolved = Path(path)
+    return resolved if resolved.is_absolute() else REPO_ROOT / resolved
 
 
 def render() -> None:
@@ -39,6 +46,7 @@ def render() -> None:
 
         _export(cfg, cid)
         _process_list(cfg)
+        _video_map(cfg)
         _quality(cid)
 
 
@@ -161,6 +169,43 @@ def _process_list(cfg: Any) -> None:
         with ui.row().classes("gap-3 mt-3"):
             theme.quiet_action("Remove selected rows", remove)
             theme.action("Save the list", save, danger=True)
+
+
+# --- Video mapping --------------------------------------------------------------
+
+
+def _video_map(cfg: Any) -> None:
+    """A summary and a way in. The editor itself is its own screen — the file has 166 rows."""
+    if cfg.media is None or not cfg.media.video_map_path:
+        return
+
+    with theme.section("Video mapping"):
+        try:
+            summary = summarize_video_map(
+                load_video_map(_resolve(cfg.media.video_map_path)),
+                {
+                    language: [p.name for p in list_video_files(Path(folder))]
+                    for language, folder in cfg.media.video_folders.items()
+                },
+                cfg.wordpress.languages,
+            )
+        except VideoMapError as exc:
+            theme.band(str(exc), "danger")
+            ui.link("Open the video mapping", "/videos").classes("note")
+            return
+
+        with ui.row().classes("gap-12 items-end mb-4"):
+            theme.figure(str(summary.confirmed_gtins), "GTIN(s) publishable")
+            theme.figure(str(summary.unconfirmed), "row(s) needing a GTIN")
+
+        if cfg.media.restrict_to_mapped_gtins:
+            ui.label(
+                "media.restrict_to_mapped_gtins is on, so a product without a confirmed video in "
+                "every language is out of scope — it never reaches the plan, and the run reports "
+                "success having skipped it."
+            ).classes("note")
+
+        ui.link("Open the video mapping", "/videos").classes("note")
 
 
 # --- Quality ------------------------------------------------------------------

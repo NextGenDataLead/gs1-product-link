@@ -38,12 +38,16 @@ PAGE_MODULES: Final = (
     "ui.pages.content",
     "ui.pages.publish",
     "ui.pages.runs",
+    "ui.pages.video_map",
 )
 
 #: Routes that are registered but deliberately absent from the rail, with how they are reached.
-#: Empty today. A screen added without either an entry here or a rail entry is unreachable, which
-#: is the point of checking both directions.
-UNLISTED_ROUTES: Final[dict[str, str]] = {}
+#: A screen added without either an entry here or a rail entry is unreachable, which is the point
+#: of checking both directions.
+UNLISTED_ROUTES: Final[dict[str, str]] = {
+    "/videos": "the video mapping editor, linked from the Data screen — one input file's editor "
+    "rather than a step of the run, and the rail is numbered by step",
+}
 
 #: NiceGUI's own machinery, not ours.
 _INTERNAL_PREFIXES: Final = ("/_nicegui", "/docs", "/redoc", "/openapi.json")

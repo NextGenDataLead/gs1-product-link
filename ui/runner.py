@@ -203,3 +203,16 @@ def run_plan_argv(client_id: str | None) -> list[str]:
 def report_quality_argv(client_id: str | None) -> list[str]:
     """Render every issue file into one worklist."""
     return ["-m", "scripts.report_quality", *([client_id] if client_id else [])]
+
+
+def build_video_map_argv(client_id: str | None, *, check: bool = True) -> list[str]:
+    """The video-mapping coverage gate.
+
+    Only the ``--check`` half is offered here. Draft mode prints a fresh skeleton to stdout, and
+    a screen that could re-draft the mapping would be a screen that can discard client sign-off —
+    so drafting stays a terminal job, where redirecting the output is a deliberate act.
+    """
+    argv = ["-m", "scripts.build_video_map", *([client_id] if client_id else [])]
+    if check:
+        argv.append("--check")
+    return argv

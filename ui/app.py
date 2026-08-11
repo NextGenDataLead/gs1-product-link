@@ -16,7 +16,7 @@ from typing import Final
 from nicegui import ui
 
 from ui import theme
-from ui.pages import content, data, preflight, publish, runs, setup
+from ui.pages import content, data, preflight, publish, runs, setup, video_map
 
 #: Loopback only, and a port unlikely to collide with a dev server the operator also runs.
 HOST: Final = "127.0.0.1"
@@ -38,6 +38,14 @@ def _preflight() -> None:
 @ui.page("/data")
 def _data() -> None:
     data.render()
+
+
+# Not in the rail: this is one input file's editor, reached from the Data screen. The rail is
+# numbered, and each screen's heading says "Step N", so an entry here would number a detour
+# as a step of the run.
+@ui.page("/videos")
+def _video_map() -> None:
+    video_map.render()
 
 
 @ui.page("/content")

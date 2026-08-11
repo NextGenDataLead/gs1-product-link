@@ -221,6 +221,12 @@ python -m scripts.build_video_map            # emit a hint skeleton
 python -m scripts.build_video_map --check     # exit 1 if any file is unmapped
 ```
 
+**Filling it in has a screen** — the operator shell's **Video mapping**, linked from Data. It lists
+every file per language with its state, offers the same fuzzy hints as suggestions, and writes the
+file a row at a time so the comments and the confirmed rows survive. Drafting stays here, in the
+terminal: re-drafting discards client sign-off, and redirecting output over the file should be a
+deliberate act rather than a button.
+
 `video_transcode: true` runs the ffmpeg H.264/MP4 prepare step — necessary because a source `.mpg`
 will not play in an HTML5 `<video>` element. Requires `ffmpeg` on PATH.
 
