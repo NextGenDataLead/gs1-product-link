@@ -23,6 +23,7 @@ from lib.config import WordPressConfig
 from lib.errors import (
     GtinMismatchError,
     MediaIntegrityError,
+    MediaOwnershipError,
     MissingCredentialError,
     WordPressAPIError,
 )
@@ -646,8 +647,16 @@ def test_delete_page_gone_during_delete_is_noop(httpx_mock: HTTPXMock) -> None:
     assert client.delete_page(POST_TYPE, 7, gtin="1") is None
 
 
+#: An attachment this tool uploaded: the content hash is the ownership marker.
+_OURS = {"id": 5, "meta": {"content_sha256": "292cc12b5c2a0fe5"}}
+#: A client's own upload. The meta key is registered site-wide, so it is present and empty —
+#: which is why "non-empty" is the test rather than "present". Taken from the live pilot site.
+_THEIRS = {"id": 5, "meta": {"_acf_changed": False, "content_sha256": ""}}
+
+
 def test_delete_media_forces(httpx_mock: HTTPXMock) -> None:
     client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=_OURS)  # ownership check
     httpx_mock.add_response(method="DELETE", json={"deleted": True})
 
     assert client.delete_media(5) is True
@@ -659,9 +668,36 @@ def test_delete_media_forces(httpx_mock: HTTPXMock) -> None:
 
 def test_delete_media_missing_is_noop(httpx_mock: HTTPXMock) -> None:
     client, _ = make_client(httpx_mock)
-    httpx_mock.add_response(method="DELETE", status_code=404)
+    httpx_mock.add_response(method="GET", status_code=404)
 
     assert client.delete_media(5) is False
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
+
+
+def test_delete_media_refuses_an_attachment_we_did_not_upload(httpx_mock: HTTPXMock) -> None:
+    """The guard the media path did not have, and the pages path always did.
+
+    On the live pilot site 366 of 406 attachments are the client's own, uploaded long before
+    this tool existed. An id is just a number; ``meta.content_sha256`` is what makes it ours.
+    """
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=_THEIRS)
+
+    with pytest.raises(MediaOwnershipError) as exc:
+        client.delete_media(5)
+
+    assert exc.value.media_id == 5
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
+
+
+def test_delete_media_refuses_when_meta_is_unreadable(httpx_mock: HTTPXMock) -> None:
+    # No meta at all (REST not exposing it) is "cannot prove it is ours", which is a refusal.
+    # Declining to delete an orphan of our own is recoverable; deleting a client photo is not.
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json={"id": 5})
+
+    with pytest.raises(MediaOwnershipError):
+        client.delete_media(5)
 
 
 # --- upload_media idempotency (§6.2) -----------------------------------------
@@ -693,9 +729,10 @@ def test_upload_media_uploads_with_content_addressed_slug(
     )
     httpx_mock.add_response(method="POST", url=f"{MEDIA_URL}/5", status_code=200, json={"id": 5})
 
-    media_id = client.upload_media(img, title="Photo")
+    upload = client.upload_media(img, title="Photo")
 
-    assert media_id == 5
+    assert upload.media_id == 5
+    assert upload.created is True  # this call put it there
     # the lookup queried the content-addressed slug, not the bare base
     lookup = _business_requests(httpx_mock)[0]
     assert lookup.method == "GET"
@@ -743,9 +780,12 @@ def test_upload_media_reuses_on_content_slug_without_meta(
         ],
     )
 
-    media_id = client.upload_media(img, title="Photo")
+    upload = client.upload_media(img, title="Photo")
 
-    assert media_id == 5
+    assert upload.media_id == 5
+    # created=False is what stops a caller cleaning up after a failed row from deleting an
+    # attachment an earlier run created and a live page is using.
+    assert upload.created is False
     assert all(r.method != "POST" for r in _business_requests(httpx_mock))  # no upload
 
 
@@ -868,7 +908,7 @@ def test_an_unverifiable_upload_warns_rather_than_passing_silently(
     httpx_mock.add_response(method="POST", url=f"{MEDIA_URL}/7", status_code=200, json={"id": 7})
 
     with caplog.at_level(logging.WARNING, logger="lib.wp_client"):
-        assert client.upload_media(video) == 7
+        assert client.upload_media(video).media_id == 7
 
     assert "unverified" in caplog.text
     assert "clip.mp4" in caplog.text
@@ -887,7 +927,15 @@ def test_a_deduped_fragment_is_discarded_and_re_uploaded(
 
     client, _ = make_client(httpx_mock)
     httpx_mock.add_response(
-        method="GET", json=[{"id": 7, "slug": slug, "media_details": {"filesize": 150}}]
+        method="GET",
+        json=[
+            {
+                "id": 7,
+                "slug": slug,
+                "media_details": {"filesize": 150},
+                "meta": {"content_sha256": "abc123"},  # ours, so ours to replace
+            }
+        ],
     )
     httpx_mock.add_response(
         method="DELETE", url=f"{MEDIA_URL}/7?force=true", json={"deleted": True}
@@ -900,11 +948,35 @@ def test_a_deduped_fragment_is_discarded_and_re_uploaded(
     )
     httpx_mock.add_response(method="POST", url=f"{MEDIA_URL}/8", status_code=200, json={"id": 8})
 
-    assert client.upload_media(video) == 8  # the whole file, under a new id
+    assert client.upload_media(video).media_id == 8  # the whole file, under a new id
 
     methods = [(r.method, r.url.path) for r in _business_requests(httpx_mock)]
     assert ("DELETE", "/wp-json/wp/v2/media/7") in methods
     assert ("POST", "/wp-json/wp/v2/media") in methods
+
+
+def test_a_same_slug_attachment_that_is_not_ours_is_never_deleted(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    """The collision the slug makes vanishingly unlikely, and the one we must not guess on.
+
+    A wrong-sized hit is a fragment *if we uploaded it*. If we did not, it is the client's file
+    sitting at a slug we happen to want, and deleting it to make room would be destroying data
+    this tool never created. Refuse and ask for a human — the E11 posture, for media.
+    """
+    video, _, slug = _upload_fixture(tmp_path)
+
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        json=[{"id": 7, "slug": slug, "media_details": {"filesize": 150}, "meta": {}}],
+    )
+
+    with pytest.raises(MediaOwnershipError):
+        client.upload_media(video)
+
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
+    assert all(r.method != "POST" for r in _business_requests(httpx_mock))  # no re-upload either
 
 
 def test_an_unverifiable_dedup_hit_is_reused_not_deleted(
@@ -920,7 +992,7 @@ def test_an_unverifiable_dedup_hit_is_reused_not_deleted(
     client, _ = make_client(httpx_mock)
     httpx_mock.add_response(method="GET", json=[{"id": 7, "slug": slug}])  # no size anywhere
 
-    assert client.upload_media(video) == 7
+    assert client.upload_media(video).media_id == 7
     assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
 
 

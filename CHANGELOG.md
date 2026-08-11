@@ -191,6 +191,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **`delete_media` would delete any attachment it was given an id for, and orphans were never
+  cleaned up.** Two halves of one gap, found by asking a question the code could not answer:
+  *is there anything stopping us destroying content that was on the site before this project?*
+
+  For pages the answer was yes, and had been all along — `_guard_gtin_match` re-reads the page
+  and refuses unless its `meta.gtin` matches, on `upsert_page`, `set_status` and `delete_page`
+  alike. For media there was no guard at all; the docstring said as much, reasoning that media
+  carries no GTIN to check against. It carries something just as good, and the omission was not
+  academic: **366 of the 406 attachments in the pilot site's media library are the client's own**,
+  uploaded long before this tool existed.
+
+  `meta.content_sha256` — written on every attachment `upload_media` creates, empty on everything
+  else — is now the ownership key, and `delete_media` re-reads the attachment and refuses unless
+  it is non-empty. Unreadable or empty meta counts as *not ours*, which is the conservative
+  direction: at worst it declines to remove an orphan of our own, which is recoverable, rather
+  than deleting a client's product photo, which is not. The one caller that legitimately deletes
+  an attachment carrying no hash yet — the truncated-upload path, where the hash is written by a
+  finalise call a bad upload never reaches — goes through a private unguarded delete, and holds
+  proof no lookup could improve on: the id came out of its own `POST` response moments earlier.
+
+  With that in place, **media uploaded by a row whose page write then fails is taken back down.**
+  Those orphans were invisible to everything: `scripts.reconcile` compares *pages*, and a failed
+  row records no state, so nothing in the tool could ever have found them. The rollback is bounded
+  three ways — it touches only ids from *this* row, only ones `upload_media` reports it actually
+  created (a deduped id belongs to an earlier run and is very likely carried by a live page), and
+  only while no page has been written. That last boundary is exact: `verify_url` fails *after* the
+  page exists and already references the media, and rolling back there would turn a failed row
+  into a live page with broken media. There is deliberately **no sweep** for orphans from earlier
+  runs — an attachment has no ownership key beyond the content hash, so identifying one would mean
+  inferring it, and inference is not a thing to do with a `DELETE` against a live site.
+
+  `upload_media` now returns a `MediaUpload` (`media_id`, `created`) rather than a bare int,
+  because created-versus-reused is the distinction the rollback turns on and it cannot be
+  recovered from the id.
+
 - **A truncated upload was reported as a success, and dedup then made it permanent.** A live
   transfer was cut off mid-upload, leaving a 1.5 MB fragment of an 8 MB video in the media
   library. WordPress answered `201`, the run called it done, and the page published against a

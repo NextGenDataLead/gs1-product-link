@@ -641,7 +641,17 @@ falling back to a `HEAD` on `source_url`) against what it sent, on both the crea
 dedup path. A create that disagrees is deleted and raises **before** the finalise call that would
 claim the slug; a dedup hit that disagrees is deleted and re-uploaded. A size nobody will state is
 logged as *unverified* and reused — deleting on a number that was never supplied would be deleting
-on inference, and `delete_media` has no ownership guard.
+on inference.
+
+**Media has an ownership guard, and it is `meta.content_sha256`.** `delete_media` re-reads the
+attachment and refuses unless that key is non-empty — the media counterpart to `_guard_gtin_match`
+on pages (§6.1, E8/E11), and for the same reason: on the pilot site 366 of 406 attachments are the
+client's own. Empty or unreadable meta counts as *not ours*, so the failure leans toward leaving an
+orphan rather than deleting a stranger's file. `upload_media` returns `MediaUpload(media_id,
+created)` so a caller can tell an attachment it added from one dedup handed it, which is what makes
+rolling back a failed row safe; `run_execute` uses it to remove media uploaded by a row whose page
+write never happened. There is deliberately no sweep for orphans from earlier runs — with no
+ownership key beyond the hash, finding one would mean inferring it.
 
 
 | # | Operation | Contract | Test |

@@ -37,6 +37,7 @@ from lib.errors import (
     ERROR_BODY_LIMIT,
     GtinMismatchError,
     MediaIntegrityError,
+    MediaOwnershipError,
     MissingCredentialError,
     WordPressAPIError,
 )
@@ -139,6 +140,19 @@ class WordPressMedia(TypedDict, total=False):
     title: dict[str, str]
     meta: dict[str, object]
     media_details: dict[str, object]
+
+
+class MediaUpload(NamedTuple):
+    """An attachment id, and whether *this* call is what put it on the site.
+
+    The distinction is what makes rolling back a failed row safe. Dedup means an upload very
+    often returns an attachment an earlier run created and a live page is already using, so a
+    caller cleaning up after itself must delete only what it actually added. ``created`` is the
+    only way to tell those apart from the outside: both are ours, and both look identical.
+    """
+
+    media_id: int
+    created: bool
 
 
 class WordPressIdentity(NamedTuple):
@@ -456,7 +470,7 @@ class WordPressClient:
             page = self._write_acf(post_type, int(page["id"]), acf)
         return page
 
-    def upload_media(self, file_path: str | Path, title: str | None = None) -> int:
+    def upload_media(self, file_path: str | Path, title: str | None = None) -> MediaUpload:
         """Upload a media file, idempotently by a content-addressed slug (§6.2).
 
         The slug folds the SHA-256 of the bytes into a base derived from ``title`` (or the
@@ -481,11 +495,14 @@ class WordPressClient:
             title: Optional media title; also seeds the idempotency slug.
 
         Returns:
-            The WordPress media id.
+            The attachment id and whether this call created it — see :class:`MediaUpload`. The
+            flag matters to any caller that might have to undo its own work: a reused id belongs
+            to an earlier run and is very likely in use by a live page.
 
         Raises:
             WordPressAPIError: On a non-2xx response after retries.
             MediaIntegrityError: WordPress stored a different number of bytes than were sent.
+            MediaOwnershipError: The slug is held by an attachment this tool did not upload.
         """
         path = Path(file_path)
         data = path.read_bytes()
@@ -497,8 +514,8 @@ class WordPressClient:
             _log.info(
                 "WP media %r already uploaded (content match), reusing id %s", slug, existing["id"]
             )
-            return existing["id"]
-        return self._create_media(path, data, title, slug, digest)
+            return MediaUpload(existing["id"], created=False)
+        return MediaUpload(self._create_media(path, data, title, slug, digest), created=True)
 
     def download_image(self, url: str) -> bytes | None:
         """Fetch an image URL, returning ``None`` if it is unavailable (edge E7).
@@ -698,10 +715,12 @@ class WordPressClient:
         (``rest_trash_not_supported``, HTTP 501), so bypassing the trash is the only
         mode there is and a ``force`` flag here could only ever be ``True``.
 
-        **Unlike :meth:`delete_page` this has no ownership guard.** Media carries
-        ``meta.content_sha256``, not a GTIN, so there is no key to check the caller's
-        intent against — an id is taken at face value. Pass only ids you got back from
-        :meth:`upload_media`.
+        **Guarded by ownership, like :meth:`delete_page`.** The attachment is re-read first and
+        the delete is refused unless it carries a non-empty ``meta.content_sha256`` — the marker
+        :meth:`upload_media` writes on everything it creates. This used to take an id at face
+        value, on the reasoning that media has no GTIN to check against. It has something just
+        as good, and the gap was not theoretical: the pilot site's media library holds 406
+        attachments, of which 366 are the client's own, uploaded long before this tool existed.
 
         Args:
             media_id: The attachment to delete.
@@ -710,7 +729,24 @@ class WordPressClient:
             ``True`` when an attachment was deleted, ``False`` when it was already gone.
 
         Raises:
+            MediaOwnershipError: The attachment exists but this tool did not upload it.
             WordPressAPIError: On any non-2xx response after retries.
+        """
+        existing = self._get_media(media_id)
+        if existing is None:
+            return False  # already gone; idempotent
+        if not _is_ours(existing):
+            raise MediaOwnershipError(media_id, "it carries no content hash from this tool")
+        return self._force_delete_media(media_id)
+
+    def _force_delete_media(self, media_id: int) -> bool:
+        """Delete an attachment with **no ownership check**; idempotent.
+
+        Only two callers may use this, and both hold proof the public guard would otherwise
+        have to go and fetch: :meth:`delete_media`, which has just performed the check, and
+        :meth:`_assert_whole`, whose id came out of its own ``POST`` response moments earlier —
+        provenance no lookup could improve on, and which the guard would in fact *fail*, because
+        the content hash is not written until the finalise call that a bad upload never reaches.
         """
         try:
             self._request(
@@ -725,6 +761,21 @@ class WordPressClient:
             raise
         _log.warning("WP deleted media %s", media_id)
         return True
+
+    def _get_media(self, media_id: int) -> WordPressMedia | None:
+        """GET one attachment (``context=edit``, so ``meta`` is readable); ``None`` if gone."""
+        try:
+            resp = self._request(
+                "GET",
+                f"{_MEDIA_PATH}/{media_id}",
+                params={"context": "edit"},
+                label=f"media {media_id}",
+            )
+        except WordPressAPIError as exc:
+            if exc.status_code in (HTTPStatus.NOT_FOUND, HTTPStatus.GONE):
+                return None
+            raise
+        return cast(WordPressMedia, resp.json())
 
     # -- Lookup internals -----------------------------------------------------
 
@@ -971,14 +1022,25 @@ class WordPressClient:
         again — a stale fragment is repairable here, and only here.
 
         Unverifiable is reuse, not deletion. ``_stored_bytes`` returns ``None`` when nothing will
-        say how large the file is, and :meth:`delete_media` has no ownership guard, so deleting
-        on a number nobody supplied would remove a live page's media on a guess. The bytes match
-        by hash; absent evidence to the contrary, the attachment is the file.
+        say how large the file is, and deleting on a number nobody supplied would remove a live
+        page's media on a guess. The bytes match by hash; absent evidence to the contrary, the
+        attachment is the file.
+
+        **Ownership is checked before anything is deleted here**, unlike on the create path: this
+        id came from a slug *lookup*, so it is whatever the site had under that slug, not
+        something this call minted. The lookup already fetched ``meta`` (``context=edit``), so the
+        check costs no request. A same-slug attachment that is not ours is a collision with the
+        client's own library — vanishingly unlikely given the slug embeds a SHA-256 prefix, and
+        exactly the case where guessing is unacceptable.
         """
         media_id = existing["id"]
         stored = self._stored_bytes(existing)
         if stored is None or stored == sent:
             return True
+        if not _is_ours(existing):
+            raise MediaOwnershipError(
+                media_id, f"it holds {stored} bytes rather than {sent}, but is not ours to replace"
+            )
         _log.warning(
             "WP media %r matches by content hash but holds %d bytes, not %d — deleting the "
             "fragment (attachment %s) and re-uploading %s",
@@ -1088,12 +1150,17 @@ class WordPressClient:
     def _discard_media(self, media_id: int) -> bool:
         """Delete an attachment we know is corrupt, without masking why we are deleting it.
 
-        :meth:`delete_media` raises on any non-2xx, and that exception would replace the
-        integrity failure it is cleaning up after — leaving the operator with a delete error and
-        no statement of what was wrong with the file.
+        A delete raises on any non-2xx, and that exception would replace the integrity failure it
+        is cleaning up after — leaving the operator with a delete error and no statement of what
+        was wrong with the file.
+
+        Goes through :meth:`_force_delete_media`: both callers have *already* established that
+        the attachment is theirs — by provenance on the create path, by an explicit
+        :func:`_is_ours` check on the dedup path — so re-fetching it here would only add a request
+        and, on the create path, would wrongly refuse.
         """
         try:
-            return self.delete_media(media_id)
+            return self._force_delete_media(media_id)
         except WordPressAPIError as exc:
             _log.error("WP could not delete corrupt media %s: %r", media_id, exc)
             return False
@@ -1289,6 +1356,24 @@ def _deleted_page(body: object) -> WordPressPage | None:
     if "previous" in body:
         return cast(WordPressPage, body["previous"])
     return cast(WordPressPage, body)
+
+
+def _is_ours(media: WordPressMedia) -> bool:
+    """Whether this tool uploaded an attachment, from the content hash it stamps on its own.
+
+    ``upload_media`` writes ``meta.content_sha256`` on every attachment it creates. On the pilot
+    site the key is registered site-wide, so it is *present* on all 406 attachments and non-empty
+    on only the 40 that came from here — which makes "non-empty" the test, not "present".
+
+    Anything unreadable or empty answers ``False``. That is the safe direction: at worst this
+    declines to delete an orphan of our own, which is recoverable, rather than deleting a
+    client's product photo, which is not.
+    """
+    meta = media.get("meta")
+    if not isinstance(meta, dict):
+        return False
+    digest = meta.get(_CONTENT_HASH_META_KEY)
+    return isinstance(digest, str) and digest != ""
 
 
 def _content_slug(base: str, digest: str) -> str:
