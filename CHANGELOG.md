@@ -191,6 +191,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **Gate 0 gave the size of the catalogue where the operator was asking about this run.** The
+  intent gate led with `context.product_count` — the length of `products.json` — under the label
+  "products in the catalogue". Honest, and the wrong number: during the install rehearsal it read
+  **127** on a run scoped to one product. Gate 0 is where the operator forms their picture of what
+  they are about to do, which makes it the worst place in the flow for the prominent figure to
+  describe something other than this run.
+
+  The fix is *not* to compute scope in the shell. `lib.preflight.in_scope` already composes the two
+  gates that decide it — the process list, then the confirmed-video allowlist behind
+  `media.restrict_to_mapped_gtins` — and a second implementation of "what will this run touch" is
+  the same class of mistake as a second implementation of the operator gates. So the screen reads
+  the doctor's `scope` check: **15 in scope**, **127 in the catalogue** one size down, and the
+  doctor's own sentence naming what removed the rest, since *15 of 127* otherwise leaves a reader
+  guessing whether that was intended.
+
+  `ui.context` gains `Scope` and `scope_from`, plus `doctor_check` — which was `_find`, copied
+  verbatim into two screens, and this would have been the third. An unreadable payload yields
+  `None` and the gate shows a dash; it never falls back to the catalogue total, because a wrong
+  number under the right label is worse than no number — the label vouches for it. `None` and
+  `in_scope=0` stay distinct: zero is actionable and alarming, absent warrants no conclusion. An
+  empty scope gets a danger band, that being the outcome this project keeps designing against.
+
+  **One `doctor --json --offline` per redraw**, hoisted into `_redraw` and shared. Gate 3 already
+  ran one; a second for gate 0 would have been ~500 ms of blocking subprocess on every answer, in
+  a function already holding the event loop — and the two gates could have reported different
+  numbers for the same run, which is the more expensive half. A contract test now fails if any
+  gate renderer runs its own.
+
+  Both surfaces moved together, because the gates are one contract. `SKILL.md`'s gate 0 leads with
+  scope, cites where the number comes from, and keeps the "not the row count" caveat — now with
+  the reason: scope deliberately cannot subtract the already-published units, because deciding
+  that needs `state.json` and an idle read of a corrupt one quarantines it (E19). On the live pilot
+  the two read 15 and 5, so "could touch" is never "will publish". The intent gate's own `purpose`
+  promised "the catalogue size" and was stale the moment the screen changed; it moved too.
+
 - **A gate asked about nothing, on every run, and its only live control was the destructive one.**
   `lib/gates.py` filtered the nine gates on mode, generator and environment and never on the plan,
   so the missing-field prompt (step 4) rendered whether or not `run_plan` had dropped anything: a

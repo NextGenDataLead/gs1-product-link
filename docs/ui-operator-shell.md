@@ -197,6 +197,27 @@ compressed, or skipped.
   on a dry run.
 - An empty plan is refused rather than run. Publishing nothing successfully is the one outcome
   indistinguishable from success.
+- **Gate 0 leads with what this run could touch, not the size of the catalogue.** It used to
+  render the length of `products.json` under the label "products in the catalogue" — honest, and
+  the wrong number: **127** on a run scoped to one product, at the gate where the operator forms
+  their picture of what they are about to do. It now shows the doctor's `scope` check — *15 in
+  scope*, *127 in the catalogue* one size down, and the doctor's own sentence naming what removed
+  the rest. The shell does **not** compute scope itself: `lib.preflight.in_scope` already composes
+  the process list and the video allowlist, and a second implementation of "what will this run
+  touch" is the same class of mistake as a second implementation of the gates.
+
+  Neither figure is the row count. Scope deliberately cannot subtract the units already published
+  — that needs `state.json`, and an idle read of a corrupt one quarantines it (E19) — so it is a
+  ceiling, and the real number arrives at step 5. On the live pilot the two read 15 and 5.
+
+  If the payload cannot be read the gate shows a dash and says so; it never falls back to the
+  catalogue total, because a wrong number under the right label is worse than no number. An empty
+  scope gets a danger band: that run would write nothing and report success.
+
+  **One `doctor --json --offline` per redraw**, in `_redraw` and shared by gates 0 and 3. Gate 3
+  already ran one; a second would have been ~500 ms of blocking subprocess on every answer, and
+  two gates could have disagreed about the same run. A contract test fails if any gate renderer
+  runs its own.
 - **The missing-field gate (step 4) appears only when the plan actually dropped a unit for a
   missing `product_name` (E18), and it names each one.** It used to render on every run, offering
   *Skip this unit* beside no unit — and of its three answers only *Stop the run* had any effect,
