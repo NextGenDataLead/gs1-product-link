@@ -469,7 +469,20 @@ class _Flow:
                 )
                 return
             if self.session.cancelled:
-                theme.band("A gate was answered with cancel. Nothing will run.", "quiet")
+                # Named rather than described. "A gate was answered with cancel" is a claim about
+                # an unnamed gate, and it was reachable at gates the operator had not cancelled at
+                # all — including one whose only button said "Show full diff".
+                refused = [
+                    f"{gate.title} (step {gate.step}) was answered “{option.label}”"
+                    for gate in self.session.gates
+                    if (option := self.session.chosen(gate.id)) is not None and option.refuses
+                ]
+                theme.band(
+                    "Nothing will run: "
+                    + "; ".join(refused)
+                    + ". Answer it differently above to make the run available again.",
+                    "quiet",
+                )
                 return
             plan = context.load_plan(self.cid)
             if plan is None or not plan.rows:

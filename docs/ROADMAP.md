@@ -191,12 +191,16 @@ GTINs as well as the counts, the shell reads them, and `run_generate` calls the 
 the doctor and every screen and command agree **by construction** rather than by coincidence. Two
 of the PRs are mostly the plumbing that made that true.
 
-Filed since, and open: **[#74](https://github.com/NextGenDataLead/gs1-product-link/issues/74)**
-(`gs1_enabled` records one meaning and is read as another),
+Filed since: **[#74](https://github.com/NextGenDataLead/gs1-product-link/issues/74)**
+(`gs1_enabled` records one meaning and is read as another) and
 **[#75](https://github.com/NextGenDataLead/gs1-product-link/issues/75)** (the WordPress MCP never
-got the multipart fix or the content-addressed slug), and
-**[#76](https://github.com/NextGenDataLead/gs1-product-link/issues/76)** (at gate 6 the only
-button the shell offers cancels the run) — the last found while fixing #56.
+got the multipart fix or the content-addressed slug), both open;
+**[#76](https://github.com/NextGenDataLead/gs1-product-link/issues/76)**, found while fixing #56,
+is fixed by [#81](https://github.com/NextGenDataLead/gs1-product-link/pull/81).
+
+| Fixed | What was wrong |
+|---|---|
+| [#81](https://github.com/NextGenDataLead/gs1-product-link/pull/81) | **The only button gate 6 could render cancelled the run** (#76). `apply`/`skip` are `chat_only`, so the per-row diff gate offers exactly one control — *Show full diff* — and it was marked `proceeds=False`, which is right in the chat flow, where it prints the rest and re-prompts. On a form it is the *terminal* answer, so `cancelled` read it as a refusal and the run was over with nothing on screen to undo it, reached by picking the most careful answer at gate 5. One boolean was answering two questions; `GateOutcome` splits them into `ADVANCES`/`STOPS`/`REDISPLAYS`, in the contract rather than in the screen. Also: `execute_argv` consulted only *required* gates, so gate 4's *Stop the run* built a command — its "abort before execute" was enforced by the screen returning early. |
 
 **#59 was the one that explained the other three.** CI installed `.[dev]` — which is exactly what
 keeps `lib` provably free of a UI dependency — and therefore never touched `ui/pages/`. Three
