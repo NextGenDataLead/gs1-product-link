@@ -23,6 +23,11 @@ from lib.gates import BY_ID, Gate, GateOption, Mode, gates_for, run_execute_argv
 from lib.records import SkippedUnit
 
 
+def _named(gates: list[Gate]) -> str:
+    """The gates in a refusal message, each with the step number the operator saw."""
+    return ", ".join(f"{gate.title} (step {gate.step})" for gate in gates)
+
+
 class GateNotAnsweredError(RuntimeError):
     """A required gate has no answer, or was answered with something that does not proceed.
 
@@ -133,6 +138,18 @@ class PublishSession:
         option = self.chosen(gate_id)
         return option is not None and option.proceeds
 
+    def refused(self, gate_id: str) -> bool:
+        """Whether ``gate_id`` was answered with an option that **stops the run**.
+
+        Deliberately not ``not proceeded(...)``. An option that re-presents its own gate —
+        ``show-full-diff``, ``change-mode``, ``regenerate`` — does not carry the flow on and does
+        not refuse either, and reading the first as the second is what made the one button the
+        shell can render at gate 6 cancel the run irrecoverably. :class:`~lib.gates.GateOutcome`
+        holds that distinction so this file does not have to re-derive it.
+        """
+        option = self.chosen(gate_id)
+        return option is not None and option.refuses
+
     @property
     def outstanding(self) -> tuple[Gate, ...]:
         """The required gates still standing between this session and a run."""
@@ -145,27 +162,49 @@ class PublishSession:
 
     @property
     def cancelled(self) -> bool:
-        """Whether any gate was answered with an option that stops the run."""
-        return any(gate.id in self.answers and not self.proceeded(gate.id) for gate in self.gates)
+        """Whether any gate was answered with an option that stops the run.
+
+        Only the answers that actually refuse. This used to count every answer that did not
+        *proceed*, which swept in the detours: a screen showing the rest of a diff, or asking to
+        pick a different mode, reported the run as cancelled with no way back.
+        """
+        return any(self.refused(gate.id) for gate in self.gates)
 
     def execute_argv(
         self, confirmed_path: str, *, dry_run: bool, revive: bool = False
     ) -> list[str]:
         """The command this session authorises — or a refusal.
 
+        Two ways to be refused, and the second one used to be missing. A gate answered *stop the
+        run* is not "outstanding" — it has an answer — so a refusal at a gate that is not
+        ``required`` reached this function and got a command built. Gate 4's *Stop the run* is
+        exactly that, and its documented "abort before execute" was enforced only by the publish
+        screen returning early: display logic standing in for the function whose entire docstring
+        is about refusing. It is checked first because it is the more specific truth, and it names
+        the gate so the screen can say which.
+
         The dry run (gate 8.5) is itself a required gate, so it is exempt from needing its *own*
         answer: it is the thing being authorised at that point, and requiring an answer before
-        producing the command it previews would be a loop. Every other required gate must already
-        have proceeded, including the production one — a dry run of a plan whose intent was never
-        confirmed is a preview of a decision nobody made.
+        producing the command it previews would be a loop. The exemption covers both checks — a
+        dry run cancelled after being read must still be *re-runnable*, since it writes nothing.
+        Every other required gate must already have proceeded, including the production one — a
+        dry run of a plan whose intent was never confirmed is a preview of a decision nobody made.
 
         Raises:
-            GateNotAnsweredError: If any required gate is outstanding.
+            GateNotAnsweredError: If any required gate is outstanding, or any gate at all was
+                answered with an option that stops the run.
         """
-        outstanding = [gate for gate in self.outstanding if not (dry_run and gate.id == "dry_run")]
+
+        def relevant(gates: tuple[Gate, ...]) -> list[Gate]:
+            return [gate for gate in gates if not (dry_run and gate.id == "dry_run")]
+
+        refused = relevant(tuple(gate for gate in self.gates if self.refused(gate.id)))
+        if refused:
+            raise GateNotAnsweredError(f"answered with a refusal: {_named(refused)}")
+
+        outstanding = relevant(self.outstanding)
         if outstanding:
-            names = ", ".join(f"{gate.title} (step {gate.step})" for gate in outstanding)
-            raise GateNotAnsweredError(f"not answered yet: {names}")
+            raise GateNotAnsweredError(f"not answered yet: {_named(outstanding)}")
 
         return run_execute_argv(
             self.client_id,

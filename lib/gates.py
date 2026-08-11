@@ -79,32 +79,72 @@ PERMANENCE_WARNING: Final = (
 REVERSIBLE_NOTE: Final = "Pages only — no GS1 record is written, so this run is reversible."
 
 
+class GateOutcome(StrEnum):
+    """What answering with one option does to the run.
+
+    Three states rather than two, because the boolean this replaces was carrying two questions at
+    once — *does this advance the flow* and *does this stop the run* — which coincide everywhere
+    except on a detour. :attr:`REDISPLAYS` is the detour.
+    """
+
+    #: Carries the flow on to the next gate.
+    ADVANCES = "advances"
+    #: Refuses: this run must not happen. The one outcome that must never be inferred wrong.
+    STOPS = "stops"
+    #: Re-presents this same gate, showing more or asking again. The run stays exactly as available
+    #: as it was — an answer of this kind changes what the operator is *looking at*, nothing else.
+    REDISPLAYS = "redisplays"
+
+
 class GateOption(NamedTuple):
     """One choice a gate offers.
 
     ``value`` is the token ``SKILL.md`` prints between the brackets, kept identical so an operator
     who has used one surface recognises the other.
 
-    ``proceeds`` says whether this answer lets the run go on. It is data rather than something a
-    consumer infers from the word, because the inference is not obvious in either direction:
-    ``changed-review`` proceeds and ``switch-to-test`` does not, and both read like the opposite
-    at a glance. A UI that guesses wrong here either blocks a legitimate run or — far worse —
-    treats ``cancel`` as consent.
+    ``outcome`` says what this answer does. It is data rather than something a consumer infers
+    from the word, because the inference is not obvious in any direction: ``changed-review``
+    advances and ``switch-to-test`` does not, and both read like the opposite at a glance. A UI
+    that guesses wrong here either blocks a legitimate run or — far worse — treats ``cancel`` as
+    consent.
+
+    It was a ``proceeds`` boolean until that boolean was found to be answering two questions with
+    one bit. ``show-full-diff`` is where they part: in the chat flow it prints the rest of the diff
+    and re-prompts, so *does not advance* is true of it, and the flag was set accordingly. On a
+    form surface it is the **terminal** answer to its gate, so the same flag read as a refusal —
+    and since it is the only option the shell can render at that gate, the single button on the
+    card cancelled the run irrecoverably, on the path taken by the operator doing the most careful
+    thing on offer. Two states made a screen guess; three say which question is being asked.
 
     ``chat_only`` marks an option only the conversational surface can honour, and it is data for
-    the same reason ``proceeds`` is: a UI cannot infer it. Two gates carry such options — one
-    needs a model to read the run log and explain, the others need a row-by-row walk the shell
-    does not do. Deleting them instead would have been the tail wagging the dog: the shell cannot
-    do a thing, so the surface that can loses it, and ``SKILL.md`` has to be edited to match. This
-    keeps both surfaces honest about what they offer, and lets the contract test derive what a
-    screen must render rather than carrying a hand-maintained list of exceptions.
+    the same reason ``outcome`` is: a UI cannot infer it. It is a **separate axis** — *which
+    surface can honour this*, not a fourth value of *what this does*. Two gates carry such options
+    — one needs a model to read the run log and explain, the others need a row-by-row walk the
+    shell does not do. Deleting them instead would have been the tail wagging the dog: the shell
+    cannot do a thing, so the surface that can loses it, and ``SKILL.md`` has to be edited to
+    match. This keeps both surfaces honest about what they offer, and lets the contract test derive
+    what a screen must render rather than carrying a hand-maintained list of exceptions.
     """
 
     value: str
     label: str
     consequence: str
-    proceeds: bool = True
+    outcome: GateOutcome = GateOutcome.ADVANCES
     chat_only: bool = False
+
+    @property
+    def proceeds(self) -> bool:
+        """Whether this answer carries the flow on to the next gate."""
+        return self.outcome is GateOutcome.ADVANCES
+
+    @property
+    def refuses(self) -> bool:
+        """Whether this answer stops the run.
+
+        Not the negation of :attr:`proceeds`, and that is the whole point: an option that
+        re-presents its gate does neither.
+        """
+        return self.outcome is GateOutcome.STOPS
 
     @property
     def in_shell(self) -> bool:
@@ -210,8 +250,13 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("confirm", "Confirm", "Proceed with this mode"),
-            GateOption("change-mode", "Change mode", "Re-present with a different mode", False),
-            GateOption("cancel", "Cancel", "Abort; nothing runs", False),
+            GateOption(
+                "change-mode",
+                "Change mode",
+                "Re-present with a different mode",
+                GateOutcome.REDISPLAYS,
+            ),
+            GateOption("cancel", "Cancel", "Abort; nothing runs", GateOutcome.STOPS),
         ),
         required=True,
         modes=_ALL_MODES,
@@ -241,8 +286,13 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("confirm", "Copy is good", "Proceed to planning"),
-            GateOption("regenerate", "Regenerate", "Fill the cache again before planning", False),
-            GateOption("cancel", "Cancel", "Abort; nothing runs", False),
+            GateOption(
+                "regenerate",
+                "Regenerate",
+                "Fill the cache again before planning",
+                GateOutcome.REDISPLAYS,
+            ),
+            GateOption("cancel", "Cancel", "Abort; nothing runs", GateOutcome.STOPS),
         ),
         required=True,
         modes=_ALL_MODES,  # links mode too: an empty cache still empties the plan
@@ -264,10 +314,8 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("skip-row", "Skip this unit", "Other languages proceed"),
-            GateOption(
-                "ask-me-later", "Ask me later", "Batch the prompts, present at the end", True
-            ),
-            GateOption("fail-run", "Stop the run", "Abort before execute", False),
+            GateOption("ask-me-later", "Ask me later", "Batch the prompts, present at the end"),
+            GateOption("fail-run", "Stop the run", "Abort before execute", GateOutcome.STOPS),
         ),
         required=False,
         modes=_ALL_MODES,
@@ -289,7 +337,7 @@ GATES: Final[tuple[Gate, ...]] = (
             GateOption("all", "All", "Confirm every NEW and CHANGED row"),
             GateOption("new-only", "New only", "Confirm NEW rows; skip CHANGED"),
             GateOption("changed-review", "Review changed", "Walk each CHANGED row's diff"),
-            GateOption("cancel", "Cancel", "Abort; nothing is written", False),
+            GateOption("cancel", "Cancel", "Abort; nothing is written", GateOutcome.STOPS),
         ),
         required=True,
         modes=_ALL_MODES,
@@ -309,7 +357,12 @@ GATES: Final[tuple[Gate, ...]] = (
         options=(
             GateOption("apply", "Apply", "Include this row in the run", chat_only=True),
             GateOption("skip", "Skip", "Leave this row unchanged", chat_only=True),
-            GateOption("show-full-diff", "Show full diff", "Show every changed row", False),
+            GateOption(
+                "show-full-diff",
+                "Show full diff",
+                "Show every changed row",
+                GateOutcome.REDISPLAYS,
+            ),
         ),
         required=False,
         modes=_ALL_MODES,
@@ -327,9 +380,14 @@ GATES: Final[tuple[Gate, ...]] = (
         options=(
             GateOption("confirm", "Confirm", "Execute against production"),
             GateOption(
-                "switch-to-test", "Switch to test", "Re-resolve to the test environment", False
+                "switch-to-test",
+                "Switch to test",
+                "Re-resolve to the test environment",
+                # STOPS, not REDISPLAYS, though it reads like a detour: it refuses *this* run,
+                # whose whole subject is the environment it was resolved against.
+                GateOutcome.STOPS,
             ),
-            GateOption("cancel", "Cancel", "Abort; nothing is written", False),
+            GateOption("cancel", "Cancel", "Abort; nothing is written", GateOutcome.STOPS),
         ),
         required=True,
         modes=_PERMANENT_MODES,
@@ -348,7 +406,7 @@ GATES: Final[tuple[Gate, ...]] = (
         ),
         options=(
             GateOption("proceed", "Proceed", "Run it for real"),
-            GateOption("cancel", "Cancel", "Abort; nothing is written", False),
+            GateOption("cancel", "Cancel", "Abort; nothing is written", GateOutcome.STOPS),
         ),
         required=True,
         modes=_ALL_MODES,
@@ -368,7 +426,11 @@ GATES: Final[tuple[Gate, ...]] = (
             GateOption("yes", "Retry the failures", "Re-run execute filtered to the failed GTINs"),
             GateOption("no", "Done", "Finish"),
             GateOption(
-                "detail", "Explain each error", "Read the run log and explain", chat_only=True
+                "detail",
+                "Explain each error",
+                "Read the run log and explain",
+                GateOutcome.REDISPLAYS,
+                chat_only=True,
             ),
         ),
         required=False,

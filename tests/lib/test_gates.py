@@ -18,7 +18,15 @@ from typing import Final
 
 import pytest
 
-from lib.gates import GATES, PERMANENCE_WARNING, Gate, Mode, gates_for, run_execute_argv
+from lib.gates import (
+    GATES,
+    PERMANENCE_WARNING,
+    Gate,
+    GateOutcome,
+    Mode,
+    gates_for,
+    run_execute_argv,
+)
 
 _SKILL: Final = (
     Path(__file__).resolve().parent.parent.parent
@@ -393,18 +401,64 @@ def test_the_dry_run_argv_matches_the_real_one_but_for_the_two_flags() -> None:
 
 def test_every_gate_offers_a_way_out(  # noqa: D401 — the name is the assertion
 ) -> None:
-    """A required gate with no non-proceeding option is not a gate, it is a notification."""
+    """A required gate with no way to stop the run is not a gate, it is a notification.
+
+    ``refuses``, not ``not proceeds``: a way out has to be an actual stop. An option that
+    re-presents the same gate satisfies "does not proceed" while leaving the run exactly as
+    available as it was, so the weaker assertion would accept a gate whose only alternative to
+    consent is being asked again.
+    """
     for gate in GATES:
         if gate.required and gate.options:
-            assert any(not option.proceeds for option in gate.options), gate.id
+            assert any(option.refuses for option in gate.options), gate.id
 
 
 def test_cancel_never_reads_as_consent() -> None:
-    """The one wrong answer that would be catastrophic, so it is asserted rather than assumed."""
+    """The one wrong answer that would be catastrophic, so it is asserted rather than assumed.
+
+    Asserts ``refuses`` rather than ``not proceeds`` for the reason above, and here it is
+    load-bearing: since :class:`~lib.gates.GateOutcome` gained a third state, ``not proceeds`` is
+    also true of every detour. An edit that made ``cancel`` a ``REDISPLAYS`` would pass the weaker
+    form of this test while making ``PublishSession.cancelled`` return ``False`` on a cancel.
+    """
     for gate in GATES:
         for option in gate.options:
             if option.value in {"cancel", "fail-run", "switch-to-test"}:
-                assert not option.proceeds, f"{gate.id}/{option.value}"
+                assert option.refuses, f"{gate.id}/{option.value}"
+
+
+def test_a_redisplay_option_is_never_read_as_a_refusal() -> None:
+    """The mirror of ``test_cancel_never_reads_as_consent``, and the one that was missing.
+
+    That test pins the answers which must never be read as consent. Nothing pinned the converse —
+    that an answer which only changes what is on screen is never read as a refusal — and the gap
+    is what shipped issue #76: ``show-full-diff`` is the only option the shell can render at gate
+    6, and answering it cancelled the run.
+    """
+    redisplays = [(g, o) for g in GATES for o in g.options if o.outcome is GateOutcome.REDISPLAYS]
+    assert redisplays, "nothing redisplays — this check would pass vacuously"
+    for gate, option in redisplays:
+        assert not option.refuses, f"{gate.id}/{option.value} reads as a refusal"
+        assert not option.proceeds, f"{gate.id}/{option.value} reads as consent"
+
+
+def test_no_gate_is_a_dead_end_in_the_shell() -> None:
+    """Every gate the shell can render leaves at least one way on from it.
+
+    The general form of #76, and the assertion that would have caught it: at gate 6 the only
+    option not marked ``chat_only`` was one the shell read as a refusal, so the single button on
+    the card ended the run with nothing on the screen to undo it. Written over ``shell_options``
+    because that is what the screen renders — a gate can offer nothing but refusals in the chat
+    flow and still be answerable there, where the operator can simply say something else.
+    """
+    for gate in GATES:
+        if not gate.shell_options:
+            continue
+        assert any(not option.refuses for option in gate.shell_options), (
+            f"every option gate {gate.id!r} can render in the shell stops the run: "
+            f"{[o.value for o in gate.shell_options]} — answering it would be a dead end with no "
+            "way back short of reloading the page and re-answering every gate"
+        )
 
 
 def test_changed_review_proceeds_even_though_it_reads_like_a_detour() -> None:

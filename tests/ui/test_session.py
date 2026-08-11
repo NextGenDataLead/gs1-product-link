@@ -95,6 +95,70 @@ def test_changed_review_proceeds_because_it_confirms_rather_than_aborts() -> Non
     assert session.execute_argv(_CONFIRMED, dry_run=False)
 
 
+def test_show_full_diff_lifts_the_cap_without_cancelling_the_run() -> None:
+    """Issue #76. The gate's only shell option was read as a refusal, and there was no way back.
+
+    ``apply``/``skip`` are ``chat_only``, so ``show-full-diff`` is the *only* button the publish
+    screen can render at gate 6 — reached by answering ``changed-review``, which is the most
+    careful answer on offer. It lifts the row cap and means nothing else: the run must stay
+    exactly as available as it was before the click.
+    """
+    session = _answer_everything(_session())
+    session.answer("plan_review", "changed-review")
+    session.answer("row_diff", "show-full-diff")
+
+    assert not session.cancelled
+    assert not session.refused("row_diff")
+    assert session.execute_argv(_CONFIRMED, dry_run=False)
+
+
+def test_change_mode_re_asks_gate_zero_rather_than_refusing_it() -> None:
+    """A detour at a *required* gate: not a cancellation, but not consent either.
+
+    Both halves are asserted because each alone is satisfied by a wrong answer. The run is still
+    held — gate 0 is required and has not proceeded — but it is held as unanswered, which is what
+    the screen then tells the operator, instead of claiming a cancel that never happened.
+    """
+    session = _answer_everything(_session())
+    session.answer("intent", "change-mode")
+
+    assert not session.cancelled
+    assert "intent" in {gate.id for gate in session.outstanding}
+    with pytest.raises(GateNotAnsweredError, match="not answered yet"):
+        session.execute_argv(_CONFIRMED, dry_run=False)
+
+
+def test_a_stop_the_run_answer_blocks_the_command_not_only_the_screen() -> None:
+    """Gate 4's *Stop the run* is not ``required``, so nothing here used to enforce it.
+
+    ``outstanding`` covers required gates only, and a refusal is *answered*, so this session built
+    a command: the documented "abort before execute" was enforced by the publish screen returning
+    early. Display logic is not the guard — this function is.
+    """
+    session = _answer_everything(_session(units_missing_product_name=(_DROPPED,)))
+    session.answer("missing_field", "fail-run")
+
+    assert not session.outstanding
+    assert session.cancelled
+    with pytest.raises(GateNotAnsweredError, match="refusal"):
+        session.execute_argv(_CONFIRMED, dry_run=False)
+
+
+def test_a_cancelled_dry_run_can_still_be_re_run_because_it_writes_nothing() -> None:
+    """The dry-run gate is exempt from both checks, not just the outstanding one.
+
+    Cancelling after reading the output ends the run — but the preview itself writes nothing, so
+    refusing to rebuild the command that produces it would make the safe half of the flow the
+    harder one to repeat.
+    """
+    session = _answer_everything(_session())
+    session.answer("dry_run", "cancel")
+
+    assert session.execute_argv(_CONFIRMED, dry_run=True)
+    with pytest.raises(GateNotAnsweredError, match="refusal"):
+        session.execute_argv(_CONFIRMED, dry_run=False)
+
+
 # --- The dry run ---------------------------------------------------------------
 
 
