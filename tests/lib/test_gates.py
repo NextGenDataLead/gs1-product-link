@@ -61,6 +61,46 @@ def test_the_step_numbers_agree() -> None:
     assert {gate.id: gate.step for gate in GATES} == documented
 
 
+def test_the_skill_offers_every_option_including_the_chat_only_ones() -> None:
+    """A ``chat_only`` option is one this surface *keeps*, not one being retired.
+
+    The distinction is the whole point of the flag. Marking ``detail`` chat-only rather than
+    deleting it was a choice to let each surface offer what it can honour — the shell has no
+    model to read a run log and explain it, and the chat flow does. If a later edit "tidied" a
+    chat-only option out of ``lib/gates.py``, the shell would not notice, because the shell never
+    rendered it. The skill would, and this is what says so.
+    """
+    skill = _SKILL.read_text("utf-8")
+    missing = [
+        f"{gate.id}.{option.value}"
+        for gate in GATES
+        for option in gate.options
+        if option.value not in skill
+    ]
+    assert not missing, f"options the SKILL never offers the operator: {missing}"
+
+
+def test_a_chat_only_option_is_dropped_from_the_shell_but_kept_in_the_contract() -> None:
+    """Both halves matter: absent from ``shell_options``, present in ``options``."""
+    chat_only = [(g, o) for g in GATES for o in g.options if o.chat_only]
+    assert chat_only, "nothing is marked chat_only — this check would pass vacuously"
+    for gate, option in chat_only:
+        assert option in gate.options
+        assert option not in gate.shell_options
+        assert not option.in_shell
+
+
+def test_every_gate_keeps_at_least_one_option_for_each_surface_it_can_serve() -> None:
+    """A gate whose every option is chat-only renders as information in the shell, not a dead end.
+
+    ``post_run`` is the case: it keeps ``yes``/``no`` for both surfaces and marks only ``detail``.
+    A gate that lost *all* its shell options while still being required would stop the run.
+    """
+    for gate in GATES:
+        if gate.required and gate.options:
+            assert gate.shell_options, f"required gate {gate.id!r} has nothing the shell can offer"
+
+
 def test_the_skill_still_carries_the_permanence_warning_verbatim() -> None:
     """The one fact that makes the flow's caution proportionate. It must not be paraphrased.
 

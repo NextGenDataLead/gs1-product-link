@@ -232,11 +232,19 @@ class _Flow:
         if not changed:
             ui.label("No changed rows carry a diff.").classes("note")
             return
-        for row in changed[:_MAX_DIFFS]:
+        # `show-full-diff` is the gate's own option, and here it lifts the row cap. The cap is not
+        # a summary — every field of every row shown is already printed — so the only thing left
+        # for "show me everything" to mean is the rows past it.
+        full = self.session.answers.get(gate.id) == "show-full-diff"
+        shown = changed if full else changed[:_MAX_DIFFS]
+        for row in shown:
             with ui.element("div").classes("mb-3"):
                 ui.label(f"{row.gtin} ({row.language}) — {row.title}").classes("mono")
                 for field, (before, after) in (row.diff or {}).items():
                     ui.label(f"  {field}: {before} → {after}").classes("note mono scroll-x")
+        if len(changed) > len(shown):
+            ui.label(f"…and {len(changed) - len(shown)} more changed row(s).").classes("note mb-3")
+        self._options(gate)
 
     def _gate_production(self, gate: Gate) -> None:
         theme.band(
@@ -306,14 +314,22 @@ class _Flow:
 
     def _gate_post_run(self, gate: Gate) -> None:
         ui.link("Every run, with its per-row outcomes →", "/runs").classes("mono")
+        ui.label(
+            "That screen also compares the site against state.json, which is the one question a "
+            "run log cannot answer: a row logged as an error may still have left a live page."
+        ).classes("note")
+        self._options(gate)
 
     # -- shared ---------------------------------------------------------------
 
     def _options(self, gate: Gate) -> None:
-        if not gate.options:
+        # `shell_options`, not `options`: an option only the conversational surface can honour —
+        # one that needs a model to read the run log, or a per-row walk this screen does not do —
+        # would otherwise become a button that does not do what it says.
+        if not gate.shell_options:
             return
         with ui.row().classes("gap-3 flex-wrap"):
-            for option in gate.options:
+            for option in gate.shell_options:
                 # Filled for the answer that carries the flow on, outlined for the ones that do
                 # not. Red is never used here: it belongs to the buttons that write.
                 place = theme.action if option.proceeds else theme.quiet_action

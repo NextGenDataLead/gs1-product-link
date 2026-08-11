@@ -90,12 +90,26 @@ class GateOption(NamedTuple):
     ``changed-review`` proceeds and ``switch-to-test`` does not, and both read like the opposite
     at a glance. A UI that guesses wrong here either blocks a legitimate run or — far worse —
     treats ``cancel`` as consent.
+
+    ``chat_only`` marks an option only the conversational surface can honour, and it is data for
+    the same reason ``proceeds`` is: a UI cannot infer it. Two gates carry such options — one
+    needs a model to read the run log and explain, the others need a row-by-row walk the shell
+    does not do. Deleting them instead would have been the tail wagging the dog: the shell cannot
+    do a thing, so the surface that can loses it, and ``SKILL.md`` has to be edited to match. This
+    keeps both surfaces honest about what they offer, and lets the contract test derive what a
+    screen must render rather than carrying a hand-maintained list of exceptions.
     """
 
     value: str
     label: str
     consequence: str
     proceeds: bool = True
+    chat_only: bool = False
+
+    @property
+    def in_shell(self) -> bool:
+        """Whether a form-rendering UI can offer this option."""
+        return not self.chat_only
 
 
 @dataclass(frozen=True)
@@ -123,6 +137,17 @@ class Gate:
     needs_generator: bool = False
     #: Only applicable when the resolved GS1 environment is ``production``.
     needs_production: bool = False
+
+    @property
+    def shell_options(self) -> tuple[GateOption, ...]:
+        """The options a form-rendering UI can offer — everything not ``chat_only``.
+
+        A screen renders from this rather than from :attr:`options`, so an option that only the
+        conversational surface can honour is absent by construction instead of by omission. The
+        difference matters: an omission is invisible, and one gate's options quietly stopped being
+        rendered at all before anything checked.
+        """
+        return tuple(option for option in self.options if option.in_shell)
 
     def applies(self, *, mode: Mode, has_generator: bool, is_production: bool) -> bool:
         """Whether this gate fires for a given run."""
@@ -237,12 +262,13 @@ GATES: Final[tuple[Gate, ...]] = (
             "never invents an old value: state records the prior `title` and `wp_url` and nothing "
             "else, so those are the only two that can show a real before/after. A `gs1_link` key "
             "means the page is published but its resolver link was never written — nothing about "
-            "the page is changing."
+            "the page is changing. `apply`/`skip` are per-row and belong to the conversational "
+            "walk; the shell shows every row's diff at once and confirms the subset at step 5."
         ),
         options=(
-            GateOption("apply", "Apply", "Include this row in the run"),
-            GateOption("skip", "Skip", "Leave this row unchanged", True),
-            GateOption("show-full-diff", "Show full diff", "Print every field, then re-ask", False),
+            GateOption("apply", "Apply", "Include this row in the run", chat_only=True),
+            GateOption("skip", "Skip", "Leave this row unchanged", chat_only=True),
+            GateOption("show-full-diff", "Show full diff", "Show every changed row", False),
         ),
         required=False,
         modes=_ALL_MODES,
@@ -293,12 +319,16 @@ GATES: Final[tuple[Gate, ...]] = (
         purpose=(
             "What actually ran, per row, with each error named. In `links` mode a refused GTIN "
             "means its target URL did not serve — read that as 'the page is not where the plan "
-            "says it is', not as a GS1 fault."
+            "says it is', not as a GS1 fault. `detail` needs a model to read the log and explain "
+            "it, so it exists in the chat flow only; the shell links to the Runs screen, where "
+            "the same rows are rendered and the site can be reconciled against the ledger."
         ),
         options=(
             GateOption("yes", "Retry the failures", "Re-run execute filtered to the failed GTINs"),
             GateOption("no", "Done", "Finish"),
-            GateOption("detail", "Explain each error", "Read the run log and explain"),
+            GateOption(
+                "detail", "Explain each error", "Read the run log and explain", chat_only=True
+            ),
         ),
         required=False,
         modes=_ALL_MODES,
