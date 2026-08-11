@@ -632,10 +632,22 @@ Tool implements **Level A + B** for v0.1.0. Level C documented for future.
 
 ## 6. Idempotency contracts
 
+**§6.2 has a precondition the hash cannot supply.** The dedup slug folds the SHA-256 of the
+*local* bytes into itself, so it says what the attachment was meant to be, never what arrived. A
+transfer cut off mid-upload leaves a fragment stored under the hash of the whole file, which every
+later lookup then returns as a content match — making a truncated upload permanent rather than
+transient. `upload_media` therefore compares the stored byte count (`media_details.filesize`,
+falling back to a `HEAD` on `source_url`) against what it sent, on both the create path and the
+dedup path. A create that disagrees is deleted and raises **before** the finalise call that would
+claim the slug; a dedup hit that disagrees is deleted and re-uploaded. A size nobody will state is
+logged as *unverified* and reused — deleting on a number that was never supplied would be deleting
+on inference, and `delete_media` has no ownership guard.
+
+
 | # | Operation | Contract | Test |
 |---|---|---|---|
 | 6.1 | `wp_client.upsert_page` | Identical `(post_type, meta.gtin, title, content, language, featured_media)` → same server state, same `WordPressPage` returned | Call twice, assert same `id`; modify content, call again, assert `id` unchanged but content updated |
-| 6.2 | `wp_client.upload_media` | Identical file content (by SHA-256) + title → single media asset | Upload same file twice, assert same media_id |
+| 6.2 | `wp_client.upload_media` | Identical file content (by SHA-256) + title → single media asset, **and a stored byte count that agrees with what was sent** | Upload same file twice, assert same media_id; upload a file the server stores short, assert it is deleted and `MediaIntegrityError` raised |
 | 6.3 | `gs1_dl_client.upsert` | Identical `(gtin, digital_link_url, links, is_enabled)` → identical server state | Call twice, GET afterward, assert single canonical state |
 | 6.4 | `qr.render_qr` | Identical inputs → byte-identical SVG (visually identical PNG) | Render twice, hash both, assert equal |
 | 6.5 | `run_execute.py` | Same confirmed plan twice → same final state as running once | Full integration test, run against test WP/GS1, run again, assert state.json unchanged |

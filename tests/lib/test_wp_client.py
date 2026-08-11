@@ -20,7 +20,12 @@ import pytest
 from pytest_httpx import HTTPXMock
 
 from lib.config import WordPressConfig
-from lib.errors import GtinMismatchError, MissingCredentialError, WordPressAPIError
+from lib.errors import (
+    GtinMismatchError,
+    MediaIntegrityError,
+    MissingCredentialError,
+    WordPressAPIError,
+)
 from lib.wp_client import (
     _PLL_LANGUAGES_PATH,
     _WPML_PROBE_PATH,
@@ -678,7 +683,14 @@ def test_upload_media_uploads_with_content_addressed_slug(
 
     client, _ = make_client(httpx_mock)
     httpx_mock.add_response(method="GET", json=[])  # content-slug lookup: miss
-    httpx_mock.add_response(method="POST", url=MEDIA_URL, status_code=201, json={"id": 5})
+    httpx_mock.add_response(
+        method="POST",
+        url=MEDIA_URL,
+        status_code=201,
+        # media_details.filesize is what the stored-size check reads; it agrees here, so the
+        # upload is confirmed whole rather than merely unverified.
+        json={"id": 5, "media_details": {"filesize": len(b"PNGDATA")}},
+    )
     httpx_mock.add_response(method="POST", url=f"{MEDIA_URL}/5", status_code=200, json={"id": 5})
 
     media_id = client.upload_media(img, title="Photo")
@@ -722,13 +734,194 @@ def test_upload_media_reuses_on_content_slug_without_meta(
     client, _ = make_client(httpx_mock)
     httpx_mock.add_response(
         method="GET",
-        json=[{"id": 5, "slug": f"photo-{digest[:12]}"}],  # no meta at all
+        json=[
+            {
+                "id": 5,
+                "slug": f"photo-{digest[:12]}",  # no meta at all
+                "media_details": {"filesize": len(b"PNGDATA")},  # and the right length
+            }
+        ],
     )
 
     media_id = client.upload_media(img, title="Photo")
 
     assert media_id == 5
     assert all(r.method != "POST" for r in _business_requests(httpx_mock))  # no upload
+
+
+# --- Truncated uploads (§6.2, issue #60) -------------------------------------
+
+
+def _upload_fixture(tmp_path: Path) -> tuple[Path, bytes, str]:
+    """A video file, its bytes, and the content-addressed slug they hash to."""
+    video = tmp_path / "clip.mp4"
+    payload = b"VIDEODATA" * 100
+    video.write_bytes(payload)
+    slug = f"clip-{hashlib.sha256(payload).hexdigest()[:12]}"
+    return video, payload, slug
+
+
+def test_a_truncated_upload_is_deleted_and_raised(httpx_mock: HTTPXMock, tmp_path: Path) -> None:
+    """The live failure: 201 Created for a fragment, and the run called it a success.
+
+    The finalise call must not happen. It is what claims the content-addressed slug, and a
+    fragment holding that slug is returned as a content match by every later run — so letting
+    it through would make the corruption permanent rather than merely present.
+    """
+    video, payload, _ = _upload_fixture(tmp_path)
+
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])  # content-slug lookup: miss
+    httpx_mock.add_response(
+        method="POST",
+        url=MEDIA_URL,
+        status_code=201,
+        json={"id": 7, "media_details": {"filesize": 150}},  # cut off mid-transfer
+    )
+    httpx_mock.add_response(
+        method="DELETE", url=f"{MEDIA_URL}/7?force=true", json={"deleted": True}
+    )
+
+    with pytest.raises(MediaIntegrityError) as exc:
+        client.upload_media(video)
+
+    assert exc.value.sent_bytes == len(payload)
+    assert exc.value.stored_bytes == 150
+    assert exc.value.deleted is True
+    deletes = [r for r in _business_requests(httpx_mock) if r.method == "DELETE"]
+    assert [r.url.path for r in deletes] == ["/wp-json/wp/v2/media/7"]
+    # the finalise POST — the one that claims the slug — never went out
+    assert not [
+        r
+        for r in _business_requests(httpx_mock)
+        if r.method == "POST" and r.url.path == "/wp-json/wp/v2/media/7"
+    ]
+
+
+def test_a_failed_cleanup_still_reports_the_truncation(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    """A delete that fails must not replace the integrity error with a delete error.
+
+    The operator needs to be told what was wrong with the file *and* that the fragment is still
+    on the site — the second is useless without the first.
+    """
+    video, _, _ = _upload_fixture(tmp_path)
+
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(
+        method="POST",
+        url=MEDIA_URL,
+        status_code=201,
+        json={"id": 7, "media_details": {"filesize": 1}},
+    )
+    for _ in range(3):  # a 5xx delete is retried per §5.1 before it gives up
+        httpx_mock.add_response(method="DELETE", status_code=500, text="nope")
+
+    with pytest.raises(MediaIntegrityError) as exc:
+        client.upload_media(video)
+
+    assert exc.value.deleted is False
+    assert "remove media 7 by hand" in str(exc.value)
+
+
+def test_stored_size_falls_back_to_a_head_when_wordpress_will_not_say(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    # media_details is not guaranteed for every attachment type on every WordPress version, so
+    # the webserver's own Content-Length is the second opinion.
+    video, payload, _ = _upload_fixture(tmp_path)
+    source_url = "https://wp.test/wp-content/uploads/clip.mp4"
+
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(
+        method="POST", url=MEDIA_URL, status_code=201, json={"id": 7, "source_url": source_url}
+    )
+    httpx_mock.add_response(
+        method="HEAD", url=source_url, headers={"Content-Length": str(len(payload) // 2)}
+    )
+    httpx_mock.add_response(
+        method="DELETE", url=f"{MEDIA_URL}/7?force=true", json={"deleted": True}
+    )
+
+    with pytest.raises(MediaIntegrityError) as exc:
+        client.upload_media(video)
+
+    assert exc.value.stored_bytes == len(payload) // 2
+
+
+def test_an_unverifiable_upload_warns_rather_than_passing_silently(
+    httpx_mock: HTTPXMock, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No size from either source is "unverified", and must be said out loud.
+
+    Passing silently is exactly the defect being fixed here, one level down: the difference
+    between "checked and fine" and "could not check" has to survive into the log.
+    """
+    video, _, _ = _upload_fixture(tmp_path)
+
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="POST", url=MEDIA_URL, status_code=201, json={"id": 7})
+    httpx_mock.add_response(method="POST", url=f"{MEDIA_URL}/7", status_code=200, json={"id": 7})
+
+    with caplog.at_level(logging.WARNING, logger="lib.wp_client"):
+        assert client.upload_media(video) == 7
+
+    assert "unverified" in caplog.text
+    assert "clip.mp4" in caplog.text
+
+
+def test_a_deduped_fragment_is_discarded_and_re_uploaded(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    """The sticky case, and the reason this is load-bearing rather than tidy-up.
+
+    The slug encodes the SHA-256 of the *local* bytes, so a fragment stored under it is found by
+    every later run and returned as a content match. Without this, re-running never repairs a
+    truncated upload — it just keeps adopting it.
+    """
+    video, payload, slug = _upload_fixture(tmp_path)
+
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET", json=[{"id": 7, "slug": slug, "media_details": {"filesize": 150}}]
+    )
+    httpx_mock.add_response(
+        method="DELETE", url=f"{MEDIA_URL}/7?force=true", json={"deleted": True}
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url=MEDIA_URL,
+        status_code=201,
+        json={"id": 8, "media_details": {"filesize": len(payload)}},
+    )
+    httpx_mock.add_response(method="POST", url=f"{MEDIA_URL}/8", status_code=200, json={"id": 8})
+
+    assert client.upload_media(video) == 8  # the whole file, under a new id
+
+    methods = [(r.method, r.url.path) for r in _business_requests(httpx_mock)]
+    assert ("DELETE", "/wp-json/wp/v2/media/7") in methods
+    assert ("POST", "/wp-json/wp/v2/media") in methods
+
+
+def test_an_unverifiable_dedup_hit_is_reused_not_deleted(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    """Unverifiable means reuse. Deleting on a number nobody supplied is deleting on a guess.
+
+    ``delete_media`` has no ownership guard, so a stored size of ``None`` must never be read as
+    a mismatch — that would remove a live page's media because a proxy omitted a header.
+    """
+    video, _, slug = _upload_fixture(tmp_path)
+
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[{"id": 7, "slug": slug}])  # no size anywhere
+
+    assert client.upload_media(video) == 7
+    assert all(r.method != "DELETE" for r in _business_requests(httpx_mock))
 
 
 # --- Edge case E7 (§7): image fetch skip -------------------------------------

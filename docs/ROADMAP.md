@@ -170,13 +170,14 @@ enough to have made the shell unusable for its main job:
 | [#69](https://github.com/NextGenDataLead/gs1-product-link/pull/69) | **The preflight buttons looked dead** (#58) — a blocking subprocess held the event loop, so "running…" never painted — and Preflight was numbered *before* the screens four of its checks tell you to run first. Now `Setup · Data · Content · Preflight · Publish · Runs`, with the order held by tests. |
 | [#70](https://github.com/NextGenDataLead/gs1-product-link/pull/70) | **Two gates declared options no screen rendered** (#58, closing it). Marked `chat_only` in the data rather than deleted — the shell having no model is no reason for the chat flow to lose *Explain each error* — and `show-full-diff` built. The hand-maintained exception list is gone. |
 | [#71](https://github.com/NextGenDataLead/gs1-product-link/pull/71) | **A failed row named neither the call nor the answer** (#60, parts 3 and 4). `_api_error` had the endpoint, the label and the body in hand, logged all three to a console nobody keeps, and built the exception with none of them — so `runs/*.jsonl` recorded `WordPressAPIError('WordPress API error 403')` for a video upload it never identified as one. The three API errors now carry the call and a scrubbed, bounded body excerpt in their message; `RunOutcome` gains `failed_call`. |
+| [#72](https://github.com/NextGenDataLead/gs1-product-link/pull/72) | **A truncated upload was a success, and dedup made it permanent** (#60, part 1). A cut-off transfer left a 1.5 MB fragment of an 8 MB video; WordPress said `201` and the page published against it. Worse, the content-addressed slug is folded from the hash of the *local* bytes, so the fragment was returned as a content match by every later run — re-running could never repair it. `upload_media` now checks the stored byte count on both paths, deleting a bad create **before** the call that claims the slug. |
 
 Still filed: **[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)**
 (screens showing the catalogue where they mean the batch) and
 **[#60](https://github.com/NextGenDataLead/gs1-product-link/issues/60)**
-(media uploads). #60's blocker was fixed by #62 and its observability half by #71; what remains
-of it is the media half — a truncated upload treated as success, and orphaned attachments never
-cleaned up.
+(media uploads). #60's blocker was fixed by #62, its observability half by #71, and the truncated
+upload by #72; what remains of it is orphaned attachments — media created by a run that then
+failed is still never cleaned up.
 
 **#59 was the one that explained the other three.** CI installed `.[dev]` — which is exactly what
 keeps `lib` provably free of a UI dependency — and therefore never touched `ui/pages/`. Three

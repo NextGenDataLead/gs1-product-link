@@ -137,6 +137,56 @@ class WordPressAPIError(OrchestratorError):
         )
 
 
+class MediaIntegrityError(OrchestratorError):
+    """WordPress stored a different number of bytes than were uploaded.
+
+    A live upload was cut off mid-transfer, leaving a 1.5 MB fragment of an 8 MB video in the
+    media library. WordPress answered ``201`` and the run treated it as a success, so a page was
+    published against a video that would not play.
+
+    **Why this raises rather than warns.** Dedup is a lookup on a content-addressed slug derived
+    from the SHA-256 of the *local* bytes, so a fragment stored under that slug is returned by
+    every later run as if it were the whole file — re-running never repairs it. The attachment
+    is therefore deleted before this is raised, and the raise is what stops a page being
+    published against media known to be broken.
+
+    Attributes:
+        path: The local file that was uploaded.
+        sent_bytes: How many bytes were sent.
+        stored_bytes: How many bytes WordPress reports having stored.
+        media_id: The attachment that was created.
+        deleted: Whether that attachment was successfully removed. ``False`` means it is still
+            on the site and needs deleting by hand — the message says so.
+        call: The request that produced it, for the run log.
+    """
+
+    def __init__(  # noqa: PLR0913 — one param per attribute; bundling them only hides them
+        self,
+        path: object,
+        sent_bytes: int,
+        stored_bytes: int,
+        media_id: int,
+        *,
+        deleted: bool,
+        call: str | None = None,
+    ) -> None:
+        self.path = path
+        self.sent_bytes = sent_bytes
+        self.stored_bytes = stored_bytes
+        self.media_id = media_id
+        self.deleted = deleted
+        self.call = call
+        cleanup = (
+            "the attachment was deleted"
+            if deleted
+            else f"the attachment was NOT deleted — remove media {media_id} by hand"
+        )
+        super().__init__(
+            f"WordPress stored {stored_bytes} bytes of {path} but {sent_bytes} were sent "
+            f"(attachment {media_id}); {cleanup}"
+        )
+
+
 class OverwriteError(OrchestratorError):
     """A write would replace an existing Digital Link and overwrite was not allowed.
 
