@@ -48,7 +48,7 @@ through `flow-orchestrator`. The shell is a second surface over the same gates, 
 |---|---|---|
 | 1 | **Setup** | The operator-facing half of `clients.yml` and `.env`, as a form, with live Test buttons. |
 | 2 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
-| 3 | **Data** | Upload the export, prune the process list, read the data-quality report. |
+| 3 | **Data** | Upload the export, prune the process list, edit the video mapping, read the data-quality report. |
 | 4 | **Content** | Import `generated_cache.json`, check its coverage, read the copy. |
 | 5 | **Publish** | The nine gates, one at a time. |
 | 6 | **Runs** | Every row of every run, as it was recorded at the time. |
@@ -115,6 +115,26 @@ The process-list grid is for the one thing the operator does with that file: **d
 Every other column is preserved verbatim — they are your working notes. Saving keeps the previous
 version, and refuses to write a list with no GTINs at all, because that would produce an empty plan
 and a run that reports success having published nothing.
+
+### Video mapping
+
+Linked from Data rather than sitting in the rail: it is one input file's editor, and the rail is
+numbered by step. It exists because that file decides whether a product can be published at all —
+with `media.restrict_to_mapped_gtins` on, a product without a confirmed video in **every** language
+never reaches the plan, so an operator could complete every screen and still produce an empty plan
+with the fix available only in a text editor.
+
+It lists every file per language with its state (unset · confirmed · `skip` · not on disk), offers
+`build_video_map`'s ranked fuzzy hints as *suggestions that fill the box*, and stages edits until
+one Save. Three things it will not do:
+
+- **Re-draft the file.** Confirmed rows are client sign-off. Drafting stays a terminal job, where
+  redirecting the output over the mapping is a deliberate act rather than a click.
+- **Round-trip the YAML.** Each row's trailing comment records which fuzzy hint its GTIN came from
+  — the evidence behind the sign-off — so `ui/video_map_edit.py` rewrites one line at a time, in the
+  spirit of `ui/config_edit.py` on `clients.yml`.
+- **Write a file that lost a row.** Nothing here deletes one, so a row that has disappeared is a
+  fault in the tool, and the file is left alone.
 
 ### Content
 

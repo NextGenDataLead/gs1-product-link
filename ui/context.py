@@ -19,7 +19,7 @@ from typing import Any
 from lib.config import ClientConfig, get_client, resolve_client_id
 from lib.errors import ConfigError
 from lib.gates import Mode
-from lib.records import Plan, PlanSummary, RunOutcome
+from lib.records import Plan, PlanSummary, ProductRecord, RunOutcome
 from ui import REPO_ROOT
 
 
@@ -125,6 +125,21 @@ def product_count(cid: str) -> int | None:
     """How many products the parsed catalogue holds, or ``None`` when it has not been parsed."""
     data = _load_json(output_dir(cid) / "data" / "products.json")
     return len(data) if isinstance(data, list) else None
+
+
+def load_products(cid: str) -> list[ProductRecord]:
+    """The parsed catalogue, or an empty list when it is absent or unreadable.
+
+    Empty rather than ``None``: the one screen that reads this uses it for fuzzy *suggestions*,
+    so an unparsed catalogue should cost the suggestions and nothing else.
+    """
+    data = _load_json(output_dir(cid) / "data" / "products.json")
+    if not isinstance(data, list):
+        return []
+    try:
+        return [ProductRecord.model_validate(item) for item in data]
+    except ValueError:
+        return []
 
 
 @dataclass(frozen=True)

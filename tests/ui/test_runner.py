@@ -109,6 +109,14 @@ def test_the_dot_env_rule_is_enforced_elsewhere() -> None:
             lambda: runner.parse_export_argv("acme", dry_run=True),
             ["-m", "scripts.parse_export", "acme", "--dry-run"],
         ),
+        (
+            lambda: runner.build_video_map_argv("acme"),
+            ["-m", "scripts.build_video_map", "acme", "--check"],
+        ),
+        (
+            lambda: runner.build_video_map_argv(None),
+            ["-m", "scripts.build_video_map", "--check"],
+        ),
     ],
 )
 def test_the_named_commands_are_what_a_person_would_type(
@@ -120,3 +128,12 @@ def test_the_named_commands_are_what_a_person_would_type(
 def test_an_absent_client_id_is_omitted_rather_than_passed_empty() -> None:
     """The id is optional when clients.yml defines exactly one client — passing "" is not that."""
     assert "" not in runner.run_plan_argv(None)
+
+
+def test_the_shell_never_offers_to_re_draft_the_video_mapping() -> None:
+    """Draft mode prints a fresh skeleton; a button that ran it could discard client sign-off.
+
+    ``build_video_map`` without ``--check`` is safe in a terminal, where redirecting its output
+    over the mapping is a deliberate act. Behind a button it would be one click.
+    """
+    assert "--check" in runner.build_video_map_argv("acme")

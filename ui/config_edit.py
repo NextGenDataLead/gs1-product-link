@@ -36,6 +36,7 @@ from typing import Final
 
 from lib.errors import ConfigError
 from lib.preflight import check_config
+from ui.text_edit import split_comment, with_comment
 
 #: This project's config files are indented two spaces per level, and a key inserted into an
 #: empty block has nothing to copy its indent from.
@@ -145,12 +146,9 @@ def _set(lines: list[str], path: Sequence[str], rendered: str) -> list[str]:
         return lines
     indent, previous, comment, comment_at = _parts(lines[at], leaf)
     head = f"{indent}{leaf}: {_match_quoting(previous, rendered)}"
-    if not comment:
-        lines[at] = head
-        return lines
-    # Comments in this file are hand-aligned into a column. Keep that column when the new value
-    # still fits under it, and fall back to two spaces when it does not.
-    lines[at] = head + " " * max(comment_at - len(head), 2) + comment
+    # Comments in this file are hand-aligned into a column, and several of them are the only
+    # record of why the value being edited is what it is.
+    lines[at] = with_comment(head, comment, comment_at)
     return lines
 
 
@@ -230,22 +228,8 @@ def _parts(line: str, key: str) -> tuple[str, str, str, int]:
     """
     indent = " " * (len(line) - len(line.lstrip()))
     after_colon = len(indent) + len(key) + 1
-    written, comment = _split_comment(line[after_colon:])
+    written, comment = split_comment(line[after_colon:])
     return indent, written.strip(), comment, after_colon + len(written) if comment else 0
-
-
-def _split_comment(text: str) -> tuple[str, str]:
-    """Separate a trailing ``#`` comment from a value, respecting quotes."""
-    quote = ""
-    for n, char in enumerate(text):
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char == "#" and (n == 0 or text[n - 1] in " \t"):
-            return text[:n], text[n:]
-    return text, ""
 
 
 # --- Rendering values ---------------------------------------------------------
