@@ -173,16 +173,30 @@ enough to have made the shell unusable for its main job:
 | [#73](https://github.com/NextGenDataLead/gs1-product-link/pull/73) | **Media had no ownership guard, and orphans were never cleaned up** (#60, part 2, closing it). Asking whether anything stopped the tool destroying pre-existing content found that pages were guarded all along by `meta.gtin` and media by nothing — against a library where **366 of 406 attachments are the client's**. `meta.content_sha256` is now the media equivalent, and media uploaded by a row that then fails its page write is rolled back, bounded to what that row created. |
 | [#72](https://github.com/NextGenDataLead/gs1-product-link/pull/72) | **A truncated upload was a success, and dedup made it permanent** (#60, part 1). A cut-off transfer left a 1.5 MB fragment of an 8 MB video; WordPress said `201` and the page published against it. Worse, the content-addressed slug is folded from the hash of the *local* bytes, so the fragment was returned as a content match by every later run — re-running could never repair it. `upload_media` now checks the stored byte count on both paths, deleting a bad create **before** the call that claims the slug. |
 | [#77](https://github.com/NextGenDataLead/gs1-product-link/pull/77) | **A gate asked about nothing, on every run** (#56, item 4). Gate applicability read mode, generator and environment and never the plan, so the missing-field prompt rendered *"Skip this unit"* beside no unit — and of its three answers only *Stop the run* did anything, making the sole live control on a question about nothing the destructive one. The gate now fires only on a plan that dropped a unit for a missing `product_name`, and names each one. Also: the Gate index's **Modes column is checked against the code** in both directions — it was prose, it said `all`, and nothing compared them, which is how this shipped. |
+| [#80](https://github.com/NextGenDataLead/gs1-product-link/pull/80) | **`run_generate` asked for copy the run would never publish** (#56, items 1 and 2, closing it). The command had no reference to the process list anywhere: `--emit` emitted **224** requests where **10** were in scope, disagreeing with the doctor by 22×. `_prepare` now narrows through `lib.preflight.in_scope` — the same function the doctor reports — so the two agree by construction, and a test computes both sides independently to prove it. `--emit` still saves the cache, which is deliberate, but now says so. |
 | [#79](https://github.com/NextGenDataLead/gs1-product-link/pull/79) | **The copy review listed the whole cache under a scoped figure** (#56, item 3). The Content screen's coverage came from the doctor and was scoped; the list beneath it read `generated_cache.json` off disk and showed every GTIN in it — and nothing prunes that file, so the gap widens with the age of the machine. `check_scope` now reports `in_scope_gtins`, uncapped because it is filtered with rather than read, and `ui.context.split_cache` divides the file into this run's copy, the in-scope units that have none yet, and everything else folded away. One preflight run now feeds both sections. |
 | [#78](https://github.com/NextGenDataLead/gs1-product-link/pull/78) | **Gate 0 gave the catalogue size where the operator asked about this run** (#56, item 5, closing the shell half of it). It rendered the length of `products.json` — **127** on a run scoped to one product — at the gate where the operator forms their picture of what they are about to do. It now reads the doctor's `scope` check rather than computing scope a second way: 15 in scope, 127 behind it, and the sentence naming what removed the rest. An unreadable payload shows a dash, never the catalogue total. The preflight is fetched **once per redraw** and shared, instead of once per gate that wants it. |
 
-Still filed: **[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)**
-(screens showing the catalogue where they mean the batch) — **items 3, 4 and 5 closed by #79, #77 and
-#78**; items 1 and 2 remain — and
-**[#60](https://github.com/NextGenDataLead/gs1-product-link/issues/60)**
-(media uploads) — **closed by #73**. #60 was fixed across four PRs: the blocker by #62, the
-observability half by #71, the truncated upload by #72, and the ownership guard plus orphan
-cleanup by #73.
+**Every issue this rehearsal raised is now closed.** The last two each took four PRs.
+**[#60](https://github.com/NextGenDataLead/gs1-product-link/issues/60)** (media uploads): the
+blocker by #62, the observability half by #71, the truncated upload by #72, and the ownership
+guard plus orphan cleanup by #73.
+**[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)** (the catalogue shown
+where the batch was meant): item 4 by #77, item 5 by #78, item 3 by #79, and items 1 and 2 by #80.
+
+#56's five defects had one cause and one answer, which only became obvious partway through:
+`lib.preflight.in_scope` already knew what a run would touch, and each surface had gone and worked
+it out again — or not at all. None of the fixes recomputes scope. `check_scope` now reports the
+GTINs as well as the counts, the shell reads them, and `run_generate` calls the same function, so
+the doctor and every screen and command agree **by construction** rather than by coincidence. Two
+of the PRs are mostly the plumbing that made that true.
+
+Filed since, and open: **[#74](https://github.com/NextGenDataLead/gs1-product-link/issues/74)**
+(`gs1_enabled` records one meaning and is read as another),
+**[#75](https://github.com/NextGenDataLead/gs1-product-link/issues/75)** (the WordPress MCP never
+got the multipart fix or the content-addressed slug), and
+**[#76](https://github.com/NextGenDataLead/gs1-product-link/issues/76)** (at gate 6 the only
+button the shell offers cancels the run) — the last found while fixing #56.
 
 **#59 was the one that explained the other three.** CI installed `.[dev]` — which is exactly what
 keeps `lib` provably free of a UI dependency — and therefore never touched `ui/pages/`. Three

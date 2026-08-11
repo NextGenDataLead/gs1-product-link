@@ -191,6 +191,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **`run_generate` had no idea what scope was, and asked for copy the run would never publish.**
+  `grep process_list scripts/run_generate.py` returned nothing: the products file was taken whole,
+  so `pending_requests` ran over the entire catalogue. The doctor and `--emit` answered the same
+  question two orders of magnitude apart — on the pilot client, **224 requests emitted where 10
+  are in scope**. That is real tokens and real time spent writing copy for products nobody is
+  publishing, and a content-review gate with hundreds of units in it, which is the surest way to
+  make a review gate go unread.
+
+  The filter goes in `_prepare`, once, because all three producer paths run through it — `--emit`,
+  `--ingest` and `--backend api`. It is `lib.preflight.in_scope`, imported rather than
+  reimplemented: the same function the doctor's `scope` check reports, so the two commands now
+  agree **by construction** rather than by coincidence. Live: 224 → 10 emitted, coverage
+  denominator 254 → 30, against the doctor's `total=30 pending=10`. A test asserts that agreement
+  by computing both sides independently — a cross-check, not a restatement, since they disagreed
+  22× before and nothing anywhere noticed.
+
+  Narrowing happens *before* `prefill_from_feed`, and that is the one behaviour change to notice:
+  the verbatim prefill now fills in-scope units only, so the cache stops accumulating copy for
+  products this client is not publishing — the same unbounded growth the Content screen had to
+  fold away.
+
+  **`--emit` still saves the cache**, deliberately: the prefill runs before the gaps are computed,
+  and persisting it is what lets emit and ingest be called in either order. What was wrong was
+  doing it silently. It is now named in `--help`, in the module docstring's Emits block, and in
+  the line the command prints — a command called `--emit` writing a second file it never mentions
+  is a surprise found by noticing an mtime.
+
+  `_ingest` gained a third reason for skipping. It matches results to pending requests and skips
+  the rest as "already fresh or input changed"; a results file emitted before the process list was
+  pruned now also lands there, and reporting it that way would send a reader to the feed to
+  explain a scope decision. The warning names which of the three it was, and the
+  `content-generator` skill documents it.
+
+  None of the 14 existing tests would have caught any of this — no test config carried a
+  `process_list`, so `in_scope` was a no-op for every one of them.
+
 - **The copy review listed the whole cache, under a coverage figure that was scoped.** The Content
   screen showed the doctor's figures — correctly scoped to the run — directly above a list that
   read `generated_cache.json` off disk and rendered every GTIN in it, captioned "N GTIN(s) in the

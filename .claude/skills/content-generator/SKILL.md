@@ -45,9 +45,18 @@ config change the operator makes deliberately — see `docs/wordpress-onboarding
    `gs1-export-parser` skill if `output/{client}/data/products.json` is missing too).
 
 2. **Read the requests.** Load `generation_requests.json`. Note `prompt_version`, the unit count, and
-   the split by `mode` (`tighten` vs `generate`) and `needs_name`. Present verbatim:
+   the split by `mode` (`tighten` vs `generate`) and `needs_name`.
+
+   **That file holds only the units in scope** — `run_generate` narrows through the process list and
+   the confirmed-video allowlist before computing the gaps, so its count matches the doctor's
+   `cache_coverage` pending figure. It used to be the whole catalogue: 224 units where 10 were in
+   scope, which is copy nobody publishes and a review gate too long to read. If the count looks like
+   the size of the export rather than the size of the batch, stop — the process list is probably not
+   configured, and generating against it wastes real tokens.
+
+   Present verbatim:
    ```
-   democlient: 246 units to generate (3 tighten, 243 generate; 1 needs a French name).
+   democlient: 10 units to generate (3 tighten, 7 generate; 1 needs a French name).
    Generate all, or a subset?
    [all | only-tighten | only GTIN … | cancel]
    ```
@@ -83,7 +92,8 @@ config change the operator makes deliberately — see `docs/wordpress-onboarding
    include `product_name` only for `needs_name` units. `client_id` must equal the run's client.
 
 6. **Ingest.** Run `python -m scripts.run_generate {client} --ingest`. Surface its stderr line
-   verbatim, e.g. `ingested 244 result(s), skipped 2; 252/254 units cached; 2 pending (…)`. A
+   verbatim, e.g. `ingested 8 result(s), skipped 2; 28/30 units cached; 2 pending (…)`. Those
+   totals are **in-scope** units, not the catalogue. A
    non-zero exit is a config error — stop and show it (step: Failure modes).
 
 7. **Review (gate #1 of 2).** Present a representative sample — a few NL and FR blocks, including any
@@ -119,6 +129,9 @@ and there is no `.mcp.json`.
   and regenerate those units rather than forcing the old copy.
 - **No pending request → skip.** A result for a `(gtin, language)` that is already fresh, verbatim
   (short 1067, `origin=feed`), or not pending is skipped with a warning — expected, not an error.
+  The warning names which of three causes it was; the third is **not in scope for this run**, which
+  happens when the process list was pruned between `--emit` and `--ingest`. That is also expected:
+  the operator narrowed the batch, and the copy is kept in the results file rather than cached.
 - **Blank marketing message.** A `generate` unit whose 1083 is empty still gets copy written from
   `functional_name` + context, and the gap is reported as `missing_generation_input` in
   `generated_issues.json` — surface it so the operator fixes 1083 in MyGS1.
