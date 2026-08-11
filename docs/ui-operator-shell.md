@@ -176,6 +176,15 @@ in both directions. Each is shown with **why it exists**, not only what it asks 
 without saying why teaches you to answer without reading, and this flow's whole cost is
 concentrated in one unreviewed click.
 
+**Some options exist only in the chat flow, and the data says which.** `post_run`'s *Explain each
+error* needs a model to read the run log; `row_diff`'s per-row *apply*/*skip* need the
+row-by-row walk the chat flow does and this screen does not — it shows every changed row at once
+and confirms the subset at step 5. Those are marked `chat_only` in `lib/gates.py` rather than
+deleted: the shell not being able to do something is no reason for the surface that can to lose
+it. The screen renders `shell_options`, so such an option cannot become a button that does not do
+what it says, and the contract test derives what must be rendered from the gates instead of from a
+hand-maintained list of exceptions.
+
 `ui/session.py` **refuses to build the command** while any required gate is outstanding. Not a
 warning: a function that raises. That is the improvement over prose, which can be paraphrased,
 compressed, or skipped.

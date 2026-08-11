@@ -166,13 +166,14 @@ enough to have made the shell unusable for its main job:
 | [#65](https://github.com/NextGenDataLead/gs1-product-link/pull/65) | **The handover named two files and needs five** (#55) — `state.json` among the missing three, without which every published GTIN re-classifies as NEW. Also: the process list has no upload path, the ledger has to travel back, and "executed draft-first" was never true. |
 | [#66](https://github.com/NextGenDataLead/gs1-product-link/pull/66) | **Two failure paths reported unreadably** (#57): the video check printed "284 of 0 video file(s)" — every gap of every kind over the files on disk — and a hand-edited `mapping.yml` answered a stray tab with a 25-line traceback, because `yaml.YAMLError` escaped every `except (OSError, ValueError)` in the codebase. |
 | [#67](https://github.com/NextGenDataLead/gs1-product-link/pull/67) | **The video mapping had no screen** (#51), so the one input that decides whether a product can be published at all was terminal-only. Now an editor on Data that writes the file a row at a time, keeping the hint comments and the confirmed rows. |
+| [#68](https://github.com/NextGenDataLead/gs1-product-link/pull/68) | **Nothing compared the site against `state.json`** (#58) — and a run that fails part-way creates that divergence itself: the page is written, the row is logged as an error, and nothing is recorded. `python -m scripts.reconcile`, read-only, also on the Runs screen. |
+| [#69](https://github.com/NextGenDataLead/gs1-product-link/pull/69) | **The preflight buttons looked dead** (#58) — a blocking subprocess held the event loop, so "running…" never painted — and Preflight was numbered *before* the screens four of its checks tell you to run first. Now `Setup · Data · Content · Preflight · Publish · Runs`, with the order held by tests. |
+| [#70](https://github.com/NextGenDataLead/gs1-product-link/pull/70) | **Two gates declared options no screen rendered** (#58, closing it). Marked `chat_only` in the data rather than deleted — the shell having no model is no reason for the chat flow to lose *Explain each error* — and `show-full-diff` built. The hand-maintained exception list is gone. |
 
 Still filed: **[#56](https://github.com/NextGenDataLead/gs1-product-link/issues/56)**
-(screens showing the catalogue where they mean the batch),
-**[#58](https://github.com/NextGenDataLead/gs1-product-link/issues/58)** (preflight feedback, screen
-order, and nothing reconciling live pages against `state.json`),
+(screens showing the catalogue where they mean the batch) and
 **[#60](https://github.com/NextGenDataLead/gs1-product-link/issues/60)**
-(media uploads: a deterministic `403` from the site's firewall, and a truncated upload treated as
+(media uploads: a deterministic `403` from the site's own PHP, and a truncated upload treated as
 success).
 
 **#59 was the one that explained the other three.** CI installed `.[dev]` — which is exactly what
