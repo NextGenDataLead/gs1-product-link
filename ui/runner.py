@@ -168,6 +168,23 @@ def run_json(argv: Sequence[str]) -> tuple[Any, CommandResult]:
         return None, result
 
 
+async def run_json_off_the_loop(argv: Sequence[str]) -> tuple[Any, CommandResult]:
+    """:func:`run_json`, in a worker thread, so the page can repaint while it runs.
+
+    :func:`run` is a blocking ``subprocess.run``. Called straight from a click handler it holds
+    the event loop for the whole command, so **every UI change queued before it never reaches the
+    browser** — including the one that says the command is running. The screen then looks
+    identical from click to result, which reads as a button that does nothing. On the Preflight
+    screen, whose whole purpose is "click this and work down the list", that was the worst place
+    for it.
+
+    A thread rather than an async subprocess because the blocking call is already written, tested
+    and shared with the synchronous callers; ``to_thread`` releases the loop without a second
+    implementation of the same thing.
+    """
+    return await asyncio.to_thread(run_json, argv)
+
+
 # --- The commands, named ------------------------------------------------------
 #
 # One function per pipeline step, so no screen builds an argv inline. The publish argv is the

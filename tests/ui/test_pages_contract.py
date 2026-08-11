@@ -18,7 +18,10 @@ has not made one unreachable or unimportable, which is the failure that actually
 
 from __future__ import annotations
 
+import ast
 import importlib
+import re
+from pathlib import Path
 from typing import Final
 
 import pytest
@@ -51,6 +54,13 @@ UNLISTED_ROUTES: Final[dict[str, str]] = {
 
 #: NiceGUI's own machinery, not ours.
 _INTERNAL_PREFIXES: Final = ("/_nicegui", "/docs", "/redoc", "/openapi.json")
+
+#: A hardcoded step eyebrow — what every screen used to pass to ``theme.heading``.
+_STEP_LITERAL: Final = re.compile(r"Step \d+")
+
+#: Where each screen's source lives, for the AST check below.
+_PAGES_DIR: Final = Path(__file__).resolve().parent.parent.parent / "ui" / "pages"
+_MODULE_PATHS: Final = {name: _PAGES_DIR / f"{name.split('.')[-1]}.py" for name in PAGE_MODULES}
 
 
 def _our_routes() -> set[str]:
@@ -94,3 +104,43 @@ def test_every_route_is_reachable() -> None:
         f"registered but unreachable: {sorted(orphans)} — add a rail entry in ui/theme.py NAV, "
         "or record how it is reached in UNLISTED_ROUTES here"
     )
+
+
+# --- The numbering is an assertion, so it has one source ----------------------
+
+
+def test_the_rail_is_numbered_in_order_from_one() -> None:
+    """The numbers are the workflow. A gap or a repeat makes them decoration."""
+    assert [number for _, _, number in theme.NAV] == [str(n) for n in range(1, len(theme.NAV) + 1)]
+
+
+def test_preflight_comes_after_the_screens_it_depends_on() -> None:
+    """Four of the doctor's checks answer "Run `parse_export` first" — which is the Data screen.
+
+    Preflight sat at step 2 for that whole time, so step 2 told an operator to go and do step 3
+    and come back, and on a fresh machine most of the list could not answer its own questions
+    yet. This is the ordering, asserted rather than remembered.
+    """
+    order = [label for label, _, _ in theme.NAV]
+
+    assert order.index("Preflight") > order.index("Data")
+    assert order.index("Preflight") > order.index("Content")
+    assert order.index("Preflight") < order.index("Publish")
+
+
+def test_no_screen_spells_its_own_step_number() -> None:
+    """``theme.step`` reads the rail, so a reorder is one edit rather than seven.
+
+    They *were* seven: the rail carried the numbers and every screen also hardcoded its own into
+    ``theme.heading``. Two lists that had to be renumbered together, with nothing to notice when
+    only one was.
+    """
+    for module in PAGE_MODULES:
+        path = _MODULE_PATHS[module]
+        for node in ast.walk(ast.parse(path.read_text("utf-8"), filename=str(path))):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            assert not _STEP_LITERAL.fullmatch(node.value), (
+                f"{path.name}:{node.lineno} spells {node.value!r} — use theme.step('<rail label>') "
+                "so the rail stays the only place the order is written"
+            )

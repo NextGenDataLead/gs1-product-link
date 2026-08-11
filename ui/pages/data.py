@@ -1,4 +1,4 @@
-"""Screen 3 — the export, the process list, and what the data quality report says.
+"""Screen 2 — the export, the process list, and what the data quality report says.
 
 The recurring loop starts here: drop a new export, prune the process list, look at what the parse
 found. Two deliberate constraints:
@@ -36,7 +36,7 @@ def render() -> None:
 
     with theme.page("Data", client_id=cid, environment=cfg.gs1.environment if cfg else None):
         theme.heading(
-            "Step 3",
+            theme.step("Data"),
             "Data",
             "The product export and the list of GTINs this run may touch.",
         )

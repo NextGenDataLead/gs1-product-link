@@ -1,4 +1,4 @@
-"""Screen 4 — the generated copy, which was written somewhere else.
+"""Screen 3 — the generated copy, which was written somewhere else.
 
 This machine has no LLM, no API key and no Anthropic egress. Copy is generated on the maintainer's
 machine in a Claude Code session and handed over as ``generated_cache.json``; this screen imports
@@ -29,7 +29,7 @@ def render() -> None:
 
     with theme.page("Content", client_id=cid, environment=cfg.gs1.environment if cfg else None):
         theme.heading(
-            "Step 4",
+            theme.step("Content"),
             "Content",
             "The tagline and Eigenschappen text, generated elsewhere and reviewed here.",
         )

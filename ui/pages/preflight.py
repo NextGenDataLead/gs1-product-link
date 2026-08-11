@@ -1,4 +1,4 @@
-"""Screen 2 — the preflight, as a list to work down.
+"""Screen 4 — the preflight, as a list to work down.
 
 Runs ``python -m scripts.doctor --json`` in a subprocess and renders what it says. The checks are
 not reimplemented here; a second implementation would be a second thing to keep true.
@@ -13,6 +13,7 @@ deliberate act, one button away.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from nicegui import ui
@@ -30,7 +31,7 @@ def render() -> None:
 
     with theme.page("Preflight", client_id=cid, environment=cfg.gs1.environment if cfg else None):
         theme.heading(
-            "Step 2",
+            theme.step("Preflight"),
             "Preflight",
             "Everything that can be checked before anything is written — so a missing secret or "
             "a stale copy cache surfaces now, not after live pages exist.",
@@ -51,17 +52,30 @@ def render() -> None:
                         str(check["detail"]),
                         str(check.get("remedy") or ""),
                     )
-            status.text = f"exit {result.returncode} · {result.display_command}"
+            status.text = f"{_finished_at()} · exit {result.returncode} · {result.display_command}"
 
-        def go(*, offline: bool) -> None:
+        # Async, and the subprocess runs off the event loop. Both halves are needed: a blocking
+        # `run_json` in a sync handler holds the loop until it is already finished, so "running…"
+        # never painted and the screen looked identical from click to result. And because the
+        # screen runs the offline checks on load, an unchanged list is exactly what a *working*
+        # re-run produces — hence the timestamp, which is the one thing that always changes.
+        async def go(*, offline: bool) -> None:
             argv = runner.doctor_argv(cid, offline=offline)
+            for button in buttons:
+                button.disable()
             status.text = "running…"
-            payload, result = runner.run_json(argv)
+            try:
+                payload, result = await runner.run_json_off_the_loop(argv)
+            finally:
+                for button in buttons:
+                    button.enable()
             show(payload, result)
 
         with ui.row().classes("gap-3 items-center mt-6"):
-            theme.quiet_action("Run offline checks", lambda: go(offline=True))
-            theme.action("Run everything, including credentials", lambda: go(offline=False))
+            buttons = [
+                theme.quiet_action("Run offline checks", lambda: go(offline=True)),
+                theme.action("Run everything, including credentials", lambda: go(offline=False)),
+            ]
         ui.label(
             "The full run authenticates against WordPress and mints a GS1 token. Both are "
             "read-only — nothing is written, and the GS1 request is a GET against a GTIN from "
@@ -72,7 +86,18 @@ def render() -> None:
         status = ui.label("").classes("note")
         results = ui.column().classes("w-full gap-0")
 
-        go(offline=True)
+        # Run once on arrival: a screen that opens blank asks the operator to press a button
+        # before it can tell them anything, and this one is cheap and touches no credential.
+        ui.timer(0, lambda: go(offline=True), once=True)
+
+
+def _finished_at() -> str:
+    """When this run finished, in UTC.
+
+    The screen runs on load, so a re-run of a healthy machine repaints an identical list — which
+    is indistinguishable from a button that did nothing. This is the part that always differs.
+    """
+    return datetime.now(UTC).strftime("%H:%M:%S UTC")
 
 
 def _summary(payload: list[dict[str, Any]]) -> None:
