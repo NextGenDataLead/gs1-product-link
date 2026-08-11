@@ -191,16 +191,24 @@ GTINs as well as the counts, the shell reads them, and `run_generate` calls the 
 the doctor and every screen and command agree **by construction** rather than by coincidence. Two
 of the PRs are mostly the plumbing that made that true.
 
-Filed since: **[#74](https://github.com/NextGenDataLead/gs1-product-link/issues/74)**
-(`gs1_enabled` records one meaning and is read as another) and
-**[#75](https://github.com/NextGenDataLead/gs1-product-link/issues/75)** (the WordPress MCP never
-got the multipart fix or the content-addressed slug), both open;
-**[#76](https://github.com/NextGenDataLead/gs1-product-link/issues/76)**, found while fixing #56,
-is fixed by [#81](https://github.com/NextGenDataLead/gs1-product-link/pull/81).
+Filed since, and closed since: **[#76](https://github.com/NextGenDataLead/gs1-product-link/issues/76)**
+(found while fixing #56) by [#81](https://github.com/NextGenDataLead/gs1-product-link/pull/81), and
+**[#74](https://github.com/NextGenDataLead/gs1-product-link/issues/74)** by
+[#82](https://github.com/NextGenDataLead/gs1-product-link/pull/82). **The one issue still open is
+[#75](https://github.com/NextGenDataLead/gs1-product-link/issues/75)** — the WordPress MCP never
+got the multipart fix or the content-addressed slug.
+
+Both of the closed two were the same shape, which is worth naming because it is the shape this
+codebase keeps producing: **one field answering two questions**. `GateOption.proceeds` meant both
+*does this advance the flow* and *does this stop the run*; `StateEntry.gs1_enabled` meant both *was
+this deliberately retracted* and *is the resolver record enabled*. Each pair agrees everywhere
+except one case, and that case is where the bug lives — so neither was findable by reading the
+field, only by asking what every writer and every reader actually meant by it.
 
 | Fixed | What was wrong |
 |---|---|
 | [#81](https://github.com/NextGenDataLead/gs1-product-link/pull/81) | **The only button gate 6 could render cancelled the run** (#76). `apply`/`skip` are `chat_only`, so the per-row diff gate offers exactly one control — *Show full diff* — and it was marked `proceeds=False`, which is right in the chat flow, where it prints the rest and re-prompts. On a form it is the *terminal* answer, so `cancelled` read it as a refusal and the run was over with nothing on screen to undo it, reached by picking the most careful answer at gate 5. One boolean was answering two questions; `GateOutcome` splits them into `ADVANCES`/`STOPS`/`REDISPLAYS`, in the contract rather than in the screen. Also: `execute_argv` consulted only *required* gates, so gate 4's *Stop the run* built a command — its "abort before execute" was enforced by the screen returning early. |
+| [#82](https://github.com/NextGenDataLead/gs1-product-link/pull/82) | **`state.json` recorded a retraction under a name that claimed a resolver** (#74). `gs1_enabled` was written by `run_unpublish` and read by `_is_held` as *"somebody took this down on purpose"*, while its name and docstring said *"the resolver record is enabled"* — so a `--only pages` run recorded `true` with no GS1 record in existence. Recording `false` there, the obvious fix, would have classified every such product HELD and made `--only links` refuse the records it exists to write. It is now `retracted`, and the claim becomes true rather than documented around; whether a record *exists* was already one field up, in an empty `gs1_link_set_hash`, so no state was added. Verifying it found two more: `--revive --only pages` classified UNCHANGED afterwards and left the resolver retracted for good, and `--revive --only links` after an interrupted take-down left a fully live product HELD forever. |
 
 **#59 was the one that explained the other three.** CI installed `.[dev]` — which is exactly what
 keeps `lib` provably free of a UI dependency — and therefore never touched `ui/pages/`. Three
