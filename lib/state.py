@@ -125,6 +125,47 @@ def load_state(client_id: str) -> State:
         )
 
 
+def peek_state(client_id: str) -> State:
+    """Read a client's state **without** quarantining a corrupt one — for diagnostics only.
+
+    :func:`load_state` moves a corrupt file aside (E19) so that a *run* can continue. That is
+    right for a run and wrong for anything that is only looking: it turns an idle read into a
+    change to what the next run does, and every published row would then re-plan as NEW. It is
+    why ``scripts/doctor.py`` refuses to touch state at all.
+
+    A reconciliation has to read it, though — comparing the ledger against the site is the whole
+    job — so this is the read that cannot bite. Same parsing, no side effects, and a corrupt file
+    is an error to report rather than a file to move.
+
+    Args:
+        client_id: The client whose state to read.
+
+    Returns:
+        The persisted :class:`~lib.records.State`, or an empty one when there is no file yet.
+
+    Raises:
+        StateError: If the file cannot be read, or will not parse. The file is left alone in
+            both cases — including the corrupt one, which :func:`load_state` would have
+            quarantined.
+    """
+    path = state_path(client_id)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return State(client_id=client_id, entries={})
+    except OSError as exc:
+        raise StateError(f"cannot read state for {client_id!r} at {path}: {exc}") from exc
+
+    try:
+        return State.model_validate(json.loads(raw))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise StateError(
+            f"state for {client_id!r} at {path} will not parse ({exc}). It has been left "
+            "exactly as it is — a run would quarantine it and start fresh, which is why this "
+            "read does not."
+        ) from exc
+
+
 def _quarantine_corrupt(path: Path, client_id: str, cause: Exception) -> Path:
     """Move a corrupt state file aside to ``state.json.corrupt.{ts}`` and return its path.
 

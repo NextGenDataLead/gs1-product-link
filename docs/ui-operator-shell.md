@@ -2,7 +2,7 @@
 
 A local desktop window over the same commands you would otherwise type. It exists so that the
 recurring loop — drop a new export, prune the process list, import the copy, run the flow, read
-the result — does not require a terminal, a virtualenv, or knowing which of nine scripts to call.
+the result — does not require a terminal, a virtualenv, or knowing which of eleven scripts to call.
 
 On the operator's machine there is nothing to install first and nothing to type: double-click
 **`install.command`** (macOS) or **`install.bat`** (Windows), then **`start.command`** /
@@ -169,6 +169,24 @@ compressed, or skipped.
 Reads `output/{client}/runs/*.jsonl`, newest first, and distinguishes a **partial** log — a run
 that stopped mid-way — from a finished one. That is the case that matters most: live pages and
 permanent GS1 records may already exist for the rows that landed.
+
+Above the logs, **"Does the site match the ledger?"** asks the site instead. Everything else on
+this screen is what *this machine* recorded, which cannot show a page created by anything else —
+another machine whose `state.json` has not come back, a hand edit in wp-admin, or a run that
+failed part-way.
+
+That last one is why it exists. The first real publish through this shell published a product in
+Dutch and failed on French; sibling-blocking correctly held the product, so the row was logged as
+an **error** and nothing was written to state — while the Dutch page was live, correct and
+publicly reachable. Ten entries in the ledger, eleven pages on the site, and nothing in the tool
+could say so. A later run classifies that product NEW, and only the slug lookup inside the
+WordPress client stops it creating a duplicate.
+
+It lists every page carrying a `meta.gtin`, **per language explicitly** (an unscoped query on a
+WPML site answers with the default language only, so skipping that would report every translated
+page as missing), and diffs both directions. It reports and never repairs: each divergence has
+more than one correct resolution, and choosing needs someone who knows which machine published
+last. `python -m scripts.reconcile` is the same check in a terminal.
 
 ---
 

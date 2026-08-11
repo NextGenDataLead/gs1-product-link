@@ -70,7 +70,7 @@ drift silently. Read `docs/ui-operator-shell.md` before changing either.
 
 ## Layout
 
-- `lib/` — the library. `scripts/` — ten CLI entry points. `ui/` — the operator shell (optional
+- `lib/` — the library. `scripts/` — eleven CLI entry points. `ui/` — the operator shell (optional
   `[ui]` extra; nothing in `lib/` or `scripts/` imports it, and the suite passes without it).
   `mcps/` — three TypeScript MCP servers (unpublished by choice, see `docs/OPEN_DECISIONS.md` OD-2).
 - **Run `python -m scripts.doctor` before a wave.** It is the preflight: config, scope, cache

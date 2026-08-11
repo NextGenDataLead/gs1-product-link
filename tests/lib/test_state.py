@@ -33,6 +33,7 @@ from lib.state import (
     compute_content_hash,
     diff_against_state,
     load_state,
+    peek_state,
     save_state,
     state_path,
 )
@@ -167,6 +168,50 @@ def test_reset_flag_is_not_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     assert "reset_from_corrupt" not in written
     assert load_state("noviplast").reset_from_corrupt is False
+
+
+# --- peek_state: the read that must not change anything ----------------------
+
+
+def test_peek_state_reads_what_load_state_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same parsing. If the two disagreed, a reconciliation would compare the wrong ledger."""
+    monkeypatch.chdir(tmp_path)
+    save_state(State(client_id="noviplast", entries={"08713195007359": {"nl": _entry(1)}}))
+
+    assert peek_state("noviplast") == load_state("noviplast")
+
+
+def test_peek_state_of_a_missing_file_is_an_empty_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert peek_state("noviplast").entries == {}
+
+
+def test_peek_state_does_not_quarantine_a_corrupt_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole reason this function exists.
+
+    ``load_state`` moves a corrupt file aside (E19) so a *run* can continue, which turns an idle
+    read into a change to what the next run does — every published row would re-plan as NEW.
+    ``scripts/doctor.py`` avoids state entirely for this reason; a reconciliation cannot, so it
+    reads through here instead.
+    """
+    monkeypatch.chdir(tmp_path)
+    path = state_path("noviplast")
+    path.parent.mkdir(parents=True)
+    path.write_text("{ not valid json", encoding="utf-8")
+
+    with pytest.raises(StateError) as caught:
+        peek_state("noviplast")
+
+    assert path.exists(), "the file was quarantined by a read that promised not to"
+    assert path.read_text(encoding="utf-8") == "{ not valid json"
+    assert not list(path.parent.glob("state.json.corrupt.*"))
+    assert "left exactly as it is" in str(caught.value)
 
 
 # --- Atomicity / kill-mid-write (§12 Phase 6 DoD) ----------------------------

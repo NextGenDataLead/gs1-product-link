@@ -56,6 +56,14 @@ _PLL_LANGUAGES_PATH: Final = "/wp-json/pll/v1/languages"
 #: 404s even on a WPML site, so detection always fell through to "none".)
 _WPML_PROBE_PATH: Final = "/wp-json/wpml/v1"
 
+#: Results per request when enumerating a post type. WordPress core caps ``per_page`` at 100
+#: and answers 400 above it, so this is the ceiling rather than a preference.
+_PER_PAGE: Final = 100
+#: How many result pages an enumeration will fetch before giving up. 100 × 100 is far past any
+#: catalogue this tool publishes, and it stops a paginating loop against a site that answers
+#: every page identically — which is what a broken ``page`` param looks like from here.
+_PAGE_LIMIT: Final = 100
+
 #: Post ``meta`` key holding the GTIN — the idempotency key for ``upsert_page`` (§6.1).
 _GTIN_META_KEY: Final = "gtin"
 #: Media ``meta`` key holding the SHA-256 of the uploaded bytes (§6.2). Still stored for
@@ -311,6 +319,64 @@ class WordPressClient:
             label=f"{post_type}?slug={slug}",
         )
         return cast(WordPressPage, pages[0]) if pages else None
+
+    def list_pages_with_gtin(
+        self, post_type: str, language: str | None = None, *, page_limit: int = _PAGE_LIMIT
+    ) -> list[WordPressPage]:
+        """Every page under ``post_type`` carrying a ``meta.gtin``, for one language.
+
+        This is what makes a live-against-state reconciliation possible: state records what
+        *this machine* wrote, and only the site can say what is actually there. Read-only —
+        a paginated ``GET`` and nothing else.
+
+        Two things it does not trust:
+
+        * **The server's idea of a page of results.** ``per_page`` is capped at 100 by core,
+          so a catalogue larger than that needs following pages. It stops at ``page_limit``
+          rather than looping forever against a site that answers every page identically.
+        * **That every post is ours.** A page with no ``meta.gtin`` was made by a human in
+          wp-admin, and reporting it as an unrecorded tool page would make the whole report
+          noise. Filtering happens here, on the way out, for the same reason
+          :meth:`_find_by_meta_gtin` verifies its own filter: ``meta_key`` is not a core REST
+          feature, and a site without an enabler silently returns *everything*.
+
+        Args:
+            post_type: The (custom) post type slug.
+            language: Scope to one language. **Required on a multilingual site** — an
+                unscoped query answers with the default language only, so omitting it here
+                would report every translated page as missing from the site.
+            page_limit: Safety stop on the number of result pages fetched.
+
+        Returns:
+            The matching pages, in the order the site returned them.
+
+        Raises:
+            WordPressAPIError: On a non-2xx response other than 404, after retries.
+        """
+        found: list[WordPressPage] = []
+        for number in range(1, page_limit + 1):
+            batch = self._get_list(
+                f"{_WP_API_PREFIX}/{post_type}",
+                params={
+                    "per_page": str(_PER_PAGE),
+                    "page": str(number),
+                    "context": "edit",
+                    "orderby": "id",
+                    "order": "asc",
+                    **self._lang_params(language),
+                },
+                label=f"{post_type}?page={number}",
+            )
+            if not batch:
+                break
+            found.extend(
+                cast(WordPressPage, item)
+                for item in batch
+                if _meta_gtin(cast(dict[str, object] | None, item.get("meta")))
+            )
+            if len(batch) < _PER_PAGE:
+                break
+        return found
 
     def upsert_page(  # noqa: PLR0913 — mirrors the §4.4 signature verbatim
         self,

@@ -894,3 +894,71 @@ def test_secrets_never_appear_in_logs(
     assert APP_PASS_VALUE not in log_text
     assert "leaked-in-body" not in log_text
     assert "[REDACTED]" in log_text
+
+
+# --- Enumerating a post type (reconciliation) --------------------------------
+
+
+def _post(page_id: int, gtin: str | None, *, status: str = "publish") -> dict[str, object]:
+    """A post as the REST API returns it — ``meta`` absent means a human made it in wp-admin."""
+    body: dict[str, object] = {"id": page_id, "slug": f"p-{gtin or page_id}", "status": status}
+    if gtin is not None:
+        body["meta"] = {"gtin": gtin}
+    return body
+
+
+def test_listing_returns_only_the_pages_carrying_a_gtin(httpx_mock: HTTPXMock) -> None:
+    """A page with no ``meta.gtin`` was made by hand. Reporting it would make the report noise."""
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        json=[_post(11, "08713195000001"), _post(12, None), _post(13, "0871319500002")],
+    )
+
+    pages = client.list_pages_with_gtin(POST_TYPE)
+
+    assert [p["id"] for p in pages] == [11, 13]
+
+
+def test_listing_follows_pages_until_the_site_runs_out(httpx_mock: HTTPXMock) -> None:
+    """``per_page`` is capped at 100 by core, so a catalogue larger than that needs following."""
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[_post(n, f"0871319500{n:04d}") for n in range(100)])
+    httpx_mock.add_response(method="GET", json=[_post(999, "08713195009999")])
+
+    pages = client.list_pages_with_gtin(POST_TYPE)
+
+    assert len(pages) == 101
+    requested = [r.url.params.get("page") for r in _business_requests(httpx_mock)]
+    assert requested == ["1", "2"]
+
+
+def test_listing_stops_at_the_page_limit(httpx_mock: HTTPXMock) -> None:
+    """A site that answers every page identically would otherwise loop forever."""
+    client, _ = make_client(httpx_mock)
+    for _ in range(3):
+        httpx_mock.add_response(
+            method="GET", json=[_post(n, f"0871319500{n:04d}") for n in range(100)]
+        )
+
+    pages = client.list_pages_with_gtin(POST_TYPE, page_limit=3)
+
+    assert len(pages) == 300
+    assert len(_business_requests(httpx_mock)) == 3
+
+
+def test_listing_scopes_to_a_language_on_a_multilingual_site(httpx_mock: HTTPXMock) -> None:
+    """Without this every translated page reads as missing from the site — a false alarm."""
+    client, _ = make_client(httpx_mock, plugin="wpml")
+    httpx_mock.add_response(method="GET", json=[_post(12, "08713195000001")])
+
+    client.list_pages_with_gtin(POST_TYPE, "fr")
+
+    assert _business_requests(httpx_mock)[0].url.params.get("lang") == "fr"
+
+
+def test_listing_an_absent_post_type_is_empty_not_an_error(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", status_code=404, json={"code": "rest_no_route"})
+
+    assert client.list_pages_with_gtin(POST_TYPE) == []
