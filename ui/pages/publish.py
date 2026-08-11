@@ -59,6 +59,11 @@ class _Flow:
         #: Whether the dry run has been run at all. Its Proceed/Cancel buttons appear only after
         #: there is output to approve — offering them beforehand invites approving nothing.
         self.has_run_dry = False
+        #: The last `doctor --json --offline` payload, refreshed once per redraw. Two gates read
+        #: it; before this it was fetched inside gate 3's renderer, so gate 0 had no scope figure
+        #: to show and adding one there would have meant a second ~250 ms blocking subprocess per
+        #: redraw. One call, one answer, and the gates cannot disagree about the same run.
+        self.doctor: Any = None
         self.body = ui.column().classes("w-full gap-6")
 
     # -- assembly -------------------------------------------------------------
@@ -78,6 +83,7 @@ class _Flow:
             for unit in (plan.skipped if plan else ())
             if unit.reason is SkipReason.MISSING_PRODUCT_NAME
         )
+        self.doctor, _ = runner.run_json(runner.doctor_argv(self.cid, offline=True))
         self.body.clear()
         with self.body:
             if self.session.mode.is_permanent:
@@ -105,15 +111,56 @@ class _Flow:
         self._options(gate)
 
     def _gate_intent(self, gate: Gate) -> None:
+        """Gate 0's figures are the scope, with the catalogue behind it — not the other way round.
+
+        This used to lead with ``product_count`` — the length of ``products.json`` — under the
+        label "products in the catalogue". Honest, and the wrong number: during the install
+        rehearsal it read **127** on a run scoped to one product. Gate 0 is where the operator
+        forms their picture of what they are about to do, so it is the worst place in the flow
+        for the prominent figure to describe something other than this run.
+
+        The catalogue total is kept, one size down, because "15" alone cannot be sanity-checked
+        against the export the gate is asking about in the same breath.
+        """
         fact = context.file_fact(self.cfg.export.path)
+        scope = context.scope_from(self.doctor)
         with ui.row().classes("gap-12 items-end mb-4 flex-wrap"):
-            theme.figure(str(context.product_count(self.cid) or 0), "products in the catalogue")
+            if scope is None:
+                # Never fall back to the catalogue count here. A wrong number under the right
+                # label is worse than no number: it reads as an answer.
+                theme.figure("—", "products in scope")
+            else:
+                theme.figure(str(scope.in_scope), "products in scope")
+                theme.figure(str(scope.total), "in the catalogue")
             theme.figure(fact.age, "export modified")
             theme.figure(self.cfg.gs1.environment, "environment")
+        if scope is None:
+            theme.band(
+                "Could not read what this run would touch — the preflight did not report its "
+                "scope check. Run it on the Preflight screen; until then the figures above "
+                "describe nothing.",
+                "warn",
+            )
+        else:
+            # The doctor's own sentence, which names the gates that removed the rest. Without it
+            # a reader sees 15 of 127 and has to guess whether that is intended.
+            ui.label(scope.detail).classes("note mb-2")
+            if scope.empty:
+                theme.band(
+                    "Nothing is in scope, so this run would write nothing and report success — "
+                    "the one outcome indistinguishable from working. Fix the scope before "
+                    "confirming anything below.",
+                    "danger",
+                )
         ui.label(f"Export: {self.cfg.export.path}").classes("mono mb-1")
         ui.label(
             "That path comes from clients.yml and has no command-line override. If the workbook "
             "you mean is somewhere else, this run will silently use the old one."
+        ).classes("note mb-1")
+        ui.label(
+            "In scope is the ceiling on what this run could touch, not how many rows it will "
+            "write: it counts what the process list and the video allowlist admit, and cannot "
+            "yet know which of those are already published. That number arrives at step 5."
         ).classes("note mb-4")
 
         def pick(value: str) -> None:
@@ -148,8 +195,7 @@ class _Flow:
         ).classes("note mt-2")
 
     def _gate_content_review(self, gate: Gate) -> None:
-        payload, _ = runner.run_json(runner.doctor_argv(self.cid, offline=True))
-        entry = _find(payload, "cache_coverage")
+        entry = context.doctor_check(self.doctor, "cache_coverage")
         if entry is not None:
             data = entry.get("data") or {}
             with ui.row().classes("gap-12 items-end mb-3"):
@@ -520,9 +566,3 @@ def _confirmed_classifications(choice: str | None) -> set[PlanClassification]:
     if choice == "new-only":
         return {PlanClassification.NEW}
     return {PlanClassification.NEW, PlanClassification.CHANGED}
-
-
-def _find(payload: Any, name: str) -> dict[str, Any] | None:
-    if not isinstance(payload, list):
-        return None
-    return next((entry for entry in payload if entry.get("name") == name), None)
