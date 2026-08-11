@@ -85,6 +85,7 @@ from lib.errors import (
     GS1APIError,
     LLMAPIError,
     MediaIntegrityError,
+    MediaOwnershipError,
     StateError,
     VideoMapError,
     WordPressAPIError,
@@ -106,7 +107,7 @@ from lib.records import (
 )
 from lib.state import load_state, save_state
 from lib.templates import TemplateEngine
-from lib.wp_client import WordPressClient
+from lib.wp_client import MediaUpload, WordPressClient
 
 _log = logging.getLogger("scripts.run_execute")
 
@@ -364,11 +365,17 @@ def _digital_link_url(cfg: ClientConfig, row: PlanRow) -> str:
 
 
 class _RowMedia(NamedTuple):
-    """The media a row contributes to its page: the hero image and this language's video."""
+    """The media a row contributes to its page: the hero image and this language's video.
+
+    ``created_ids`` holds only the attachments *this row* put on the site, and exists so a row
+    that fails afterwards can take them back down. Deduped ids are deliberately absent: they
+    belong to an earlier run and are very likely carried by a page that is live and fine.
+    """
 
     featured_media_id: int | None
     image_acf_value: int | str | None
     video_media_id: int | None
+    created_ids: tuple[int, ...] = ()
 
 
 _NO_MEDIA = _RowMedia(None, None, None)
@@ -394,15 +401,17 @@ def _row_media(cfg: ClientConfig, row: PlanRow, wp: WordPressClient) -> _RowMedi
     media = cfg.media
     if media is None:
         return _NO_MEDIA
-    hero_id = _hero_media_id(cfg.client_id, media, row, wp)
+    hero = _hero_media_id(cfg.client_id, media, row, wp)
+    hero_id = hero.media_id if hero else None
     image_value = _image_acf_value(media, hero_id, wp)
-    video_id = _video_media_id(cfg.client_id, media, row, wp)
-    return _RowMedia(hero_id, image_value, video_id)
+    video = _video_media_id(cfg.client_id, media, row, wp)
+    created = tuple(up.media_id for up in (hero, video) if up is not None and up.created)
+    return _RowMedia(hero_id, image_value, video.media_id if video else None, created)
 
 
 def _hero_media_id(
     client_id: str, media: MediaConfig, row: PlanRow, wp: WordPressClient
-) -> int | None:
+) -> MediaUpload | None:
     """Download the export image, convert it to web JPEG, and upload it; ``None`` on any failure."""
     url = row.product.image_url
     if not url:
@@ -432,7 +441,7 @@ def _image_acf_value(
 
 def _video_media_id(
     client_id: str, media: MediaConfig, row: PlanRow, wp: WordPressClient
-) -> int | None:
+) -> MediaUpload | None:
     """Resolve, prepare (transcode), and upload this language's video; ``None`` if none matches."""
     folder = media.video_folders.get(row.language)
     if not folder or not media.video_map_path:
@@ -457,6 +466,43 @@ def _video_media_id(
 
 
 # --- Execution ---------------------------------------------------------------
+
+
+def _rollback_media(wp: WordPressClient, media: _RowMedia, row: PlanRow) -> None:
+    """Take back down the attachments this row uploaded, when its page write did not happen.
+
+    Nothing else in the tool removes them: an upload that succeeds before a failing page write
+    leaves media referenced by no page and recorded in no state file, invisible to
+    ``scripts.reconcile`` (which compares *pages*) and to any later run.
+
+    Three things this deliberately does not do:
+
+    * **It does not sweep.** Only ids from ``created_ids`` — attachments this row put there — are
+      touched. There is no way to identify an orphan from an earlier run without inferring it,
+      and inference against a live media library is not a thing to do with a DELETE.
+    * **It does not touch a deduped id.** Those belong to an earlier run and are very probably
+      carried by a page that is live and correct.
+    * **It does not mask the original failure.** A delete that fails is logged with the id, so
+      the operator can remove it by hand, and the row's real error is what propagates.
+    """
+    for media_id in media.created_ids:
+        try:
+            wp.delete_media(media_id)
+        except (WordPressAPIError, MediaOwnershipError) as exc:
+            _log.warning(
+                "row %s/%s: could not clean up orphaned media %s (%r) — remove it by hand",
+                row.gtin,
+                row.language,
+                media_id,
+                exc,
+            )
+        else:
+            _log.info(
+                "row %s/%s: removed orphaned media %s after the page write failed",
+                row.gtin,
+                row.language,
+                media_id,
+            )
 
 
 def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcome it annotates
@@ -493,17 +539,24 @@ def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcom
         if media.video_media_id is not None:
             acf[cfg.media.video_file_field] = media.video_media_id
     prior = state.entries.get(row.gtin, {}).get(row.language)
-    page = wp.upsert_page(
-        post_type=cfg.wordpress.post_type,
-        slug=row.slug,
-        title=row.title,
-        content=html,
-        language=row.language,
-        featured_media=media.featured_media_id,
-        meta={"gtin": row.gtin},
-        existing_id=prior.wp_page_id if prior else None,
-        acf=acf,
-    )
+    # From here to the upsert returning, any failure leaves the attachments above referenced by
+    # nothing. Past it, the page exists and carries them, so removing them would turn a failed
+    # row into a broken live page — which is why the window closes exactly here.
+    try:
+        page = wp.upsert_page(
+            post_type=cfg.wordpress.post_type,
+            slug=row.slug,
+            title=row.title,
+            content=html,
+            language=row.language,
+            featured_media=media.featured_media_id,
+            meta={"gtin": row.gtin},
+            existing_id=prior.wp_page_id if prior else None,
+            acf=acf,
+        )
+    except Exception:
+        _rollback_media(wp, media, row)
+        raise
     page_url = page["link"]
     outcome.wp_page_id = page["id"]
     outcome.wp_url = page_url

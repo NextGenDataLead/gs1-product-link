@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ from lib.config import (
 from lib.errors import MediaIntegrityError, WordPressAPIError
 from lib.records import LocalisedText, Plan, PlanClassification, PlanRow, ProductRecord, State
 from lib.state import load_state
+from lib.wp_client import MediaUpload
 from scripts import run_execute
 
 GTIN_A = "08713195007359"
@@ -142,6 +144,7 @@ class _Recorder:
         self.downloaded: list[str] = []
         self.uploaded: list[dict[str, Any]] = []
         self.slug_lookups: list[dict[str, Any]] = []
+        self.deleted_media: list[int] = []
 
 
 def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration has to survive
@@ -154,6 +157,8 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
     unverifiable: tuple[str, ...] = (),
     findable_slugs: dict[tuple[str, str], int] | None = None,
     upload_error: Exception | None = None,
+    reused_media: frozenset[int] = frozenset(),
+    delete_media_error: Exception | None = None,
 ) -> _Recorder:
     """Patch the two clients with recording fakes.
 
@@ -213,14 +218,23 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
             rec.downloaded.append(url)
             return None if url == "MISSING" else b"imgbytes:" + url.encode()
 
-        def upload_media(self, file_path: Any, title: str | None = None) -> int:
+        def upload_media(self, file_path: Any, title: str | None = None) -> MediaUpload:
             key = str(file_path)
             if upload_error is not None:
                 rec.uploaded.append({"path": key, "title": title, "id": None})
                 raise upload_error
             mid = 5000 + int.from_bytes(hashlib.sha256(key.encode()).digest()[:2], "big")
             rec.uploaded.append({"path": key, "title": title, "id": mid})
-            return mid
+            # created is False for an id already seen: the real client dedupes by content hash,
+            # and a rollback must be able to tell "we added this" from "this was already here".
+            first = mid not in {u["id"] for u in rec.uploaded[:-1]}
+            return MediaUpload(mid, created=first and mid not in reused_media)
+
+        def delete_media(self, media_id: int) -> bool:
+            rec.deleted_media.append(media_id)
+            if delete_media_error is not None:
+                raise delete_media_error
+            return True
 
         def media_source_url(self, media_id: int) -> str | None:
             return f"https://wp.test/wp-content/uploads/{media_id}.jpg"
@@ -801,6 +815,110 @@ def test_media_rerun_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     # deterministic converter + content-hash dedupe → the same attachment id both runs.
     assert rec1.uploaded[0]["id"] == rec2.uploaded[0]["id"]
     assert rec2.wp[0]["featured_media"] == rec1.uploaded[0]["id"]
+
+
+def test_media_uploaded_by_a_row_whose_page_write_fails_is_cleaned_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orphan case: media on the site, referenced by no page and recorded in no state.
+
+    Nothing else finds these. ``scripts.reconcile`` compares *pages*, and state never mentions
+    an attachment whose row failed — so an orphan is invisible to every other check the tool has.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    _fake_convert(monkeypatch)
+    rec = _install(monkeypatch, cfg, wp_error=WordPressAPIError(500, "boom"))
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 1
+
+    uploaded = [u["id"] for u in rec.uploaded]
+    assert uploaded  # something was uploaded before the page write failed
+    assert rec.deleted_media == uploaded  # and every bit of it was taken back down
+
+
+def test_a_reused_attachment_is_never_rolled_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dedup means an upload often returns an earlier run's attachment. Deleting that would
+    break a page that is live and correct — the failing row did not create it, so it is not
+    the failing row's to remove.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    _fake_convert(monkeypatch)
+    hero = 5000 + int.from_bytes(
+        hashlib.sha256(str(Path("output/acme/media/images") / f"{GTIN_A}.jpg").encode()).digest()[
+            :2
+        ],
+        "big",
+    )
+    rec = _install(
+        monkeypatch,
+        cfg,
+        wp_error=WordPressAPIError(500, "boom"),
+        reused_media=frozenset({hero}),  # an earlier run put this one there
+    )
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 1
+
+    # Not vacuous: the upload happened and returned exactly the id marked as pre-existing.
+    assert [u["id"] for u in rec.uploaded] == [hero]
+    assert rec.deleted_media == []
+
+
+def test_media_is_kept_when_the_page_exists_and_only_verification_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window closes when the page write returns, not when the row does.
+
+    ``verify_url`` fails *after* the page exists and already carries the attachments. Rolling
+    back there would turn a failed row into a live page with broken media — strictly worse than
+    the failure it is cleaning up after.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    _fake_convert(monkeypatch)
+    rec = _install(monkeypatch, cfg, verify=False)
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 1
+
+    assert rec.wp  # the page write happened
+    assert rec.deleted_media == []  # so its media stays
+
+
+def test_a_failed_rollback_warns_and_keeps_the_original_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The operator needs the id to clean up by hand, and still needs to know why the row failed.
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    _fake_convert(monkeypatch)
+    _install(
+        monkeypatch,
+        cfg,
+        wp_error=WordPressAPIError(500, "boom"),
+        delete_media_error=WordPressAPIError(403, "no"),
+    )
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_row(GTIN_A, "nl", image_url="https://cdn/x.jpg"))
+    )
+
+    with caplog.at_level(logging.WARNING, logger="scripts.run_execute"):
+        assert run_execute.main(["acme", "--plan", str(plan)]) == 1
+
+    assert "remove it by hand" in caplog.text
+    outcome = _read_outcomes(tmp_path, newest=True)[0]
+    assert "500" in outcome["error"]  # the page-write failure, not the cleanup failure
 
 
 def test_a_truncated_upload_fails_the_row_instead_of_publishing(

@@ -137,6 +137,37 @@ class WordPressAPIError(OrchestratorError):
         )
 
 
+class MediaOwnershipError(OrchestratorError):
+    """A media attachment was about to be deleted that this tool did not upload.
+
+    The media sibling of :class:`GtinMismatchError`, and it exists because the asymmetry was
+    real: every mutating *page* path re-reads the page and refuses unless its ``meta.gtin``
+    matches, while ``delete_media`` took an id at face value. On the live pilot site that gap
+    covered 366 of 406 attachments — the client's own media library, uploaded long before this
+    tool existed.
+
+    Ownership is read from ``meta.content_sha256``, which :meth:`~lib.wp_client.
+    WordPressClient.upload_media` writes on every attachment it creates and which is empty on
+    everything else.
+
+    **The failure is deliberately conservative.** An attachment of ours whose finalise call never
+    landed carries no hash and so reads as "not ours": this refuses to delete it and asks for a
+    human. Leaving one orphan behind is recoverable; deleting a client's product photo is not.
+
+    Attributes:
+        media_id: The attachment that was not deleted.
+        reason: Why it could not be claimed — no hash, or unreadable.
+    """
+
+    def __init__(self, media_id: int, reason: str) -> None:
+        self.media_id = media_id
+        self.reason = reason
+        super().__init__(
+            f"refusing to delete media {media_id}: {reason}. Only attachments this tool "
+            f"uploaded (carrying meta.content_sha256) may be deleted"
+        )
+
+
 class MediaIntegrityError(OrchestratorError):
     """WordPress stored a different number of bytes than were uploaded.
 
