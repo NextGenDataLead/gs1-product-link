@@ -299,7 +299,25 @@ def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult
     detail = f"{len(scoped)} of {len(products)} product(s) in the export are in scope"
     if reasons:
         detail += ", after " + " and ".join(reasons)
-    data: dict[str, object] = {"in_scope": len(scoped), "total": len(products)}
+    data: dict[str, object] = {
+        "in_scope": len(scoped),
+        "total": len(products),
+        # The GTINs themselves, not only the count, so a consumer can *filter* by scope rather
+        # than merely report it. The Content screen lists cached copy and must show this run's
+        # units rather than everything the cache has ever accumulated; without the list it would
+        # have to re-derive scope, and a second implementation of "what will this run touch" is
+        # the mistake `in_scope` exists to prevent.
+        #
+        # ``ProductRecord.gtin`` verbatim — the same field the generator keys its cache by
+        # (``entries[gtin][language]``). A normalised variant here would silently fail to match
+        # for any client whose feed carries 13-digit codes, and the failure would look like
+        # "nothing is in scope" rather than like a bug.
+        #
+        # Deliberately uncapped, unlike ``cache_coverage``'s ``pending_units``: that is a list to
+        # read, this is a list to filter with, and a truncated filter hides in-scope work — the
+        # exact failure this data is here to fix.
+        "in_scope_gtins": [product.gtin for product in scoped],
+    }
     if not scoped:
         return CheckResult(
             "scope",

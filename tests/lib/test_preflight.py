@@ -233,6 +233,39 @@ def test_scope_applies_the_process_list_and_the_video_allowlist(tmp_path: Path) 
     assert [p.gtin for p in scoped] == [GTIN_A]  # B is unmapped, the third is not listed
 
 
+def test_the_scope_check_names_the_gtins_and_not_only_how_many(tmp_path: Path) -> None:
+    """A count lets a consumer *report* scope; the list lets it *filter* by it.
+
+    The operator shell's Content screen needs the second: it lists generated copy, and the cache
+    accumulates every unit ever generated on that machine, so showing this run's batch means
+    intersecting the two. Without the list it would have to re-derive scope, and a second
+    implementation of "what will this run touch" is what ``in_scope`` exists to prevent.
+
+    ``ProductRecord.gtin`` verbatim, because that is the field the generator keys its cache by —
+    a normalised variant would silently match nothing for a 13-digit feed.
+    """
+    cfg = _make_config(process_list=_write_process_list(tmp_path, [GTIN_A]))
+
+    result = check_scope(cfg, [_product(GTIN_A), _product(GTIN_B)])
+
+    assert result.data["in_scope_gtins"] == [GTIN_A]
+    assert result.data["in_scope"] == 1
+
+
+def test_the_gtin_list_is_never_truncated(tmp_path: Path) -> None:
+    """``pending_units`` is capped at 20 because it is read; this list is *filtered with*.
+
+    A truncated filter hides in-scope work, which is the failure this data exists to fix rather
+    than a tidier version of it.
+    """
+    gtins = [f"0871319500{n:04d}" for n in range(50)]
+    cfg = _make_config(process_list=_write_process_list(tmp_path, gtins))
+
+    result = check_scope(cfg, [_product(gtin) for gtin in gtins])
+
+    assert result.data["in_scope_gtins"] == gtins
+
+
 def test_scope_of_nothing_is_a_failure_not_a_quiet_pass(tmp_path: Path) -> None:
     """An empty scope means a run that publishes nothing and reports success."""
     cfg = _make_config(process_list=_write_process_list(tmp_path, [GTIN_B]))

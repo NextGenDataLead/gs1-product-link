@@ -191,6 +191,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Fixed
+- **The copy review listed the whole cache, under a coverage figure that was scoped.** The Content
+  screen showed the doctor's figures — correctly scoped to the run — directly above a list that
+  read `generated_cache.json` off disk and rendered every GTIN in it, captioned "N GTIN(s) in the
+  cache". One screen, a scoped number and an unscoped list, and nothing distinguishing them.
+  Nothing prunes that file, so it accumulates every unit ever generated on the machine: a
+  two-product batch eventually sits under a list of hundreds.
+
+  Scope is not recomputed in the shell. `check_scope` now reports **`in_scope_gtins`** beside the
+  two counts, so a consumer can *filter* by scope rather than only report it, and
+  `lib.preflight.in_scope` stays the single implementation. The list is `ProductRecord.gtin`
+  verbatim — the field the generator keys its cache by — because a normalised variant would
+  silently match nothing for a 13-digit feed, and would fail looking like "nothing is in scope"
+  rather than like a bug. It is deliberately **uncapped**, unlike `pending_units`: that is a list
+  to read, this is a list to filter with, and a truncated filter hides in-scope work.
+
+  `ui.context.split_cache` does the division as a pure, separately tested function: this run's
+  entries, the rest, and the in-scope GTINs with no entry at all — the last being the interesting
+  set, since that is the copy still to be made. An unknown scope returns everything with
+  `scoped=False` rather than an empty split, and the screen says so: filtering to nothing would
+  read as "there is no copy", wrong in the direction that stops an operator looking. Out-of-scope
+  entries are folded behind a count, not dropped.
+
+  Coverage and the review now come from **one** preflight run — they answer the same question at
+  two zoom levels, and a re-check that moved the count without moving the list would restore the
+  disagreement being fixed. The import handler refreshes both, since they describe the file it just
+  replaced.
+
+  On the live pilot: 16 entries cached, 10 in scope, 6 folded, and 5 in-scope GTINs with no entry —
+  exactly the five `plan.json` records as E21 `no_generated_copy`, with 10 + 5 matching the
+  doctor's in-scope count of 15.
+
 - **Gate 0 gave the size of the catalogue where the operator was asking about this run.** The
   intent gate led with `context.product_count` — the length of `products.json` — under the label
   "products in the catalogue". Honest, and the wrong number: during the install rehearsal it read
