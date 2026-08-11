@@ -109,8 +109,20 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
      State the configured path and how long ago it was modified, and ask whether it is the same
      file. This catches the likeliest real error — a fresh export dropped somewhere new while
      config still points at the old one — which nothing downstream would notice.
-   - **Product count** from `output/{client}/data/products.json`. Label it as the source catalogue
-     size, **not** the number of rows this run will write: that arrives at the plan gate (step 5).
+   - **Scope** — how many products this run could touch, from
+     `python -m scripts.doctor {client} --json --offline`, the check named `scope`
+     (`data.in_scope` of `data.total`). Lead with it and carry its `detail` sentence, which names
+     what removed the rest. Give the catalogue total as the *second* number, not the first: it
+     used to be the only one here, and on a run scoped to one product it read **127**. Gate 0 is
+     where the operator forms their picture of what they are about to do, so the prominent figure
+     must describe this run.
+
+     Still **not** the number of rows this run will write — that arrives at the plan gate
+     (step 5), and the gap is real rather than rounding: scope counts what the process list and
+     the video allowlist admit, and deliberately cannot subtract the units that are already
+     published, because deciding that needs `state.json` and an idle read of a corrupt one
+     quarantines it (E19). Say "could touch", never "will publish". On the live pilot the two
+     read 15 and 5.
    - **Environment** — `test` or `production`, resolved from `clients.yml`.
    - **Permanence**, for `links` and `both` only.
 
@@ -119,7 +131,9 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    About to run the GS1 publish flow for democlient.
      Mode:        both — WordPress pages, then Digital Links pointing at them
      Export:      input/democlient/products.xlsx (modified 12 days ago)
-     Products:    127 in the parsed catalogue
+     In scope:    15 of 127 parsed products, after the process list and
+                  media.restrict_to_mapped_gtins (confirmed video in every language).
+                  That is the ceiling on what this run could touch, not the row count.
      Environment: production
 
    A GS1 Digital Link record can never be deleted. Retraction only disables it; the
@@ -136,6 +150,12 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    ```
    You said products-2026-q3.xlsx. Config points at input/democlient/products.xlsx,
    modified 12 days ago. Same file?
+   ```
+   If the `scope` check came back **`fail`** — nothing in scope — say so above the menu and do
+   not present the run as ready:
+   ```
+   Nothing is in scope: 0 of 127 parsed products survive the process list and
+   media.restrict_to_mapped_gtins. This run would write nothing and report success.
    ```
    `change-mode` → re-present with the chosen mode; `cancel` → abort, run nothing.
 

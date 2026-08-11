@@ -84,7 +84,7 @@ def _coverage(cid: str) -> None:
             payload, result = runner.run_json(runner.doctor_argv(cid, offline=True))
             body.clear()
             with body:
-                entry = _find(payload, "cache_coverage")
+                entry = context.doctor_check(payload, "cache_coverage")
                 if entry is None:
                     theme.band(result.stderr or "Could not read the coverage check.", "warn")
                     return
@@ -152,9 +152,3 @@ def _review(cache_path: Path, languages: list[str]) -> None:
 
 
 _MAX_SHOWN = 25
-
-
-def _find(payload: Any, name: str) -> dict[str, Any] | None:
-    if not isinstance(payload, list):
-        return None
-    return next((entry for entry in payload if entry.get("name") == name), None)

@@ -127,6 +127,62 @@ def product_count(cid: str) -> int | None:
     return len(data) if isinstance(data, list) else None
 
 
+def doctor_check(payload: Any, name: str) -> dict[str, Any] | None:
+    """One named check out of ``scripts.doctor --json``, or ``None``.
+
+    The payload is whatever the subprocess printed, so it may not be a list at all — a crashed
+    command still says something, and every caller here would rather show that than raise.
+    """
+    if not isinstance(payload, list):
+        return None
+    return next((entry for entry in payload if entry.get("name") == name), None)
+
+
+@dataclass(frozen=True)
+class Scope:
+    """What a run would touch, as the doctor's ``scope`` check reports it.
+
+    Read from the doctor rather than recomputed here, and that is the point: ``lib.preflight``
+    already composes the two gates that decide scope — the process list, then the confirmed-video
+    allowlist behind ``media.restrict_to_mapped_gtins`` — and a second implementation of "what
+    will this run touch" is the same class of mistake as a second implementation of the gates.
+
+    ``in_scope`` is deliberately a **superset** of what ``run_plan`` will classify: it omits the
+    already-published drop, because deciding that needs ``state.json`` and an idle read of a
+    corrupt one quarantines it (E19). So this is the ceiling on what a run could touch, never a
+    promise of how many rows it will write — that number arrives at the plan gate.
+    """
+
+    in_scope: int
+    total: int
+    #: The doctor's sentence, verbatim, naming what removed the rest.
+    detail: str
+    #: The check failed: nothing is in scope, so a run would publish nothing and report success.
+    empty: bool
+
+
+def scope_from(payload: Any) -> Scope | None:
+    """Read the doctor's ``scope`` check, or ``None`` when it did not report one.
+
+    ``None`` is a state to display, not a reason to fall back on the catalogue count. Showing the
+    catalogue total under a label that says "in scope" would be the defect this replaces, wearing
+    the right words.
+    """
+    entry = doctor_check(payload, "scope")
+    if entry is None:
+        return None
+    data = entry.get("data") or {}
+    in_scope, total = data.get("in_scope"), data.get("total")
+    if not isinstance(in_scope, int) or not isinstance(total, int):
+        return None
+    return Scope(
+        in_scope=in_scope,
+        total=total,
+        detail=str(entry.get("detail") or ""),
+        empty=entry.get("status") == "fail",
+    )
+
+
 def load_products(cid: str) -> list[ProductRecord]:
     """The parsed catalogue, or an empty list when it is absent or unreadable.
 

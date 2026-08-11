@@ -199,10 +199,14 @@ GATES: Final[tuple[Gate, ...]] = (
         title="Intent confirmation",
         purpose=(
             "States the mode, cross-checks the configured export file against the one the "
-            "operator has in mind, gives the catalogue size and the environment, and — for "
-            "anything that writes to GS1 — warns that the records are permanent. The export "
-            "cross-check catches the likeliest real error: a fresh export dropped somewhere new "
-            "while `export.path` still points at the old one, which nothing downstream notices."
+            "operator has in mind, gives **how many products this run could touch** and the "
+            "environment, and — for anything that writes to GS1 — warns that the records are "
+            "permanent. The export cross-check catches the likeliest real error: a fresh export "
+            "dropped somewhere new while `export.path` still points at the old one, which "
+            "nothing downstream notices. The scope figure leads and the catalogue total follows "
+            "it: this gate used to give only the catalogue size, which read 127 on a run scoped "
+            "to one product — and gate 0 is where the operator forms their picture of what they "
+            "are about to do. Neither number is the row count; that arrives at step 5."
         ),
         options=(
             GateOption("confirm", "Confirm", "Proceed with this mode"),

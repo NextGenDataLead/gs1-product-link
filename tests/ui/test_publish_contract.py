@@ -101,6 +101,55 @@ def test_the_missing_field_renderer_names_the_units() -> None:
     )
 
 
+def _calls(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Every function or method name called anywhere inside ``node``."""
+    return {
+        name
+        for inner in ast.walk(node)
+        if isinstance(inner, ast.Call)
+        for name in (getattr(inner.func, "id", None) or getattr(inner.func, "attr", None),)
+        if name
+    }
+
+
+def test_gate_zero_shows_the_scope_and_not_the_catalogue() -> None:
+    """The figure at gate 0 must describe *this run*, not the size of the parsed export.
+
+    It used to render ``context.product_count`` — the length of ``products.json`` — labelled
+    "products in the catalogue", which read 127 on a run scoped to one product. Gate 0 is where
+    the operator confirms what they are about to do, so it is the worst place in the flow for the
+    prominent number to be about something else.
+
+    ``product_count`` is not wrong in itself and still serves the Data screen; what is asserted
+    here is that gate 0 does not reach for it.
+    """
+    calls = _calls(_renderers()["intent"])
+    assert "scope_from" in calls, (
+        "_gate_intent does not read the doctor's scope check, so whatever figure it shows is not "
+        "what this run would touch"
+    )
+    assert "product_count" not in calls, (
+        "_gate_intent reads product_count — the catalogue total. That is the number this gate "
+        "was showing when it said 127 for a one-product run"
+    )
+
+
+def test_no_gate_renderer_runs_its_own_preflight() -> None:
+    """One doctor call per redraw, hoisted into ``_redraw`` and shared.
+
+    Two gates need it. Fetched per renderer it would be two ~250 ms blocking subprocesses on
+    every answer, in a function that is already holding the event loop — and the two gates could
+    report different numbers for the same run, which is the more expensive half.
+    """
+    offenders = sorted(
+        gate_id for gate_id, node in _renderers().items() if "run_json" in _calls(node)
+    )
+    assert not offenders, (
+        f"these gate renderers run their own preflight: {offenders}. Read `self.doctor`, which "
+        "_redraw refreshes once per pass"
+    )
+
+
 def test_no_gate_with_options_answers_itself() -> None:
     """Writing into ``session.answers`` is the screen deciding on the operator's behalf.
 
