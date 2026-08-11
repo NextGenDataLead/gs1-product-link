@@ -17,7 +17,14 @@ from typing import Any
 import pytest
 from pytest_httpx import HTTPXMock
 
-from lib.config import ClientConfig, ExportConfig, GeneratorConfig, GS1Config, WordPressConfig
+from lib.config import (
+    ClientConfig,
+    ExportConfig,
+    GeneratorConfig,
+    GS1Config,
+    ProcessListConfig,
+    WordPressConfig,
+)
 from lib.generator import (
     ORIGIN_GENERATED,
     GeneratedCache,
@@ -38,8 +45,24 @@ _NOW = datetime(2026, 7, 18, tzinfo=UTC)
 # --- Builders ----------------------------------------------------------------
 
 
+def _write_process_list(tmp_path: Path, gtins: list[str]) -> ProcessListConfig:
+    """A process list naming exactly ``gtins`` — the operator's statement of scope."""
+    import openpyxl  # noqa: PLC0415 — only this helper needs it
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Barcode"])
+    for gtin in gtins:
+        sheet.append([gtin])
+    path = tmp_path / "process-list.xlsx"
+    workbook.save(path)
+    return ProcessListConfig(path=str(path), gtin_column="Barcode")
+
+
 def _make_config(
-    languages: list[str] | None = None, generator: GeneratorConfig | None = None
+    languages: list[str] | None = None,
+    generator: GeneratorConfig | None = None,
+    process_list: ProcessListConfig | None = None,
 ) -> ClientConfig:
     return ClientConfig(
         client_id="noviplast",
@@ -58,6 +81,7 @@ def _make_config(
             languages=languages or ["nl"],
         ),
         generator=generator,
+        process_list=process_list,
     )
 
 
@@ -362,3 +386,120 @@ def test_missing_products_file_exits_2(tmp_path: Path, monkeypatch: pytest.Monke
     _patch_client(monkeypatch, _make_config())
 
     assert run_generate.main(["noviplast"]) == 2
+
+
+# --- scope -------------------------------------------------------------------
+
+
+def test_emit_only_asks_for_copy_the_run_would_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect: this command worked from the whole catalogue and never knew scope existed.
+
+    The doctor and ``--emit`` answered the same question two orders of magnitude apart — 10
+    against 224 on the pilot client. That is real tokens and real time spent writing copy for
+    products nobody is publishing, and a content-review gate with hundreds of units in it, which
+    is the surest way to make a review gate go unread.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(process_list=_write_process_list(tmp_path, [GTIN_A])))
+    _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
+
+    assert run_generate.main(["noviplast", "--emit"]) == 0
+
+    payload = _read_requests_file()
+    assert [request.gtin for request in payload.requests] == [GTIN_A]
+
+
+def test_emit_and_the_doctor_now_report_the_same_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The issue's actual acceptance test, and it is a cross-check rather than a restatement.
+
+    ``check_cache_coverage`` and ``--emit`` compute pending units independently, in different
+    modules. They agree only because both now narrow through ``lib.preflight.in_scope``; before
+    this they disagreed by 22x on real data, and nothing anywhere noticed.
+    """
+    from lib.preflight import check_cache_coverage  # noqa: PLC0415 — only this test needs it
+
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        process_list=_write_process_list(tmp_path, [GTIN_A]),
+    )
+    _patch_client(monkeypatch, cfg)
+    products = [_product(GTIN_A), _product(GTIN_B)]
+    _write_products("noviplast", products)
+
+    assert run_generate.main(["noviplast", "--emit"]) == 0
+
+    emitted = len(_read_requests_file().requests)
+    assert emitted == check_cache_coverage(cfg, products).data["pending"]
+
+
+def test_the_verbatim_prefill_stops_at_the_edge_of_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Narrowing happens *before* the prefill, which is the one behaviour change to notice.
+
+    ``--emit`` persists the prefill, so an unscoped one would keep seeding the cache with copy for
+    products this client is not publishing — the same unbounded accumulation the Content screen
+    now has to fold away.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(process_list=_write_process_list(tmp_path, [GTIN_A])))
+    _write_products(
+        "noviplast",
+        [_product(GTIN_A, short_1067="Kort en bruikbaar"), _product(GTIN_B, short_1067="Ook kort")],
+    )
+
+    assert run_generate.main(["noviplast", "--emit"]) == 0
+
+    assert set(load_cache("noviplast").entries) == {GTIN_A}
+
+
+def test_emit_says_it_wrote_the_cache_as_well(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Writing the cache here is deliberate; doing it silently was not.
+
+    The prefill runs before the gaps are computed and is persisted so emit and ingest can be
+    called in either order. That is worth keeping and worth saying: a command named ``--emit``
+    that writes a second file it never mentions is a surprise found by noticing an mtime.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    _write_products("noviplast", [_product(short_1067="Kort en bruikbaar")])
+
+    run_generate.main(["noviplast", "--emit"])
+
+    assert "generated_cache.json" in capsys.readouterr().err
+
+
+def test_ingesting_an_out_of_scope_result_says_that_is_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A results file emitted before the process list was pruned still holds those units.
+
+    They are correctly skipped, but "already fresh or input changed" would send a reader to the
+    feed to explain a scope decision. Three causes, and the warning names which.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(process_list=_write_process_list(tmp_path, [GTIN_A])))
+    _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
+    _data_dir = Path("output/noviplast/data")
+    _data_dir.mkdir(parents=True, exist_ok=True)
+    (_data_dir / "generation_results.json").write_text(
+        json.dumps(
+            {
+                "client_id": "noviplast",
+                "results": [{"gtin": GTIN_B, "language": "nl", "usps": ["Tagline", "Bullet"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        assert run_generate.main(["noviplast", "--ingest"]) == 0
+
+    assert "not in scope for this run" in caplog.text

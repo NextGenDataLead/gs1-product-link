@@ -24,7 +24,14 @@ through the shared cache (``lib.generator``). It
 ``run_plan`` later only *reads* the cache. This pipeline fails silently — verify the emitted
 requests and the cache against real parsed data, not just green tests.
 
+Only the products **in scope** are considered — the process list and the confirmed-video
+allowlist, via ``lib.preflight.in_scope``, the same filter the doctor's ``scope`` check reports.
+Before that this command worked from the whole catalogue and disagreed with the doctor by two
+orders of magnitude.
+
 Emits (--emit):       output/{client_id}/data/generation_requests.json
+                      **and** output/{client_id}/data/generated_cache.json — the verbatim prefill
+                      is persisted here too, so emit and ingest may be called in either order
 Reads (--ingest):     output/{client_id}/data/generation_results.json (writes the cache)
 Writes (--backend api): output/{client_id}/data/generated_cache.json
 Exit codes:
@@ -63,12 +70,15 @@ from lib.generator import (
     save_cache,
 )
 from lib.llm import AnthropicClient, load_voice_template
+from lib.preflight import in_scope
 from lib.records import ProductRecord
 
 _log = logging.getLogger("scripts.run_generate")
 
 REQUESTS_FILENAME: Final = "generation_requests.json"
 RESULTS_FILENAME: Final = "generation_results.json"
+#: Named here only so the emit path can say which file it also wrote; `lib.generator` owns it.
+CACHE_FILENAME: Final = "generated_cache.json"
 
 #: Provenance recorded for cache entries filled from an in-session producer's results file.
 _INSESSION_PROVENANCE: Final = "in-session"
@@ -158,15 +168,33 @@ def _load_results(path: Path, client_id: str) -> ResultsFile:
 
 
 def _prepare(
-    client_id: str, languages: list[str], products_path: Path, prompt_version: str, now: datetime
+    cfg: ClientConfig, languages: list[str], products_path: Path, prompt_version: str, now: datetime
 ) -> tuple[GeneratedCache, list[GenerationRequest], list[ProductRecord]]:
-    """Load products and cache, verbatim-prefill, and compute the pending gaps.
+    """Load products, narrow them to this run's scope, verbatim-prefill, and compute the gaps.
 
-    Both emit and ingest run this so the cache always ends up with its verbatim entries,
-    regardless of which is called first. Pure apart from reading the two input files.
+    **Scope is applied here, once, because all three producer paths run through it** — ``--emit``,
+    ``--ingest`` and ``--backend api``. Before this, none of them knew scope existed: the products
+    file was taken whole, so ``pending_requests`` was computed over the entire catalogue. On the
+    pilot client that meant **224 requests emitted where 10 were in scope** — the doctor and this
+    command answering the same question two orders of magnitude apart. Those are real tokens and
+    real time spent writing copy for products nobody is publishing, and a content-review gate with
+    hundreds of units in it, which is the surest way to make a review gate go unread.
+
+    :func:`lib.preflight.in_scope` is that filter, and it is imported rather than reimplemented:
+    it composes the process list and the confirmed-video allowlist, and a second implementation of
+    "what will this run touch" is exactly what it exists to prevent. This is the same function the
+    doctor's ``scope`` check reports, so the two commands now agree by construction rather than by
+    coincidence.
+
+    Narrowing before ``prefill_from_feed`` is deliberate and is the one behaviour change a reader
+    should notice: the verbatim prefill now fills in-scope units only, so the cache stops
+    accumulating entries for products this client is not publishing.
+
+    Both emit and ingest run this so the cache always ends up with its verbatim entries, regardless
+    of which is called first. Pure apart from reading its input files.
     """
-    products = _load_products(products_path)
-    cache = load_cache(client_id)
+    products = in_scope(cfg, _load_products(products_path))
+    cache = load_cache(cfg.client_id)
     prefill_from_feed(products, cache, languages, prompt_version, now=now)
     requests = pending_requests(products, cache, languages, prompt_version)
     return cache, requests, products
@@ -239,24 +267,34 @@ def _ingest(
     requests: list[GenerationRequest],
     results: ResultsFile,
     now: datetime,
+    products: list[ProductRecord],
 ) -> tuple[int, int]:
     """Apply a session's results to ``cache`` in place and persist it.
 
     Matches each result to a pending request by ``(gtin, language)``. A result with no pending
-    request (already fresh, or its input changed away) or a mismatched fingerprint (generated
-    against stale inputs) is skipped with a warning rather than cached. Returns ``(applied,
-    skipped)``.
+    request, or one whose fingerprint no longer matches (generated against inputs that have since
+    changed), is skipped with a warning rather than cached. Returns ``(applied, skipped)``.
+
+    "No pending request" has **three** causes and the warning names which: the unit is already
+    cached fresh, its inputs changed, or it is no longer in scope. The third arrived when
+    :func:`_prepare` began narrowing to the process list and the video allowlist — a results file
+    emitted before the list was pruned still holds those units, and reporting them as "already
+    fresh or input changed" would send a reader looking at the feed for a scope decision.
     """
     by_key = {(r.gtin, r.language): r for r in requests}
+    in_scope_gtins = {product.gtin for product in products}
     applied = 0
     skipped = 0
     for item in results.results:
         request = by_key.get((item.gtin, item.language))
         if request is None:
             _log.warning(
-                "no pending request for %s/%s (already fresh or input changed); skipping",
+                "no pending request for %s/%s (%s); skipping",
                 item.gtin,
                 item.language,
+                "not in scope for this run"
+                if item.gtin not in in_scope_gtins
+                else "already fresh or input changed",
             )
             skipped += 1
             continue
@@ -359,7 +397,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     mode.add_argument(
         "--emit",
         action="store_true",
-        help="Write pending requests for an in-session producer (default)",
+        help=(
+            "Write pending requests for an in-session producer (default). Also saves the cache: "
+            "the verbatim prefill runs first and is persisted so emit and ingest can be called "
+            "in either order"
+        ),
     )
     mode.add_argument(
         "--ingest",
@@ -386,9 +428,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
         prompt_version = cfg.generator.prompt_version if cfg.generator else DEFAULT_PROMPT_VERSION
-        cache, requests, products = _prepare(
-            cfg.client_id, languages, products_path, prompt_version, now
-        )
+        cache, requests, products = _prepare(cfg, languages, products_path, prompt_version, now)
         total_units = len(products) * len(languages)
 
         if args.backend == "api":
@@ -400,7 +440,7 @@ def main(argv: list[str] | None = None) -> int:
                 Path(args.results) if args.results else _data_path(cfg.client_id, RESULTS_FILENAME)
             )
             results = _load_results(results_path, cfg.client_id)
-            applied, skipped = _ingest(cache, requests, results, now)
+            applied, skipped = _ingest(cache, requests, results, now, products)
             # Re-derive against the mutated cache so coverage reflects the post-ingest state,
             # not the gaps we started with.
             requests = pending_requests(products, cache, languages, prompt_version)
@@ -425,7 +465,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ingested {applied} result(s), skipped {skipped}; {coverage}", file=sys.stderr)
     else:
         _log.info("wrote %d request(s) to %s", len(requests), emit_path)
-        print(f"emitted {len(requests)} request(s) to {emit_path}; {coverage}", file=sys.stderr)
+        # Name the cache too. It is written on this path by design — `prefill_from_feed` runs
+        # before the gaps are computed, and persisting it here is what lets emit and ingest be
+        # called in either order — but a command called `--emit` writing a second file it never
+        # mentions is a surprise found by noticing the mtime, which is no way to find it.
+        print(
+            f"emitted {len(requests)} request(s) to {emit_path}; "
+            f"saved the verbatim prefill to {_data_path(cfg.client_id, CACHE_FILENAME)}; "
+            f"{coverage}",
+            file=sys.stderr,
+        )
     return _EXIT_OK
 
 
