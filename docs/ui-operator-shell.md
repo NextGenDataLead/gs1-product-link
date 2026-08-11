@@ -161,6 +161,23 @@ that unit *pending* again — and a pending unit with no producer on this machin
 plan (E21). The screen lists the pending units by GTIN and language, so "request a fresh cache" is
 an instruction rather than a hunch.
 
+**The copy review shows this run's batch, not the cache.** `generated_cache.json` is never pruned,
+so it holds every unit ever generated for this client on this machine. The review used to list all
+of it — captioned "N GTIN(s) in the cache" — directly beneath coverage figures that *were* scoped,
+with nothing to tell the two apart, and the gap widens with the age of the machine. It now reads
+`in_scope_gtins` from the doctor's `scope` check and splits the file: this run's entries, then the
+in-scope GTINs that have **no** entry (the copy still to be made), then everything else folded away
+under a count. Folded rather than dropped — it is real copy, and a reader who wants it should reach
+it; what it must not do is pad this run's list.
+
+Scope is not recomputed here. `lib.preflight.in_scope` stays the single implementation and the
+doctor carries the answer across. If it cannot be read the screen shows the whole cache and *says*
+so, because filtering to nothing would read as "there is no copy" — wrong in the direction that
+stops an operator looking.
+
+Coverage and the review come from **one** preflight run, and the import button refreshes both: they
+describe the file it just replaced.
+
 **Asking for that cache is a conversation, not a button, and deliberately so.** This machine never
 runs `run_generate` — no API key, no Anthropic egress — so it cannot produce
 `generation_requests.json` either; that command runs on the maintainer's machine, in a Claude Code
