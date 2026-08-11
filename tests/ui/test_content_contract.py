@@ -71,9 +71,26 @@ def test_the_copy_review_filters_by_scope() -> None:
     Asserted as "it calls the splitter" rather than by inspecting the rendering, because the
     splitter is where the decision lives and ``tests/ui/test_context.py`` covers what it decides.
     """
-    assert "split_cache" in _calls(_function("_review")), (
+    review = _function("_review")
+    assert "split_cache" in _calls(review), (
         "_review does not split the cache by scope, so it is listing every GTIN ever generated "
         "for this client under a coverage figure that is scoped to this run"
+    )
+    # And that it hands over the scope it was given. Calling the splitter with `None` is a legal
+    # call that reproduces the defect exactly — every entry comes back as in-scope — so asserting
+    # the call alone is not enough.
+    call = next(
+        inner
+        for inner in ast.walk(review)
+        if isinstance(inner, ast.Call)
+        and (getattr(inner.func, "attr", None) or getattr(inner.func, "id", None)) == "split_cache"
+    )
+    passed = {arg.id for arg in call.args if isinstance(arg, ast.Name)} | {
+        kw.value.id for kw in call.keywords if isinstance(kw.value, ast.Name)
+    }
+    assert "scope" in passed, (
+        "_review calls split_cache without passing its `scope` argument, so every cache entry "
+        f"comes back in scope and nothing is filtered; it passes {sorted(passed)}"
     )
 
 
