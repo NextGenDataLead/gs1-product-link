@@ -197,6 +197,18 @@ compressed, or skipped.
   on a dry run.
 - An empty plan is refused rather than run. Publishing nothing successfully is the one outcome
   indistinguishable from success.
+- **The missing-field gate (step 4) appears only when the plan actually dropped a unit for a
+  missing `product_name` (E18), and it names each one.** It used to render on every run, offering
+  *Skip this unit* beside no unit — and of its three answers only *Stop the run* had any effect,
+  so the one live control on a question about nothing was the destructive one. Gate applicability
+  now consults the plan (`needs_missing_product_name`), refreshed on **every redraw** rather than
+  once per run, because the plan is built at step 5 — in the middle of the walk — and a fact read
+  before there is a plan decides a gate that then never appears. Building a plan that drops units
+  says so in a toast as well as by the gate appearing above.
+
+The Gate index's **Modes column is checked against the code** in both directions, not only the
+ids and step numbers. It is prose, it said `all` for a gate that was never meant to fire
+unconditionally, and nothing compared the two — which is how that defect shipped.
 
 ### Runs
 
