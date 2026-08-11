@@ -86,7 +86,7 @@ verbatim prompt text. Neither is the copy; both are checked against the table.
 | `intent` | 0 | **yes** | all |
 | `languages` | 2 | no | all |
 | `content_review` | 3 | **yes** | all, when a `generator` is configured |
-| `missing_field` | 4 | no | all |
+| `missing_field` | 4 | no | all, when a unit was dropped for a missing `product_name` |
 | `plan_review` | 5 | **yes** | all |
 | `row_diff` | 6 | no | all |
 | `production` | 8 | **yes — never skippable** | `links`, `both`, on production only |
@@ -183,6 +183,14 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    - `ask-me-later` — batch the prompts, present at end.
    - `fail-run` — abort before execute.
    Default `flow.on_missing_field: prompt`.
+   **When run_plan logs no such warning this gate does not happen at all** — do not present it,
+   do not mention it, do not ask about it. `lib/gates.py` now enforces that for the
+   form-rendering surface (`needs_missing_product_name`), and it is written here so both
+   surfaces skip it for the same stated reason rather than by coincidence: a prompt asking
+   whether to skip a unit that was never skipped offers a button naming no unit, and of its
+   three answers only `fail-run` does anything — so the one live control on a question about
+   nothing is the destructive one. That teaches answering a gate without reading it, and the
+   cost lands at the gates that matter.
 
 5. **Plan summary (§10.6.1).** Present verbatim (the actionable total is NEW + CHANGED;
    UNCHANGED rows are never executed):

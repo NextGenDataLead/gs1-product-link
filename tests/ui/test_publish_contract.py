@@ -39,11 +39,65 @@ def _renderers() -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
     return found
 
 
+def _named_function(name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    """The one function called ``name`` in the publish screen."""
+    tree = ast.parse(_PUBLISH.read_text("utf-8"), filename=str(_PUBLISH))
+    found = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name
+    ]
+    assert len(found) == 1, f"expected exactly one {name}; found {len(found)}"
+    return found[0]
+
+
 def test_the_renderers_are_where_we_think() -> None:
-    """A guard on the guard: these checks are worthless if they match nothing."""
+    """A guard on the guard: these checks are worthless if they match nothing.
+
+    ``missing_field`` is in the set because a gate served by the ``_gate_default`` fallback is
+    invisible to every check in this file — which is exactly where it sat while it rendered on
+    every run, asking about nothing. A dedicated renderer is what brings it under them.
+    """
     rendered = _renderers()
-    assert {"intent", "plan_review", "dry_run", "production"} <= set(rendered), (
+    assert {"intent", "plan_review", "dry_run", "production", "missing_field"} <= set(rendered), (
         f"expected renderers for the load-bearing gates; found {sorted(rendered)}"
+    )
+
+
+def test_the_screen_tells_the_session_what_the_plan_dropped() -> None:
+    """The refresh belongs in ``_redraw``, and the location is the whole point.
+
+    The plan is built at gate 5, in the middle of the walk, so this fact is read once per redraw
+    rather than once per run. Moving it to ``__init__`` — the obvious tidier-looking place — reads
+    it before there is a plan, and gate 4 would then never appear on the run that needs it.
+    """
+    assigned = {
+        target.attr
+        for node in ast.walk(_named_function("_redraw"))
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+    }
+    assert "units_missing_product_name" in assigned, (
+        "_redraw does not refresh session.units_missing_product_name, so gate 4's applicability "
+        "is decided by whatever the plan held when the screen was built"
+    )
+
+
+def test_the_missing_field_renderer_names_the_units() -> None:
+    """Naming them is the fix, not merely hiding the gate when there is nothing to say.
+
+    A gate that appears only when something was dropped but still cannot say *what* leaves the
+    operator with the same unanswerable question, one run later.
+    """
+    attributes = {
+        node.attr
+        for node in ast.walk(_renderers()["missing_field"])
+        if isinstance(node, ast.Attribute)
+    }
+    assert {"gtin", "language", "detail"} <= attributes, (
+        "_gate_missing_field never reads the dropped units' gtin, language and detail, so it "
+        f"cannot be naming them; it reaches {sorted(attributes)}"
     )
 
 

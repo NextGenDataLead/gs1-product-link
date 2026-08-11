@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from lib.gates import BY_ID, Gate, GateOption, Mode, gates_for, run_execute_argv
+from lib.records import SkippedUnit
 
 
 class GateNotAnsweredError(RuntimeError):
@@ -48,12 +49,35 @@ class PublishSession:
     languages: list[str] = field(default_factory=list)
     #: gate id → the option value the operator picked.
     answers: dict[str, str] = field(default_factory=dict)
+    #: The units this run's plan dropped for a missing ``product_name`` (E18), as the plan
+    #: recorded them. Not an answer and not a file read: a *fact about this run*, the same kind
+    #: of thing as ``has_generator`` and ``is_production``, and it decides whether the
+    #: missing-field gate is in the walk at all.
+    #:
+    #: The units themselves rather than a bare flag, on purpose. The screen both hides the gate
+    #: and names the units it is about; if those two came from separate reads of ``plan.json``
+    #: they could disagree, and the way they would disagree is the gate rendering over an empty
+    #: list — the very defect this field exists to fix, with a condition on top. One value, one
+    #: truth.
+    #:
+    #: Defaulted, unlike ``gates_for``'s parameter, because a session begins before there is a
+    #: plan. That costs nothing here: the screen refreshes it on every redraw, and the drift
+    #: protection lives one call down, at the contract boundary.
+    units_missing_product_name: tuple[SkippedUnit, ...] = ()
 
     @property
     def gates(self) -> tuple[Gate, ...]:
-        """The gates that fire for this run, in step order."""
+        """The gates that fire for this run, in step order.
+
+        Recomputed on every access rather than cached, which matters now that one of the inputs
+        is a fact about the plan: the plan is built at step 5, in the middle of the walk, so the
+        answer to "which gates?" legitimately changes partway through.
+        """
         return gates_for(
-            mode=self.mode, has_generator=self.has_generator, is_production=self.is_production
+            mode=self.mode,
+            has_generator=self.has_generator,
+            is_production=self.is_production,
+            has_missing_product_name=bool(self.units_missing_product_name),
         )
 
     def answer(self, gate_id: str, value: str) -> None:

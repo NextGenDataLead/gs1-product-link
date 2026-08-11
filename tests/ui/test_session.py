@@ -11,9 +11,18 @@ from __future__ import annotations
 import pytest
 
 from lib.gates import Mode
+from lib.records import SkippedUnit, SkipReason
 from ui.session import GateNotAnsweredError, PublishSession
 
 _CONFIRMED = "output/acme/plan.confirmed.json"
+
+#: One unit `run_plan` dropped for E18, exactly as it would appear in ``plan.json``.
+_DROPPED = SkippedUnit(
+    gtin="08713195003276",
+    language="fr",
+    reason=SkipReason.MISSING_PRODUCT_NAME,
+    detail="missing product_name.fr",
+)
 
 
 def _session(**overrides: object) -> PublishSession:
@@ -204,6 +213,49 @@ def test_a_client_without_a_generator_skips_the_copy_review() -> None:
 
     assert session.execute_argv(_CONFIRMED, dry_run=False)
     assert "content_review" not in {gate.id for gate in session.gates}
+
+
+def test_the_missing_field_gate_is_absent_until_the_plan_says_a_unit_was_dropped() -> None:
+    """Gate 4 asks about units the plan dropped, so with no such units it is not in the walk.
+
+    The session carries the units rather than a flag because the screen both hides the gate and
+    names what it is about; one value cannot disagree with itself.
+    """
+    session = _session()
+    assert "missing_field" not in {gate.id for gate in session.gates}
+
+    session.units_missing_product_name = (_DROPPED,)
+    assert "missing_field" in {gate.id for gate in session.gates}
+
+
+def test_a_dropped_unit_never_blocks_the_run() -> None:
+    """Gate 4 is not required, and must not become so.
+
+    Its only non-proceeding option stops the run outright, so making it required would put every
+    run with an E18 drop behind a gate whose sole way through is to accept the omission — a
+    choice the operator should be free to make, not compelled to make.
+    """
+    session = _session(units_missing_product_name=(_DROPPED,))
+    session.answer("intent", "confirm")
+
+    assert "missing_field" not in {gate.id for gate in session.outstanding}
+
+
+def test_a_stop_the_run_answer_stops_mattering_once_the_drops_are_gone() -> None:
+    """Answering a gate that later stops applying is silently forgotten. Pinned, not endorsed.
+
+    Defensible on its face — the reason for stopping is gone — but it is silent, and it is not
+    specific to this gate: switching mode at gate 0 already discards a ``cancel`` answered at the
+    production gate, and ``has_generator`` does the same to the copy review. Fixing it for one of
+    the three would make three conditional gates behave three ways, so this states the current
+    behaviour and the general fix is filed.
+    """
+    session = _session(units_missing_product_name=(_DROPPED,))
+    session.answer("missing_field", "fail-run")
+    assert session.cancelled
+
+    session.units_missing_product_name = ()
+    assert not session.cancelled
 
 
 # --- Bookkeeping ---------------------------------------------------------------

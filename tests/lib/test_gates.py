@@ -11,6 +11,7 @@ directions. Adding a gate to either without the other fails CI.
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 from typing import Final
@@ -28,12 +29,29 @@ _SKILL: Final = (
 )
 
 #: One row of the Gate index table: | `id` | step | required | modes |
-_ROW: Final = re.compile(r"^\|\s*`(?P<id>[a-z_]+)`\s*\|\s*(?P<step>[\d.]+)\s*\|", re.MULTILINE)
+_ROW: Final = re.compile(
+    r"^\|\s*`(?P<id>[a-z_]+)`\s*\|\s*(?P<step>[\d.]+)\s*\|(?P<required>[^|]*)\|(?P<modes>[^|]*)\|",
+    re.MULTILINE,
+)
 
 
 def _indexed_gates() -> dict[str, str]:
     """The gate id → step mapping the SKILL's Gate index declares."""
     return {m.group("id"): m.group("step") for m in _ROW.finditer(_SKILL.read_text("utf-8"))}
+
+
+def _indexed_modes() -> dict[str, str]:
+    """The gate id → Modes-cell mapping the SKILL's Gate index declares."""
+    return {m.group("id"): m.group("modes") for m in _ROW.finditer(_SKILL.read_text("utf-8"))}
+
+
+#: Each applicability flag on :class:`~lib.gates.Gate`, and the word its Modes cell must contain
+#: when the flag is set — and must not contain when it is not.
+_MODE_CONDITIONS: Final = {
+    "needs_generator": "generator",
+    "needs_production": "production",
+    "needs_missing_product_name": "product_name",
+}
 
 
 # --- Drift ---------------------------------------------------------------------
@@ -59,6 +77,27 @@ def test_the_step_numbers_agree() -> None:
     """The numbering is load-bearing: cross-references to "step 8" must keep meaning step 8."""
     documented = _indexed_gates()
     assert {gate.id: gate.step for gate in GATES} == documented
+
+
+def test_the_modes_column_names_every_condition_a_gate_carries() -> None:
+    """The Modes cell is prose, and until now nothing compared it to the code.
+
+    That is how the missing-field gate shipped: its cell said ``all`` while the gate was meant to
+    fire only on a plan that dropped something, and the two could not be reconciled because only
+    the id and the step were ever checked. A reader of the SKILL — which is to say the model
+    driving the flow — had no way to learn a condition the table did not mention.
+
+    Checked in both directions, like the id sets: a flag the cell does not name, and a cell naming
+    a condition the gate does not carry, both fail.
+    """
+    modes = _indexed_modes()
+    for gate in GATES:
+        cell = modes[gate.id].lower()
+        for attribute, word in _MODE_CONDITIONS.items():
+            assert (word in cell) is getattr(gate, attribute), (
+                f"the Gate index's Modes cell for {gate.id!r} and its {attribute} disagree: "
+                f"cell is {modes[gate.id].strip()!r}, flag is {getattr(gate, attribute)}"
+            )
 
 
 def test_the_skill_offers_every_option_including_the_chat_only_ones() -> None:
@@ -123,13 +162,29 @@ def test_the_production_gate_never_fires_in_pages_mode() -> None:
     A second production prompt for a page you can delete only trains the operator to click
     through them, which costs at the gate that matters.
     """
-    fired = {gate.id for gate in gates_for(mode=Mode.PAGES, has_generator=True, is_production=True)}
+    fired = {
+        gate.id
+        for gate in gates_for(
+            mode=Mode.PAGES,
+            has_generator=True,
+            is_production=True,
+            has_missing_product_name=True,
+        )
+    }
     assert "production" not in fired
 
 
 @pytest.mark.parametrize("mode", [Mode.LINKS, Mode.BOTH])
 def test_the_production_gate_always_fires_on_a_permanent_production_run(mode: Mode) -> None:
-    fired = {gate.id for gate in gates_for(mode=mode, has_generator=False, is_production=True)}
+    fired = {
+        gate.id
+        for gate in gates_for(
+            mode=mode,
+            has_generator=False,
+            is_production=True,
+            has_missing_product_name=False,
+        )
+    }
     assert "production" in fired
 
 
@@ -137,7 +192,12 @@ def test_the_production_gate_always_fires_on_a_permanent_production_run(mode: Mo
 def test_the_dry_run_gate_fires_in_every_mode(mode: Mode) -> None:
     """Mandatory, and the cheapest thing in the flow."""
     for production in (True, False):
-        fired = gates_for(mode=mode, has_generator=False, is_production=production)
+        fired = gates_for(
+            mode=mode,
+            has_generator=False,
+            is_production=production,
+            has_missing_product_name=False,
+        )
         assert any(gate.id == "dry_run" and gate.required for gate in fired)
 
 
@@ -149,16 +209,90 @@ def test_content_review_fires_in_links_mode_too(  # noqa: D401 — the name is t
     links run against an unfilled cache publishes nothing and reports success.
     """
     fired = {
-        gate.id for gate in gates_for(mode=Mode.LINKS, has_generator=True, is_production=False)
+        gate.id
+        for gate in gates_for(
+            mode=Mode.LINKS,
+            has_generator=True,
+            is_production=False,
+            has_missing_product_name=False,
+        )
     }
     assert "content_review" in fired
 
 
 def test_content_review_does_not_fire_without_a_generator() -> None:
     fired = {
-        gate.id for gate in gates_for(mode=Mode.BOTH, has_generator=False, is_production=False)
+        gate.id
+        for gate in gates_for(
+            mode=Mode.BOTH,
+            has_generator=False,
+            is_production=False,
+            has_missing_product_name=False,
+        )
     }
     assert "content_review" not in fired
+
+
+def _fired(*, has_missing_product_name: bool) -> set[str]:
+    """Every gate id for a maximal run — every other applicability input switched on."""
+    return {
+        gate.id
+        for gate in gates_for(
+            mode=Mode.BOTH,
+            has_generator=True,
+            is_production=True,
+            has_missing_product_name=has_missing_product_name,
+        )
+    }
+
+
+def test_the_missing_field_gate_does_not_fire_when_nothing_was_dropped() -> None:
+    """The defect this gate's applicability flag exists to fix.
+
+    It used to render on every run: a card headed "one per unit dropped for a missing
+    product_name" above a button reading "Skip this unit", with no unit — because ``gates_for``
+    filtered on mode, generator and environment and never on the plan. Of its three answers only
+    ``fail-run`` did anything, so the sole live control on a question about nothing was the one
+    that stops the run. A gate that asks about nothing teaches answering without reading, and
+    that habit is spent at the gates that matter.
+    """
+    assert "missing_field" not in _fired(has_missing_product_name=False)
+
+
+def test_the_missing_field_gate_fires_once_a_unit_was_dropped() -> None:
+    """The other half, and not a formality: without it the check above passes by deletion."""
+    assert "missing_field" in _fired(has_missing_product_name=True)
+
+
+def test_the_plan_fact_changes_exactly_one_gate() -> None:
+    """Whether the plan dropped a unit decides the missing-field gate and nothing else.
+
+    Stated as a set difference rather than as two membership checks, so a later flag put on a
+    second gate — silently widening what a plan fact can hide — fails here.
+    """
+    with_drops = _fired(has_missing_product_name=True)
+    without = _fired(has_missing_product_name=False)
+    assert with_drops - without == {"missing_field"}
+    assert without - with_drops == set()
+
+
+def test_every_applicability_input_must_be_supplied() -> None:
+    """No applicability input may acquire a default. This is the module's whole premise.
+
+    A defaulted one means a caller that forgets it gets a walk quietly missing a gate — and, in
+    this module's own words, a gate that quietly stops being shown raises nothing at all. Without
+    this check, adding ``= False`` to any of them is an edit no test would notice.
+    """
+    parameters = inspect.signature(gates_for).parameters
+    assert set(parameters) == {
+        "mode",
+        "has_generator",
+        "is_production",
+        "has_missing_product_name",
+    }
+    for name, parameter in parameters.items():
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, name
+        assert parameter.default is inspect.Parameter.empty, name
 
 
 def test_gates_come_back_in_step_order() -> None:
@@ -166,7 +300,12 @@ def test_gates_come_back_in_step_order() -> None:
     it has not built yet."""
     steps = [
         float(gate.step)
-        for gate in gates_for(mode=Mode.BOTH, has_generator=True, is_production=True)
+        for gate in gates_for(
+            mode=Mode.BOTH,
+            has_generator=True,
+            is_production=True,
+            has_missing_product_name=True,
+        )
     ]
     assert steps == sorted(steps)
 
@@ -290,6 +429,37 @@ def test_a_gate_knows_its_own_applicability() -> None:
         modes=frozenset({Mode.LINKS}),
         needs_production=True,
     )
-    assert gate.applies(mode=Mode.LINKS, has_generator=False, is_production=True)
-    assert not gate.applies(mode=Mode.LINKS, has_generator=False, is_production=False)
-    assert not gate.applies(mode=Mode.PAGES, has_generator=False, is_production=True)
+    assert gate.applies(
+        mode=Mode.LINKS, has_generator=False, is_production=True, has_missing_product_name=False
+    )
+    assert not gate.applies(
+        mode=Mode.LINKS, has_generator=False, is_production=False, has_missing_product_name=False
+    )
+    assert not gate.applies(
+        mode=Mode.PAGES, has_generator=False, is_production=True, has_missing_product_name=False
+    )
+
+
+def test_a_gate_can_depend_on_what_the_plan_dropped() -> None:
+    """Applicability can turn on a fact about the plan, not only on configuration.
+
+    The distinction is operational rather than academic: mode, generator and environment are
+    settled before the walk begins, and this one is not — the plan is built at step 5, halfway
+    through — so a consumer must re-ask it rather than resolve it once.
+    """
+    gate = Gate(
+        id="x",
+        step="1",
+        title="X",
+        purpose="why",
+        options=(),
+        required=False,
+        modes=frozenset({Mode.PAGES}),
+        needs_missing_product_name=True,
+    )
+    assert gate.applies(
+        mode=Mode.PAGES, has_generator=False, is_production=False, has_missing_product_name=True
+    )
+    assert not gate.applies(
+        mode=Mode.PAGES, has_generator=False, is_production=False, has_missing_product_name=False
+    )
