@@ -22,8 +22,16 @@ export const WP_API_PREFIX = "/wp-json/wp/v2";
 const MEDIA_PATH = `${WP_API_PREFIX}/media`;
 /** Polylang detection route — a 200 means the plugin is active (§4.4). */
 export const PLL_LANGUAGES_PATH = "/wp-json/pll/v1/languages";
-/** WPML detection route — its presence means WPML is active (§4.4). */
-export const WPML_PROBE_PATH = "/wp-json/sitepress-multilingual-cms/v1/languages";
+/**
+ * WPML detection route — its presence means WPML is active (§4.4).
+ *
+ * WPML's REST **namespace root**, probed rather than a concrete endpoint because WPML's routes
+ * are admin-gated and version-dependent; the namespace index is the one thing that answers 200
+ * unauthenticated on any WPML site. (The former probe,
+ * `/wp-json/sitepress-multilingual-cms/v1/languages`, is not a namespace WPML registers — it 404s
+ * even on a WPML site, so detection always fell through to "none".)
+ */
+export const WPML_PROBE_PATH = "/wp-json/wpml/v1";
 
 const GTIN_META_KEY = "gtin";
 const CONTENT_HASH_META_KEY = "content_sha256";
@@ -97,6 +105,8 @@ export interface UpsertPageInput {
   parent?: number;
   meta?: Record<string, unknown>;
   existing_id?: number;
+  /** ACF field values. Written in a second call, never on the create — see `writeAcf`. */
+  acf?: Record<string, unknown>;
 }
 
 /** Error raised for a non-success WordPress API response. Never carries the password. */
@@ -319,38 +329,72 @@ export class WordPressClient {
     return { Authorization: `Basic ${token}` };
   }
 
-  /** Detect which multilingual plugin the site runs (§4.4). */
+  /**
+   * Detect which multilingual plugin the site runs, by probing (§4.4).
+   *
+   * Probes the Polylang route first, then WPML's namespace root; a 200 wins.
+   *
+   * **Reports; does not adopt.** The configured value stays in force for writes, mirroring
+   * Python's `_resolve_plugin`: a probe can be wrong for reasons that have nothing to do with the
+   * site's real setup — a renamed route, a version change, an admin-gated endpoint — and letting
+   * one override a configured plugin fails silently, publishing every page unlinked.
+   */
   async detectMultilingualPlugin(): Promise<MultilingualPlugin> {
-    let detected: MultilingualPlugin;
     if (await this.probe(PLL_LANGUAGES_PATH)) {
-      detected = "polylang";
-    } else if (await this.probe(WPML_PROBE_PATH)) {
-      detected = "wpml";
-    } else {
-      detected = "none";
+      return "polylang";
     }
-    this.multilingualPlugin = detected;
-    return detected;
+    if (await this.probe(WPML_PROBE_PATH)) {
+      return "wpml";
+    }
+    return "none";
   }
 
-  /** Return the page with `slug` under `postType`, or null (§4.4). */
-  async findBySlug(postType: string, slug: string): Promise<WordPressPage | null> {
+  /**
+   * Return the page with `slug` under `postType`, or null (§4.4).
+   *
+   * `language` scopes the lookup and is **required on a multilingual site** — see
+   * {@link langParams}.
+   */
+  async findBySlug(
+    postType: string,
+    slug: string,
+    language?: string,
+  ): Promise<WordPressPage | null> {
     const pages = await this.getList(`${WP_API_PREFIX}/${postType}`, {
       slug,
       context: "edit",
+      ...this.langParams(language),
     });
     return pages.length > 0 ? (pages[0] as WordPressPage) : null;
   }
 
-  /** Create or update one product page, idempotently (§6.1). */
+  /**
+   * Create or update one product page, idempotently (§6.1).
+   *
+   * Lookups are scoped to `input.language`. On a multilingual site a create is issued with
+   * `?lang=`, and `acf` is written in a **second call** — both are load-bearing and both have a
+   * silent failure mode; see {@link writePage} and {@link writeAcf}.
+   */
   async upsertPage(input: UpsertPageInput): Promise<WordPressPage> {
     const gtin = metaGtin(input.meta);
-    const found = await this.lookupExisting(input.post_type, input.slug, gtin, input.existing_id);
+    const found = await this.lookupExisting(
+      input.post_type,
+      input.slug,
+      gtin,
+      input.existing_id,
+      input.language,
+    );
+    let page: WordPressPage;
     if (found !== null) {
       this.guardGtinMatch(found, gtin);
-      return this.writePage(input, found.id);
+      page = await this.writePage(input, found.id);
+    } else {
+      page = await this.writePage(input, null);
     }
-    return this.writePage(input, null);
+    if (input.acf !== undefined && Object.keys(input.acf).length > 0) {
+      page = await this.writeAcf(input.post_type, page.id, input.acf);
+    }
+    return page;
   }
 
   /**
@@ -392,11 +436,46 @@ export class WordPressClient {
 
   // -- Lookup / write internals -------------------------------------------
 
+  /**
+   * The `lang` query param scoping a lookup to one language (§4.4).
+   *
+   * On a multilingual site the same slug exists once per language — `p-{gtin}` is GTIN-derived
+   * and carries no language component — and an unscoped collection query answers with the
+   * **default language only**. Verified against a live WPML site: `?slug=p-X` returned the nl
+   * page while the fr page was invisible.
+   *
+   * Omitting this is not a near miss, it is data loss. Both pages share a `meta.gtin` (same
+   * product), so the E8 guard cannot catch it: upserting the fr row finds the nl page by slug,
+   * the GTIN matches, and **the nl page is overwritten with French** — no fr page is created and
+   * the row reports ok.
+   *
+   * Sent for Polylang as well as WPML. Only WPML is verified; for Polylang this is at worst
+   * inert, since WordPress silently ignores query params it does not know.
+   */
+  private langParams(language: string | undefined): Record<string, string> {
+    if (
+      language !== undefined &&
+      language.length > 0 &&
+      (this.multilingualPlugin === "wpml" || this.multilingualPlugin === "polylang")
+    ) {
+      return { lang: language };
+    }
+    return {};
+  }
+
+  /**
+   * Resolve the existing page by id, then slug, then `meta.gtin` (§6.1).
+   *
+   * Both collection lookups are scoped to `language`: on a multilingual site they would otherwise
+   * answer for the default language only, and adopt the wrong page (see {@link langParams}).
+   * `existingId` needs no scope — an id is unambiguous.
+   */
   private async lookupExisting(
     postType: string,
     slug: string,
     gtin: string | null,
     existingId: number | undefined,
+    language: string | undefined,
   ): Promise<WordPressPage | null> {
     if (existingId !== undefined) {
       const page = await this.getPage(postType, existingId);
@@ -404,12 +483,12 @@ export class WordPressClient {
         return page;
       }
     }
-    const bySlug = await this.findBySlug(postType, slug);
+    const bySlug = await this.findBySlug(postType, slug, language);
     if (bySlug !== null) {
       return bySlug;
     }
     if (gtin !== null) {
-      return this.findByMetaGtin(postType, gtin);
+      return this.findByMetaGtin(postType, gtin, language);
     }
     return null;
   }
@@ -445,13 +524,37 @@ export class WordPressClient {
     }
   }
 
-  private async findByMetaGtin(postType: string, gtin: string): Promise<WordPressPage | null> {
+  /**
+   * GET the page whose `meta.gtin` equals `gtin`, or null (§6.1).
+   *
+   * The `meta_key`/`meta_value` params are **not** core WordPress REST features: core silently
+   * drops unknown query params rather than erroring, so a site without a `rest_{post_type}_query`
+   * enabler answers this request with an unfiltered page of *every* post. Never trust the server
+   * to have filtered — verify `meta.gtin` on the way out. Taking `pages[0]` on an unfiltered list
+   * returns an arbitrary unrelated page, which the E8/E11 guards then reject, turning every
+   * would-be create into a bogus "slug collision" error.
+   *
+   * Returning null when nothing matches is also the right fallback on a site with no enabler: the
+   * caller creates the page instead of adopting the wrong one.
+   */
+  private async findByMetaGtin(
+    postType: string,
+    gtin: string,
+    language: string | undefined,
+  ): Promise<WordPressPage | null> {
     const pages = await this.getList(`${WP_API_PREFIX}/${postType}`, {
       meta_key: GTIN_META_KEY,
       meta_value: gtin,
       context: "edit",
+      ...this.langParams(language),
     });
-    return pages.length > 0 ? (pages[0] as WordPressPage) : null;
+    for (const page of pages) {
+      const candidate = page as WordPressPage;
+      if (metaGtin(candidate.meta) === gtin) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   private async findMediaBySlug(slug: string): Promise<WordPressMedia | null> {
@@ -472,6 +575,18 @@ export class WordPressClient {
     }
   }
 
+  /**
+   * POST a create (`pageId === null`) or update to the post-type endpoint.
+   *
+   * A create on a multilingual site carries `?lang=` so the page is created **as** that language.
+   * This is what keeps the slug intact: the slug is GTIN-derived and identical across languages,
+   * so a page created without a language collides with its sibling and WordPress silently appends
+   * `-2`. The French page would then live at `/fr/…/p-{gtin}-2/` while the resolver target is
+   * built as `/fr/…/p-{gtin}/` — and every French QR would point at a 404. Verified live: with
+   * `?lang=` both pages keep `p-{gtin}`.
+   *
+   * Deliberately no `acf` here — see {@link writeAcf}.
+   */
   private async writePage(input: UpsertPageInput, pageId: number | null): Promise<WordPressPage> {
     const body: Record<string, unknown> = {
       title: input.title,
@@ -491,11 +606,37 @@ export class WordPressClient {
     if (this.multilingualPlugin === "polylang") {
       body.lang = input.language;
     }
+    // Only on create: an existing page already has its language, and re-asserting it here is not
+    // this method's job (translation linking owns it).
     const path =
       pageId === null
         ? `${WP_API_PREFIX}/${input.post_type}`
         : `${WP_API_PREFIX}/${input.post_type}/${pageId}`;
-    const response = await this.request("POST", path, { jsonBody: body });
+    const params = pageId === null ? this.langParams(input.language) : {};
+    const response = await this.request("POST", path, { jsonBody: body, params });
+    return (await response.json()) as WordPressPage;
+  }
+
+  /**
+   * Write ACF field values in their own call, after the page exists (§3.1).
+   *
+   * ACF cannot ride along on a create that carries `?lang=`: the values are **silently dropped** —
+   * `201 Created`, fields empty, no error. Measured three ways against the live site: create
+   * without `?lang` + acf persists; create with `?lang=fr` + acf is empty; create with `?lang=fr`
+   * *then* acf in a second call persists. Unhandled, this yields pages with a correct URL and no
+   * content, which `verifyUrl` passes as ok.
+   *
+   * Done for updates too, not just creates: one path is easier to keep correct than two, and the
+   * extra call is cheap next to publishing a blank page.
+   */
+  private async writeAcf(
+    postType: string,
+    pageId: number,
+    acf: Record<string, unknown>,
+  ): Promise<WordPressPage> {
+    const response = await this.request("POST", `${WP_API_PREFIX}/${postType}/${pageId}`, {
+      jsonBody: { acf },
+    });
     return (await response.json()) as WordPressPage;
   }
 
@@ -720,8 +861,10 @@ export class WordPressClient {
 
   /** Issue one HTTP call with the retry policy in §5.1. */
   private async request(method: string, path: string, opts: RequestOptions): Promise<Response> {
-    const query =
-      opts.params === undefined ? "" : `?${new URLSearchParams(opts.params).toString()}`;
+    // An empty params object must produce no query string at all, not a bare "?" — callers pass
+    // `{}` for "no language scope" and a trailing ? is noise in every log and test assertion.
+    const search = opts.params === undefined ? "" : new URLSearchParams(opts.params).toString();
+    const query = search === "" ? "" : `?${search}`;
     const url = this.baseUrl + path + query;
     let attempts429 = 0;
     let attempts5xx = 0;

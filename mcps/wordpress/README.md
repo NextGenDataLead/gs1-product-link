@@ -5,9 +5,9 @@ MCP server wrapping the **WordPress REST API v2**. Exposes five tools
 
 | Tool | Purpose |
 |---|---|
-| `wp_upsert_page` | Create/update one product page idempotently (lookup by id → slug → `meta.gtin`) |
+| `wp_upsert_page` | Create/update one product page idempotently (lookup by id → slug → `meta.gtin`, scoped to `language`); writes `acf` in a follow-up call |
 | `wp_upload_media` | Upload a media file as `multipart/form-data`, deduped by a content-addressed slug (`{base}-{sha12}`); returns its id |
-| `wp_find_by_slug` | Find a page by slug under a post type (`null` if absent) |
+| `wp_find_by_slug` | Find a page by slug under a post type, optionally scoped to `language` (`null` if absent) |
 | `wp_verify_url` | Whether a URL resolves to a 2xx/3xx via HEAD |
 | `wp_detect_multilingual` | Detect the site's multilingual plugin: `polylang`, `wpml`, or `none` |
 
@@ -67,9 +67,14 @@ retry loop) keeps the two MCPs maintainable as one codebase.
 ## Parity with `lib/wp_client.py`
 
 This client is a **second implementation of the same contract**, so it drifts silently every
-time the Python one is fixed against reality. Issue #75 was exactly that: four fixes the Python
-client earned on the live pilot site had never crossed, and a reader had no way to know. This
-section is the countermeasure — **keep it true, or the next reader inherits the same problem.**
+time the Python one is fixed against reality. It has happened twice. Issue #75 caught four media
+fixes that had never crossed; auditing the rest of the surface immediately afterwards found
+**five more**, all older, and all in code this client does implement. This section is the
+countermeasure — **keep it true, or the next reader inherits the same problem.**
+
+**Last audited: 2026-08-12**, against `lib/wp_client.py` in full. The client was scaffolded at
+`3cc0274` (2026-07-12) and every Python fix after that date is a drift candidate; the audit method
+is at the end of this section.
 
 Mirrored, and load-bearing enough to name:
 
@@ -86,6 +91,26 @@ Mirrored, and load-bearing enough to name:
 - **An ownership predicate**: only attachments carrying a **non-empty** `meta.content_sha256` are
   ours to delete (PR #73). Non-empty rather than present, because the key is registered site-wide
   on the pilot — present on all 406 attachments, non-empty on only the 40 from this tool.
+- **Language-scoped lookups.** On a multilingual site the same slug exists once per language and
+  an unscoped collection query answers for the **default language only**. Both language pages
+  share a `meta.gtin`, so the E8 guard cannot catch it: upserting the fr row would find the nl
+  page, the GTIN would match, and the nl page would be overwritten with French.
+- **`?lang=` on create** (never on update). Without it the fr create collides with its nl sibling
+  and WordPress silently appends `-2`, so the page lands at `p-{gtin}-2` while the resolver target
+  is built as `p-{gtin}` — every French QR would resolve to a 404.
+- **ACF written in a second call.** ACF values riding along on a create that carries `?lang=` are
+  **silently dropped** — `201 Created`, fields empty, no error — which yields a page with a
+  correct URL and no content that `verifyUrl` passes as ok.
+- **`meta.gtin` verified on the way out.** `meta_key`/`meta_value` are not core REST features and
+  core drops unknown params, so a site without a `rest_{post_type}_query` enabler answers with
+  *every* post; taking `pages[0]` there adopts an arbitrary page, which E8/E11 then rejects,
+  turning every would-be create into a bogus "slug collision".
+- **WPML detected at its namespace root**, `/wp-json/wpml/v1`. The obvious-looking
+  `/wp-json/sitepress-multilingual-cms/v1/languages` is not a namespace WPML registers — it 404s
+  even on a WPML site, so detection always fell through to `none`.
+- **Detection reports, it does not adopt.** The configured plugin stays in force for writes
+  (Python's `_resolve_plugin`): a probe can be wrong for reasons unrelated to the site's real
+  setup, and letting one override a configured plugin fails silently.
 
 Deliberate differences, decided rather than drifted:
 
@@ -96,10 +121,29 @@ Deliberate differences, decided rather than drifted:
 | **Diagnostics go to stderr** via an injectable `logger`, not a logging framework. | This is a stdio server — stdout carries the MCP protocol frames. |
 | **`WordPressApiError` carries no call label**, where the Python `WordPressAPIError` names the failing call and quotes the scrubbed body (#71). | Not yet ported. Diagnostic quality only; no behavioural difference. |
 
+**Absent by scope**, because the MCP exposes five tools rather than the Python client's full
+surface — listing them is what makes "everything else is mirrored" a claim you can check:
+`whoami`, `list_pages_with_gtin` (and with it the `per_page`/page-limit pagination),
+`download_image`, `media_source_url`, `link_translations`, `set_page_status`, `delete_page`,
+`delete_media`, `close`.
+
+### Re-auditing this
+
+Drift is invisible to CI: nothing in the publish path imports these servers, so both
+implementations stay green while they disagree. The check is manual and takes minutes:
+
+```bash
+git log --oneline --since=<date-of-last-audit> -- lib/wp_client.py   # candidates
+diff <(grep -n "^    def " lib/wp_client.py) <(grep -n "^  \(private \)\?\(async \)\?[a-z]" src/client.ts)
+```
+
+For each Python fix since the last audit, decide: ported, absent-by-scope, or drift. Then update
+the date above. Both previous rounds were found this way and neither was found any other way.
+
 ## Status
 
 Code-complete and unit-tested against mocked HTTP (`fetch` stub) and an in-memory MCP
-transport, including the four media behaviours above (#75). The live staging round-trip
+transport, including every behaviour in the parity list above. The live staging round-trip
 (Polylang detection, §6.1/§6.2 idempotency, and the published-page exit gate) runs via the
 marked `tests/integration/test_wp_staging.py` once staging WordPress is provisioned — see
 IMPLEMENTATION_SPEC §12 Phase 4 and §13.3.
