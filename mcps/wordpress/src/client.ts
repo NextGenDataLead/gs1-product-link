@@ -4,14 +4,18 @@
  * Mirrors `lib/wp_client.py` (IMPLEMENTATION_SPEC §4.4 / §5.1 / §6.1-6.2 / §7):
  * HTTP Basic auth with an application password, the same retry policy (429/5xx with
  * independent budgets; a 401 is terminal — no token dance), the 3-step upsert lookup
- * (existing_id → slug → meta.gtin) with E8/E11 guards, and SHA-256 media idempotency.
- * Kept dependency-free (global `fetch`, `node:crypto`, `node:fs`) so it is unit-testable
- * without the MCP SDK.
+ * (existing_id → slug → meta.gtin) with E8/E11 guards, and the media contract: multipart
+ * uploads under a content-addressed slug, with a stored-size check that refuses a truncated
+ * one. Kept dependency-free (global `fetch`/`FormData`, `node:crypto`, `node:fs`) so it is
+ * unit-testable without the MCP SDK.
+ *
+ * Deliberate deviations from the Python client are listed in `README.md` under
+ * "Parity with lib/wp_client.py" — keep that section true.
  */
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
 
 /** REST base for posts of any (custom) post type (§4.4). */
 export const WP_API_PREFIX = "/wp-json/wp/v2";
@@ -23,6 +27,8 @@ export const WPML_PROBE_PATH = "/wp-json/sitepress-multilingual-cms/v1/languages
 
 const GTIN_META_KEY = "gtin";
 const CONTENT_HASH_META_KEY = "content_sha256";
+/** Hex chars of the content SHA-256 folded into a media slug (§6.2 idempotency). */
+const SLUG_HASH_LEN = 12;
 
 const RETRY_429_MAX_ATTEMPTS = 5;
 const RETRY_429_BASE_MS = 1000;
@@ -36,6 +42,7 @@ const HTTP_SUCCESS_MAX = 300;
 const HTTP_REDIRECT_MAX = 400;
 const HTTP_NOT_FOUND = 404;
 const HTTP_CONFLICT = 409;
+const HTTP_GONE = 410;
 const HTTP_TOO_MANY_REQUESTS = 429;
 const HTTP_SERVER_ERROR_MIN = 500;
 const HTTP_SERVER_ERROR_MAX = 600;
@@ -74,6 +81,8 @@ export interface WordPressMedia {
   id: number;
   slug?: string;
   source_url?: string;
+  /** Untrusted REST JSON — narrowed in `storedBytes`, never typed optimistically. */
+  media_details?: Record<string, unknown>;
   meta?: Record<string, unknown>;
 }
 
@@ -116,18 +125,88 @@ export class WordPressGtinMismatchError extends Error {
   }
 }
 
+/**
+ * Raised when WordPress stored a different number of bytes than were uploaded (#60, #72).
+ *
+ * A live upload was cut off mid-transfer and answered `201` anyway, leaving a 1.5 MB fragment of
+ * an 8 MB video that WordPress then served happily. A half-uploaded video is worse than a failed
+ * one: the page publishes, the QR resolves, and the product looks fine until someone presses play.
+ */
+export class MediaIntegrityError extends Error {
+  constructor(
+    readonly filePath: string,
+    readonly sentBytes: number,
+    readonly storedBytes: number,
+    readonly mediaId: number,
+    readonly deleted: boolean,
+  ) {
+    super(
+      `WordPress stored ${storedBytes} bytes of ${basename(filePath)} but ${sentBytes} were sent ` +
+        `(attachment ${mediaId}); ` +
+        (deleted
+          ? "the attachment was deleted"
+          : `remove media ${mediaId} by hand — the fragment is still on the site`),
+    );
+    this.name = "MediaIntegrityError";
+  }
+}
+
+/** Raised rather than deleting an attachment this tool did not upload (#73). */
+export class MediaOwnershipError extends Error {
+  constructor(
+    readonly mediaId: number,
+    readonly reason: string,
+  ) {
+    super(
+      `refusing to delete media ${mediaId}: ${reason}. Only attachments this tool uploaded ` +
+        `(carrying a non-empty meta.${CONTENT_HASH_META_KEY}) may be deleted`,
+    );
+    this.name = "MediaOwnershipError";
+  }
+}
+
+export type LogLevel = "warn" | "error";
+/** Diagnostics sink. Never given the application password. */
+export type WordPressLogger = (level: LogLevel, message: string) => void;
+
+/**
+ * Default sink: stderr.
+ *
+ * This client is served over stdio by `index.ts`, where **stdout carries the MCP protocol
+ * frames** — a diagnostic written there corrupts the session. `process.stderr.write` rather than
+ * `console.error` keeps the channel explicit and the repo's console ban unambiguous.
+ */
+const defaultLogger: WordPressLogger = (level, message) => {
+  process.stderr.write(`[wordpress-mcp] ${level}: WP ${message}\n`);
+};
+
 export interface WordPressClientOptions {
   /** Injectable fetch (defaults to global fetch) — used by tests. */
   fetchImpl?: typeof fetch;
   /** Injectable sleep (defaults to setTimeout) — makes retry backoff instant in tests. */
   sleep?: (ms: number) => Promise<void>;
+  /** Injectable diagnostics sink (defaults to stderr) — lets tests assert on warnings. */
+  logger?: WordPressLogger;
+}
+
+/** One multipart file part, mirroring Python's `files={"file": (filename, data, mime)}`. */
+interface FormFile {
+  fileName: string;
+  data: Uint8Array;
+  mime: string;
 }
 
 interface RequestOptions {
   params?: Record<string, string>;
   jsonBody?: unknown;
-  content?: Uint8Array;
-  extraHeaders?: Record<string, string>;
+  /**
+   * Sent as `multipart/form-data` under field `file`.
+   *
+   * There is deliberately no raw-body mode. That is the form #62 removed after a security plugin
+   * on the live site refused an ordinary H.264 video with a bare HTML `403`, while accepting the
+   * identical bytes as multipart — so its absence here is a guarantee, not an oversight.
+   */
+  formFile?: FormFile;
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -168,10 +247,58 @@ export function mediaSlug(title: string | undefined, fileName: string): string {
   return slug.length > 0 ? slug : "media";
 }
 
+/**
+ * A content-addressed media slug: the base slug plus a prefix of the content hash (§6.2).
+ *
+ * Folding the hash into the slug makes dedup a pure slug lookup — identical bytes always map to
+ * the same slug and different bytes to a different one. So `uploadMedia` needs no read-back of the
+ * stored `content_sha256` meta (it works whether or not that meta is exposed in REST, and on the
+ * live site it was not), and a stale attachment sharing only the *base* slug cannot shadow the
+ * match. Both were seen live.
+ */
+export function contentSlug(base: string, digest: string): string {
+  return `${base}-${digest.slice(0, SLUG_HASH_LEN)}`;
+}
+
+/**
+ * Node ships no `mimetypes` equivalent and this module is deliberately dependency-free, so a small
+ * map is the alternative to a package. It covers all six of `lib/media_video.py`'s `_VIDEO_EXTS`
+ * plus the web image set, and falls back to what Python's `guess_type` returns for anything
+ * unknown. WordPress re-sniffs the upload itself, so the part MIME is a hint, not the decider.
+ */
+const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".svg": "image/svg+xml",
+  ".mp4": "video/mp4",
+  ".m4v": "video/x-m4v",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".mpg": "video/mpeg",
+  ".mpeg": "video/mpeg",
+  ".pdf": "application/pdf",
+};
+const DEFAULT_MIME = "application/octet-stream";
+
+function guessMime(fileName: string): string {
+  return MIME_BY_EXTENSION[extname(fileName).toLowerCase()] ?? DEFAULT_MIME;
+}
+
+function multipartBody(file: FormFile): FormData {
+  const form = new FormData();
+  form.append("file", new File([file.data], file.fileName, { type: file.mime }));
+  return form;
+}
+
 export class WordPressClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly logger: WordPressLogger;
   multilingualPlugin: MultilingualPlugin;
 
   constructor(
@@ -181,6 +308,7 @@ export class WordPressClient {
     this.baseUrl = config.siteUrl.replace(/\/+$/, "");
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.sleep = options.sleep ?? defaultSleep;
+    this.logger = options.logger ?? defaultLogger;
     this.multilingualPlugin = config.multilingualPlugin;
   }
 
@@ -225,17 +353,27 @@ export class WordPressClient {
     return this.writePage(input, null);
   }
 
-  /** Upload a media file, idempotently by content hash + slug (§6.2). */
+  /**
+   * Upload a media file, idempotently by a content-addressed slug (§6.2).
+   *
+   * The slug folds the SHA-256 of the bytes into a base derived from `title` (or the filename) —
+   * see {@link contentSlug}. Dedup is then a pure slug lookup: a hit means the bytes are
+   * identical, so the existing id is returned without re-uploading.
+   *
+   * **A content match is checked for length before it is trusted.** The slug proves what the bytes
+   * were meant to be, not what arrived; a hit whose stored size disagrees is deleted and
+   * re-uploaded rather than reused, or re-running could never repair a truncated upload.
+   */
   async uploadMedia(filePath: string, title?: string): Promise<number> {
     const data = readFileSync(filePath);
     const digest = createHash("sha256").update(data).digest("hex");
-    const slug = mediaSlug(title, basename(filePath));
+    const slug = contentSlug(mediaSlug(title, basename(filePath)), digest);
 
     const existing = await this.findMediaBySlug(slug);
-    if (existing !== null && mediaHash(existing) === digest) {
+    if (existing !== null && (await this.isWhole(existing, filePath, data.length, slug))) {
       return existing.id;
     }
-    return this.createMedia(data, basename(filePath), title, slug, digest);
+    return this.createMedia(filePath, data, title, slug, digest);
   }
 
   /** Return whether `url` resolves to a 2xx/3xx via HEAD (§4.4, §5.1). */
@@ -361,21 +499,30 @@ export class WordPressClient {
     return (await response.json()) as WordPressPage;
   }
 
+  /** Upload media bytes, then set its slug/title and content-hash meta (§6.2). */
   private async createMedia(
+    filePath: string,
     data: Uint8Array,
-    fileName: string,
     title: string | undefined,
     slug: string,
     digest: string,
   ): Promise<number> {
+    // Name the stored file after the content-addressed slug so re-uploads of the same bytes reuse
+    // (before reaching here) and the physical filename never churns -1/-2 suffixes.
     const response = await this.request("POST", MEDIA_PATH, {
-      content: data,
-      extraHeaders: {
-        "Content-Type": "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${fileName}"`,
+      formFile: {
+        fileName: `${slug}${extname(filePath)}`,
+        data,
+        mime: guessMime(filePath),
       },
     });
     const media = (await response.json()) as WordPressMedia;
+
+    // Before the finalise call, not after: the finalise is what claims the content-addressed slug,
+    // and a fragment that holds that slug is returned by every later run as a content match.
+    // Checking here means a truncated upload never becomes the answer to its own hash.
+    await this.assertWhole(media, filePath, data.length);
+
     const updateBody: Record<string, unknown> = {
       slug,
       meta: { [CONTENT_HASH_META_KEY]: digest },
@@ -385,6 +532,178 @@ export class WordPressClient {
     }
     await this.request("POST", `${MEDIA_PATH}/${media.id}`, { jsonBody: updateBody });
     return media.id;
+  }
+
+  // -- Media integrity (#60, #72, #73) -------------------------------------
+
+  /** Delete and raise if WordPress stored fewer (or more) bytes than were sent (#72). */
+  private async assertWhole(
+    media: WordPressMedia,
+    filePath: string,
+    sent: number,
+  ): Promise<void> {
+    const stored = await this.storedBytes(media);
+    if (stored === null) {
+      this.logger(
+        "warn",
+        `stored size of media ${media.id} (${basename(filePath)}) could not be established; ` +
+          `upload unverified`,
+      );
+      return;
+    }
+    if (stored === sent) {
+      return;
+    }
+    this.logger(
+      "error",
+      `stored ${stored} bytes of ${basename(filePath)} but ${sent} were sent; ` +
+        `deleting attachment ${media.id}`,
+    );
+    throw new MediaIntegrityError(
+      filePath,
+      sent,
+      stored,
+      media.id,
+      await this.discardMedia(media.id),
+    );
+  }
+
+  /**
+   * Whether a deduped attachment may be reused, discarding it if it is a fragment.
+   *
+   * The counterpart to {@link assertWhole} on the path that does *no* upload. It returns rather
+   * than raises, because the caller has the bytes in hand and can simply upload them again — a
+   * stale fragment is repairable here, and only here.
+   *
+   * Unverifiable is reuse, not deletion: deleting on a number nobody supplied would remove a live
+   * page's media on a guess. The bytes match by hash; absent evidence to the contrary, the
+   * attachment is the file.
+   *
+   * **Ownership is checked before anything is deleted here**, unlike on the create path: this id
+   * came from a slug *lookup*, so it is whatever the site had under that slug, not something this
+   * call minted. The lookup already fetched `meta` (`context=edit`), so the check costs no request.
+   */
+  private async isWhole(
+    existing: WordPressMedia,
+    filePath: string,
+    sent: number,
+    slug: string,
+  ): Promise<boolean> {
+    const stored = await this.storedBytes(existing);
+    if (stored === null || stored === sent) {
+      return true;
+    }
+    if (!isOurs(existing)) {
+      throw new MediaOwnershipError(
+        existing.id,
+        `it holds ${stored} bytes rather than ${sent}, but is not ours to replace`,
+      );
+    }
+    this.logger(
+      "warn",
+      `media ${slug} matches by content hash but holds ${stored} bytes, not ${sent} — deleting ` +
+        `the fragment (attachment ${existing.id}) and re-uploading ${basename(filePath)}`,
+    );
+    if (await this.discardMedia(existing.id)) {
+      return false;
+    }
+    throw new MediaIntegrityError(filePath, sent, stored, existing.id, false);
+  }
+
+  /**
+   * How many bytes WordPress holds for an attachment, or null if it will not say.
+   *
+   * `media_details.filesize` is the cheap answer — it rides along on the create response, and it
+   * is the size of the *original* file rather than of any derivative. It is not guaranteed for
+   * every attachment type on every WordPress version, so a HEAD on the public `source_url` is the
+   * fallback: the webserver's `Content-Length` is an independent measurement.
+   *
+   * `null` is a real answer and callers must treat it as one — "unverified", never "fine".
+   */
+  private async storedBytes(media: WordPressMedia): Promise<number | null> {
+    const filesize = media.media_details?.filesize;
+    if (typeof filesize === "number" && Number.isInteger(filesize)) {
+      return filesize;
+    }
+    if (typeof media.source_url === "string" && media.source_url.length > 0) {
+      return this.contentLength(media.source_url);
+    }
+    return null;
+  }
+
+  /**
+   * `Content-Length` of `url` via an unauthenticated HEAD, or null.
+   *
+   * Deliberately forgiving, and deliberately *not* through {@link request}: this is an absolute
+   * URL with no base to prepend, and a second opinion rather than an API call. A proxy that
+   * answers without the header, or does not answer at all, must not turn into an upload failure.
+   * It only ever adds certainty.
+   */
+  private async contentLength(url: string): Promise<number | null> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, { method: "HEAD" });
+    } catch (err) {
+      this.logger("warn", `HEAD ${url} failed (${String(err)}); upload size unverified`);
+      return null;
+    }
+    if (response.status < HTTP_SUCCESS_MIN || response.status >= HTTP_SUCCESS_MAX) {
+      this.logger("warn", `HEAD ${url} -> ${response.status}; upload size unverified`);
+      return null;
+    }
+    const header = response.headers.get("Content-Length");
+    // `Number(null)` and `Number("")` are both 0, and "0 bytes stored" reads as a mismatch — which
+    // would delete a perfectly good upload. A missing header must reach the null branch instead.
+    const value = header === null ? Number.NaN : Number(header);
+    if (!Number.isInteger(value)) {
+      this.logger("warn", `HEAD ${url} gave no usable Content-Length`);
+      return null;
+    }
+    return value;
+  }
+
+  /**
+   * Delete an attachment we know is corrupt, without masking why we are deleting it.
+   *
+   * A delete raises on any non-2xx, and that exception would replace the integrity failure it is
+   * cleaning up after — leaving the operator with a delete error and no statement of what was
+   * wrong with the file.
+   */
+  private async discardMedia(mediaId: number): Promise<boolean> {
+    try {
+      return await this.forceDeleteMedia(mediaId);
+    } catch (err) {
+      this.logger("error", `could not delete corrupt media ${mediaId}: ${String(err)}`);
+      return false;
+    }
+  }
+
+  /**
+   * Delete one attachment with **no ownership check**; idempotent. Private, and reachable from no
+   * MCP tool — `src/server.test.ts` pins the exposed tool list, which is the standing guard.
+   *
+   * Both callers already hold the proof an ownership guard would have to fetch. {@link assertWhole}
+   * has an id from its own POST response moments earlier — provenance no lookup could improve on,
+   * and which the guard would in fact *fail*, since the content hash is not written until the
+   * finalise call a bad upload never reaches. {@link isWhole} has run `isOurs` itself.
+   *
+   * Always force-deletes: WordPress refuses to trash attachments (`rest_trash_not_supported`,
+   * HTTP 501), so bypassing the trash is the only mode there is.
+   */
+  private async forceDeleteMedia(mediaId: number): Promise<boolean> {
+    try {
+      await this.request("DELETE", `${MEDIA_PATH}/${mediaId}`, { params: { force: "true" } });
+    } catch (err) {
+      if (
+        err instanceof WordPressApiError &&
+        (err.statusCode === HTTP_NOT_FOUND || err.statusCode === HTTP_GONE)
+      ) {
+        return false; // already gone; idempotent
+      }
+      throw err;
+    }
+    this.logger("warn", `deleted media ${mediaId}`);
+    return true;
   }
 
   private async probe(path: string): Promise<boolean> {
@@ -406,16 +725,21 @@ export class WordPressClient {
     const url = this.baseUrl + path + query;
     let attempts429 = 0;
     let attempts5xx = 0;
+    // Built once, above the retry loop. A File-backed FormData can be re-extracted per attempt
+    // (each gets a fresh boundary), whereas rebuilding it would re-copy the bytes — an 8 MB video,
+    // three times, on a flaky connection.
+    const formBody = opts.formFile === undefined ? undefined : multipartBody(opts.formFile);
 
     for (;;) {
       const headers: Record<string, string> = { ...this.authHeader() };
       if (opts.jsonBody !== undefined) {
         headers["Content-Type"] = "application/json";
       }
-      Object.assign(headers, opts.extraHeaders ?? {});
       const init: RequestInit = { method, headers };
-      if (opts.content !== undefined) {
-        init.body = opts.content;
+      if (formBody !== undefined) {
+        // No Content-Type set here on purpose: fetch must write `multipart/form-data; boundary=…`
+        // itself, and any value set here would clobber the boundary.
+        init.body = formBody;
       } else if (opts.jsonBody !== undefined) {
         init.body = JSON.stringify(opts.jsonBody);
       }
@@ -462,7 +786,18 @@ export class WordPressClient {
   }
 }
 
-function mediaHash(media: WordPressMedia): string | null {
-  const value = media.meta?.[CONTENT_HASH_META_KEY];
-  return typeof value === "string" && value.length > 0 ? value : null;
+/**
+ * Whether this tool uploaded an attachment, from the content hash it stamps on its own (#73).
+ *
+ * `uploadMedia` writes `meta.content_sha256` on everything it creates. On the pilot site the key
+ * is registered site-wide, so it is *present* on all 406 attachments and non-empty on only the 40
+ * that came from here — which makes "non-empty" the test, not "present".
+ *
+ * Anything unreadable or empty answers false. That is the safe direction: at worst this declines
+ * to touch an orphan of our own, which is recoverable, rather than deleting a client's product
+ * photo, which is not.
+ */
+function isOurs(media: WordPressMedia): boolean {
+  const digest = media.meta?.[CONTENT_HASH_META_KEY];
+  return typeof digest === "string" && digest.length > 0;
 }
