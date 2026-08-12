@@ -1,13 +1,18 @@
 /** Tests for the TS WordPress client: auth, detection, idempotency, E8/E11, retry, scrubbing. */
 
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import {
   type WordPressClientConfig,
+  type WordPressLogger,
+  contentSlug,
+  MediaIntegrityError,
+  MediaOwnershipError,
+  mediaSlug,
   WordPressApiError,
   WordPressClient,
   WordPressGtinMismatchError,
@@ -59,13 +64,58 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 
 const noSleep = async (): Promise<void> => {};
 
-function makeClient(queue: (Response | Error)[], config: WordPressClientConfig = CONFIG) {
+/** Silences the default stderr sink; tests that care about diagnostics pass `collectLogs()`. */
+const quiet: WordPressLogger = () => {};
+
+function makeClient(
+  queue: (Response | Error)[],
+  config: WordPressClientConfig = CONFIG,
+  logger: WordPressLogger = quiet,
+) {
   const { fetchImpl, calls } = stubFetch(queue);
-  return { client: new WordPressClient(config, { fetchImpl, sleep: noSleep }), calls };
+  return { client: new WordPressClient(config, { fetchImpl, sleep: noSleep, logger }), calls };
 }
 
 function authOf(call: Call): string | undefined {
   return (call.init.headers as Record<string, string> | undefined)?.Authorization;
+}
+
+/** Collects the client's diagnostics so a test can assert it warned rather than passed silently. */
+function collectLogs(): { logger: WordPressLogger; lines: string[] } {
+  const lines: string[] = [];
+  return {
+    logger: (level, message) => {
+      lines.push(`${level}: ${message}`);
+    },
+    lines,
+  };
+}
+
+/** The `file` part of a recorded multipart body. Reading it does not consume the FormData. */
+function filePart(call: Call): File {
+  const body = call.init.body;
+  expect(body).toBeInstanceOf(FormData);
+  const part = (body as FormData).get("file");
+  if (part === null || typeof part === "string") {
+    throw new Error("expected a file part in the multipart body");
+  }
+  return part;
+}
+
+const FIXTURE_DIR = mkdtempSync(join(tmpdir(), "wpmcp-"));
+afterAll(() => {
+  rmSync(FIXTURE_DIR, { recursive: true, force: true });
+});
+
+function fixture(name: string, body: string): { path: string; bytes: number; slug: string } {
+  const path = join(FIXTURE_DIR, name);
+  const data = Buffer.from(body);
+  writeFileSync(path, data);
+  const digest = createHash("sha256").update(data).digest("hex");
+  // The expected slug is spelled out rather than derived with the implementation's own helpers,
+  // so a regression in either one fails the test instead of moving the target with it.
+  const base = name.replace(/\.[^.]+$/, "").toLowerCase();
+  return { path, bytes: data.length, slug: `${base}-${digest.slice(0, 12)}` };
 }
 
 describe("multilingual detection", () => {
@@ -214,35 +264,251 @@ describe("edge cases E8, E11 (§7)", () => {
   });
 });
 
-describe("upload_media idempotency (§6.2)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "wpmcp-"));
-  const img = join(dir, "photo.png");
-  writeFileSync(img, Buffer.from("PNGDATA"));
-  const digest = createHash("sha256").update(Buffer.from("PNGDATA")).digest("hex");
+const MEDIA_URL = `${SITE}/wp-json/wp/v2/media`;
+const PNG = fixture("photo.png", "PNGDATA");
+const PNG_DIGEST = createHash("sha256").update(Buffer.from("PNGDATA")).digest("hex");
+const CLIP = fixture("clip.mp4", "VIDEODATA".repeat(100));
 
-  it("uploads once and finalises the hash meta when new", async () => {
-    const { client, calls } = makeClient([json(200, []), json(201, { id: 5 }), json(200, { id: 5 })]);
-
-    const mediaId = await client.uploadMedia(img, "Photo");
-
-    expect(mediaId).toBe(5);
-    const creates = calls.filter(
-      (c) => c.init.method === "POST" && c.url === `${SITE}/wp-json/wp/v2/media`,
-    );
-    expect(creates).toHaveLength(1);
-    const finalise = calls.find((c) => c.url === `${SITE}/wp-json/wp/v2/media/5`);
-    expect(JSON.parse(finalise?.init.body as string).meta).toEqual({ content_sha256: digest });
+describe("media slug (§6.2)", () => {
+  it("derives the base slug from the title, falling back to the filename", () => {
+    expect(mediaSlug("Hydro Jet", "Hydro Jet NL.mp4")).toBe("hydro-jet");
+    expect(mediaSlug(undefined, "Hydro Jet NL.mp4")).toBe("hydro-jet-nl");
   });
 
-  it("reuses the existing media when the hash matches", async () => {
+  it("folds a 12-char hash prefix into the slug", () => {
+    expect(contentSlug("hydro-jet", "abcdef1234567890deadbeef")).toBe("hydro-jet-abcdef123456");
+  });
+});
+
+describe("upload_media idempotency (§6.2)", () => {
+  it("uploads under a content-addressed slug, as multipart", async () => {
     const { client, calls } = makeClient([
-      json(200, [{ id: 5, slug: "photo", meta: { content_sha256: digest } }]),
+      json(200, []),
+      json(201, { id: 5, media_details: { filesize: PNG.bytes } }),
+      json(200, { id: 5 }),
     ]);
 
-    const mediaId = await client.uploadMedia(img, "Photo");
+    expect(await client.uploadMedia(PNG.path, "Photo")).toBe(5);
 
-    expect(mediaId).toBe(5);
+    expect(calls[0].url).toContain(`slug=${PNG.slug}`);
+    const creates = calls.filter((c) => c.init.method === "POST" && c.url === MEDIA_URL);
+    expect(creates).toHaveLength(1);
+
+    // The physical filename is content-addressed too, so WordPress never churns -1/-2 suffixes.
+    const part = filePart(creates[0]);
+    expect(part.name).toBe(`${PNG.slug}.png`);
+    expect(part.type).toBe("image/png");
+    expect(await part.text()).toBe("PNGDATA");
+
+    // The boundary Content-Type is written when the body is *encoded*, so it can never appear in
+    // the recorded init.headers. What carries the same weight: the client sets no content type of
+    // its own (which would clobber the boundary) and no Content-Disposition — the raw-body form
+    // that #62 removed, after a security plugin 403'd it on the live site.
+    const headers = creates[0].init.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBeUndefined();
+    expect(headers["Content-Disposition"]).toBeUndefined();
+    // …and that what the client handed to fetch does in fact encode as multipart. This is the
+    // literal mirror of the Python assertion, obtained one layer down.
+    expect(
+      new Request(SITE, { method: "POST", body: creates[0].init.body }).headers.get("content-type"),
+    ).toMatch(/^multipart\/form-data; boundary=/);
+
+    const finalise = calls.find((c) => c.url === `${MEDIA_URL}/5`);
+    expect(JSON.parse(finalise?.init.body as string)).toMatchObject({
+      slug: PNG.slug,
+      meta: { content_sha256: PNG_DIGEST },
+    });
+  });
+
+  it("reuses on the content slug even when the attachment carries no meta at all", async () => {
+    // No `meta` on the item on purpose: dedup must not depend on attachment meta being exposed
+    // in REST, which on the live site it was not.
+    const { client, calls } = makeClient([
+      json(200, [{ id: 5, slug: PNG.slug, media_details: { filesize: PNG.bytes } }]),
+    ]);
+
+    expect(await client.uploadMedia(PNG.path, "Photo")).toBe(5);
     expect(calls.some((c) => c.init.method === "POST")).toBe(false);
+  });
+
+  it("declares an unknown extension as application/octet-stream", async () => {
+    const odd = fixture("thing.xyz", "ODDBYTES");
+    const { client, calls } = makeClient([
+      json(200, []),
+      json(201, { id: 5, media_details: { filesize: odd.bytes } }),
+      json(200, { id: 5 }),
+    ]);
+
+    await client.uploadMedia(odd.path);
+
+    const part = filePart(calls[1]);
+    expect(part.type).toBe("application/octet-stream");
+    expect(part.name).toBe(`${odd.slug}.xyz`);
+  });
+
+  it("declares a video part as video/mp4", async () => {
+    const { client, calls } = makeClient([
+      json(200, []),
+      json(201, { id: 5, media_details: { filesize: CLIP.bytes } }),
+      json(200, { id: 5 }),
+    ]);
+
+    await client.uploadMedia(CLIP.path);
+
+    expect(filePart(calls[1]).type).toBe("video/mp4");
+  });
+});
+
+describe("upload_media integrity (#72)", () => {
+  it("deletes and raises when WordPress stored a fragment", async () => {
+    const { client, calls } = makeClient([
+      json(200, []),
+      json(201, { id: 7, media_details: { filesize: 150 } }),
+      json(200, { deleted: true }),
+    ]);
+
+    await expect(client.uploadMedia(CLIP.path)).rejects.toMatchObject({
+      name: "MediaIntegrityError",
+      sentBytes: CLIP.bytes,
+      storedBytes: 150,
+      mediaId: 7,
+      deleted: true,
+    });
+
+    expect(calls[2].init.method).toBe("DELETE");
+    expect(calls[2].url).toBe(`${MEDIA_URL}/7?force=true`);
+    // The finalise never went out — so the fragment never claimed the content-addressed slug.
+    expect(calls).toHaveLength(3);
+  });
+
+  it("still reports the truncation when the cleanup itself fails", async () => {
+    const { client } = makeClient([
+      json(200, []),
+      json(201, { id: 7, media_details: { filesize: 1 } }),
+      json(500, {}),
+      json(500, {}),
+      json(500, {}),
+    ]);
+
+    // The delete error must not replace the integrity failure it is cleaning up after.
+    const err = await client.uploadMedia(CLIP.path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaIntegrityError);
+    expect((err as MediaIntegrityError).deleted).toBe(false);
+    expect((err as MediaIntegrityError).message).toMatch(/remove media 7 by hand/);
+  });
+
+  it("falls back to an unauthenticated HEAD when WordPress will not say", async () => {
+    const src = `${SITE}/wp-content/uploads/clip.mp4`;
+    const { client, calls } = makeClient([
+      json(200, []),
+      json(201, { id: 7, source_url: src }),
+      new Response("", { headers: { "Content-Length": "450" } }),
+      json(200, { deleted: true }),
+    ]);
+
+    await expect(client.uploadMedia(CLIP.path)).rejects.toMatchObject({ storedBytes: 450 });
+
+    expect(calls[2].url).toBe(src); // absolute, not prefixed with the API base
+    expect(calls[2].init.method).toBe("HEAD");
+    expect(authOf(calls[2])).toBeUndefined(); // a second opinion, not an API call
+  });
+
+  it("treats a HEAD with no Content-Length as unverified, not as zero bytes", async () => {
+    const src = `${SITE}/wp-content/uploads/clip.mp4`;
+    const { logger, lines } = collectLogs();
+    const { client, calls } = makeClient(
+      [
+        json(200, []),
+        json(201, { id: 7, source_url: src }),
+        new Response("", { status: 200 }), // 200, but the proxy omitted the header
+        json(200, { id: 7 }),
+      ],
+      CONFIG,
+      logger,
+    );
+
+    // `Number(null)` is 0, and "0 bytes stored" reads as a mismatch — which would delete a
+    // perfectly good upload on evidence nobody supplied.
+    expect(await client.uploadMedia(CLIP.path)).toBe(7);
+    expect(calls.some((c) => c.init.method === "DELETE")).toBe(false);
+    expect(lines.join("\n")).toMatch(/no usable Content-Length/);
+  });
+
+  it("warns rather than passing silently when the size cannot be established", async () => {
+    const { logger, lines } = collectLogs();
+    const { client } = makeClient(
+      [json(200, []), json(201, { id: 7 }), json(200, { id: 7 })],
+      CONFIG,
+      logger,
+    );
+
+    expect(await client.uploadMedia(CLIP.path)).toBe(7);
+    expect(lines.join("\n")).toMatch(/unverified/);
+    expect(lines.join("\n")).toMatch(/clip\.mp4/);
+  });
+
+  it("sends diagnostics to stderr by default, never stdout", async () => {
+    // stdout carries the MCP protocol frames — a diagnostic written there corrupts the session.
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      const { fetchImpl } = stubFetch([json(200, []), json(201, { id: 7 }), json(200, { id: 7 })]);
+      // No logger injected: this is the production default.
+      await new WordPressClient(CONFIG, { fetchImpl, sleep: noSleep }).uploadMedia(CLIP.path);
+
+      expect(stderr.mock.calls.map(String).join("")).toMatch(/wordpress-mcp.+unverified/);
+      expect(stdout).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+      stdout.mockRestore();
+    }
+  });
+
+  it("discards a deduped fragment and re-uploads", async () => {
+    const { client, calls } = makeClient([
+      json(200, [
+        {
+          id: 7,
+          slug: CLIP.slug,
+          media_details: { filesize: 150 },
+          meta: { content_sha256: "abc123" },
+        },
+      ]),
+      json(200, { deleted: true }),
+      json(201, { id: 8, media_details: { filesize: CLIP.bytes } }),
+      json(200, { id: 8 }),
+    ]);
+
+    // Re-running is the only thing that can repair a truncated upload, so the fragment must go.
+    expect(await client.uploadMedia(CLIP.path)).toBe(8);
+    expect(calls[1].init.method).toBe("DELETE");
+    expect(calls.some((c) => c.init.method === "POST" && c.url === MEDIA_URL)).toBe(true);
+  });
+
+  it("never deletes a same-slug attachment that is not ours", async () => {
+    // meta.content_sha256 is registered site-wide on the pilot, so it is present and empty on the
+    // client's own 366 attachments — which is why non-empty is the test, not present.
+    const { client, calls } = makeClient([
+      json(200, [
+        {
+          id: 7,
+          slug: CLIP.slug,
+          media_details: { filesize: 150 },
+          meta: { _acf_changed: false, content_sha256: "" },
+        },
+      ]),
+    ]);
+
+    await expect(client.uploadMedia(CLIP.path)).rejects.toBeInstanceOf(MediaOwnershipError);
+    expect(calls).toHaveLength(1); // no delete, no upload
+  });
+
+  it("reuses an unverifiable dedup hit rather than deleting it", async () => {
+    const { client, calls } = makeClient([json(200, [{ id: 7, slug: CLIP.slug }])]);
+
+    // Deleting on a number nobody supplied would remove a live page's media on a guess.
+    expect(await client.uploadMedia(CLIP.path)).toBe(7);
+    expect(calls.some((c) => c.init.method === "DELETE")).toBe(false);
   });
 });
 
