@@ -34,6 +34,9 @@ const CONFIG: WordPressClientConfig = {
   languages: ["nl", "fr"],
 };
 
+/** A multilingual site — the only kind this tool targets, and where lang scoping is load-bearing. */
+const WPML_CONFIG: WordPressClientConfig = { ...CONFIG, multilingualPlugin: "wpml" };
+
 interface Call {
   url: string;
   init: RequestInit;
@@ -129,12 +132,182 @@ describe("multilingual detection", () => {
     expect(await client.detectMultilingualPlugin()).toBe("wpml");
   });
 
+  it("probes WPML's namespace root, not a route it does not register", async () => {
+    const { client, calls } = makeClient([new Response("", { status: 404 }), json(200, {})]);
+
+    await client.detectMultilingualPlugin();
+
+    // `/wp-json/sitepress-multilingual-cms/v1/languages` is not a namespace WPML registers: it
+    // 404s even on a WPML site, so detection always fell through to "none".
+    expect(calls[1].url).toBe(`${SITE}/wp-json/wpml/v1`);
+  });
+
   it("detects none when neither route responds", async () => {
     const { client } = makeClient([
       new Response("", { status: 404 }),
       new Response("", { status: 404 }),
     ]);
     expect(await client.detectMultilingualPlugin()).toBe("none");
+  });
+
+  it("reports what it detected without adopting it over the configured plugin", async () => {
+    const { client } = makeClient(
+      [new Response("", { status: 404 }), new Response("", { status: 404 })],
+      WPML_CONFIG,
+    );
+
+    // A probe can be wrong — a renamed route, a version change, an admin-gated endpoint — and
+    // letting one override a configured plugin fails silently: every page publishes unlinked.
+    expect(await client.detectMultilingualPlugin()).toBe("none");
+    expect(client.multilingualPlugin).toBe("wpml");
+  });
+});
+
+describe("multilingual lookups and writes (§4.4)", () => {
+  const upsertFr = {
+    post_type: POST_TYPE,
+    slug: "p-1",
+    title: "T",
+    content: "",
+    language: "fr",
+    meta: { gtin: "1" },
+  };
+
+  it("scopes both lookups to the language on a multilingual site", async () => {
+    const { client, calls } = makeClient(
+      [json(200, []), json(200, []), json(201, { id: 7, slug: "p-1" })],
+      WPML_CONFIG,
+    );
+
+    // Unscoped, a slug lookup answers for the default language only. Both languages share the
+    // GTIN-derived slug *and* the meta.gtin, so the E8 guard passes and the nl page is
+    // overwritten with French — no fr page created, row reports ok.
+    await client.upsertPage(upsertFr);
+
+    const gets = calls.filter((c) => c.init.method === undefined || c.init.method === "GET");
+    expect(gets).toHaveLength(2);
+    for (const get of gets) {
+      expect(get.url).toContain("lang=fr");
+    }
+  });
+
+  it("carries ?lang= on create but not on update", async () => {
+    const { client, calls } = makeClient(
+      [
+        json(200, []),
+        json(200, []),
+        json(201, { id: 7, slug: "p-1" }),
+        json(200, [{ id: 7, slug: "p-1", meta: { gtin: "1" } }]),
+        json(200, { id: 7, slug: "p-1" }),
+      ],
+      WPML_CONFIG,
+    );
+
+    await client.upsertPage(upsertFr);
+    await client.upsertPage({ ...upsertFr, title: "T2" });
+
+    const posts = calls.filter((c) => c.init.method === "POST");
+    // Without ?lang= the create collides with its nl sibling and WordPress appends -2, so the
+    // page lands at p-1-2 while the resolver target is built as p-1 — every French QR 404s.
+    expect(posts[0].url).toBe(`${SITE}/wp-json/wp/v2/${POST_TYPE}?lang=fr`);
+    expect(posts[1].url).toBe(`${SITE}/wp-json/wp/v2/${POST_TYPE}/7`);
+    expect(posts[1].url).not.toContain("lang=");
+  });
+
+  it("sends no lang param on a single-language site", async () => {
+    const { client, calls } = makeClient([
+      json(200, []),
+      json(200, []),
+      json(201, { id: 7, slug: "p-1" }),
+    ]);
+
+    await client.upsertPage({ ...upsertFr, language: "nl" });
+
+    expect(calls.every((c) => !c.url.includes("lang="))).toBe(true);
+  });
+
+  it("writes acf in a second call, never on the create", async () => {
+    const { client, calls } = makeClient(
+      [
+        json(200, []),
+        json(200, []),
+        json(201, { id: 7, slug: "p-1" }),
+        json(200, { id: 7, slug: "p-1", acf: { product_title: "Tagline" } }),
+      ],
+      WPML_CONFIG,
+    );
+
+    // ?lang= and acf in one create silently drop the acf — 201, fields empty, no error.
+    const page = await client.upsertPage({ ...upsertFr, acf: { product_title: "Tagline" } });
+
+    const posts = calls.filter((c) => c.init.method === "POST");
+    expect(posts).toHaveLength(2);
+    expect(posts[0].init.body as string).not.toContain("acf");
+    expect(JSON.parse(posts[1].init.body as string)).toEqual({
+      acf: { product_title: "Tagline" },
+    });
+    expect(posts[1].url).toBe(`${SITE}/wp-json/wp/v2/${POST_TYPE}/7`);
+    // The returned page is the ACF response, so it reflects what was written.
+    expect((page as { acf?: unknown }).acf).toEqual({ product_title: "Tagline" });
+  });
+
+  it("makes no acf call when no acf is given", async () => {
+    const { client, calls } = makeClient([
+      json(200, []),
+      json(200, []),
+      json(201, { id: 7, slug: "p-1" }),
+    ]);
+
+    await client.upsertPage({ ...upsertFr, language: "nl" });
+
+    expect(calls.filter((c) => c.init.method === "POST")).toHaveLength(1);
+  });
+});
+
+describe("meta.gtin lookup (§6.1)", () => {
+  const upsert = {
+    post_type: POST_TYPE,
+    slug: "p-1",
+    title: "T",
+    content: "B",
+    language: "nl",
+    meta: { gtin: "1" },
+  };
+
+  it("ignores an unfiltered response instead of adopting an arbitrary page", async () => {
+    // meta_key/meta_value are not core REST features — core drops unknown params, so a site with
+    // no rest_{post_type}_query enabler answers with every post. Taking pages[0] there adopts an
+    // unrelated page, which E8/E11 then rejects: every would-be create becomes a bogus collision.
+    const { client, calls } = makeClient([
+      json(200, []), // slug lookup: nothing
+      json(200, [{ id: 55, meta: { gtin: "999" } }, { id: 56, meta: { gtin: "888" } }]),
+      json(201, { id: 10, meta: { gtin: "1" } }),
+    ]);
+
+    const page = await client.upsertPage(upsert);
+
+    expect(page.id).toBe(10); // created, not adopted
+    expect(calls[2].url).toBe(`${SITE}/wp-json/wp/v2/${POST_TYPE}`);
+  });
+
+  it("returns the matching page when the server did filter", async () => {
+    const { client } = makeClient([
+      json(200, []),
+      json(200, [{ id: 55, meta: { gtin: "1" } }]),
+      json(200, { id: 55 }),
+    ]);
+
+    expect((await client.upsertPage(upsert)).id).toBe(55);
+  });
+
+  it("tolerates pages without meta in an unfiltered response", async () => {
+    const { client } = makeClient([
+      json(200, []),
+      json(200, [{ id: 55 }, { id: 56, meta: null }, { id: 57, meta: { gtin: "1" } }]),
+      json(200, { id: 57 }),
+    ]);
+
+    expect((await client.upsertPage(upsert)).id).toBe(57);
   });
 });
 

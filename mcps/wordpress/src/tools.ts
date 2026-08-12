@@ -24,6 +24,7 @@ const upsertShape = {
   parent: z.number().int().optional(),
   meta: z.record(z.unknown()).optional(),
   existing_id: z.number().int().optional(),
+  acf: z.record(z.unknown()).optional(),
 };
 const uploadShape = {
   client_id: z.string(),
@@ -34,6 +35,8 @@ const findShape = {
   client_id: z.string(),
   post_type: z.string().optional(),
   slug: z.string(),
+  /** Required on a multilingual site: unscoped, the lookup answers for the default language. */
+  language: z.string().optional(),
 };
 const verifyShape = { client_id: z.string(), url: z.string().url() };
 const detectShape = { client_id: z.string() };
@@ -113,11 +116,11 @@ export function registerWordPressTools(server: McpServer, deps: ToolDeps = defau
       description: "Find a page by slug under a post type. Returns null when absent.",
       inputSchema: findShape,
     },
-    async ({ client_id, post_type, slug }) => {
+    async ({ client_id, post_type, slug, language }) => {
       try {
         const config = deps.loadConfig(client_id);
         const client = deps.makeClient(config);
-        const page = await client.findBySlug(post_type ?? config.postType, slug);
+        const page = await client.findBySlug(post_type ?? config.postType, slug, language);
         return ok({ page });
       } catch (err) {
         return fail(err);
