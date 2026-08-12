@@ -11,6 +11,11 @@ MCP server wrapping the **WordPress REST API v2**. Exposes five tools
 | `wp_verify_url` | Whether a URL resolves to a 2xx/3xx via HEAD |
 | `wp_detect_multilingual` | Detect the site's multilingual plugin: `polylang`, `wpml`, or `none` |
 
+The two **write** tools — `wp_upsert_page` and `wp_upload_media` — are gated: each asks the
+operator through MCP elicitation before touching the site, using the `intent` gate from
+[`lib/gates.py`](../../lib/gates.py), and **refuses to write when no human can be asked**. The three
+read-only tools are ungated. See [The writes are gated](#the-writes-are-gated) below.
+
 The tools hide plumbing (`site_url`, credentials, `post_status`) and resolve it from
 `clients.yml` by `client_id`. The HTTP client mirrors the authoritative Python client
 (`lib/wp_client.py`): HTTP Basic auth with an application password, the retry policy
@@ -63,6 +68,31 @@ credentials from `clients.yml`, (2) GTIN-keyed idempotency (`meta.gtin` upsert k
 content-addressed media slug), (3) Polylang/WPML translation linking, or (4) the E8/E11 guards.
 Standardising on the gs1-nl structure (same `ToolDeps` injection, `{ok, error}` envelope,
 retry loop) keeps the two MCPs maintainable as one codebase.
+
+## The writes are gated
+
+`CLAUDE.md` says publishing goes through `flow-orchestrator` because "the operator gates live only
+in that skill" and calling the scripts directly "bypasses every one of them". An ungated tool call
+was the same bypass wearing a different hat: a model could call `wp_upsert_page` and the page was
+written, with nothing between the decision and the live site.
+
+Now `wp_upsert_page` and `wp_upload_media` ask the **operator** first, via MCP elicitation — which
+puts the question to the human running the client, not to the assistant calling the tool. A prompt
+the model could answer itself would be theatre.
+
+The gate is `intent` (step 0) and **not** `production` (step 8): WordPress pages are the reversible
+leg, and `lib/gates.py` skips the production gate in `pages` mode deliberately — "a second
+production prompt for a page you can delete trains the operator to click through them". The
+permanent writes live in [`gs1-nl`](../gs1-nl/README.md), and that server gates on both.
+
+**It fails closed.** `elicitInput` throws when the client has not declared the `elicitation`
+capability, and the tools let that refusal stand: a client that cannot reach a human cannot write.
+A declined *or dismissed* prompt is a refusal — consent is never inferred.
+
+`src/gates.generated.ts` is written by `python -m scripts.export_gates` from `lib/gates.py`.
+Do not edit it: `tests/lib/test_gates_export.py` and a CI step both fail when it is stale. Gate text
+in TypeScript would otherwise have become a fourth hand-maintained copy of the safety contract —
+the failure mode the section below exists to record.
 
 ## Parity with `lib/wp_client.py`
 
@@ -149,4 +179,7 @@ marked `tests/integration/test_wp_staging.py` once staging WordPress is provisio
 IMPLEMENTATION_SPEC §12 Phase 4 and §13.3.
 
 **Nothing in the publish path uses this server**, and it is unpublished by choice
-(`docs/OPEN_DECISIONS.md` OD-2). `lib/wp_client.py` is what runs against the live site.
+(`docs/OPEN_DECISIONS.md` OD-2). `lib/wp_client.py` is what runs against the live site, driven by
+`flow-orchestrator`. This server is now *safe* to point at one — its writes are gated — but that is
+a floor, not a recommendation: the skill carries the whole flow (scope, plan review, per-row diff,
+dry run), where this carries one gate per call.

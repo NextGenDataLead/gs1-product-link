@@ -12,6 +12,17 @@ import { z } from "zod";
 import type { UpsertPageInput, WordPressClientConfig } from "./client.js";
 import { WordPressClient } from "./client.js";
 import { loadWordPressClientConfig } from "./config.js";
+import { type GateExtra, requireGate } from "./gate.js";
+
+/**
+ * The gate every write here answers to.
+ *
+ * `intent` (step 0) and not `production` (step 8): WordPress pages are the *reversible* leg, and
+ * `lib/gates.py` skips the production gate in `pages` mode deliberately — "a second production
+ * prompt for a page you can delete trains the operator to click through them." The permanent
+ * writes are in the gs1-nl server, and that one gates on both.
+ */
+const WRITE_GATE = "intent";
 
 const upsertShape = {
   client_id: z.string(),
@@ -80,12 +91,20 @@ export function registerWordPressTools(server: McpServer, deps: ToolDeps = defau
       description: "Create or update one product page idempotently (lookup by id/slug/meta.gtin).",
       inputSchema: upsertShape,
     },
-    async ({ client_id, post_type, ...rest }) => {
+    async ({ client_id, post_type, ...rest }, extra: GateExtra) => {
       try {
         const config = deps.loadConfig(client_id);
-        const client = deps.makeClient(config);
         const input: UpsertPageInput = { post_type: post_type ?? config.postType, ...rest };
-        const page = await client.upsertPage(input);
+        await requireGate(server, extra, WRITE_GATE, {
+          "Write": "one WordPress product page (reversible)",
+          "Site": config.siteUrl,
+          "Post type": input.post_type,
+          "Slug": input.slug,
+          "Language": input.language,
+          "GTIN": String(input.meta?.gtin ?? "(none)"),
+          "Status": config.postStatus,
+        });
+        const page = await deps.makeClient(config).upsertPage(input);
         return ok({ page });
       } catch (err) {
         return fail(err);
@@ -99,10 +118,16 @@ export function registerWordPressTools(server: McpServer, deps: ToolDeps = defau
       description: "Upload a media file, idempotently by content hash + slug. Returns its id.",
       inputSchema: uploadShape,
     },
-    async ({ client_id, file_path, title }) => {
+    async ({ client_id, file_path, title }, extra: GateExtra) => {
       try {
-        const client = deps.makeClient(deps.loadConfig(client_id));
-        const mediaId = await client.uploadMedia(file_path, title);
+        const config = deps.loadConfig(client_id);
+        await requireGate(server, extra, WRITE_GATE, {
+          "Write": "one media upload to the site's library (reversible)",
+          "Site": config.siteUrl,
+          "File": file_path,
+          "Title": title ?? "(from filename)",
+        });
+        const mediaId = await deps.makeClient(config).uploadMedia(file_path, title);
         return ok({ media_id: mediaId });
       } catch (err) {
         return fail(err);

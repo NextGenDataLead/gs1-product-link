@@ -105,16 +105,53 @@ def test_the_ui_shell_never_loads_env_either() -> None:
     assert offenders == []
 
 
+#: Scripts that are not operational entry points: they take no credential and reach no network,
+#: existing only to generate or check files already in the tree.
+#:
+#: Exempt from the ``load_env`` rule because loading production credentials into a code generator is
+#: the thing this file exists to prevent, not an instance of it. Kept as an explicit set — and held
+#: to :func:`test_codegen_scripts_stay_credential_free` below — so the exemption cannot quietly
+#: become the place a real entry point hides.
+_CODEGEN_SCRIPTS = {"export_gates.py"}
+
+#: Importing any of these means a script can reach a credential or the network, so it is not
+#: codegen and belongs back under the rule.
+_OPERATIONAL_MODULES = {
+    "dotenv",
+    "httpx",
+    "lib.config",
+    "lib.env",
+    "lib.gs1_dl_client",
+    "lib.wp_client",
+    "requests",
+}
+
+
+def _script_paths() -> list[Path]:
+    paths = sorted(p for p in (_REPO_ROOT / "scripts").glob("*.py") if p.name != "__init__.py")
+    assert paths, "expected script entry points to exist"
+    return paths
+
+
+def _imported_modules(tree: ast.AST) -> set[str]:
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module is not None:
+            modules.add(node.module)
+        elif isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+    return modules
+
+
 def test_scripts_call_load_env_from_main_block_not_from_main() -> None:
     """Tests call ``main()`` directly, so a call sited there would load ``.env`` under pytest.
 
     Asserts the call is a direct statement of the module-level ``if __name__ == "__main__":``
     block, and that no function body anywhere in the module calls it.
     """
-    scripts = sorted(p for p in (_REPO_ROOT / "scripts").glob("*.py") if p.name != "__init__.py")
-    assert scripts, "expected script entry points to exist"
-
-    for path in scripts:
+    for path in _script_paths():
+        if path.name in _CODEGEN_SCRIPTS:
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
 
         in_main_block = any(
@@ -143,3 +180,24 @@ def test_scripts_call_load_env_from_main_block_not_from_main() -> None:
                 f"{path.name}: load_env() is called inside {func.name}() — tests call main() "
                 "directly, so this would load production credentials into the pytest process"
             )
+
+
+def test_codegen_scripts_stay_credential_free() -> None:
+    """The exemption is only sound while the exempt scripts remain what it describes.
+
+    So it is checked in both directions: an exempt script must neither load ``.env`` nor import
+    anything that could reach a credential or the network. The day one does, this fails and it goes
+    back under the rule above — rather than keeping a quiet pass it no longer deserves.
+    """
+    present = {p.name for p in _script_paths()}
+    assert present >= _CODEGEN_SCRIPTS, (
+        f"exemption names a script that no longer exists: {_CODEGEN_SCRIPTS - present}"
+    )
+
+    for path in _script_paths():
+        if path.name not in _CODEGEN_SCRIPTS:
+            continue
+        assert not _reads_dotenv(path), f"{path.name}: exempt from load_env, yet reads .env"
+        offenders = _imported_modules(ast.parse(path.read_text(encoding="utf-8")))
+        offenders &= _OPERATIONAL_MODULES
+        assert not offenders, f"{path.name}: no longer credential-free; imports {sorted(offenders)}"
