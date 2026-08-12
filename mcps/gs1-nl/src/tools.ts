@@ -12,6 +12,42 @@ import { z } from "zod";
 import type { GS1ClientConfig, UpsertEntry } from "./client.js";
 import { GS1ApiError, GS1Client } from "./client.js";
 import { loadGS1ClientConfig } from "./config.js";
+import { type GateExtra, requireGate } from "./gate.js";
+
+/**
+ * Gate every write, and gate a production write twice.
+ *
+ * `intent` (step 0) states what is about to happen and that GS1 records are permanent. `production`
+ * (step 8) is "mandatory, non-overridable, and enforced per run rather than per session" — the one
+ * gate `lib/gates.py` marks that way, because this is the write that cannot be undone.
+ *
+ * Both are asked, in that order, exactly as the skill asks them. A single merged prompt would be
+ * shorter and would lose the property that makes the second one work: it is a separate decision,
+ * made after the first.
+ */
+async function gateWrite(
+  server: McpServer,
+  extra: GateExtra,
+  config: GS1ClientConfig,
+  facts: Readonly<Record<string, string>>,
+): Promise<void> {
+  const permanent = config.environment === "production";
+  await requireGate(server, extra, "intent", {
+    ...facts,
+    "Environment": config.environment,
+    "Account": config.accountNumber,
+    "Permanent": permanent
+      ? "YES — a GS1 record can never be deleted; retraction only disables it"
+      : "no (test environment)",
+  });
+  if (permanent) {
+    await requireGate(server, extra, "production", {
+      ...facts,
+      "Environment": "PRODUCTION",
+      "Account": config.accountNumber,
+    });
+  }
+}
 
 const GTIN_PATTERN = /^[0-9]{8,14}$/;
 
@@ -84,9 +120,12 @@ export function registerGs1Tools(server: McpServer, deps: ToolDeps = defaultDeps
       description: "Set or update the resolver target for one GTIN via the v2 API.",
       inputSchema: upsertShape,
     },
-    async ({ client_id, gtin, item_description, is_enabled, links, application_identifiers }) => {
+    async (
+      { client_id, gtin, item_description, is_enabled, links, application_identifiers },
+      extra: GateExtra,
+    ) => {
       try {
-        const client = deps.makeClient(deps.loadConfig(client_id));
+        const config = deps.loadConfig(client_id);
         const entry: UpsertEntry = {
           gtin,
           item_description,
@@ -94,7 +133,14 @@ export function registerGs1Tools(server: McpServer, deps: ToolDeps = defaultDeps
           links,
           application_identifiers,
         };
-        await client.upsert(entry);
+        await gateWrite(server, extra, config, {
+          "Write": "one GS1 Digital Link record",
+          "GTIN": gtin,
+          "Description": item_description,
+          "Targets": links.map((l) => `${l.link_type} ${l.language} -> ${l.target_url}`).join("; "),
+          "Enabled": String(is_enabled),
+        });
+        await deps.makeClient(config).upsert(entry);
         return ok({ gtin });
       } catch (err) {
         return fail(err);
@@ -108,10 +154,19 @@ export function registerGs1Tools(server: McpServer, deps: ToolDeps = defaultDeps
       description: "Bulk create/update. Batches into groups of batch_size internally.",
       inputSchema: bulkShape,
     },
-    async ({ client_id, entries }) => {
+    async ({ client_id, entries }, extra: GateExtra) => {
       try {
-        const client = deps.makeClient(deps.loadConfig(client_id));
-        const result = await client.upsertBulk(entries as UpsertEntry[]);
+        const config = deps.loadConfig(client_id);
+        const list = entries as UpsertEntry[];
+        await gateWrite(server, extra, config, {
+          "Write": `${list.length} GS1 Digital Link record(s), in bulk`,
+          "GTINs": list
+            .slice(0, 10)
+            .map((e) => e.gtin)
+            .join(", ")
+            .concat(list.length > 10 ? `, +${list.length - 10} more` : ""),
+        });
+        const result = await deps.makeClient(config).upsertBulk(list);
         return ok({ total: result.total, batches: result.batches });
       } catch (err) {
         return fail(err);

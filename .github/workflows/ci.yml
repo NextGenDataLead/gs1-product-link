@@ -38,6 +38,11 @@ jobs:
       - name: Type-check (mypy --strict)
         run: mypy --strict lib
 
+      # The MCP servers gate their write tools on lib/gates.py via a generated TypeScript module.
+      # A gate added here but not regenerated there quietly stops being shown on that surface.
+      - name: Gate contract is exported to the MCP servers
+        run: python -m scripts.export_gates --check
+
       - name: Tests
         run: pytest
 

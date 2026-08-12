@@ -88,6 +88,7 @@ export function resolveGS1Config(
   const resolver = merged.resolver_settings ?? {};
   return {
     host: HOSTS[environment],
+    environment,
     accountNumber,
     clientId: requireEnv(env, clientIdEnv),
     clientSecret: requireEnv(env, clientSecretEnv),

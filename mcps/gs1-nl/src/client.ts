@@ -53,6 +53,14 @@ export interface ResolverSettings {
 /** Fully-resolved config for one client (client credentials already resolved). */
 export interface GS1ClientConfig {
   host: string;
+  /**
+   * Which GS1 environment this config resolved to.
+   *
+   * Carried on the config, not just used to pick the host, because the tools gate on it: the
+   * production gate (`lib/gates.py` step 8) is mandatory and non-overridable, and a handler cannot
+   * apply it without knowing the answer.
+   */
+  environment: "test" | "production";
   accountNumber: string;
   clientId: string;
   clientSecret: string;
