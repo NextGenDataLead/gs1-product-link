@@ -74,6 +74,17 @@ def _load_products(path: Path) -> dict[str, ProductRecord]:
     return {product.gtin14: product for product in products}
 
 
+def _generated_at() -> str:
+    """When this report was written, in the reader's own clock: ``2026-08-13 22:02 CEST``.
+
+    Local time rather than UTC so it matches what the file browser shows beside the file — the
+    two disagreeing by an hour or two is exactly the confusion this line exists to remove. The
+    zone is named so the timestamp is still unambiguous when the file is sent to someone else.
+    """
+    now = datetime.now(UTC).astimezone()
+    return f"{now:%Y-%m-%d %H:%M} {now:%Z}".strip()
+
+
 def _publish_blocks(
     client_id: str, products: dict[str, ProductRecord]
 ) -> tuple[dict[str, list[MandatoryGap]], list[str]]:
@@ -181,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         video_map_issues=issues["video_map"],
         category_issues=issues["category"],
         products=products,
-        snapshot=datetime.now(UTC).strftime("%Y-%m-%d"),
+        snapshot=_generated_at(),
         freshness=freshness,
         observations=_load_observations(data_dir / "observations.json"),
         mandatory_gaps=mandatory_gaps,
