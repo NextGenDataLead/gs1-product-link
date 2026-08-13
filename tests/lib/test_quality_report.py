@@ -6,7 +6,8 @@ No I/O, no clock (the snapshot date is injected), so the same inputs render byte
 
 from __future__ import annotations
 
-from lib.quality_report import render_quality_report
+from lib.gdsn import GdsnSource
+from lib.quality_report import MatrixInput, render_quality_report
 from lib.records import LocalisedText, ProductRecord, SourceIssue
 
 _FRESH = {
@@ -260,3 +261,111 @@ def test_generated_copy_is_a_pointer_not_a_per_row_dump() -> None:
     assert "generated_cache.json" in md
     assert "src" not in md and "txt" not in md  # no per-row source dump
     assert "2b." not in md  # the old subsection is gone
+
+
+# --- §0 coverage matrix -------------------------------------------------------
+
+
+def _matrix(**over: object) -> MatrixInput:
+    base: dict[str, object] = {
+        "products": [],
+        "gdsn_map": {
+            "product_name": GdsnSource(sheet="S", attribute="3301", localised=True, required=True),
+            "brand": GdsnSource(sheet="S", attribute="3336", required=True),
+            "net_content": GdsnSource(sheet="S", attribute="3510"),
+        },
+        "gdsn_extras": {"material": GdsnSource(sheet="S", attribute="Material")},
+        "languages": ["nl", "fr"],
+        "video_confirmed": {"nl": set(), "fr": set()},
+    }
+    base.update(over)
+    return MatrixInput(**base)  # type: ignore[arg-type]
+
+
+def _p(gtin: str, **over: object) -> ProductRecord:
+    base: dict[str, object] = {
+        "gtin": gtin,
+        "brand": "Noviplast",
+        "product_name": LocalisedText(values={"nl": "a", "fr": "b"}),
+    }
+    base.update(over)
+    return ProductRecord.model_validate(base)
+
+
+def test_matrix_sorts_richest_first() -> None:
+    """The order someone works in — GTIN order carries no information."""
+    thin = _p("08713195000001", product_name=LocalisedText(values={"nl": "a"}))
+    rich = _p("08713195000002", net_content="10 cm", extras={"material": "PP"})
+    md = _render(matrix=_matrix(products=[thin, rich]))
+
+    body = [line for line in md.splitlines() if line.startswith("| `0871")]
+    assert body[0].startswith("| `08713195000002`")  # richer first
+
+
+def test_matrix_marks_mandatory_columns_and_puts_them_first() -> None:
+    md = _render(matrix=_matrix(products=[_p("08713195000001")]))
+
+    header = next(line for line in md.splitlines() if line.startswith("| GTIN |"))
+    cols = [c.strip() for c in header.split("|")[1:-1]]
+    assert cols[2] == "**product·3301**"  # mandatory, first after GTIN/Name
+    assert cols[-3] == "material"  # optional, after the mandatory block
+    assert cols[-2] == "**video**"
+
+
+def test_a_localised_field_in_one_language_is_a_half_mark() -> None:
+    md = _render(
+        matrix=_matrix(
+            products=[_p("08713195000001", product_name=LocalisedText(values={"nl": "a"}))]
+        )
+    )
+
+    row = next(line for line in md.splitlines() if line.startswith("| `08713195000001`"))
+    assert "◐" in row
+
+
+def test_an_extras_field_is_one_flat_slot_not_a_language_group() -> None:
+    """Regression: `localised` describes the source attribute, not how extras are stored.
+
+    Reading an extra as a per-language group finds nothing and reports every one missing — wrong
+    in the direction that invents work for the client.
+    """
+    localised_extra = {"functional_name": GdsnSource(sheet="S", attribute="3301", localised=True)}
+    md = _render(
+        matrix=_matrix(
+            products=[_p("08713195000001", extras={"functional_name": "haak"})],
+            gdsn_extras=localised_extra,
+        )
+    )
+
+    # Trailing cells are: … | functional·name | video | score |, so the extra sits at -4.
+    row = next(line for line in md.splitlines() if line.startswith("| `08713195000001`"))
+    assert row.split("|")[-4].strip() == "●"
+
+
+def test_the_video_column_reflects_both_languages() -> None:
+    gtin = "08713195000001"
+    both = _render(
+        matrix=_matrix(products=[_p(gtin)], video_confirmed={"nl": {gtin}, "fr": {gtin}})
+    )
+    one = _render(matrix=_matrix(products=[_p(gtin)], video_confirmed={"nl": {gtin}, "fr": set()}))
+    neither = _render(matrix=_matrix(products=[_p(gtin)]))
+
+    def video_cell(md: str) -> str:
+        return next(line for line in md.splitlines() if line.startswith(f"| `{gtin}`")).split("|")[
+            -3
+        ]
+
+    assert "●" in video_cell(both)
+    assert "◐" in video_cell(one)
+    assert "○" in video_cell(neither)
+
+
+def test_no_matrix_input_omits_the_section() -> None:
+    assert "Coverage matrix" not in _render()
+
+
+def test_an_empty_scope_says_so_rather_than_rendering_an_empty_table() -> None:
+    md = _render(matrix=_matrix(products=[]))
+
+    assert "Coverage matrix" in md
+    assert "No products in scope" in md

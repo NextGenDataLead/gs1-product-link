@@ -33,9 +33,9 @@ from lib.config import get_client, resolve_client_id
 from lib.env import load_env
 from lib.errors import ConfigError, ExportParseError, VideoMapError
 from lib.mandatory import MandatoryGap, missing_mandatory
-from lib.media_video import fully_mapped_gtins, load_video_map
+from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
 from lib.preflight import in_scope
-from lib.quality_report import render_quality_report
+from lib.quality_report import MatrixInput, render_quality_report
 from lib.records import ProductRecord, SourceIssue
 
 _EXIT_OK = 0
@@ -128,6 +128,45 @@ def _publish_blocks(
     return gaps, sorted(held)
 
 
+def _matrix_input(client_id: str, products: dict[str, ProductRecord]) -> MatrixInput | None:
+    """Gather the §0 matrix inputs, or ``None`` when there is nothing to tabulate.
+
+    Scoped to the process list, like every other per-SKU section: a coverage table over the whole
+    catalogue would be mostly rows nobody asked about, which is the failure the scope check exists
+    to prevent. Config problems yield ``None`` rather than an exception — ``doctor`` reports those,
+    and a report that refuses to render because of one helps nobody.
+    """
+    try:
+        cfg = get_client(client_id)
+    except (ConfigError, ExportParseError):
+        return None
+    if not cfg.export.gdsn_map:
+        return None
+
+    languages = cfg.wordpress.languages
+    confirmed: dict[str, set[str]] = {lang: set() for lang in languages}
+    media = cfg.media
+    if media is not None and media.video_map_path:
+        try:
+            vmap = load_video_map(Path(media.video_map_path))
+        except VideoMapError:
+            pass  # the video-map section reports this; an empty set reads as "not confirmed"
+        else:
+            for lang in languages:
+                confirmed[lang] = {
+                    canon_gtin(entry.gtin)
+                    for entry in vmap.by_language.get(lang, [])
+                    if entry.gtin and entry.gtin.lower() != "skip"
+                }
+    return MatrixInput(
+        products=in_scope(cfg, list(products.values())),
+        gdsn_map=cfg.export.gdsn_map,
+        gdsn_extras=cfg.export.gdsn_extras,
+        languages=languages,
+        video_confirmed=confirmed,
+    )
+
+
 def _load_observations(path: Path) -> list[str]:
     """Read the in-session review notes (``observations.json``); absent yields ``[]``.
 
@@ -184,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
 
     products = _load_products(data_dir / "products.json")
     mandatory_gaps, video_held = _publish_blocks(client_id, products)
+    matrix = _matrix_input(client_id, products)
 
     markdown = render_quality_report(
         client_id=client_id,
@@ -197,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
         observations=_load_observations(data_dir / "observations.json"),
         mandatory_gaps=mandatory_gaps,
         video_held=video_held,
+        matrix=matrix,
     )
 
     out = Path(args.out) if args.out else Path("output") / client_id / "data-quality-report.md"

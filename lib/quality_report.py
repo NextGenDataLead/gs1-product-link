@@ -16,9 +16,13 @@ snapshot date and per-source freshness) and returns markdown. All I/O and clock 
 from __future__ import annotations
 
 from collections import Counter
+from typing import TYPE_CHECKING, NamedTuple
 
 from lib.mandatory import MandatoryGap
 from lib.records import ProductRecord, SourceIssue
+
+if TYPE_CHECKING:
+    from lib.gdsn import GdsnSource
 
 #: Issue kinds emitted by the generator merge (``generated_issues.json``).
 _HELD = "missing_generation_input"
@@ -36,6 +40,91 @@ _ISO_DATE_LEN = 10
 #: page title (``product_name``) and the hero image (``image_url``). A blank in any other
 #: field (e.g. ``net_content``) only degrades a detail line, so it is a source fix, not a block.
 _BLOCKING_BLANK_FIELDS = frozenset({"product_name", "image_url"})
+
+
+#: Matrix cell marks. A filled circle reads as "there" at a glance across 30 rows in a way that
+#: a tick and a dash do not, and the half circle says "one language only" without a legend lookup.
+_PRESENT = "●"
+_PARTIAL = "◐"
+_ABSENT = "○"
+
+#: Column header for the video pair — not a ``gdsn_map`` field, but the same kind of fact.
+_VIDEO_COLUMN = "video"
+
+
+class MatrixInput(NamedTuple):
+    """Everything the §0 coverage matrix needs, gathered by the caller.
+
+    Bundled rather than passed as five more keyword arguments: they are one fact — "the scope and
+    the shape of its data" — and a renderer signature that already takes nine sources does not
+    need five more that must always travel together.
+    """
+
+    #: In-scope products, in any order; the matrix sorts them itself.
+    products: list[ProductRecord]
+    gdsn_map: dict[str, GdsnSource]
+    gdsn_extras: dict[str, GdsnSource]
+    languages: list[str]
+    #: Language → GTIN-14s with a client-confirmed video in it.
+    video_confirmed: dict[str, set[str]]
+
+
+class FieldColumn(NamedTuple):
+    """One column of the coverage matrix: where the value comes from and whether it is required."""
+
+    field: str
+    #: Short header. GDSN attribute numbers are what an operator searches MyGS1 by, so they win
+    #: over the internal field name wherever there is one.
+    header: str
+    localised: bool
+    required: bool
+
+
+def _columns(
+    gdsn_map: dict[str, GdsnSource], gdsn_extras: dict[str, GdsnSource]
+) -> list[FieldColumn]:
+    """Matrix columns, mandatory first, derived from config rather than listed here.
+
+    Derived so the matrix cannot drift from what the pipeline actually enforces: marking a field
+    ``required`` in ``clients.yml`` moves it into the mandatory block here with no code change,
+    which is the whole point of a coverage table nobody has to maintain by hand.
+    """
+    mandatory = [
+        FieldColumn(name, f"{name.split('_')[0]}·{src.attribute}", src.localised, True)
+        for name, src in gdsn_map.items()
+        if src.required or src.required_group
+    ]
+    optional = [
+        FieldColumn(name, f"{name.split('_')[0]}·{src.attribute}", src.localised, False)
+        for name, src in gdsn_map.items()
+        if not (src.required or src.required_group)
+    ] + [
+        FieldColumn(name, name.replace("_", "·"), src.localised, False)
+        for name, src in gdsn_extras.items()
+    ]
+    return mandatory + optional
+
+
+def _mark(product: ProductRecord, column: FieldColumn, languages: list[str]) -> tuple[str, int]:
+    """The cell for one product/column, and how many language slots it fills (for the sort).
+
+    ``localised`` describes the *source attribute*, not how the value is stored. A ``gdsn_extras``
+    field lands in :attr:`ProductRecord.extras` as one flat string whatever its source looked like,
+    so it is counted as a single slot — reading it as a per-language group finds nothing and
+    reports every extra missing, which is wrong in the direction that invents work.
+    """
+    if column.field not in type(product).model_fields:
+        filled = bool(str(product.extras.get(column.field) or "").strip())
+        return (_PRESENT if filled else _ABSENT), int(filled)
+    value = getattr(product, column.field, None)
+    if not column.localised:
+        filled = bool(str(value or "").strip())
+        return (_PRESENT if filled else _ABSENT), int(filled)
+    values = getattr(value, "values", {}) or {}
+    have = sum(bool(str(values.get(lang) or "").strip()) for lang in languages)
+    if have == len(languages):
+        return _PRESENT, have
+    return (_PARTIAL if have else _ABSENT), have
 
 
 def _stalest(freshness: dict[str, str]) -> str:
@@ -242,6 +331,62 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
     ]
 
 
+def _matrix_lines(  # noqa: PLR0913 — a matrix needs its rows, its columns, and their sources
+    products: list[ProductRecord],
+    gdsn_map: dict[str, GdsnSource],
+    gdsn_extras: dict[str, GdsnSource],
+    languages: list[str],
+    video_confirmed: dict[str, set[str]],
+    names: dict[str, ProductRecord],
+) -> list[str]:
+    """Per-SKU coverage of every field, richest first.
+
+    One row per in-scope product, one column per configured field plus the video pair. Sorted by
+    how much is filled, so the SKUs closest to publishable sit at the top and the worst-served at
+    the bottom — the order someone works in, rather than GTIN order, which carries no information.
+
+    Mandatory columns come first and are marked, because a gap there stops the SKU while a gap in
+    an optional column only thins the page. The two facts look identical in a matrix otherwise.
+    """
+    if not products:
+        return ["## 0. Coverage matrix", "", "_No products in scope._", ""]
+
+    columns = _columns(gdsn_map, gdsn_extras)
+    rows: list[tuple[int, list[str]]] = []
+    for product in products:
+        gtin = product.gtin14
+        cells, score = [], 0
+        for column in columns:
+            mark, filled = _mark(product, column, languages)
+            cells.append(mark)
+            score += filled
+        have = [lang for lang in languages if gtin in video_confirmed.get(lang, set())]
+        video = _PRESENT if len(have) == len(languages) else (_PARTIAL if have else _ABSENT)
+        score += len(have)
+        name = _name(names, gtin)[:20]
+        rows.append((score, [f"`{gtin}`", name, *cells, video, str(score)]))
+
+    # Descending by fill, then by GTIN so equal rows keep a stable order between runs.
+    rows.sort(key=lambda r: (-r[0], r[1][0]))
+    mandatory = sum(1 for c in columns if c.required)
+    header = (
+        ["GTIN", "Name"]
+        + [f"**{c.header}**" if c.required else c.header for c in columns]
+        + [f"**{_VIDEO_COLUMN}**", "score"]
+    )
+    return [
+        "## 0. Coverage matrix",
+        "",
+        f"{_PRESENT} present · {_PARTIAL} one language only · {_ABSENT} missing. "
+        f"**Bold columns are mandatory** — a gap there holds the whole SKU ({mandatory} fields "
+        f"plus the video). Everything else only thins the page. Sorted richest first; `score` "
+        f"counts filled language-slots, so a localised field can contribute {len(languages)}.",
+        "",
+        *_table(header, [cells for _, cells in rows]),
+        "",
+    ]
+
+
 def _blocking_lines(  # noqa: PLR0913 — one parameter per independent source of a block
     held: list[str],
     blocking_blanks: list[SourceIssue],
@@ -426,6 +571,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     observations: list[str] | None = None,
     mandatory_gaps: dict[str, list[MandatoryGap]] | None = None,
     video_held: list[str] | None = None,
+    matrix: MatrixInput | None = None,
 ) -> str:
     """Render the consolidated data-quality report as markdown.
 
@@ -445,6 +591,9 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
             :func:`lib.mandatory.missing_mandatory`. Computed by the caller rather than derived
             here, because it needs the client's ``gdsn_map`` and this renderer stays pure.
         video_held: GTINs held for want of a client-confirmed video in every language (E24).
+        matrix: In-scope products plus the field definitions and video confirmations behind the
+            §0 coverage matrix. ``None`` omits the section — a report for a client with no
+            ``gdsn_map`` has nothing to tabulate.
 
     Returns:
         The full markdown document.
@@ -469,6 +618,18 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
             video_held or [],
         ),
         *_observations_lines(observations or []),
+        *(
+            _matrix_lines(
+                matrix.products,
+                matrix.gdsn_map,
+                matrix.gdsn_extras,
+                matrix.languages,
+                matrix.video_confirmed,
+                products,
+            )
+            if matrix is not None
+            else []
+        ),
         *_blocking_lines(held, blocking_blanks, products, mandatory_gaps or {}, video_held or []),
         *_review_lines(inferences, generated_count, products, client_id),
         *_source_lines(degrade_blanks, inconsistent, wrong_lang, products),
