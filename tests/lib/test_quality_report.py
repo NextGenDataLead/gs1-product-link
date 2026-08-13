@@ -62,6 +62,31 @@ def _render(**over: object) -> str:
     return render_quality_report(**base)  # type: ignore[arg-type]
 
 
+def test_the_header_leads_with_when_the_report_was_written() -> None:
+    """On its own line, near the top — the reader should not have to check a file browser."""
+    md = _render(snapshot="2026-08-13 22:02 CEST")
+
+    lines = md.splitlines()
+    assert "**Generated 2026-08-13 22:02 CEST**" in lines
+    # Prominent, not buried: within the first handful of lines, under the title.
+    assert lines.index("**Generated 2026-08-13 22:02 CEST**") < 4
+
+
+def test_the_header_names_the_oldest_input_not_only_the_generation_time() -> None:
+    """A report can be minutes old and still describe a month-old export — say which."""
+    md = _render(snapshot="2026-08-13 22:02 CEST")
+
+    assert "The oldest input is from 2026-07-19" in md  # the `source` entry in _FRESH
+
+
+def test_a_missing_freshness_entry_does_not_become_an_ancient_date() -> None:
+    """An unknown date is unknown; treating it as old would put a false scare in the header."""
+    md = _render(snapshot="2026-08-13 22:02 CEST", freshness={})
+
+    assert "oldest input" not in md
+    assert "**Generated 2026-08-13 22:02 CEST**" in md
+
+
 def test_held_gtins_block_publish() -> None:
     gen = [
         _issue("08713195003276", "missing_generation_input", field="description_short.nl"),

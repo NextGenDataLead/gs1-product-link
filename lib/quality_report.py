@@ -29,10 +29,23 @@ _BLANK = "value_blank"
 _INCONSISTENT = "value_inconsistent_across_markets"
 _WRONG_LANG = "value_wrong_language"
 
+#: Length of an ISO ``YYYY-MM-DD`` freshness date. Anything else (``—``) is "unknown", not old.
+_ISO_DATE_LEN = 10
+
 #: Base fields whose blank makes a published page broken/degraded enough to block it: the
 #: page title (``product_name``) and the hero image (``image_url``). A blank in any other
 #: field (e.g. ``net_content``) only degrades a detail line, so it is a source fix, not a block.
 _BLOCKING_BLANK_FIELDS = frozenset({"product_name", "image_url"})
+
+
+def _stalest(freshness: dict[str, str]) -> str:
+    """The oldest input date, or "" when none is known.
+
+    Dates are ISO ``YYYY-MM-DD`` so they sort lexically; anything unparseable (``—``) is ignored
+    rather than treated as ancient, which would put a scare in the header on missing information.
+    """
+    dates = [v for v in freshness.values() if len(v) == _ISO_DATE_LEN and v[:4].isdigit()]
+    return min(dates) if dates else ""
 
 
 def _blocks_publish(field: str) -> bool:
@@ -98,15 +111,32 @@ def _table(header: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def _header_lines(client_id: str, snapshot: str, freshness: dict[str, str]) -> list[str]:
+    """The title block, leading with **when this document was written**.
+
+    On its own line, in local time with the zone named, and first — because the question a reader
+    asks of a worklist is how old it is, and the answer used to be a date buried mid-sentence.
+    Whoever opens the file sees it without checking a file browser or asking the person who ran it.
+
+    The generation time and the *input* freshness are deliberately separate facts: a report can be
+    minutes old and still describe a month-old export, which is exactly the case here.
+    """
+
     def f(key: str) -> str:
         return freshness.get(key, "—")
 
+    stale = _stalest(freshness)
     return [
         f"# {client_id.title()} — Data quality report",
         "",
-        "_Consolidated worklist of everything blocking correct, complete product pages. "
-        f"Snapshot {snapshot}. Source freshness: generated `{f('generated')}`, "
-        f"source `{f('source')}`, video-map `{f('video_map')}`, categories `{f('category')}`._",
+        f"**Generated {snapshot}**",
+        "",
+        f"_Describes data as of: generated `{f('generated')}`, source `{f('source')}`, "
+        f"video-map `{f('video_map')}`, categories `{f('category')}`."
+        + (
+            f" **The oldest input is from {stale}** — anything fixed since is not reflected here._"
+            if stale
+            else "_"
+        ),
         "",
         f"> Regenerate the underlying data: `run_plan {client_id}` (generated + categories), "
         f"`parse_export {client_id}` (source), `build_video_map {client_id} --check` (video-map); "

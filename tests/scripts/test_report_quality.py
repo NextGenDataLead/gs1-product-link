@@ -7,6 +7,8 @@ Drives ``main`` in a temp working directory: writes sample ``output/{client}/dat
 from __future__ import annotations
 
 import json
+import re
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -87,3 +89,12 @@ def test_absent_issue_files_treated_as_empty(
 
     assert report_quality.main(["noviplast"]) == 0
     assert (tmp_path / "output" / "noviplast" / "data-quality-report.md").is_file()
+
+
+def test_generated_at_is_local_time_with_a_named_zone() -> None:
+    """Local, so it matches the file browser beside the file; named, so it travels unambiguously."""
+    stamp = report_quality._generated_at()
+
+    # "2026-08-13 22:02 CEST" — date, time, then a zone abbreviation.
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+", stamp), stamp
+    assert stamp.startswith(datetime.now().astimezone().strftime("%Y-%m-%d"))
