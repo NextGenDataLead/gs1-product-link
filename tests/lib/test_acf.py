@@ -75,6 +75,32 @@ def test_extras_are_reachable_by_dotted_path() -> None:
     assert payload == {"fn": "microvezeldoek"}
 
 
+def test_a_localised_extra_yields_this_languages_value() -> None:
+    """The no-falling-back rule above applies to extras too, and used not to.
+
+    ``extras.{name}`` returned one flat string whatever the page's language, so a French page
+    took the Dutch token — exactly the failure the localised branch exists to prevent.
+    """
+    product = _product(
+        extras_localised={
+            "functional_name": LocalisedText(values={"nl": "microvezeldoek", "fr": "microfibre"})
+        }
+    )
+
+    fn_map = {"fn": "extras.functional_name"}
+
+    assert build_acf_payload(product, "fr", fn_map) == {"fn": "microfibre"}
+    assert build_acf_payload(product, "nl", fn_map) == {"fn": "microvezeldoek"}
+
+
+def test_a_localised_extra_missing_this_language_omits_the_field() -> None:
+    product = _product(
+        extras_localised={"functional_name": LocalisedText(values={"nl": "microvezeldoek"})}
+    )
+
+    assert build_acf_payload(product, "fr", {"fn": "extras.functional_name"}) == {}
+
+
 def test_empty_map_yields_empty_payload() -> None:
     """A client with no acf_map renders from the body template — nothing to assemble."""
     assert build_acf_payload(_product(), "nl", {}) == {}

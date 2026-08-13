@@ -116,12 +116,52 @@ class ProductRecord(BaseModel):
     generated_tagline: LocalisedText | None = None
     generated_description: LocalisedText | None = None
 
+    #: Pass-through values the feed carries once, language-agnostically (dimensions, material).
     extras: dict[str, str] = Field(default_factory=dict)
+
+    #: Pass-through values whose source attribute is a per-language ``LanguageCode``/``Value``
+    #: group. Separate from :attr:`extras` rather than widening it, so each value has exactly one
+    #: home and no reader has to know which of two dicts is authoritative. Empty on a
+    #: ``products.json`` written before this field existed — :meth:`extra` then falls back to the
+    #: flat value, which is what those files hold.
+    extras_localised: dict[str, LocalisedText] = Field(default_factory=dict)
 
     @property
     def gtin14(self) -> str:
         """The GTIN zero-padded to 14 digits for Digital Link URIs."""
         return self.gtin.zfill(14)
+
+    def extra(self, name: str, language: str, fallback: str | None = None) -> str | None:
+        """The pass-through extra ``name`` as it should read in ``language``.
+
+        Every call site has to name a language, which is the point: reading an extra without one
+        is how the Dutch token reached the French page. ``fallback`` is opt-in per caller because
+        the right answer differs — a template renders one blob and a hole in it reads as broken,
+        so it falls back; an ACF field is written independently and omitting it beats writing the
+        wrong language into it.
+
+        Args:
+            name: The ``gdsn_extras`` key.
+            language: The language the value is wanted in.
+            fallback: Language to fall back to when ``language`` is absent.
+
+        Returns:
+            The value, or ``None`` when no extra of that name carries one for this language.
+        """
+        localised = self.extras_localised.get(name)
+        if localised is not None:
+            return localised.get(language, fallback)
+        return self.extras.get(name)
+
+    def extras_for(self, language: str, fallback: str | None = None) -> dict[str, str]:
+        """Every pass-through extra as it should read in ``language``, in one mapping.
+
+        Names whose value is absent for ``language`` (and for ``fallback``) are omitted rather
+        than rendered empty, so a caller can tell "carries nothing here" from "carries a blank".
+        """
+        names = [*self.extras, *self.extras_localised]
+        resolved = ((name, self.extra(name, language, fallback)) for name in names)
+        return {name: value for name, value in resolved if value is not None}
 
 
 # --- Plan types (§2.2) -------------------------------------------------------
@@ -539,6 +579,7 @@ def build_product_record(
     scalars: dict[str, str],
     localised: dict[str, dict[str, str]],
     extras: dict[str, str],
+    extras_localised: dict[str, dict[str, str]] | None = None,
 ) -> ProductRecord:
     """Assemble a :class:`ProductRecord` from collected field values.
 
@@ -549,7 +590,9 @@ def build_product_record(
         gtin: The product GTIN, used only for the error message here.
         scalars: Language-agnostic field values keyed by field name.
         localised: Per-language field values keyed by field then language code.
-        extras: Free-form pass-through values.
+        extras: Free-form pass-through values, language-agnostic.
+        extras_localised: Per-language pass-through values keyed by name then language code.
+            Optional: the flat parser has no per-language extras to collect.
 
     Returns:
         The validated record.
@@ -563,6 +606,13 @@ def build_product_record(
             fields[field_name] = LocalisedText(values=values)
     if extras:
         fields["extras"] = extras
+    localised_extras = {
+        name: LocalisedText(values=values)
+        for name, values in (extras_localised or {}).items()
+        if values
+    }
+    if localised_extras:
+        fields["extras_localised"] = localised_extras
     try:
         return ProductRecord.model_validate(fields)
     except ValidationError as exc:

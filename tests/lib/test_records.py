@@ -74,6 +74,64 @@ def test_state_is_mutable() -> None:
     assert "08713195007359" in state.entries
 
 
+# --- Pass-through extras, per language ---------------------------------------
+
+
+def test_extra_reads_a_localised_extra_in_the_asked_for_language() -> None:
+    record = _product(
+        extras_localised={
+            "functional_name": LocalisedText(values={"nl": "Rugsteun", "fr": "Support"})
+        }
+    )
+
+    assert record.extra("functional_name", "nl") == "Rugsteun"
+    assert record.extra("functional_name", "fr") == "Support"
+
+
+def test_extra_reads_a_language_agnostic_extra_whatever_the_language() -> None:
+    # material carries no LanguageCode pair in the feed, so one value serves every language.
+    record = _product(extras={"material": "kunststof"})
+
+    assert record.extra("material", "nl") == "kunststof"
+    assert record.extra("material", "fr") == "kunststof"
+
+
+def test_extra_does_not_fall_back_across_languages_unless_asked() -> None:
+    # Dutch text on a French page is the bug this whole change exists to fix, so the
+    # fallback is opt-in per call site rather than the default.
+    record = _product(
+        extras_localised={"functional_name": LocalisedText(values={"nl": "Rugsteun"})}
+    )
+
+    assert record.extra("functional_name", "fr") is None
+    assert record.extra("functional_name", "fr", "nl") == "Rugsteun"
+
+
+def test_extra_is_none_for_a_name_no_extra_carries() -> None:
+    assert _product().extra("nope", "nl") is None
+
+
+def test_extras_for_merges_flat_and_localised_into_one_languages_view() -> None:
+    record = _product(
+        extras={"material": "kunststof"},
+        extras_localised={
+            "functional_name": LocalisedText(values={"nl": "Rugsteun", "fr": "Support"})
+        },
+    )
+
+    assert record.extras_for("fr") == {"material": "kunststof", "functional_name": "Support"}
+    assert record.extras_for("nl") == {"material": "kunststof", "functional_name": "Rugsteun"}
+
+
+def test_extras_for_omits_an_extra_this_language_lacks() -> None:
+    record = _product(
+        extras_localised={"functional_name": LocalisedText(values={"nl": "Rugsteun"})}
+    )
+
+    assert record.extras_for("fr") == {}
+    assert record.extras_for("fr", "nl") == {"functional_name": "Rugsteun"}
+
+
 # --- Plan types --------------------------------------------------------------
 
 
@@ -221,12 +279,28 @@ def test_product_record_json_round_trip_preserves_all_fields() -> None:
         description_long=LocalisedText(values={"nl": "Lang", "fr": "Long"}),
         generated_tagline=LocalisedText(values={"nl": "Slogan", "fr": "Slogan FR"}),
         generated_description=LocalisedText(values={"nl": "<p>NL</p>", "fr": "<p>FR</p>"}),
-        extras={"functional_name": "Rugsteun"},
+        extras={"material": "kunststof"},
+        extras_localised={
+            "functional_name": LocalisedText(values={"nl": "Rugsteun", "fr": "Support"})
+        },
     )
 
     restored = ProductRecord.model_validate_json(record.model_dump_json())
 
     assert restored == record
+
+
+def test_a_products_json_written_before_localised_extras_still_loads() -> None:
+    # extras_localised defaults empty, so an older parse still validates and `extra` falls
+    # back to the flat value — the operator re-runs parse_export to gain the other languages
+    # rather than being blocked by a hard load failure.
+    old = '{"gtin": "08713195007359", "brand": "Noviplast", "product_name": {"values": '
+    old += '{"nl": "Rugsteun"}}, "extras": {"functional_name": "Rugsteun"}}'
+
+    record = ProductRecord.model_validate_json(old)
+
+    assert record.extras_localised == {}
+    assert record.extra("functional_name", "fr") == "Rugsteun"
 
 
 def test_generated_fields_default_to_none() -> None:

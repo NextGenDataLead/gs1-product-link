@@ -507,14 +507,18 @@ def build_records(  # noqa: PLR0913 — each argument is a distinct input; bundl
     records: list[ProductRecord] = []
     issues: list[SourceIssue] = []
     for gtin in gtins:
-        acc = _Accumulator(scalars={"gtin": gtin}, localised={}, extras={}, warnings=[], issues=[])
+        acc = _Accumulator(
+            scalars={"gtin": gtin},
+            localised={},
+            extras={},
+            extras_localised={},
+            warnings=[],
+            issues=[],
+        )
         for field, src in gdsn_map.items():
             if field != "gtin":
                 _resolve_field(ctx, field, src, gtin, acc)
-        for name, src in gdsn_extras.items():
-            value = _resolve_extra(ctx, src, gtin)
-            if value is not None:
-                acc.extras[name] = value
+        _resolve_extras(ctx, gdsn_extras, gtin, acc)
         warnings.extend(acc.warnings)
         issues.extend(acc.issues)
 
@@ -531,7 +535,11 @@ def build_records(  # noqa: PLR0913 — each argument is a distinct input; bundl
         try:
             records.append(
                 build_product_record(
-                    gtin=gtin, scalars=acc.scalars, localised=acc.localised, extras=acc.extras
+                    gtin=gtin,
+                    scalars=acc.scalars,
+                    localised=acc.localised,
+                    extras=acc.extras,
+                    extras_localised=acc.extras_localised,
                 )
             )
         except ExportParseError as exc:
@@ -560,6 +568,8 @@ class _Accumulator:
     scalars: dict[str, str]
     localised: dict[str, dict[str, str]]
     extras: dict[str, str]
+    #: Pass-through extras whose source attribute is per-language, keyed name → language.
+    extras_localised: dict[str, dict[str, str]]
     #: Non-fatal notes raised while resolving this GTIN's fields; merged into
     #: :attr:`BuildResult.warnings` so ``parse_export``'s summary counts them.
     warnings: list[str]
@@ -901,21 +911,58 @@ def _resolve_scalar(  # noqa: PLR0913 — one collaborator per step; bundling hi
         _report_blank(where, acc)
 
 
-def _resolve_extra(ctx: _BuildContext, src: GdsnSource, gtin: str) -> str | None:
-    """Resolve a pass-through extra to a single string (default language for localised).
+def _resolve_extras(
+    ctx: _BuildContext, gdsn_extras: dict[str, GdsnSource], gtin: str, acc: _Accumulator
+) -> None:
+    """Resolve every pass-through extra for one GTIN into the accumulator.
 
-    Extras are carried verbatim and unreported: they are not page fields, so a blank or a
-    cross-market disagreement in one is not a source-fix finding here.
+    Per-language extras land in :attr:`_Accumulator.extras_localised` and language-agnostic ones
+    in :attr:`_Accumulator.extras` — one home per value, so no reader downstream has to decide
+    which of two dicts is authoritative for a given name.
+    """
+    for name, src in gdsn_extras.items():
+        if src.localised:
+            values = _resolve_localised_extra(ctx, src, gtin)
+            if values is not None:
+                acc.extras_localised[name] = values
+            continue
+        value = _resolve_extra(ctx, src, gtin)
+        if value is not None:
+            acc.extras[name] = value
+
+
+def _resolve_localised_extra(
+    ctx: _BuildContext, src: GdsnSource, gtin: str
+) -> dict[str, str] | None:
+    """Resolve a per-language pass-through extra into every configured language.
+
+    It used to resolve to the default language alone, which silently discarded every other
+    language the feed carried — so a French page rendered the Dutch token, and the quality
+    report could not tell a genuine translation gap from one the parser had created.
+
+    Extras stay unreported here: they are not page fields, so a blank or a cross-market
+    disagreement in one is not a source-fix finding at parse time.
     """
     sheet = ctx.workbook.get(src.sheet)
     if sheet is None:
         return None
-    if src.localised:
-        chosen, _ = _pick_ranked(
-            lambda market: sheet.pick_localised(gtin, market, src.attribute, ctx.default_language),
-            ctx.market_priority,
-        )
-        return chosen
+    values: dict[str, str] = {}
+    for lang in ctx.languages:
+        picker = _localised_picker(sheet, gtin, src.attribute, lang)
+        chosen, _ = _pick_ranked(picker, ctx.market_priority)
+        if chosen is not None:
+            values[lang] = chosen
+    return values or None
+
+
+def _resolve_extra(ctx: _BuildContext, src: GdsnSource, gtin: str) -> str | None:
+    """Resolve a language-agnostic pass-through extra to a single string.
+
+    Per-language extras go through :func:`_resolve_localised_extra` instead.
+    """
+    sheet = ctx.workbook.get(src.sheet)
+    if sheet is None:
+        return None
     if src.primary_file:
         chosen, _ = _pick_ranked(
             lambda market: sheet.pick_primary_file(gtin, market), ctx.market_priority

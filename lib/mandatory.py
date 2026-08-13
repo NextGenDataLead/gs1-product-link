@@ -45,8 +45,14 @@ class MandatoryGap(NamedTuple):
 
 
 def _value_for(product: ProductRecord, field: str, language: str) -> str:
-    """The product's value for ``field`` in ``language``, as a string ("" when absent)."""
-    value = getattr(product, field, None) or product.extras.get(field)
+    """The product's value for ``field`` in ``language``, as a string ("" when absent).
+
+    Falls through to the pass-through extras, which :meth:`ProductRecord.extra` resolves for
+    the asked-for language — a per-language extra read flat would report present in every
+    language on the strength of one, which is the direction that publishes a half-translated
+    page.
+    """
+    value = getattr(product, field, None) or product.extra(field, language)
     if isinstance(value, LocalisedText):
         return str(value.values.get(language) or "").strip() if language else ""
     return str(value or "").strip()

@@ -109,19 +109,28 @@ def _columns(
 def _mark(product: ProductRecord, column: FieldColumn, languages: list[str]) -> tuple[str, int]:
     """The cell for one product/column, and how many language slots it fills (for the sort).
 
-    ``localised`` describes the *source attribute*, not how the value is stored. A ``gdsn_extras``
-    field lands in :attr:`ProductRecord.extras` as one flat string whatever its source looked like,
-    so it is counted as a single slot — reading it as a per-language group finds nothing and
-    reports every extra missing, which is wrong in the direction that invents work.
+    A ``gdsn_extras`` field is counted per language when the record actually carries it that way
+    (:attr:`ProductRecord.extras_localised`) and as a single slot otherwise. The distinction is
+    the record's, not the config's: ``localised`` describes the *source attribute*, and a
+    ``products.json`` written before extras were kept per language holds one flat string however
+    the attribute looked. Counting that flat value as a language group would find nothing and
+    report every extra missing — wrong in the direction that invents work for the client.
     """
     if column.field not in type(product).model_fields:
-        filled = bool(str(product.extras.get(column.field) or "").strip())
-        return (_PRESENT if filled else _ABSENT), int(filled)
+        localised = product.extras_localised.get(column.field)
+        if localised is None:
+            filled = bool(str(product.extras.get(column.field) or "").strip())
+            return (_PRESENT if filled else _ABSENT), int(filled)
+        return _language_mark(localised.values, languages)
     value = getattr(product, column.field, None)
     if not column.localised:
         filled = bool(str(value or "").strip())
         return (_PRESENT if filled else _ABSENT), int(filled)
-    values = getattr(value, "values", {}) or {}
+    return _language_mark(getattr(value, "values", {}) or {}, languages)
+
+
+def _language_mark(values: dict[str, str], languages: list[str]) -> tuple[str, int]:
+    """The cell for a per-language value: full, half, or empty, plus the slots it fills."""
     have = sum(bool(str(values.get(lang) or "").strip()) for lang in languages)
     if have == len(languages):
         return _PRESENT, have

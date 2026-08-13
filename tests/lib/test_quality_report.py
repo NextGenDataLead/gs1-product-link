@@ -323,21 +323,64 @@ def test_a_localised_field_in_one_language_is_a_half_mark() -> None:
     assert "◐" in row
 
 
-def test_an_extras_field_is_one_flat_slot_not_a_language_group() -> None:
-    """Regression: `localised` describes the source attribute, not how extras are stored.
+#: A `gdsn_extras` entry whose source attribute carries a LanguageCode/Value pair.
+_LOCALISED_EXTRA = {"functional_name": GdsnSource(sheet="S", attribute="3301", localised=True)}
 
-    Reading an extra as a per-language group finds nothing and reports every one missing — wrong
-    in the direction that invents work for the client.
+
+def _extra_cell(md: str, gtin: str) -> str:
+    """Trailing cells are: … | functional·name | video | score |, so the extra sits at -4."""
+    row = next(line for line in md.splitlines() if line.startswith(f"| `{gtin}`"))
+    return row.split("|")[-4].strip()
+
+
+def test_a_localised_extra_is_counted_per_language() -> None:
+    """Now the parser keeps every language of a localised extra, the matrix can count them.
+
+    It could not before: the value collapsed to one flat string, so a per-language reading
+    found nothing and reported every extra missing.
     """
-    localised_extra = {"functional_name": GdsnSource(sheet="S", attribute="3301", localised=True)}
     md = _render(
         matrix=_matrix(
-            products=[_p("08713195000001", extras={"functional_name": "haak"})],
-            gdsn_extras=localised_extra,
+            products=[
+                _p(
+                    "08713195000001",
+                    extras_localised={
+                        "functional_name": LocalisedText(values={"nl": "haak", "fr": "crochet"})
+                    },
+                ),
+                _p(
+                    "08713195000002",
+                    extras_localised={"functional_name": LocalisedText(values={"nl": "haak"})},
+                ),
+            ],
+            gdsn_extras=_LOCALISED_EXTRA,
         )
     )
 
-    # Trailing cells are: … | functional·name | video | score |, so the extra sits at -4.
+    assert _extra_cell(md, "08713195000001") == "●"
+    assert _extra_cell(md, "08713195000002") == "◐"
+
+
+def test_a_flat_extra_from_an_older_parse_is_still_one_slot() -> None:
+    """A products.json written before extras were per-language must not read as all-missing.
+
+    Wrong in the direction that invents work for the client — the fix is to re-parse, not to
+    open a translation queue against a file that simply predates the field.
+    """
+    md = _render(
+        matrix=_matrix(
+            products=[_p("08713195000001", extras={"functional_name": "haak"})],
+            gdsn_extras=_LOCALISED_EXTRA,
+        )
+    )
+
+    assert _extra_cell(md, "08713195000001") == "●"
+
+
+def test_a_language_agnostic_extra_is_one_flat_slot() -> None:
+    # material has no LanguageCode pair in the feed, so one value fills its only slot.
+    md = _render(matrix=_matrix(products=[_p("08713195000001", extras={"material": "PP"})]))
+
     row = next(line for line in md.splitlines() if line.startswith("| `08713195000001`"))
     assert row.split("|")[-4].strip() == "●"
 
