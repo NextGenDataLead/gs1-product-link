@@ -130,6 +130,13 @@ class GdsnSource(BaseModel):
             a column that is present for every product and feeds nothing is noise in a table whose
             job is to show where the gaps are. It does **not** stop the field being parsed — the
             value is still in ``extras`` for whatever future check wants it.
+        translate: Whether the generator may fill this value in a language the feed lacks, by
+            translating the same value from a language the feed has. Default ``False`` —
+            **opt in per field**, because every filled value costs producer tokens and adds
+            LLM-written text to a page. Deriving a French value from the Dutch one the feed
+            already carries is translation, not invention; a field blank in **every** language is
+            never filled, and stays a source finding (E23). Each filled value is reported for
+            the operator to put back into MyGS1 — see :func:`lib.generator.translation_gaps`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -146,6 +153,7 @@ class GdsnSource(BaseModel):
     required: bool = False
     required_group: str = ""
     in_matrix: bool = True
+    translate: bool = False
 
     @model_validator(mode="after")
     def _required_xor_group(self) -> GdsnSource:

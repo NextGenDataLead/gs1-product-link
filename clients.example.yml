@@ -90,7 +90,12 @@ clients:
         # 2026-07-17. No strip_prefix — 3301 has no brand prefix. See docs §4.1.
         # DEFERRED to the generator: prefix/suffix with 3332 (Product variation) — blind
         # concatenation produces duplicates ("Snoeischaar snoeischaar").
-        product_name:      { sheet: TradeItemDescription,            attribute: "3301", localised: true, required: true }
+        # translate: true — where the feed carries a name in one language and not another, the
+        # generator fills the gap by translating the sibling and REPORTS the value so it goes
+        # back into MyGS1. Opt-in per field: every fill costs producer tokens and puts more
+        # LLM-written text on the page. A field blank in EVERY language is never filled — there
+        # is nothing to derive from, so it stays a source finding (E23). §4.2.
+        product_name:      { sheet: TradeItemDescription,            attribute: "3301", localised: true, required: true, translate: true }
         # 1083 TradeItemMarketingMessage. NOT the tagline — exhaustive search disproved
         # that (34/36 live taglines match nothing here; 1083 is paragraph-length marketing
         # copy). Kept parsed as a GENERATOR INPUT only; feeds no ACF slot (see acf_map).
@@ -98,20 +103,25 @@ clients:
         # longer fills, so its value_too_long findings were measuring the wrong field.
         # report_issues: false — a generator input; its blanks are the generator's future
         # work, not today's source-fix queue. §4.2.
-        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true, report_issues: false, required_group: marketing_copy }
+        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true, report_issues: false, required_group: marketing_copy, translate: true }
         # 1067 TradeItemFeatureBenefit = the ranked USP source (tagline + Eigenschappen) when
         # present. multivalue: true joins every TradeItemFeatureBenefit[n] slot with a newline so
         # the generator sees all of them (the feed spreads USPs across slots AND newline-separates
         # within a slot); the generator splits on newlines to rank. report_issues: false — a
         # generator input, its blanks are the generator's work (flagged there), not the source queue.
-        description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true, multivalue: true, report_issues: false, required_group: marketing_copy }
+        description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true, multivalue: true, report_issues: false, required_group: marketing_copy, translate: true }
         brand:             { sheet: TradeItemDescription,            attribute: "3336", required: true }
         net_content:       { sheet: TradeItemMeasurements,           attribute: "3510", with_unit: true, required: true }
         gpc_brick_code:    { sheet: BrickGPCCommercialData,          attribute: GpcCategoryCode, required: true }
         image_url:         { sheet: ReferencedFileDetailInformation, attribute: "2485", primary_file: true, required: true }
-      # Named pass-through attributes carried verbatim into ProductRecord.extras.
+      # Named pass-through attributes carried verbatim into ProductRecord. A `localised: true`
+      # extra keeps EVERY configured language, in ProductRecord.extras_localised; the rest are
+      # one flat value in ProductRecord.extras.
       gdsn_extras:
-        functional_name:   { sheet: TradeItemDescription, attribute: "3301", localised: true }
+        functional_name:   { sheet: TradeItemDescription, attribute: "3301", localised: true, translate: true }
+        # No translate: logistics_name and marketing_name are in_matrix: false because nothing
+        # consumes them. Filling a language gap in a value no page reads is producer tokens
+        # spent on nothing.
         logistics_name:    { sheet: TradeItemDescription, attribute: "3297", localised: true, in_matrix: false }
         # 3318 = the old product_name source, kept as a pass-through now the title comes
         # from 3301. Carried, not published: it holds the brand-prefix typos ("Nociplast",
@@ -120,9 +130,10 @@ clients:
         marketing_name:    { sheet: TradeItemDescription, attribute: "3318", localised: true, in_matrix: false }
         # --- Content-generator inputs (see docs/clients/democlient-generator-spec.md) ---
         # 3332 Product variation — the intelligent title suffix. Near-empty (4/127), so the
-        # generator's title step is a deterministic dedup rule, not LLM work. Localised, but
-        # only the default-language token is carried (extras collapse to one language).
-        product_variation: { sheet: TradeItemDescription,   attribute: "3332", localised: true }
+        # generator's title step is a deterministic dedup rule, not LLM work. It is suffixed
+        # onto the title of every language, so it is translated where the feed has it in one
+        # language only — otherwise a French title ends in a Dutch word.
+        product_variation: { sheet: TradeItemDescription,   attribute: "3332", localised: true, translate: true }
         # Dimensions (all 127/127) carry a MeasurementUnitCode ("MMT" = mm); with_unit keeps
         # the code so the Technische-details assembler decodes it via lib/units like
         # net_content. Feed both the deterministic spec line and the Eigenschappen prompt.
@@ -132,7 +143,11 @@ clients:
         # Material (75/127) is language-agnostic (Information[0]/Material[n]/Value, no
         # LanguageCode pair) so it is a scalar, matched by the path segment "Material", not a
         # number. Watch for the junk value "zzzanders" — the generator treats it as absent.
-        material:          { sheet: BrickGPCCommercialData,  attribute: "Material" }
+        # translate: true because it renders verbatim in Technische details on EVERY language's
+        # page, so a French page otherwise reads "Matériau: kunststof". Note the asymmetry with
+        # the fields above: GS1 has no per-language slot for 4.012, so the translation cannot be
+        # put back into MyGS1 — it is a page fix, and the report says so on the row.
+        material:          { sheet: BrickGPCCommercialData,  attribute: "Material", translate: true }
 
     wordpress:
       site_url: "https://www.democlient.nl"
