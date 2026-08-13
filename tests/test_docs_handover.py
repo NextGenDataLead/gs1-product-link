@@ -96,3 +96,39 @@ def test_the_install_doc_does_not_claim_the_process_list_is_uploaded() -> None:
         "once claimed the Data screen accepts it, which sends an operator looking for a button "
         "that does not exist"
     )
+
+
+# --- the example config is the only record of client policy that lives in git ----------------
+
+
+def test_the_example_config_demonstrates_the_mandatory_field_options() -> None:
+    """`clients.yml` is gitignored, so the example is where these options are documented.
+
+    A real client's `required` markings never reach the repository — which means the example is
+    the only thing a second client can be built from, and the only evidence in git that the
+    options exist at all. It went one release without them; this stops that recurring.
+    """
+    gdsn_map = _example_client()["export"]["gdsn_map"]  # type: ignore[index,call-overload]
+    assert isinstance(gdsn_map, dict)
+
+    required = {name for name, src in gdsn_map.items() if src.get("required")}
+    grouped = {
+        name: src["required_group"] for name, src in gdsn_map.items() if src.get("required_group")
+    }
+
+    assert required, "clients.example.yml shows no `required: true` field"
+    assert grouped, "clients.example.yml shows no `required_group` — the either-or form"
+    # The group needs at least two members, or it demonstrates nothing an either-or is for.
+    assert len(set(grouped.values())) == 1
+    assert len(grouped) >= 2
+
+
+def test_the_example_config_never_marks_a_field_required_and_grouped() -> None:
+    """They answer different questions; the example must not model the contradiction."""
+    gdsn_map = _example_client()["export"]["gdsn_map"]  # type: ignore[index,call-overload]
+    both = [
+        name
+        for name, src in gdsn_map.items()  # type: ignore[union-attr]
+        if src.get("required") and src.get("required_group")
+    ]
+    assert both == []

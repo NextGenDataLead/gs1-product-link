@@ -68,6 +68,20 @@ clients:
       # ProductRecord field → GDSN attribute source. `attribute` is the GDSN attribute
       # number (e.g. "3297") or a path segment name (e.g. GpcCategoryCode). Discover
       # these by running: python -m scripts.inspect_export input/democlient/products.xlsx
+      # `required: true` holds a SKU out of publishing entirely while the value is missing
+      # (edge E23) — in EVERY language, so a product is never half-published: a page built
+      # from an incomplete record still publishes and its QR still resolves, and it looks
+      # finished until someone reads it. A localised field must carry a value in each of
+      # `wordpress.languages`. The gap is reported per GTIN in the data-quality report, with
+      # the GDSN attribute to fill; it is fixed in MyGS1, never downstream.
+      #
+      # `required_group: NAME` is the either-or form: the group is satisfied when **at least
+      # one** member carries a value, so alternatives can be declared without making each one
+      # individually mandatory. `marketing_copy` below is the case it exists for — the content
+      # generator writes from attr 1083 *or* 1067 and needs only one of them, so neither is
+      # required alone but the pair is. Mutually exclusive with `required`.
+      #
+      # Both are optional and default off: a field left unmarked never blocks.
       gdsn_map:
         # 3301 Functional Name = the page title (big name). The clean functional name
         # ("voegstrijker"), matching the live "Cable Organiser" style — NOT 3318, which
@@ -76,7 +90,7 @@ clients:
         # 2026-07-17. No strip_prefix — 3301 has no brand prefix. See docs §4.1.
         # DEFERRED to the generator: prefix/suffix with 3332 (Product variation) — blind
         # concatenation produces duplicates ("Snoeischaar snoeischaar").
-        product_name:      { sheet: TradeItemDescription,            attribute: "3301", localised: true }
+        product_name:      { sheet: TradeItemDescription,            attribute: "3301", localised: true, required: true }
         # 1083 TradeItemMarketingMessage. NOT the tagline — exhaustive search disproved
         # that (34/36 live taglines match nothing here; 1083 is paragraph-length marketing
         # copy). Kept parsed as a GENERATOR INPUT only; feeds no ACF slot (see acf_map).
@@ -84,17 +98,17 @@ clients:
         # longer fills, so its value_too_long findings were measuring the wrong field.
         # report_issues: false — a generator input; its blanks are the generator's future
         # work, not today's source-fix queue. §4.2.
-        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true, report_issues: false }
+        description_short: { sheet: MarketingInformation,            attribute: "1083", localised: true, report_issues: false, required_group: marketing_copy }
         # 1067 TradeItemFeatureBenefit = the ranked USP source (tagline + Eigenschappen) when
         # present. multivalue: true joins every TradeItemFeatureBenefit[n] slot with a newline so
         # the generator sees all of them (the feed spreads USPs across slots AND newline-separates
         # within a slot); the generator splits on newlines to rank. report_issues: false — a
         # generator input, its blanks are the generator's work (flagged there), not the source queue.
-        description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true, multivalue: true, report_issues: false }
-        brand:             { sheet: TradeItemDescription,            attribute: "3336" }
-        net_content:       { sheet: TradeItemMeasurements,           attribute: "3510", with_unit: true }
-        gpc_brick_code:    { sheet: BrickGPCCommercialData,          attribute: GpcCategoryCode }
-        image_url:         { sheet: ReferencedFileDetailInformation, attribute: "2485", primary_file: true }
+        description_long:  { sheet: MarketingInformation,            attribute: "1067", localised: true, multivalue: true, report_issues: false, required_group: marketing_copy }
+        brand:             { sheet: TradeItemDescription,            attribute: "3336", required: true }
+        net_content:       { sheet: TradeItemMeasurements,           attribute: "3510", with_unit: true, required: true }
+        gpc_brick_code:    { sheet: BrickGPCCommercialData,          attribute: GpcCategoryCode, required: true }
+        image_url:         { sheet: ReferencedFileDetailInformation, attribute: "2485", primary_file: true, required: true }
       # Named pass-through attributes carried verbatim into ProductRecord.extras.
       gdsn_extras:
         functional_name:   { sheet: TradeItemDescription, attribute: "3301", localised: true }
