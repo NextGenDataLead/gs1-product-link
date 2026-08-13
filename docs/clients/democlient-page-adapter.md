@@ -542,10 +542,12 @@ source — the filters survive updates to whatever registers them.
   - ~~**To add: the generated-content entries (client requirement).**~~ **Done (generator commit
     7):** `run_plan` writes a separate `output/{client_id}/data/generated_issues.json` (always, even
     empty), one `SourceIssue` per generated (`content_generated`) / adjusted (`content_adjusted`)
-    value and per blank marketing message (`missing_generation_input`), each carrying the
-    source-language value it was derived from so the text can be judged before being transcribed
-    upstream. Once a value lands in MyGS1 the next export supersedes the cached generation
-    (fingerprint miss), and the generator stops firing for that field.
+    value, per filled language gap (`value_translated`), and per marketing message blank in *every*
+    configured language (`missing_generation_input`), each carrying the source-language value it was
+    derived from so the text can be judged before being transcribed upstream. Once a value lands in
+    MyGS1 the next export supersedes the cached generation (fingerprint miss), and the generator
+    stops firing for that field. `value_translated` is the one that closes the loop deliberately:
+    it renders in §4 of the data-quality report with the exact text to paste back.
 - New **image pipeline**: download → convert/resize (Pillow) → upload → dedupe.
 - ~~**Make `tests/integration/test_run_execute_staging.py` safe before it is ever run.**~~ **Done** —
   along with `test_wp_staging.py`, which had the same defect. Both now clean up in a `finally`, so a

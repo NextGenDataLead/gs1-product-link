@@ -77,9 +77,12 @@ third field), so slug/title/`diff_against_state` keep working. Raw 3301 stays in
 - **File:** `output/{client_id}/data/generated_cache.json`.
 - **Model:** pydantic `GeneratedCache`; atomic write reusing the tmp-file + `os.replace` pattern from
   `lib/state.py save_state`.
-- **Key:** `(gtin, language, field)`, each entry carrying an **`input_fingerprint`** = sha256 over the
-  source inputs (canonicalised like `compute_content_hash`): relevant subset of `{1083, 1067,
-  net_content, height, width, depth, material, lang, prompt_version, model}`.
+- **Key:** `(gtin, language)`, one entry carrying the USPs and a `translations` map, plus an
+  **`input_fingerprint`** = sha256 over the source inputs (canonicalised like
+  `compute_content_hash`): `{1083, 1067, net_content, height, width, depth, material,
+  translation_sources, lang, prompt_version}`. `translation_sources` — the other language's text
+  each translation was made from — is in there so editing the Dutch source supersedes the French
+  translation; without it that entry's own inputs are all empty and nothing would move.
 - **Provenance:** stores `provenance:"generated"`, `model`, `prompt_version`, `input_fingerprint`,
   `generated_at`, raw model output, and the **source-language input** it was derived from. Feed values
   are never cached — that absence *is* the provenance line.
@@ -91,15 +94,15 @@ third field), so slug/title/`diff_against_state` keep working. Raw 3301 stays in
 
 The cache is the producer seam. `lib/generator.py` owns a producer-agnostic contract:
 - `GenerationRequest` (gtin, language, the assembled inputs + few-shot voice, `input_fingerprint`,
-  `needs_name`) and `GenerationResult` (`usps`, optional `product_name` for the French fill).
+  `translations`) and `GenerationResult` (`usps`, plus a `translations` map answering them).
   **`usps` is one ranked list: `usps[0]` is the tagline, `usps[1:]` are the Eigenschappen bullets.**
 - `pending_requests(products, cache, cfg) -> list[GenerationRequest]` — the gaps whose fingerprint
   misses the cache (pure).
 - `apply_result(cache, request, result) -> GeneratedCache` — validate a result and write its entry
   with provenance/fingerprint (pure). Both producers write through this.
 - `merge_generated(products, cache, cfg) -> tuple[list[ProductRecord], list[SourceIssue]]` — pure,
-  no network: title combiner, tagline resolution, three-part HTML assembly, French fill, one
-  `SourceIssue` per generated value; used by `run_plan`.
+  no network: title combiner, tagline resolution, three-part HTML assembly, the language-gap
+  fill, one `SourceIssue` per generated value and one per filled value; used by `run_plan`.
 
 An `LLMClient` Protocol (`generate_copy(request) -> GenerationResult`) lets any backend satisfy the
 contract; test fakes and the API client both implement it.
@@ -149,10 +152,11 @@ Real-export split: 8 verbatim, 3 tighten, 243 generate (127 products × 2 langua
 
 ## LLM call shape & prompt
 - **One call per `(gtin, language)`** returning structured JSON via tool-use / strict schema:
-  `{"usps": [...], "product_name"?: "..."}`. USPs are seeded by 1067 (all `TradeItemFeatureBenefit`
-  slots) plus net content / dims / material as context, generated from 1083; `product_name` only
-  when the feed lacks the language (French fill). One call per unit keeps prompts small and cache
-  keys clean. Batch API (50% off) is an optional optimisation.
+  `{"usps": [...], "translations"?: {...}}`. USPs are seeded by 1067 (all `TradeItemFeatureBenefit`
+  slots) plus net content / dims / material as context, generated from 1083; `translations` carries
+  one key per value the feed holds in another language and not this one. One call per unit keeps
+  prompts small and cache keys clean, and means the translation and the copy that quotes it are
+  written together. Batch API (50% off) is an optional optimisation.
 - **Determinism:** `temperature=0`, pinned model id, versioned prompt template, inputs sorted
   deterministically.
 - **Assembly** (`merge_generated`, deterministic): tagline = `usps[0]`; Eigenschappen = `usps[1:]`;
@@ -163,7 +167,10 @@ Real-export split: 8 verbatim, 3 tighten, 243 generate (127 products × 2 langua
   <p><strong>Technische details</strong><br />• {net_content} • {H×W×D} • {material}</p>  <!-- deterministic -->
   ```
 - **Report:** one `content_generated` issue per generated value (with its source-language input),
-  and one `missing_generation_input` issue per language whose 1083 is blank.
+  one `value_translated` per filled language gap (§4 of the data-quality report — the value is what
+  the operator pastes back into MyGS1), and one `missing_generation_input` per language whose 1083
+  is blank **in every configured language**. A 1083 the feed carries in Dutch and not French is a
+  pending translation, not a missing input.
 - **Brand voice:** few-shot block of real feed marketing copy that reads well, per language, in the
   versioned prompt.
 - **Known limitation:** the parser currently captures only `TradeItemFeatureBenefit[0]`; capturing
