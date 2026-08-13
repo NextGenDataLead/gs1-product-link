@@ -52,7 +52,7 @@ from lib.errors import (
     VideoMapError,
     WordPressAPIError,
 )
-from lib.generator import load_cache, pending_requests, prefill_from_feed
+from lib.generator import generation_context, load_cache, pending_requests, prefill_from_feed
 from lib.gs1_dl_client import GS1DigitalLinkClient
 from lib.media_video import (
     VideoMapSummary,
@@ -362,13 +362,18 @@ def check_cache_coverage(cfg: ClientConfig, products: list[ProductRecord]) -> Ch
 
     cache = load_cache(cfg.client_id)
     languages = cfg.wordpress.languages
+    context = generation_context(
+        languages,
+        cfg.wordpress.default_language,
+        cfg.generator.prompt_version,
+        cfg.export.gdsn_map,
+        cfg.export.gdsn_extras,
+    )
     # prefill_from_feed fills the units whose feed copy is usable verbatim, and pending_requests
     # is documented as needing it to have run first. It mutates the cache *in memory* only —
     # nothing here writes it back, so the file on disk is untouched by looking at it.
-    prefill_from_feed(
-        products, cache, languages, cfg.generator.prompt_version, now=datetime.now(UTC)
-    )
-    pending = pending_requests(products, cache, languages, cfg.generator.prompt_version)
+    prefill_from_feed(products, cache, context, now=datetime.now(UTC))
+    pending = pending_requests(products, cache, context)
     total = len(products) * len(languages)
     covered = total - len(pending)
     data: dict[str, object] = {

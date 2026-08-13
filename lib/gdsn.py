@@ -537,7 +537,7 @@ def build_records(  # noqa: PLR0913 — each argument is a distinct input; bundl
         if "product_name" in gdsn_map:
             issues.extend(
                 _check_field_language(
-                    product_name, "product_name", _source_label(gdsn_map["product_name"]), gtin
+                    product_name, "product_name", source_label(gdsn_map["product_name"]), gtin
                 )
             )
         try:
@@ -682,8 +682,13 @@ def _check_length(value: str, limit: int, where: _Where, acc: _Accumulator) -> s
     return value
 
 
-def _source_label(src: GdsnSource) -> str:
-    """Name a field the way the *source system* does, for the report (§SourceIssue)."""
+def source_label(src: GdsnSource) -> str:
+    """Name a field the way the *source system* does, for the report (§SourceIssue).
+
+    Public because ``lib.generator`` needs the same words when it reports a value it filled:
+    the operator searches MyGS1 by the attribute, and two spellings of one attribute in one
+    report is two things to learn.
+    """
     return f"{src.sheet} attr {src.attribute}" if src.attribute else src.sheet
 
 
@@ -740,7 +745,7 @@ def _check_field_language(
 
 def _apply_checks(value: str, src: GdsnSource, field: str, gtin: str, acc: _Accumulator) -> str:
     """Apply the configured source-value expectations, in order."""
-    where = _Where(field=field, source=_source_label(src), gtin=gtin)
+    where = _Where(field=field, source=source_label(src), gtin=gtin)
     if src.strip_prefix:
         value = _strip_prefix(value, src.strip_prefix, where, acc)
     if src.max_length:
@@ -874,7 +879,7 @@ def _resolve_field(
         if chosen is not None:
             acc.scalars[field] = chosen
         elif src.report_issues:
-            _report_blank(_Where(field, _source_label(src), gtin), acc)
+            _report_blank(_Where(field, source_label(src), gtin), acc)
     else:
         _resolve_scalar(ctx, sheet, field, src, gtin, acc)
 
@@ -891,7 +896,7 @@ def _resolve_localised(  # noqa: PLR0913 — one collaborator per step; bundling
             else _localised_picker(sheet, gtin, src.attribute, lang)
         )
         chosen, per_market = _pick_ranked(picker, ctx.market_priority)
-        where = _Where(f"{field}.{lang}", _source_label(src), gtin)
+        where = _Where(f"{field}.{lang}", source_label(src), gtin)
         if src.report_issues:
             _report_inconsistency(per_market, where, acc)
         if chosen is not None:
@@ -910,7 +915,7 @@ def _resolve_scalar(  # noqa: PLR0913 — one collaborator per step; bundling hi
         lambda market: sheet.pick_scalar(gtin, market, src.attribute, src.with_unit),
         ctx.market_priority,
     )
-    where = _Where(field, _source_label(src), gtin)
+    where = _Where(field, source_label(src), gtin)
     if src.report_issues:
         _report_inconsistency(per_market, where, acc)
     if chosen is not None:

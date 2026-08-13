@@ -17,7 +17,7 @@ from pytest_httpx import HTTPXMock
 
 from lib.config import GeneratorConfig
 from lib.errors import GeneratorError, LLMAPIError, MissingCredentialError
-from lib.generator import MODE_TIGHTEN, GenerationInputs, GenerationRequest
+from lib.generator import MODE_TIGHTEN, GenerationInputs, GenerationRequest, TranslationGap
 from lib.llm import ANTHROPIC_VERSION, AnthropicClient, load_voice_template
 
 _KEY_ENV = "TEST_ANTHROPIC_KEY"
@@ -37,7 +37,10 @@ def _config(**overrides: Any) -> GeneratorConfig:
 
 
 def _request(
-    *, mode: str = "generate", needs_name: bool = False, candidates: list[str] | None = None
+    *,
+    mode: str = "generate",
+    translations: list[TranslationGap] | None = None,
+    candidates: list[str] | None = None,
 ) -> GenerationRequest:
     return GenerationRequest(
         gtin="04895069002951",
@@ -48,16 +51,25 @@ def _request(
             net_content="4 H87",
         ),
         input_fingerprint="fp-1",
-        needs_name=needs_name,
+        translations=translations or [],
         mode=mode,
         candidates=candidates or [],
     )
 
 
-def _tool_response(usps: list[str], product_name: str | None = None) -> dict[str, Any]:
+def _gap(field: str, source_value: str) -> TranslationGap:
+    return TranslationGap(
+        field=field,
+        source_language="fr",
+        source_value=source_value,
+        source_label="TradeItemDescription attr 3301",
+    )
+
+
+def _tool_response(usps: list[str], translations: dict[str, str] | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {"usps": usps}
-    if product_name is not None:
-        payload["product_name"] = product_name
+    if translations is not None:
+        payload["translations"] = translations
     return {
         "id": "msg_1",
         "type": "message",
@@ -114,16 +126,45 @@ def test_tighten_request_renders_candidates(
     assert "Een hele lange zin die ingekort moet worden" in body["messages"][0]["content"]
 
 
-def test_needs_name_result_carries_product_name(
+def test_a_language_gap_is_rendered_into_the_prompt_with_its_source_text(
+    httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The producer translates in the same call it writes the copy, so it needs the source."""
+    monkeypatch.setenv(_KEY_ENV, "sk-test")
+    httpx_mock.add_response(json=_tool_response(["Slogan"]))
+
+    with AnthropicClient(_config(), _VOICE, sleep=lambda _: None) as client:
+        client.generate_copy(_request(translations=[_gap("product_name", "Lisse-joints")]))
+
+    user_message = json.loads(httpx_mock.get_requests()[-1].content)["messages"][0]["content"]
+    assert "product_name (from fr): Lisse-joints" in user_message
+
+
+def test_translations_are_parsed_off_the_tool_result(
     httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(_KEY_ENV, "sk-test")
-    httpx_mock.add_response(json=_tool_response(["Slogan"], product_name="Lisse-joints"))
+    httpx_mock.add_response(
+        json=_tool_response(["Slogan"], translations={"product_name": "Voegstrijker"})
+    )
 
     with AnthropicClient(_config(), _VOICE, sleep=lambda _: None) as client:
-        result = client.generate_copy(_request(needs_name=True))
+        result = client.generate_copy(_request(translations=[_gap("product_name", "Lisse-joints")]))
 
-    assert result.product_name == "Lisse-joints"
+    assert result.translations == {"product_name": "Voegstrijker"}
+
+
+def test_a_result_with_no_translations_is_an_empty_mapping_not_an_error(
+    httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Most units have no language gap at all; the key is optional in the tool schema.
+    monkeypatch.setenv(_KEY_ENV, "sk-test")
+    httpx_mock.add_response(json=_tool_response(["Slogan"]))
+
+    with AnthropicClient(_config(), _VOICE, sleep=lambda _: None) as client:
+        result = client.generate_copy(_request())
+
+    assert result.translations == {}
 
 
 # --- failure paths -----------------------------------------------------------

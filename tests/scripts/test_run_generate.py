@@ -28,6 +28,7 @@ from lib.config import (
 from lib.generator import (
     ORIGIN_GENERATED,
     GeneratedCache,
+    GenerationContext,
     GenerationRequest,
     GenerationResult,
     load_cache,
@@ -57,6 +58,11 @@ def _write_process_list(tmp_path: Path, gtins: list[str]) -> ProcessListConfig:
     path = tmp_path / "process-list.xlsx"
     workbook.save(path)
     return ProcessListConfig(path=str(path), gtin_column="Barcode")
+
+
+def _ctx(*languages: str) -> GenerationContext:
+    """The context `run_generate` builds for `_make_config` — nothing opted into translation."""
+    return GenerationContext(languages=list(languages), default_language="nl", prompt_version="v1")
 
 
 def _make_config(
@@ -311,8 +317,8 @@ def test_ingest_missing_results_file_exits_2(
 def test_run_producer_fills_cache_via_fake_client() -> None:
     cache = GeneratedCache(client_id="noviplast")
     product = _product()
-    prefill_from_feed([product], cache, ["nl"], "v1", now=_NOW)
-    requests = pending_requests([product], cache, ["nl"], "v1")
+    prefill_from_feed([product], cache, _ctx("nl"), now=_NOW)
+    requests = pending_requests([product], cache, _ctx("nl"))
 
     filled = run_generate.run_producer(
         cache, requests, _FakeClient(), provenance="api:test", now=_NOW

@@ -29,11 +29,14 @@ from lib.config import (
     WordPressConfig,
 )
 from lib.errors import ConfigError
+from lib.gdsn import GdsnSource
 from lib.generator import (
     ORIGIN_GENERATED,
     GeneratedCache,
+    GenerationContext,
     GenerationResult,
     apply_result,
+    generation_context,
     pending_requests,
     save_cache,
 )
@@ -658,6 +661,27 @@ def _bilingual_wp() -> WordPressConfig:
     )
 
 
+#: An export whose title attribute is opted into language-gap filling. `run_plan` derives what
+#: may be filled from `gdsn_map`/`gdsn_extras`, so a config without this fills nothing — which is
+#: the behaviour `test_e18_without_the_field_opted_in_still_skips_french` locks down.
+def _translating_export() -> ExportConfig:
+    return ExportConfig(
+        path="input/acme.xlsx",
+        gdsn_map={
+            "product_name": GdsnSource(
+                sheet="TradeItemDescription", attribute="3301", localised=True, translate=True
+            )
+        },
+    )
+
+
+def _ctx(language: str) -> GenerationContext:
+    """The context `run_plan` will build for `_translating_export`, for seeding a cache with."""
+    return generation_context(
+        [language], "nl", "v1", _translating_export().gdsn_map, _translating_export().gdsn_extras
+    )
+
+
 def _cache_with(gtin: str, language: str, **result: Any) -> None:
     """Build and persist a generated_cache.json with one fresh entry for (gtin, language)."""
     _cache_multi(gtin, {language: result})
@@ -667,7 +691,7 @@ def _cache_multi(gtin: str, entries: dict[str, dict[str, Any]]) -> None:
     """Persist a cache with one fresh entry per language (lang -> GenerationResult kwargs)."""
     cache = GeneratedCache(client_id="acme")
     for language, result in entries.items():
-        request = pending_requests([_product(gtin)], cache, [language], "v1")[0]
+        request = pending_requests([_product(gtin)], cache, _ctx(language))[0]
         apply_result(
             cache,
             request,
@@ -705,7 +729,11 @@ def test_generated_content_reclassifies_changed(
 
 def test_e18_cached_french_name_is_planned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    cfg = _make_config(wordpress=_bilingual_wp(), generator=GeneratorConfig(enabled=True))
+    cfg = _make_config(
+        wordpress=_bilingual_wp(),
+        generator=GeneratorConfig(enabled=True),
+        export=_translating_export(),
+    )
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])  # nl name only
@@ -714,7 +742,7 @@ def test_e18_cached_french_name_is_planned(tmp_path: Path, monkeypatch: pytest.M
         GTIN_A,
         {
             "nl": {"usps": ["Slogan NL"]},
-            "fr": {"usps": ["Slogan"], "product_name": "Nom FR"},
+            "fr": {"usps": ["Slogan"], "translations": {"product_name": "Nom FR"}},
         },
     )
 
@@ -729,7 +757,11 @@ def test_e18_without_cache_still_skips_french(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    cfg = _make_config(wordpress=_bilingual_wp(), generator=GeneratorConfig(enabled=True))
+    cfg = _make_config(
+        wordpress=_bilingual_wp(),
+        generator=GeneratorConfig(enabled=True),
+        export=_translating_export(),
+    )
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])  # nl name only, no fr name/fill
@@ -739,6 +771,39 @@ def test_e18_without_cache_still_skips_french(
 
     planned = {(r.gtin, r.language) for r in _read_plan().rows}
     assert (GTIN_A, "fr") not in planned  # E18 backstop: no fr name anywhere -> skipped
+    assert (GTIN_A, "nl") in planned
+
+
+def test_e18_without_the_field_opted_in_still_skips_french(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Filling is a client's decision, taken in `clients.yml`, not something run_plan assumes.
+
+    Same cache as the passing case above, but an export whose `product_name` carries no
+    `translate: true`, and fr is skipped. Two guards make that so and this test does not separate
+    them — the gap is never requested (`translation_gaps`) *and* the seeded fr entry fingerprints
+    differently, because the opt-in changes `translation_sources`. Each is isolated in
+    `tests/lib/test_generator.py`; what this asserts is the end-to-end consequence.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(wordpress=_bilingual_wp(), generator=GeneratorConfig(enabled=True))
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+    _cache_multi(
+        GTIN_A,
+        {
+            "nl": {"usps": ["Slogan NL"]},
+            "fr": {"usps": ["Slogan"], "translations": {"product_name": "Nom FR"}},
+        },
+    )
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    planned = {(r.gtin, r.language) for r in _read_plan().rows}
+    assert (GTIN_A, "fr") not in planned
+    # nl is planned, so the cache is readable and the run reached classification — the fr row is
+    # missing because of this config, not because the whole merge fell over.
     assert (GTIN_A, "nl") in planned
 
 
