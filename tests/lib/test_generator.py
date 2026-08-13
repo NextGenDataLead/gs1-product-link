@@ -507,6 +507,9 @@ def test_a_translated_value_with_no_gs1_slot_says_so_rather_than_sending_a_waste
     material = next(i for i in issues if i.field == "material.fr")
     assert "language-agnostic in GS1" in material.detail
     assert "no fr slot" in material.detail
+    # …and on `source`, because the report's table renders that column and not the detail: a row
+    # reading only "attr Material" sends the operator hunting for a French field that is not there.
+    assert material.source == "BrickGPCCommercialData attr Material — no per-language slot in GS1"
 
 
 def _cache_with_translations(

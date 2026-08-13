@@ -205,6 +205,88 @@ def test_categories_clean_line_when_no_issues() -> None:
     assert "No unmapped GPC bricks" in _render()
 
 
+# --- §4 translated values ------------------------------------------------------
+
+
+def _translated(gtin: str, field: str, value: str, source: str, detail: str = "d") -> SourceIssue:
+    return SourceIssue(
+        gtin=gtin,
+        field=field,
+        source=source,
+        issue="value_translated",
+        value=value,
+        detail=detail,
+    )
+
+
+def test_translated_values_are_listed_with_the_text_to_paste() -> None:
+    """The value is the deliverable here, not evidence for a count.
+
+    §2 deliberately became a pointer rather than a per-row dump, because nobody acts on generated
+    copy row by row. This section is the opposite: each row is one paste into MyGS1, so the text
+    has to be in the table.
+    """
+    gen = [
+        _translated(
+            "08713195000001",
+            "product_name.fr",
+            "Pic d'arrosage",
+            "TradeItemDescription attr 3301",
+        )
+    ]
+    md = _render(generated_issues=gen, products=_products("08713195000001"))
+
+    assert "## 4. Translated to fill a language gap" in md
+    assert "Pic d'arrosage" in md
+    assert "TradeItemDescription attr 3301" in md
+    assert "fr" in md
+
+
+def test_a_translated_value_lands_after_the_other_mygs1_fixes_not_among_the_blockers() -> None:
+    # It is MyGS1 work that does not hold the GTIN — §3's neighbourhood, not §1's.
+    md = _render(
+        generated_issues=[
+            _translated(
+                "08713195000001", "product_name.fr", "Pic", "TradeItemDescription attr 3301"
+            )
+        ],
+        products=_products("08713195000001"),
+    )
+
+    before, _, after = md.partition("## 3.")
+    assert "Translated to fill a language gap" in after
+    assert "Translated to fill a language gap" not in before
+
+
+def test_the_video_and_category_sections_move_down_to_make_room() -> None:
+    md = _render()
+
+    assert "## 5. Video mapping backlog" in md
+    assert "## 6. Categories" in md
+
+
+def test_an_empty_translation_section_says_none_rather_than_a_headerless_table() -> None:
+    md = _render()
+
+    section = md.partition("## 4.")[2]
+    assert "_None._" in section
+
+
+def test_the_summary_counts_translated_values_as_non_blocking_mygs1_work() -> None:
+    md = _render(
+        generated_issues=[
+            _translated(
+                "08713195000001", "product_name.fr", "Pic", "TradeItemDescription attr 3301"
+            )
+        ],
+        products=_products("08713195000001"),
+    )
+
+    row = next(line for line in md.splitlines() if "Values translated" in line)
+    assert "MyGS1" in row
+    assert "no" in row.lower()
+
+
 def test_observations_section_renders_notes() -> None:
     md = _render(
         observations=[

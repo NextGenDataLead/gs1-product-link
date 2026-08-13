@@ -868,10 +868,18 @@ def _translated_issue(gtin: str, language: str, gap: TranslationGap, value: str)
         else f"{gap.source_label} is language-agnostic in GS1, so there is no {language} slot "
         "to hold this — it stays a page-only translation"
     )
+    # The caveat rides on `source` as well as in the detail, because the report's table renders
+    # the source and not the detail: a row saying only "attr Material" sends the operator into
+    # MyGS1 looking for a French field that does not exist.
+    source = (
+        gap.source_label
+        if gap.has_language_slot
+        else f"{gap.source_label} — no per-language slot in GS1"
+    )
     return SourceIssue(
         gtin=gtin,
         field=f"{gap.field}.{language}",
-        source=gap.source_label,
+        source=source,
         issue="value_translated",
         value=value,
         detail=(

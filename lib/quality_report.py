@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 _HELD = "missing_generation_input"
 _INFERENCE = "generation_inference"
 _GENERATED = "content_generated"
+#: A value the generator rendered into a language the feed lacked — §4's MyGS1 work queue.
+_TRANSLATED = "value_translated"
 #: Issue kinds emitted by the export parser (``source_issues.json``).
 _BLANK = "value_blank"
 _INCONSISTENT = "value_inconsistent_across_markets"
@@ -316,6 +318,13 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
             "Worth a glance",
         ],
         [
+            "Source",
+            "Values translated to fill a language gap",
+            str(by_kind[_TRANSLATED]),
+            "Client (MyGS1)",
+            "No — §4 to paste back",
+        ],
+        [
             "Media",
             "Videos not yet mapped to a GTIN",
             str(len(video_map_issues)),
@@ -516,9 +525,40 @@ def _source_lines(
     ]
 
 
+def _translated_lines(
+    translated: list[SourceIssue], products: dict[str, ProductRecord]
+) -> list[str]:
+    """§4 — the values the tool rendered into a language the feed did not carry them in.
+
+    A work queue, not a confession: each row is one paste into MyGS1, after which the next export
+    carries the value for real and the tool stops writing it. So unlike §2 — which is a count and
+    a pointer, because nobody acts on generated copy row by row — the text belongs in the table.
+
+    Rows whose attribute has no per-language slot in GS1 (attr 4.012 Material) say so instead of
+    naming a field, rather than sending the operator to look for one that does not exist.
+    """
+    rows = [
+        [_label(products, i.gtin), _lang(i.field), _cell(i.source), _cell(i.value)]
+        for i in translated
+    ]
+    return [
+        "## 4. Translated to fill a language gap — paste these into MyGS1",
+        "",
+        "The feed carries each of these in another language but not in this one, so the tool "
+        "**translated it** and the page shows LLM-written text where it should show the client's. "
+        "Nothing here blocks publishing. Putting the value back in MyGS1 is what ends that: the "
+        "next export carries it for real and the tool stops writing it.",
+        "",
+        "**Action: paste each value into the named attribute for that language in MyGS1.**",
+        "",
+        *_table(["GTIN", "Lang", "Source attribute", "Value to paste"], rows),
+        "",
+    ]
+
+
 def _video_lines(video_map_issues: list[SourceIssue], client_id: str) -> list[str]:
     lines = [
-        "## 4. Video mapping backlog",
+        "## 5. Video mapping backlog",
         "",
         f"**{len(video_map_issues)}** video files have no GTIN assigned yet. Client to map each "
         f"filename → GTIN in `input/{client_id}/videos/mapping.yml` (or mark `skip`), then "
@@ -542,7 +582,7 @@ def _category_lines(category_issues: list[SourceIssue]) -> list[str]:
         if category_issues
         else "No unmapped GPC bricks — every product resolves to a site category."
     )
-    return ["## 5. Categories", "", body, ""]
+    return ["## 6. Categories", "", body, ""]
 
 
 def _observations_lines(observations: list[str]) -> list[str]:
@@ -611,6 +651,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     held = sorted({i.gtin for i in generated_issues if i.issue == _HELD})
     inferences = [i for i in generated_issues if i.issue == _INFERENCE]
     generated_count = sum(1 for i in generated_issues if i.issue == _GENERATED)
+    translated = [i for i in generated_issues if i.issue == _TRANSLATED]
     blanks = [i for i in source_issues if i.issue == _BLANK]
     blocking_blanks = [i for i in blanks if _blocks_publish(i.field)]
     degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
@@ -643,6 +684,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
         *_blocking_lines(held, blocking_blanks, products, mandatory_gaps or {}, video_held or []),
         *_review_lines(inferences, generated_count, products, client_id),
         *_source_lines(degrade_blanks, inconsistent, wrong_lang, products),
+        *_translated_lines(translated, products),
         *_video_lines(video_map_issues, client_id),
         *_category_lines(category_issues),
     ]
