@@ -245,12 +245,17 @@ def test_pilot_gate_restricts_to_mapped_and_absent(
 
     assert run_plan.main(["acme", "--products", str(products)]) == 0
 
-    # Only A survives: B lacks an fr video (not_mapped), C already present.
-    assert {r.gtin for r in _read_plan().rows} == {GTIN_A}
+    # Only A gets rows: C is already present (excluded before classification), and B lacks an fr
+    # video — which is now a *hold* rather than a silent drop, so it appears in `skipped`.
+    plan = _read_plan()
+    assert {r.gtin for r in plan.rows} == {GTIN_A}
+    held = {s.gtin for s in plan.skipped if s.reason is SkipReason.NO_CONFIRMED_VIDEO}
+    assert held == {GTIN_B}
+    # Held in *every* language, so the SKU is never half-published.
+    assert {s.language for s in plan.skipped if s.gtin == GTIN_B} == {"nl", "fr"}
     err = capsys.readouterr().err
-    assert "pilot-excluded" in err
-    assert "1 no confirmed video in every language" in err
-    assert "1 already have a page" in err
+    assert "1 pilot-excluded (already have a page)" in err
+    assert "no_confirmed_video" in err  # the hold is tallied, not silently dropped
 
 
 def _pages_only_state(*gtins: str) -> None:

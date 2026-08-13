@@ -113,14 +113,19 @@ def _pilot_gate(
     state: State,
     excluded: dict[str, int],
 ) -> tuple[list[ProductRecord], dict[str, int]]:
-    """Restrict to fully-mapped GTINs, dropping finished ones (§9.5).
+    """Drop GTINs that are already finished (§9.5).
 
-    A no-op unless ``media.restrict_to_mapped_gtins``. Otherwise keeps only products whose GTIN
-    has a client-confirmed video in **every** language *and* is not already finished — so the
-    plan targets the remaining pilot work and every other GTIN is excluded. Extends the tally with
-    ``not_mapped`` (no confirmed video in every language) and ``already_present`` (mapped, but
-    already finished). ``run_execute`` hard-enforces the mapped-only half independently, so a
-    ``--plan`` slice can still update an already-present pilot GTIN.
+    A no-op unless ``media.restrict_to_mapped_gtins``. Extends the tally with ``already_present``
+    (published *and* resolvable). ``run_execute`` hard-enforces the mapped-only rule independently,
+    so a ``--plan`` slice can still update an already-present pilot GTIN.
+
+    **It no longer drops GTINs that lack a confirmed video.** That was a silent exclusion: the
+    product vanished before classification, so it appeared in no plan, no skip list and no report —
+    indistinguishable from a product nobody had asked about. Those GTINs now reach
+    :func:`lib.state.diff_against_state` and are *held* there (E24), which puts them in
+    ``PlanDiff.skipped`` and therefore in the data-quality report, where the missing video can be
+    acted on. Same products excluded from publishing; the difference is that the operator can see
+    which, and why.
 
     **"Finished" means published *and* resolvable, not merely having a state entry.** A
     ``run_execute --only pages`` run writes an entry whose ``gs1_link_set_hash`` is empty — the
@@ -132,12 +137,11 @@ def _pilot_gate(
     every language keeps a half-published GTIN in the queue until its resolver record exists.
     Entries written before ``--only`` existed all carry a real hash, so no prior state reclassifies.
     """
-    excluded = {**excluded, "not_mapped": 0, "already_present": 0}
+    excluded = {**excluded, "already_present": 0}
     media = cfg.media
     if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
         return products, excluded
 
-    allow = fully_mapped_gtins(load_video_map(Path(media.video_map_path)), cfg.wordpress.languages)
     present = {
         canon_gtin(gtin)
         for gtin, entries in state.entries.items()
@@ -145,14 +149,23 @@ def _pilot_gate(
     }
     kept: list[ProductRecord] = []
     for product in products:
-        gtin = product.gtin14
-        if gtin not in allow:
-            excluded["not_mapped"] += 1
-        elif gtin in present:
+        if product.gtin14 in present:
             excluded["already_present"] += 1
         else:
             kept.append(product)
     return kept, excluded
+
+
+def _confirmed_video_gtins(cfg: ClientConfig) -> frozenset[str] | None:
+    """GTINs with a client-confirmed video in every language, or ``None`` when unrestricted.
+
+    ``None`` disables the E24 hold entirely, which is what a client without
+    ``media.restrict_to_mapped_gtins`` wants — not an empty set, which would hold everything.
+    """
+    media = cfg.media
+    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
+        return None
+    return fully_mapped_gtins(load_video_map(Path(media.video_map_path)), cfg.wordpress.languages)
 
 
 def _assign_categories(
@@ -274,6 +287,8 @@ def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> _PlanResult
         cfg.wordpress,
         require_generated_copy=cfg.generator is not None,
         require_hero_image=cfg.media is not None and cfg.media.require_hero_image,
+        gdsn_map=cfg.export.gdsn_map,
+        video_gtins=_confirmed_video_gtins(cfg),
     )
     counts = {c: sum(1 for row in rows if row.classification is c) for c in PlanClassification}
     plan = Plan(
@@ -363,13 +378,9 @@ def _summary(
     not_listed = excluded.get("not_listed", 0)
     if not_listed:
         line += f"; {not_listed} excluded (not on the process list)"
-    pilot_blocked = excluded.get("not_mapped", 0) + excluded.get("already_present", 0)
-    if pilot_blocked:
-        line += (
-            f"; {pilot_blocked} pilot-excluded ("
-            f"{excluded['not_mapped']} no confirmed video in every language, "
-            f"{excluded['already_present']} already have a page)"
-        )
+    already_present = excluded.get("already_present", 0)
+    if already_present:
+        line += f"; {already_present} pilot-excluded (already have a page)"
     if plan.skipped:
         line += f"; {len(plan.skipped)} skipped ({_skip_tally(plan.skipped)})"
     if unmapped_categories:

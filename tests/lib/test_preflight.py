@@ -217,8 +217,13 @@ def _cache_entry() -> CacheEntry:
 # --- Scope --------------------------------------------------------------------
 
 
-def test_scope_applies_the_process_list_and_the_video_allowlist(tmp_path: Path) -> None:
-    """A check that reports on the whole catalogue reports mostly on work nobody asked for."""
+def test_scope_applies_the_process_list_but_not_the_video_allowlist(tmp_path: Path) -> None:
+    """The process list narrows scope; a missing video does not — it holds, visibly (E24).
+
+    A GTIN the operator listed and cannot yet have is a different fact from one they never
+    asked about, and only the first is actionable. Narrowing here made it invisible on every
+    surface at once — this figure, the plan, and the quality report.
+    """
     cfg = _make_config(
         process_list=_write_process_list(tmp_path, [GTIN_A, GTIN_B]),
         media=MediaConfig(
@@ -230,7 +235,8 @@ def test_scope_applies_the_process_list_and_the_video_allowlist(tmp_path: Path) 
 
     scoped = in_scope(cfg, products)
 
-    assert [p.gtin for p in scoped] == [GTIN_A]  # B is unmapped, the third is not listed
+    # B has no confirmed video but stays in scope; only the unlisted third product is dropped.
+    assert [p.gtin for p in scoped] == [GTIN_A, GTIN_B]
 
 
 def test_the_scope_check_names_the_gtins_and_not_only_how_many(tmp_path: Path) -> None:

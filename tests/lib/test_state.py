@@ -21,6 +21,7 @@ import pytest
 
 from lib.config import WordPressConfig
 from lib.errors import ConfigError, StateError
+from lib.gdsn import GdsnSource
 from lib.records import (
     LocalisedText,
     PlanClassification,
@@ -870,6 +871,105 @@ def test_diff_keeps_gtin_with_hero_image_when_required() -> None:
     )
 
     assert [r.language for r in rows] == ["nl"]
+
+
+def _required(**sources: object) -> dict[str, GdsnSource]:
+    return {name: source for name, source in sources.items() if isinstance(source, GdsnSource)}
+
+
+def test_diff_holds_the_whole_sku_when_a_mandatory_field_is_missing() -> None:
+    """E23 is per product, in every language: a half-published SKU reads as success."""
+    gdsn_map = _required(
+        product_name=GdsnSource(sheet="S", attribute="3301", localised=True, required=True)
+    )
+    product = _product(product_name=LocalisedText(values={"nl": "Rugsteun"}))  # no fr
+
+    rows, skipped = diff_against_state(
+        [product],
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        gdsn_map=gdsn_map,
+    )
+
+    assert rows == []  # nl is held too, though nl itself is complete
+    assert [(s.language, s.reason) for s in skipped] == [
+        ("nl", SkipReason.MISSING_MANDATORY_FIELD),
+        ("fr", SkipReason.MISSING_MANDATORY_FIELD),
+    ]
+    assert "product_name.fr (attr 3301)" in skipped[0].detail
+
+
+def test_diff_publishes_when_every_mandatory_field_is_present() -> None:
+    gdsn_map = _required(
+        product_name=GdsnSource(sheet="S", attribute="3301", localised=True, required=True)
+    )
+
+    rows, skipped = diff_against_state(
+        [_product()],
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        gdsn_map=gdsn_map,
+    )
+
+    assert [r.language for r in rows] == ["nl", "fr"]
+    assert skipped == []
+
+
+def test_diff_holds_the_whole_sku_without_a_confirmed_video() -> None:
+    rows, skipped = diff_against_state(
+        [_product()],
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        video_gtins=frozenset({"08713195000000"}),  # some other GTIN
+    )
+
+    assert rows == []
+    assert {s.reason for s in skipped} == {SkipReason.NO_CONFIRMED_VIDEO}
+    assert {s.language for s in skipped} == {"nl", "fr"}
+
+
+def test_diff_publishes_when_the_video_is_confirmed() -> None:
+    rows, skipped = diff_against_state(
+        [_product()],
+        State(client_id="noviplast", entries={}),
+        ["nl"],
+        _wp(),
+        video_gtins=frozenset({"08713195007359"}),
+    )
+
+    assert [r.language for r in rows] == ["nl"]
+    assert skipped == []
+
+
+def test_no_video_set_means_no_video_hold() -> None:
+    """``None`` disables E24; an empty set would hold every product, which is a different thing."""
+    rows, _ = diff_against_state(
+        [_product()], State(client_id="noviplast", entries={}), ["nl"], _wp(), video_gtins=None
+    )
+
+    assert [r.language for r in rows] == ["nl"]
+
+
+def test_missing_data_is_reported_ahead_of_a_missing_video() -> None:
+    """One SKU, one reason: E23 runs first, so the operator is not sent to fix two things."""
+    gdsn_map = _required(
+        product_name=GdsnSource(sheet="S", attribute="3301", localised=True, required=True)
+    )
+    product = _product(product_name=LocalisedText(values={"nl": "Rugsteun"}))
+
+    _, skipped = diff_against_state(
+        [product],
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        gdsn_map=gdsn_map,
+        video_gtins=frozenset(),  # also has no video
+    )
+
+    assert {s.reason for s in skipped} == {SkipReason.MISSING_MANDATORY_FIELD}
 
 
 def test_diff_empty_products_yields_no_rows() -> None:
