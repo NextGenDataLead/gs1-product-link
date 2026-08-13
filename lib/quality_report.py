@@ -92,15 +92,16 @@ def _columns(
     mandatory = [
         FieldColumn(name, f"{name.split('_')[0]}·{src.attribute}", src.localised, True)
         for name, src in gdsn_map.items()
-        if src.required or src.required_group
+        if (src.required or src.required_group) and src.in_matrix
     ]
     optional = [
         FieldColumn(name, f"{name.split('_')[0]}·{src.attribute}", src.localised, False)
         for name, src in gdsn_map.items()
-        if not (src.required or src.required_group)
+        if not (src.required or src.required_group) and src.in_matrix
     ] + [
         FieldColumn(name, name.replace("_", "·"), src.localised, False)
         for name, src in gdsn_extras.items()
+        if src.in_matrix
     ]
     return mandatory + optional
 
