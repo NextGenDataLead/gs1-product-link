@@ -369,3 +369,24 @@ def test_an_empty_scope_says_so_rather_than_rendering_an_empty_table() -> None:
 
     assert "Coverage matrix" in md
     assert "No products in scope" in md
+
+
+def test_a_field_marked_out_of_the_matrix_gets_no_column() -> None:
+    """A column present for every product that feeds nothing is noise in a gaps table.
+
+    `logistics_name` (3297) and `marketing_name` (3318) are pure pass-through: carried verbatim,
+    consumed by nothing, so they read present on every SKU and never indicate work.
+    """
+    md = _render(
+        matrix=_matrix(
+            products=[_p("08713195000001", extras={"logistics_name": "x", "material": "PP"})],
+            gdsn_extras={
+                "logistics_name": GdsnSource(sheet="S", attribute="3297", in_matrix=False),
+                "material": GdsnSource(sheet="S", attribute="Material"),
+            },
+        )
+    )
+
+    header = next(line for line in md.splitlines() if line.startswith("| GTIN |"))
+    assert "logistics" not in header
+    assert "material" in header  # the neighbouring optional column is untouched

@@ -278,6 +278,10 @@
         "required_group": {
           "type": "string",
           "description": "Name of an either-or group: the product satisfies it when at least one member carries a value. For alternatives where neither field is individually mandatory but one must be present (e.g. marketing copy from attr 1083 or 1067). Mutually exclusive with required."
+        },
+        "in_matrix": {
+          "type": "boolean",
+          "description": "Whether this field gets a column in the data-quality report's coverage matrix. Default true. Set false for a value the pipeline carries but nothing consumes — a column present for every product that feeds nothing is noise in a table whose job is to show gaps. Does not stop the field being parsed."
         }
       }
     },

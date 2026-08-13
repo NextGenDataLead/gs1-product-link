@@ -112,12 +112,12 @@ clients:
       # Named pass-through attributes carried verbatim into ProductRecord.extras.
       gdsn_extras:
         functional_name:   { sheet: TradeItemDescription, attribute: "3301", localised: true }
-        logistics_name:    { sheet: TradeItemDescription, attribute: "3297", localised: true }
+        logistics_name:    { sheet: TradeItemDescription, attribute: "3297", localised: true, in_matrix: false }
         # 3318 = the old product_name source, kept as a pass-through now the title comes
         # from 3301. Carried, not published: it holds the brand-prefix typos ("Nociplast",
         # "Noviplat"), which the report may check once its scope widens past published
         # fields.
-        marketing_name:    { sheet: TradeItemDescription, attribute: "3318", localised: true }
+        marketing_name:    { sheet: TradeItemDescription, attribute: "3318", localised: true, in_matrix: false }
         # --- Content-generator inputs (see docs/clients/democlient-generator-spec.md) ---
         # 3332 Product variation — the intelligent title suffix. Near-empty (4/127), so the
         # generator's title step is a deterministic dedup rule, not LLM work. Localised, but

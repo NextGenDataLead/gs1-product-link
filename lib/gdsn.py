@@ -125,6 +125,11 @@ class GdsnSource(BaseModel):
             for: the generator can write from ``1083`` *or* ``1067``, and needs only one of them.
             Mutually exclusive with ``required`` — a field is individually mandatory or part of
             a group, never both.
+        in_matrix: Whether this field gets a column in the data-quality report's coverage matrix.
+            Default ``True``. Set ``False`` for a value the pipeline carries but nothing consumes:
+            a column that is present for every product and feeds nothing is noise in a table whose
+            job is to show where the gaps are. It does **not** stop the field being parsed — the
+            value is still in ``extras`` for whatever future check wants it.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -140,6 +145,7 @@ class GdsnSource(BaseModel):
     report_issues: bool = True
     required: bool = False
     required_group: str = ""
+    in_matrix: bool = True
 
     @model_validator(mode="after")
     def _required_xor_group(self) -> GdsnSource:
