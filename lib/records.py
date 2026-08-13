@@ -173,6 +173,11 @@ class SkipReason(StrEnum):
     NO_GENERATED_COPY = "no_generated_copy"
     #: E22 — ``media.require_hero_image`` is set and the source ``image_url`` is blank.
     BLANK_HERO_IMAGE = "blank_hero_image"
+    #: E23 — a ``gdsn_map`` field marked ``required`` (or a ``required_group``) has no value.
+    #: Held for the whole product, in every language, so a SKU is never half-published.
+    MISSING_MANDATORY_FIELD = "missing_mandatory_field"
+    #: E24 — the product has no client-confirmed video in every configured language.
+    NO_CONFIRMED_VIDEO = "no_confirmed_video"
 
 
 class SkippedUnit(BaseModel):

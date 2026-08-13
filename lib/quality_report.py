@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from lib.mandatory import MandatoryGap
 from lib.records import ProductRecord, SourceIssue
 
 #: Issue kinds emitted by the generator merge (``generated_issues.json``).
@@ -114,11 +115,13 @@ def _header_lines(client_id: str, snapshot: str, freshness: dict[str, str]) -> l
     ]
 
 
-def _summary_lines(
+def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summary row
     generated_issues: list[SourceIssue],
     source_issues: list[SourceIssue],
     video_map_issues: list[SourceIssue],
     category_issues: list[SourceIssue],
+    mandatory_gaps: dict[str, list[MandatoryGap]],
+    video_held: list[str],
 ) -> list[str]:
     by_kind = Counter(i.issue for i in generated_issues)
     held = {i.gtin for i in generated_issues if i.issue == _HELD}
@@ -127,6 +130,20 @@ def _summary_lines(
     degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
     inconsistent = [i for i in source_issues if i.issue == _INCONSISTENT]
     rows = [
+        [
+            "Source",
+            "**Missing mandatory data (E23)**",
+            f"{sum(len(g) for g in mandatory_gaps.values())} gaps / {len(mandatory_gaps)} GTINs",
+            "Client (MyGS1)",
+            "**Yes — whole SKU**",
+        ],
+        [
+            "Media",
+            "**No confirmed video (E24)**",
+            f"{len(video_held)} GTINs",
+            "Client",
+            "**Yes — whole SKU**",
+        ],
         [
             "Copy",
             "Held — no marketing message (1083)",
@@ -195,29 +212,58 @@ def _summary_lines(
     ]
 
 
-def _blocking_lines(
-    held: list[str], blocking_blanks: list[SourceIssue], products: dict[str, ProductRecord]
+def _blocking_lines(  # noqa: PLR0913 — one parameter per independent source of a block
+    held: list[str],
+    blocking_blanks: list[SourceIssue],
+    products: dict[str, ProductRecord],
+    mandatory_gaps: dict[str, list[MandatoryGap]],
+    video_held: list[str],
 ) -> list[str]:
     held_rows = [[_label(products, gtin), "Fill attr 1083 in nl + fr"] for gtin in held]
     blank_rows = [[_label(products, i.gtin), i.field, _cell(i.source)] for i in blocking_blanks]
+    mandatory_rows = [
+        [_label(products, gtin), ", ".join(gap.label for gap in gaps)]
+        for gtin, gaps in sorted(mandatory_gaps.items())
+    ]
+    video_rows = [[_label(products, gtin), "Confirm a video in nl + fr"] for gtin in video_held]
     return [
         "## 1. Blocks publish — fix before these GTINs go live",
         "",
-        "### 1a. Held — no marketing copy (attr 1083)",
+        "### 1a. Missing mandatory source data (E23)",
         "",
-        "Blank marketing message (attr **1083**) and no feature bullets (**1067**) — nothing to "
-        "write honest copy from. These stay in the pilot allowlist (so they keep showing up here) "
-        "but are **held out of publishing** until copy exists. **Action: client fills attr 1083 "
-        "(nl + fr) in MyGS1**, then re-run generation.",
+        "Every field marked `required` in `clients.yml` must carry a value, in **every** language, "
+        "before a SKU may publish — and `marketing_copy` is satisfied by **either** attr 1083 "
+        "**or** 1067, not both. A product missing any of them is **held in all languages**, so a "
+        "SKU is never half-published: a page assembled from an incomplete record still publishes, "
+        "the QR still resolves, and it looks finished until someone reads it. **Action: fill the "
+        "named attributes in MyGS1** — never downstream.",
+        "",
+        *_table(["GTIN", "Missing"], mandatory_rows),
+        "",
+        "### 1b. No client-confirmed video (E24)",
+        "",
+        "`media.restrict_to_mapped_gtins` is set, so a product may publish only once a video is "
+        "confirmed for it in **every** language. These are listed on the process list and cannot "
+        "run yet. **Action: complete `input/{client}/videos/mapping.yml`** — or drop the GTIN from "
+        "the process list if it is not wanted.",
+        "",
+        *_table(["GTIN", "Fix"], video_rows),
+        "",
+        "### 1c. Held — no marketing copy generated yet (E21)",
+        "",
+        "The generator produced nothing for these units. Where 1a already names `marketing_copy`, "
+        "this is the same product seen from the copy pipeline; where it does not, the inputs "
+        "exist but generation has not run. **Action: fill attr 1083 (nl + fr) in MyGS1** if it is "
+        "blank, then re-run generation.",
         "",
         *_table(["GTIN", "Fix"], held_rows),
         "",
-        "### 1b. Blank required page fields — title / image",
+        "### 1d. Blank required page fields — title / image",
         "",
         "A blank **title** (`product_name`) leaves the page with no headline; a blank hero "
-        "**image** (`image_url`) renders it without media. Fix at source in MyGS1. _The pipeline "
-        "holds these out of the plan automatically: a blank title always (E18), a blank image "
-        "when `media.require_hero_image` is set (E22)._",
+        "**image** (`image_url`) renders it without media. Fix at source in MyGS1. _Both are also "
+        "`required`, so 1a holds them; this section names the cross-market source finding behind "
+        "the hold._",
         "",
         *_table(["GTIN", "Field", "Source attribute"], blank_rows),
         "",
@@ -348,6 +394,8 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     snapshot: str,
     freshness: dict[str, str],
     observations: list[str] | None = None,
+    mandatory_gaps: dict[str, list[MandatoryGap]] | None = None,
+    video_held: list[str] | None = None,
 ) -> str:
     """Render the consolidated data-quality report as markdown.
 
@@ -363,6 +411,10 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
             ``category`` — each source has its own producer run, so they can differ.
         observations: Free-text, in-session review notes (``observations.json``) — the
             assistant's own qualitative flags for this run. ``None``/empty renders a placeholder.
+        mandatory_gaps: Missing mandatory source values per GTIN (E23), from
+            :func:`lib.mandatory.missing_mandatory`. Computed by the caller rather than derived
+            here, because it needs the client's ``gdsn_map`` and this renderer stays pure.
+        video_held: GTINs held for want of a client-confirmed video in every language (E24).
 
     Returns:
         The full markdown document.
@@ -378,9 +430,16 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
 
     lines = [
         *_header_lines(client_id, snapshot, freshness),
-        *_summary_lines(generated_issues, source_issues, video_map_issues, category_issues),
+        *_summary_lines(
+            generated_issues,
+            source_issues,
+            video_map_issues,
+            category_issues,
+            mandatory_gaps or {},
+            video_held or [],
+        ),
         *_observations_lines(observations or []),
-        *_blocking_lines(held, blocking_blanks, products),
+        *_blocking_lines(held, blocking_blanks, products, mandatory_gaps or {}, video_held or []),
         *_review_lines(inferences, generated_count, products, client_id),
         *_source_lines(degrade_blanks, inconsistent, wrong_lang, products),
         *_video_lines(video_map_issues, client_id),

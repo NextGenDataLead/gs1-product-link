@@ -270,6 +270,14 @@
         "report_issues": {
           "type": "boolean",
           "description": "Whether this field's cross-market findings — value_blank (absent from every market) and value_inconsistent_across_markets (markets disagree) — reach source_issues.json. Default true. Set false for a field the tool parses but does not publish directly (e.g. a generator input), whose findings are deferred. Does not affect value_too_long / brand_prefix_mismatch."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether a product missing this value may never publish (E23). A localised field must be non-blank in every configured language; the hold is per product, not per language, so a SKU is never half-published. Mutually exclusive with required_group."
+        },
+        "required_group": {
+          "type": "string",
+          "description": "Name of an either-or group: the product satisfies it when at least one member carries a value. For alternatives where neither field is individually mandatory but one must be present (e.g. marketing copy from attr 1083 or 1067). Mutually exclusive with required."
         }
       }
     },

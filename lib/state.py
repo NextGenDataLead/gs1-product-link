@@ -36,6 +36,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 from lib.errors import ConfigError, StateError
+from lib.mandatory import missing_mandatory
+from lib.media_video import canon_gtin
 from lib.records import (
     PlanClassification,
     PlanRow,
@@ -48,6 +50,7 @@ from lib.records import (
 
 if TYPE_CHECKING:
     from lib.config import WordPressConfig
+    from lib.gdsn import GdsnSource
 
 _log = logging.getLogger(__name__)
 
@@ -336,6 +339,8 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     wordpress: WordPressConfig,
     require_generated_copy: bool = False,
     require_hero_image: bool = False,
+    gdsn_map: dict[str, GdsnSource] | None = None,
+    video_gtins: frozenset[str] | None = None,
 ) -> PlanDiff:
     """Classify each ``(GTIN, language)`` against prior state, building plan rows (§4.8, §8.2).
 
@@ -365,6 +370,15 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
         require_hero_image: When True (``media.require_hero_image``), hold any GTIN whose source
             ``image_url`` is blank so a hero-less page is never published (E22). Off by default; a
             runtime image fetch failure still degrades gracefully and publishes (E7).
+        gdsn_map: The client's ``export.gdsn_map``. When given, a product missing any value marked
+            ``required`` — or every member of a ``required_group`` — is held in **all** languages
+            (E23), because a page assembled from an incomplete record publishes and looks finished.
+            The hold is per product on purpose: publishing nl while fr is missing leaves a SKU
+            half-live, which reads as success on every surface that counts pages.
+        video_gtins: GTIN-14s with a client-confirmed video in every language. When given, a
+            product outside it is held in all languages (E24). Passing the set rather than the
+            video map keeps this function free of file reading, and lets the caller decide what
+            "confirmed" means.
 
     Returns:
         A :class:`PlanDiff`: one :class:`~lib.records.PlanRow` per planned
@@ -388,9 +402,28 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     rows: list[PlanRow] = []
     skipped: list[SkippedUnit] = []
     for product in products:
-        # E22 drops the product, but it is recorded per language: the plan's unit of work is
-        # ``(GTIN, language)``, and a count in any other unit cannot be compared with the row
-        # counts beside it.
+        # E23/E24/E22 all drop the whole product, but each is recorded per language: the plan's
+        # unit of work is ``(GTIN, language)``, and a count in any other unit cannot be compared
+        # with the row counts beside it.
+        gaps = missing_mandatory(product, gdsn_map, languages) if gdsn_map else []
+        if gaps:  # E23
+            detail = "missing mandatory source data: " + ", ".join(gap.label for gap in gaps)
+            skipped.extend(
+                _skip(product.gtin, language, SkipReason.MISSING_MANDATORY_FIELD, detail)
+                for language in languages
+            )
+            continue
+        if video_gtins is not None and canon_gtin(product.gtin) not in video_gtins:  # E24
+            skipped.extend(
+                _skip(
+                    product.gtin,
+                    language,
+                    SkipReason.NO_CONFIRMED_VIDEO,
+                    "no client-confirmed video in every language (held)",
+                )
+                for language in languages
+            )
+            continue
         if require_hero_image and not (product.image_url or "").strip():  # E22
             skipped.extend(
                 _skip(

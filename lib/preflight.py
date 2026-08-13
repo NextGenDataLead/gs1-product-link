@@ -56,9 +56,7 @@ from lib.generator import load_cache, pending_requests, prefill_from_feed
 from lib.gs1_dl_client import GS1DigitalLinkClient
 from lib.media_video import (
     VideoMapSummary,
-    canon_gtin,
     check_video_map,
-    fully_mapped_gtins,
     list_video_files,
     load_video_map,
     summarize_video_map,
@@ -262,15 +260,11 @@ def in_scope(cfg: ClientConfig, products: list[ProductRecord]) -> list[ProductRe
         except ProcessListError:
             return scoped  # check_process_list reports this; do not fail twice over it
         scoped = [product for product in scoped if product.gtin14 in listed]
-    media = cfg.media
-    if media is not None and media.restrict_to_mapped_gtins and media.video_map_path:
-        try:
-            allow = fully_mapped_gtins(
-                load_video_map(Path(media.video_map_path)), cfg.wordpress.languages
-            )
-        except VideoMapError:
-            return scoped  # check_video_coverage reports this
-        scoped = [product for product in scoped if canon_gtin(product.gtin) in allow]
+    # Deliberately no video narrowing here. A GTIN without a confirmed video is *in scope and
+    # held* (E24), not out of scope: it is a product the operator asked for and cannot yet have,
+    # which is a different fact from one they never asked about, and only the first is actionable.
+    # Narrowing here made it invisible on every surface at once — this figure, the plan, and the
+    # quality report — so the missing video looked like nothing rather than like work.
     return scoped
 
 

@@ -29,9 +29,12 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lib.config import resolve_client_id
+from lib.config import get_client, resolve_client_id
 from lib.env import load_env
-from lib.errors import ConfigError
+from lib.errors import ConfigError, ExportParseError, VideoMapError
+from lib.mandatory import MandatoryGap, missing_mandatory
+from lib.media_video import fully_mapped_gtins, load_video_map
+from lib.preflight import in_scope
 from lib.quality_report import render_quality_report
 from lib.records import ProductRecord, SourceIssue
 
@@ -69,6 +72,49 @@ def _load_products(path: Path) -> dict[str, ProductRecord]:
     data = json.loads(path.read_text(encoding="utf-8"))
     products = [ProductRecord.model_validate(item) for item in data]
     return {product.gtin14: product for product in products}
+
+
+def _publish_blocks(
+    client_id: str, products: dict[str, ProductRecord]
+) -> tuple[dict[str, list[MandatoryGap]], list[str]]:
+    """The two whole-SKU holds, recomputed from config rather than read from a run artifact.
+
+    Recomputed on purpose: the report must be able to say what blocks publishing *today*, from an
+    export the operator may have replaced since the last ``run_plan``. Reading a stale plan would
+    describe a run rather than the data, and the data is what the client has to fix.
+
+    Restricted to the products in scope, so the report lists work the operator asked for rather
+    than the whole catalogue. Any config failure yields empty holds and leaves the rest of the
+    report intact — ``doctor`` is where a broken config is reported, and a quality report that
+    refuses to render because of it helps nobody.
+
+    Returns:
+        ``(gaps by GTIN, GTINs held for want of a confirmed video)``.
+    """
+    try:
+        cfg = get_client(client_id)
+    except (ConfigError, ExportParseError):
+        return {}, []
+
+    scoped = in_scope(cfg, list(products.values()))
+    languages = cfg.wordpress.languages
+    gaps = {
+        product.gtin14: found
+        for product in scoped
+        if (found := missing_mandatory(product, cfg.export.gdsn_map, languages))
+    }
+
+    media = cfg.media
+    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
+        return gaps, []
+    try:
+        confirmed = fully_mapped_gtins(load_video_map(Path(media.video_map_path)), languages)
+    except VideoMapError:
+        return gaps, []  # the video-map section reports this; do not fail twice over it
+    # Products already held by E23 are not listed again here: E23 runs first, so naming the same
+    # SKU twice would imply two independent blocks where the first already stops the run.
+    held = [p.gtin14 for p in scoped if p.gtin14 not in gaps and p.gtin14 not in confirmed]
+    return gaps, sorted(held)
 
 
 def _load_observations(path: Path) -> list[str]:
@@ -125,16 +171,21 @@ def main(argv: list[str] | None = None) -> int:
         issues[key] = _load_issues(path)
         freshness[key] = _mtime(path)
 
+    products = _load_products(data_dir / "products.json")
+    mandatory_gaps, video_held = _publish_blocks(client_id, products)
+
     markdown = render_quality_report(
         client_id=client_id,
         source_issues=issues["source"],
         generated_issues=issues["generated"],
         video_map_issues=issues["video_map"],
         category_issues=issues["category"],
-        products=_load_products(data_dir / "products.json"),
+        products=products,
         snapshot=datetime.now(UTC).strftime("%Y-%m-%d"),
         freshness=freshness,
         observations=_load_observations(data_dir / "observations.json"),
+        mandatory_gaps=mandatory_gaps,
+        video_held=video_held,
     )
 
     out = Path(args.out) if args.out else Path("output") / client_id / "data-quality-report.md"

@@ -35,7 +35,7 @@ from difflib import SequenceMatcher
 from typing import Final, NamedTuple
 
 import openpyxl
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from lib.errors import ExportParseError
 from lib.records import ProductRecord, SourceIssue, _coerce_cell, build_product_record
@@ -115,6 +115,16 @@ class GdsnSource(BaseModel):
             source-fix queue, and surfacing them now only asks the operator about a field
             they cannot see on the page. Does not affect ``value_too_long`` /
             ``brand_prefix_mismatch``, which are gated by ``max_length`` / ``strip_prefix``.
+        required: Whether a product missing this value may never publish (E23). A localised
+            field must be non-blank in **every** configured language: the hold is per *product*,
+            not per language, so a SKU is never half-published — see
+            :func:`lib.mandatory.missing_mandatory`.
+        required_group: Name of an either-or group. A product satisfies the group when **at
+            least one** member carries a value, so alternatives can be declared without making
+            each one individually mandatory. Noviplast's marketing copy is the case this exists
+            for: the generator can write from ``1083`` *or* ``1067``, and needs only one of them.
+            Mutually exclusive with ``required`` — a field is individually mandatory or part of
+            a group, never both.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -128,6 +138,18 @@ class GdsnSource(BaseModel):
     strip_prefix: str = ""
     max_length: int = 0
     report_issues: bool = True
+    required: bool = False
+    required_group: str = ""
+
+    @model_validator(mode="after")
+    def _required_xor_group(self) -> GdsnSource:
+        """``required`` and ``required_group`` answer different questions; naming both is a bug."""
+        if self.required and self.required_group:
+            raise ValueError(
+                "a gdsn_map field is either individually required or part of a required_group, "
+                "not both"
+            )
+        return self
 
 
 # --- Column / sheet models ---------------------------------------------------
