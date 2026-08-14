@@ -27,7 +27,7 @@ from typing import Final, NamedTuple, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from lib.errors import GeneratorError
-from lib.gdsn import GdsnSource, source_label
+from lib.gdsn import SCALAR_SEPARATOR, GdsnSource, source_label
 from lib.records import LocalisedText, ProductRecord, SourceIssue
 from lib.units import decode_net_content, decode_unit
 
@@ -350,14 +350,34 @@ def _is_placeholder(value: str | None) -> bool:
     return value is not None and value.strip().casefold().startswith(_PLACEHOLDER_PREFIX)
 
 
+def _without_placeholders(value: str | None) -> str | None:
+    """``value`` minus any placeholder slot; ``None`` when no real slot is left.
+
+    ``Material`` repeats in the feed and the parser joins its slots, so testing the whole string
+    for a ``zzz…`` prefix stopped answering the question it was asked: ``kunststof, zzzanders``
+    reads as an ordinary material, which would put the junk on the page *and* report it in §4 as
+    a value to paste into MyGS1 — a blank turned into fabricated master data, the exact failure
+    the placeholder rule exists to prevent.
+
+    A value with no placeholder slot is returned **byte-identical**, never re-joined: the split is
+    a way of finding placeholders, not a licence to normalise the feed's own punctuation.
+    """
+    if value is None:
+        return None
+    parts = value.split(SCALAR_SEPARATOR)
+    if not any(_is_placeholder(part) for part in parts):
+        return value
+    kept = [part for part in parts if part.strip() and not _is_placeholder(part)]
+    return SCALAR_SEPARATOR.join(kept) or None
+
+
 def _material(product: ProductRecord, language: str, fallback: str) -> str | None:
     """The product's material for ``language``, or ``None`` when absent or a placeholder.
 
     Falls back to the default language: until the producer has translated it, a French page
     showing the Dutch word beats one showing no material at all.
     """
-    material = product.extra("material", language, fallback)
-    return None if _is_placeholder(material) else material
+    return _without_placeholders(product.extra("material", language, fallback))
 
 
 def generation_context(  # noqa: PLR0913 — each argument is a distinct client fact
@@ -401,16 +421,19 @@ def generation_context(  # noqa: PLR0913 — each argument is a distinct client 
 
 
 def _carried(values: dict[str, str]) -> dict[str, str]:
-    """Drop the languages whose "value" is blank or a datapool placeholder.
+    """Drop the languages whose "value" is blank, and any placeholder slot within the rest.
 
     A ``zzz…`` placeholder is the feed saying it has no value — :func:`_material` already reads it
     that way for the prompt. Reading it as text to translate would ask the producer to render a
     placeholder into French and then tell the operator to paste that into MyGS1, turning a blank
     into fabricated master data.
+
+    Cleaned rather than merely filtered, because a repeated attribute can be part real and part
+    placeholder: ``kunststof, zzzanders`` is a language the feed *does* carry, and what it carries
+    is ``kunststof``. See :func:`_without_placeholders`.
     """
-    return {
-        lang: text for lang, text in values.items() if text.strip() and not _is_placeholder(text)
-    }
+    cleaned = {lang: _without_placeholders(text) for lang, text in values.items()}
+    return {lang: text for lang, text in cleaned.items() if text and text.strip()}
 
 
 def _field_values(product: ProductRecord, field: str, default_language: str) -> dict[str, str]:

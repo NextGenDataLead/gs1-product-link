@@ -74,6 +74,11 @@ _MAX_HEADER_SCAN: Final = 40
 _ATTR_ID_RE: Final = re.compile(r"\((\d+)\)\s*$")
 _INDEX_RE: Final = re.compile(r"\[\d+\]$")
 
+#: How a language-agnostic ``multivalue`` attribute's repeated slots are joined. Not a newline:
+#: the value renders verbatim inside a page's Technische details, where HTML would collapse one
+#: to a space and turn ``kunststof metaal`` into what reads as a single material.
+SCALAR_SEPARATOR: Final = ", "
+
 
 def _strip_index(segment: str) -> str:
     """Drop a trailing repeated-group index, e.g. ``"DescriptionShort[0]"`` → base."""
@@ -92,9 +97,14 @@ class GdsnSource(BaseModel):
             name (e.g. ``"GpcCategoryCode"``) identifying the column.
         localised: Whether the attribute is a per-language ``LanguageCode``/``Value``
             group (resolved once per configured language).
-        multivalue: For a ``localised`` attribute that repeats (e.g. all
-            ``TradeItemFeatureBenefit[n]`` slots), join every slot's value with a newline
-            instead of taking only the first. Ignored for non-localised sources.
+        multivalue: For an attribute that repeats across ``[n]`` slots (e.g. every
+            ``TradeItemFeatureBenefit[n]``, or ``Material[0..2]``), read every slot instead of
+            only the first. Blank slots are skipped, so a hole in the sequence does not become
+            an empty item. **The separator differs by kind, and deliberately:** a ``localised``
+            attribute joins with a newline, because the generator splits attr 1067 back into
+            ranked USP candidates on exactly that character; a language-agnostic one joins with
+            :data:`SCALAR_SEPARATOR`, because its value renders verbatim in a page's Technische
+            details, where a newline would collapse to a space and read as one fused word.
         with_unit: Whether to append the paired ``MeasurementUnitCode`` to the value.
         primary_file: Whether to resolve the primary referenced-file URI instead of a
             plain attribute (used for ``image_url``).
@@ -263,23 +273,29 @@ class GdsnSheet:
                     values.append(value)
         return values
 
-    def pick_scalar(
-        self, gtin: str, market: str, attribute: str, with_unit: bool = False
-    ) -> str | None:
-        """Return a language-agnostic attribute value, optionally with its unit."""
-        row = self.rows_by_key.get((gtin, market))
-        if row is None:
-            return None
+    def _scalar_value_columns(self, attribute: str) -> list[GdsnColumn]:
+        """The columns holding ``attribute``'s own value, in sheet (slot) order.
+
+        Two regimes, because a GDSN attribute is spelled two ways: a ``LanguageCode``/``Value``
+        group contributes its ``Value`` leaves, and a bare column (``GpcCategoryCode``) is its own
+        value. The second is only consulted when the first finds nothing, so a group's unit and
+        language siblings can never be mistaken for the value.
+        """
         candidates = [c for c in self.columns if c.matches_attribute(attribute)]
-        value_col = next(
-            (c for c in candidates if c.leaf_name == _LEAF_VALUE),
-            None,
-        ) or next(
-            (c for c in candidates if c.leaf_name not in (_LEAF_LANGUAGE, _LEAF_UNIT)),
-            None,
-        )
-        if value_col is None:
-            return None
+        values = [c for c in candidates if c.leaf_name == _LEAF_VALUE]
+        if values:
+            return values
+        return [c for c in candidates if c.leaf_name not in (_LEAF_LANGUAGE, _LEAF_UNIT)]
+
+    def _scalar_cell(
+        self, row: tuple[object, ...], value_col: GdsnColumn, with_unit: bool
+    ) -> str | None:
+        """One slot's value, with its own group's unit code appended when asked for.
+
+        The unit is read from ``value_col``'s own ``group_path``: a repeated attribute carries one
+        ``MeasurementUnitCode`` per slot, and borrowing the first slot's would report the second
+        slot's number in the wrong unit.
+        """
         value = self._cell(row, value_col.index)
         if value is None:
             return None
@@ -289,6 +305,42 @@ class GdsnSheet:
             if unit:
                 return f"{value} {unit}"
         return value
+
+    def pick_scalar(
+        self, gtin: str, market: str, attribute: str, with_unit: bool = False
+    ) -> str | None:
+        """Return a language-agnostic attribute value, optionally with its unit.
+
+        The **first** slot only, blank included: a repeated attribute whose slot 0 is empty reads
+        as empty here, and does not quietly fall through to slot 1. Only a source that opts into
+        ``multivalue`` goes on to :meth:`pick_scalar_all`.
+        """
+        row = self.rows_by_key.get((gtin, market))
+        if row is None:
+            return None
+        value_col = next(iter(self._scalar_value_columns(attribute)), None)
+        if value_col is None:
+            return None
+        return self._scalar_cell(row, value_col, with_unit)
+
+    def pick_scalar_all(
+        self, gtin: str, market: str, attribute: str, with_unit: bool = False
+    ) -> list[str]:
+        """Return every slot's value for a language-agnostic ``attribute``, in slot order.
+
+        The language-agnostic twin of :meth:`pick_localised_all`. Blank slots are skipped rather
+        than yielded as empty strings, so a hole in the middle of ``Material[0..2]`` joins to
+        ``"kunststof, glas"`` and not to ``"kunststof, , glas"``.
+        """
+        row = self.rows_by_key.get((gtin, market))
+        if row is None:
+            return []
+        values: list[str] = []
+        for value_col in self._scalar_value_columns(attribute):
+            value = self._scalar_cell(row, value_col, with_unit)
+            if value:
+                values.append(value)
+        return values
 
     def pick_primary_file(self, gtin: str, market: str) -> str | None:
         """Return the URI of the primary product image, with graceful fallbacks."""
@@ -782,6 +834,34 @@ def _multivalue_picker(
     return pick
 
 
+def _scalar_picker(sheet: GdsnSheet, gtin: str, src: GdsnSource) -> Callable[[str], str | None]:
+    """The single- or every-slot picker for a language-agnostic source, per its ``multivalue``.
+
+    One function because both language-agnostic resolvers — the mapped field and the pass-through
+    extra — need the same choice, and letting them each spell it out is how ``multivalue`` came to
+    mean one thing on one path and nothing on the others.
+    """
+    if src.multivalue:
+        return _multivalue_scalar_picker(sheet, gtin, src.attribute, src.with_unit)
+    return lambda market: sheet.pick_scalar(gtin, market, src.attribute, src.with_unit)
+
+
+def _multivalue_scalar_picker(
+    sheet: GdsnSheet, gtin: str, attribute: str, with_unit: bool
+) -> Callable[[str], str | None]:
+    """A language-agnostic picker that joins every repeated slot with :data:`SCALAR_SEPARATOR`.
+
+    The scalar counterpart of :func:`_multivalue_picker`. Returns ``None`` when the market carries
+    no slot, so :func:`_pick_ranked` skips it and ranks on — matching the single-value contract.
+    """
+
+    def pick(market: str) -> str | None:
+        values = sheet.pick_scalar_all(gtin, market, attribute, with_unit)
+        return SCALAR_SEPARATOR.join(values) if values else None
+
+    return pick
+
+
 def _pick_ranked(
     pick: Callable[[str], str | None], market_priority: list[str]
 ) -> tuple[str | None, dict[str, str]]:
@@ -912,7 +992,7 @@ def _resolve_scalar(  # noqa: PLR0913 — one collaborator per step; bundling hi
 ) -> None:
     """Resolve a language-agnostic field from the highest-priority market that carries it."""
     chosen, per_market = _pick_ranked(
-        lambda market: sheet.pick_scalar(gtin, market, src.attribute, src.with_unit),
+        _scalar_picker(sheet, gtin, src),
         ctx.market_priority,
     )
     where = _Where(field, source_label(src), gtin)
@@ -961,7 +1041,11 @@ def _resolve_localised_extra(
         return None
     values: dict[str, str] = {}
     for lang in ctx.languages:
-        picker = _localised_picker(sheet, gtin, src.attribute, lang)
+        picker = (
+            _multivalue_picker(sheet, gtin, src.attribute, lang)
+            if src.multivalue
+            else _localised_picker(sheet, gtin, src.attribute, lang)
+        )
         chosen, _ = _pick_ranked(picker, ctx.market_priority)
         if chosen is not None:
             values[lang] = chosen
@@ -981,8 +1065,5 @@ def _resolve_extra(ctx: _BuildContext, src: GdsnSource, gtin: str) -> str | None
             lambda market: sheet.pick_primary_file(gtin, market), ctx.market_priority
         )
         return chosen
-    chosen, _ = _pick_ranked(
-        lambda market: sheet.pick_scalar(gtin, market, src.attribute, src.with_unit),
-        ctx.market_priority,
-    )
+    chosen, _ = _pick_ranked(_scalar_picker(sheet, gtin, src), ctx.market_priority)
     return chosen

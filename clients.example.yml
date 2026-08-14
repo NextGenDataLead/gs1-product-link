@@ -148,12 +148,17 @@ clients:
         dim_depth:         { sheet: TradeItemMeasurements,   attribute: "3492", with_unit: true }
         # Material (75/127) is language-agnostic (Information[0]/Material[n]/Value, no
         # LanguageCode pair) so it is a scalar, matched by the path segment "Material", not a
-        # number. Watch for the junk value "zzzanders" — the generator treats it as absent.
-        # translate: true because it renders verbatim in Technische details on EVERY language's
-        # page, so a French page otherwise reads "Matériau: kunststof". Note the asymmetry with
-        # the fields above: GS1 has no per-language slot for 4.012, so the translation cannot be
-        # put back into MyGS1 — it is a page fix, and the report says so on the row.
-        material:          { sheet: BrickGPCCommercialData,  attribute: "Material", translate: true }
+        # number. Watch for the junk value "zzzanders" — the generator treats it as absent, and
+        # does so per slot, so "kunststof, zzzanders" is read as "kunststof".
+        # multivalue: true because a product can be made of more than one: the sheet repeats
+        # Material[0..2], all three labelled Material (4.012), and without the flag slots 1 and 2
+        # were silently discarded. A language-agnostic source joins its slots with ", " (not the
+        # newline used for 1067) because this value renders verbatim in Technische details.
+        # translate: true because it renders on EVERY language's page, so a French page otherwise
+        # reads "Matériau: kunststof". Note the asymmetry with the fields above: GS1 has no
+        # per-language slot for 4.012, so the translation cannot be put back into MyGS1 — it is a
+        # page fix, and the report says so on the row.
+        material:          { sheet: BrickGPCCommercialData,  attribute: "Material", multivalue: true, translate: true }
 
     wordpress:
       site_url: "https://www.democlient.nl"

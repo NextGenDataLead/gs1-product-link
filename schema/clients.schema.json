@@ -248,7 +248,7 @@
         },
         "multivalue": {
           "type": "boolean",
-          "description": "For a localised attribute that repeats (e.g. all TradeItemFeatureBenefit[n] slots), join every slot's value with a newline instead of taking only the first. Ignored for non-localised sources."
+          "description": "For an attribute that repeats across [n] slots (e.g. TradeItemFeatureBenefit[n], or Material[0..2]), read every slot instead of only the first; blank slots are skipped. A localised attribute joins its slots with a newline (the generator splits attr 1067 back into ranked USPs on it); a language-agnostic one joins with ', ', because its value renders verbatim on the page."
         },
         "with_unit": {
           "type": "boolean",
