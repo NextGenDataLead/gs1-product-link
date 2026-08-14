@@ -484,15 +484,16 @@ def _gather_inputs(
     product: ProductRecord, language: str, context: GenerationContext, gaps: list[TranslationGap]
 ) -> GenerationInputs:
     """Assemble the generation inputs for one ``(gtin, language)`` from the record."""
-    name = product.product_name.get(language) if product.product_name else None
     return GenerationInputs(
-        # The default-language fallback is deliberate and used to be accidental: extras collapsed
-        # to one language, so a unit with no name in its own language was seeded with the Dutch
-        # one. That is the right context for the producer — it is what the copy describes — but it
-        # should be a stated rule, not a side effect of how extras were stored.
-        functional_name=(
-            name or product.extra("functional_name", language, context.default_language)
-        ),
+        # Named for the producer's vocabulary — the prompt and the content-generator skill both
+        # call it the functional name — but read from ``product_name``, which *is* attr 3301. It
+        # used to read an ``extras.functional_name`` declared against that same attribute, with
+        # the mapped field as a fallback: one value under two names, and this was the read that
+        # made the duplication look load-bearing. The default-language fallback is the part worth
+        # keeping, and is now a stated rule rather than a side effect of how extras were stored: a
+        # unit with no name in its own language is seeded with the Dutch one, because that is what
+        # the copy describes.
+        functional_name=product.product_name.get(language, context.default_language),
         marketing_message=(
             product.description_short.get(language) if product.description_short else None
         ),

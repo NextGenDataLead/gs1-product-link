@@ -242,30 +242,16 @@ def test_translated_values_are_listed_with_the_text_to_paste() -> None:
     assert "fr" in md
 
 
-def test_one_paste_is_one_row_even_when_two_fields_share_an_attribute() -> None:
-    """Seen in a real run: attr 3301 feeds both `product_name` and `extras.functional_name`.
+def test_every_filled_value_is_one_row_and_the_summary_says_the_same_number() -> None:
+    """One row per filled value, and one number above it that agrees.
 
-    Both are genuinely filled, so both are genuinely reported — but the table is a work queue in
-    the source system's vocabulary, where they are one cell. Two identical rows read as two jobs
-    and invite the operator to wonder what the difference is.
+    The count and the table are assembled in different places, so they can drift — and they once
+    did, for a reason since removed: attr 3301 was declared twice, as `product_name` and again as
+    `extras.functional_name`, so one MyGS1 paste appeared as two rows. That was deduplicated here.
+    The duplicate declaration is gone and `lib.config` refuses one at load, which leaves this test
+    holding the half that still matters: a summary saying 2 above a table of 1 is the kind of
+    small contradiction that makes a reader stop trusting the whole document.
     """
-    same = "TradeItemDescription attr 3301"
-    md = _render(
-        generated_issues=[
-            _translated("08713195007649", "product_name.fr", "câble magnétique", same),
-            _translated("08713195007649", "functional_name.fr", "câble magnétique", same),
-        ],
-        products=_products("08713195007649"),
-    )
-
-    section = md.partition("## 4.")[2].partition("## 5.")[0]
-    assert section.count("câble magnétique") == 1
-    # …and the summary agrees, rather than counting 2 above a table of 1.
-    row = next(line for line in md.splitlines() if "Values translated" in line)
-    assert "| 1 |" in row
-
-
-def test_two_different_values_for_one_attribute_stay_two_rows() -> None:
     same = "TradeItemDescription attr 3301"
     md = _render(
         generated_issues=[
@@ -278,6 +264,10 @@ def test_two_different_values_for_one_attribute_stay_two_rows() -> None:
     section = md.partition("## 4.")[2].partition("## 5.")[0]
     assert "câble magnétique" in section
     assert "Magnetkabel" in section
+    rows = [line for line in section.splitlines() if line.startswith("| `0871")]
+    row = next(line for line in md.splitlines() if "Values translated" in line)
+    assert f"| {len(rows)} |" in row
+    assert len(rows) == 2
 
 
 def test_a_translated_value_lands_after_the_other_mygs1_fixes_not_among_the_blockers() -> None:

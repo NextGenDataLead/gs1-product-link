@@ -247,3 +247,23 @@ def test_data_with_mustache_and_html_is_inert_and_escaped(tmp_path: Path) -> Non
     assert "&lt;script&gt;" in out
     # ... and the injected Mustache tag is not re-rendered (stays literal, not "Acme").
     assert "{{brand}}" in out
+
+
+# --- the shipped client templates --------------------------------------------
+
+#: The committed client templates. Nothing else in the suite renders them, so the only guard on
+#: their contents is a source assertion.
+_CLIENT_TEMPLATES = Path(__file__).resolve().parents[2] / "templates" / "noviplast"
+
+
+@pytest.mark.parametrize("language", ["nl", "fr"])
+def test_the_shipped_client_template_does_not_print_the_product_name_twice(language: str) -> None:
+    """Attr 3301 fed both `{{product_name}}` and an `{{extras.functional_name}}` block below it.
+
+    So the header rendered the same string in the `<h1>` and again beneath it. The duplicate
+    declaration is gone, which means the block would now render empty and warn E12 on every page.
+    """
+    source = (_CLIENT_TEMPLATES / f"product.{language}.html").read_text(encoding="utf-8")
+
+    assert "extras.functional_name" not in source
+    assert "noviplast-product__functional" not in source

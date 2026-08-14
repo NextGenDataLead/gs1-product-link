@@ -80,7 +80,8 @@ everything else is assembly from parsed data. Four things:
   details unit words. Reuse for the net_content bullet.
 - **`lib/gdsn.py`** — the parser. 1083 → `description_short`, 1067 → `description_long`, both
   `report_issues: false` **generator inputs** (`clients.example.yml` gdsn_map). 3301 → `product_name`.
-  `extras` carries pass-throughs (functional_name 3301, logistics_name 3297, marketing_name 3318).
+  `extras` carries pass-throughs (logistics_name 3297, marketing_name 3318). 3301 is declared once,
+  as `product_name` — a second declaration of it as `extras.functional_name` was removed 2026-08-14.
   Dimensions/material sources are **not confirmed mapped** — scope this.
 - **`lib/records.py`** — `ProductRecord` (frozen). `SourceIssue` (records.py:194) is the documented
   home for **generated-content reporting** (records.py:202-204): when the LLM fills a gap the feed

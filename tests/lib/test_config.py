@@ -184,6 +184,10 @@ def test_the_example_config_opts_the_published_fields_into_translation(tmp_path:
     `logistics_name` and `marketing_name` are deliberately out: both are `in_matrix: false`
     because nothing consumes them, so filling a gap in one is tokens spent on a value no page
     reads.
+
+    `functional_name` is absent for a different reason: it is gone from the config entirely
+    rather than merely un-translated. It was a second declaration of attr 3301, which
+    `product_name` already carries — see the duplicate-attribute test below.
     """
     export = load_clients("clients.example.yml")["democlient"].export
 
@@ -193,10 +197,66 @@ def test_the_example_config_opts_the_published_fields_into_translation(tmp_path:
         "description_long",
     ]
     assert [n for n, s in export.gdsn_extras.items() if s.translate] == [
-        "functional_name",
         "product_variation",
         "material",
     ]
+
+
+def test_two_sources_reading_one_attribute_are_refused_at_load(tmp_path: Path) -> None:
+    """One attribute, one field — checked where the operator's own config is read.
+
+    Attr 3301 was declared twice for months: mapped as `product_name` and again as
+    `extras.functional_name`. The same value arrived under two names, so no reader could tell
+    them apart, and the duplication surfaced as two §4 rows for one MyGS1 cell, two identical
+    coverage-matrix columns, and a client template printing the product name under itself.
+
+    Refused at load rather than pinned in a test over `clients.example.yml`, because the
+    duplicate lived in the gitignored `clients.yml` that no test in git can see.
+    """
+    client = _base_client()
+    client["export"] = {
+        "format": "gdsn",
+        "path": "x.xlsx",
+        "gdsn_map": {"product_name": {"sheet": "TradeItemDescription", "attribute": "3301"}},
+        "gdsn_extras": {"functional_name": {"sheet": "TradeItemDescription", "attribute": "3301"}},
+    }
+    path = _write_config(tmp_path, client)
+
+    with pytest.raises(ExportParseError, match="product_name.*functional_name.*3301"):
+        load_clients(path)
+
+
+def test_one_attribute_number_on_two_sheets_is_not_a_duplicate(tmp_path: Path) -> None:
+    """GDSN attribute numbers are only unique within a sheet, so the sheet is half the identity.
+
+    Comparing numbers alone would refuse a legitimate config and push a client back towards the
+    duplicate declaration this check exists to stop.
+    """
+    client = _base_client()
+    client["export"] = {
+        "format": "gdsn",
+        "path": "x.xlsx",
+        "gdsn_map": {"product_name": {"sheet": "TradeItemDescription", "attribute": "3301"}},
+        "gdsn_extras": {"other": {"sheet": "MarketingInformation", "attribute": "3301"}},
+    }
+    path = _write_config(tmp_path, client)
+
+    assert load_clients(path)["acme"].export.gdsn_extras["other"].sheet == "MarketingInformation"
+
+
+def test_the_example_config_reads_each_attribute_once(tmp_path: Path) -> None:
+    """The shipped example has to demonstrate the rule it is validated against."""
+    export = load_clients("clients.example.yml")["democlient"].export
+
+    seen: dict[tuple[str, str], str] = {}
+    duplicates: list[str] = []
+    for name, src in [*export.gdsn_map.items(), *export.gdsn_extras.items()]:
+        key = (src.sheet, src.attribute)
+        if key in seen:
+            duplicates.append(f"{seen[key]} and {name} both read {src.sheet} attr {src.attribute}")
+        seen[key] = name
+
+    assert not duplicates, "; ".join(duplicates)
 
 
 # --- GS1Config.resolve bridge ------------------------------------------------

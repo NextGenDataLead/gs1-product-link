@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-#: Separator for reaching into ``ProductRecord.extras``, e.g. ``extras.functional_name``.
+#: Separator for reaching into ``ProductRecord.extras``, e.g. ``extras.material``.
 _EXTRAS_PREFIX = "extras."
 
 

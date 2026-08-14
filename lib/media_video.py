@@ -114,11 +114,21 @@ class VideoCandidate(NamedTuple):
 
 
 def _candidate_fields(product: ProductRecord) -> list[tuple[str, str]]:
-    """Return ``(field_label, value)`` pairs on ``product`` worth matching a video name against."""
+    """Return ``(field_label, value)`` pairs on ``product`` worth matching a video name against.
+
+    ``product_name`` is attr 3301 and carries every language, so it is the substance of the match.
+    A ``functional_name`` extra used to be listed here too and added nothing: it was a second
+    declaration of that same attribute, so it could only ever repeat what ``product_name`` says.
+
+    The two remaining name extras are read only where the feed carries them **flat**. Both are
+    ``localised: true``, so a current parse puts them in ``extras_localised`` and this loop finds
+    nothing — widening it to read per-language values is a real improvement to the hints and is
+    tracked separately, because it changes which GTIN most files are hinted at.
+    """
     pairs: list[tuple[str, str]] = [
         (f"product_name.{lang}", value) for lang, value in product.product_name.values.items()
     ]
-    for key in ("marketing_name", "functional_name", "logistics_name"):
+    for key in ("marketing_name", "logistics_name"):
         value = product.extras.get(key)
         if value:
             pairs.append((f"extras.{key}", value))
@@ -131,7 +141,8 @@ def rank_candidates(
     """Rank ``products`` against a normalized video name; return the top ``top_n`` hints.
 
     Scores each product by the best :class:`~difflib.SequenceMatcher` ratio across its
-    ``product_name`` (all languages) and ``extras`` marketing/functional/logistics names.
+    ``product_name`` (all languages) and any name extra the feed carries flat — see
+    :func:`_candidate_fields` for what that currently reaches.
     Hints only — the operator decides the actual GTIN.
     """
     scored: list[VideoCandidate] = []

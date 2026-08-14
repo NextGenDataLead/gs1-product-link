@@ -387,6 +387,41 @@ def _validate_column_targets(client_id: str, export: ExportConfig) -> None:
                 )
 
 
+def _validate_unique_attributes(client_id: str, export: ExportConfig) -> None:
+    """One GDSN attribute, one field.
+
+    Two sources reading the same sheet and attribute carry the same value under two names, which
+    nothing downstream can tell apart. Attr 3301 was mapped as ``product_name`` and declared again
+    as ``gdsn_extras.functional_name`` for months, and the duplication surfaced everywhere the
+    value was consumed: two §4 rows asking for one MyGS1 paste, two identical coverage-matrix
+    columns, a client template printing the product name under itself, and a generator input read
+    from the extra with the mapped field as a fallback for a value that could never differ.
+
+    Checked here rather than pinned in a test over ``clients.example.yml`` because the real
+    ``clients.yml`` is gitignored — this is the only place a check can see the file that had the
+    bug. ``lib.preflight.check_config`` calls :func:`load_clients`, so ``scripts.doctor`` reports
+    it before any run.
+
+    The sheet is half the identity: GDSN attribute numbers are unique only within a sheet, so
+    comparing numbers alone would refuse a legitimate config.
+
+    Raises:
+        ExportParseError: If two sources read the same ``(sheet, attribute)``.
+    """
+    if export.format != "gdsn":
+        return
+    seen: dict[tuple[str, str], str] = {}
+    for name, src in [*export.gdsn_map.items(), *export.gdsn_extras.items()]:
+        key = (src.sheet, src.attribute)
+        first = seen.get(key)
+        if first is not None:
+            raise ExportParseError(
+                f"client {client_id!r}: {first!r} and {name!r} both read "
+                f"{src.sheet} attr {src.attribute} — one attribute, one field"
+            )
+        seen[key] = name
+
+
 def load_clients(path: str | Path = DEFAULT_CLIENTS_PATH) -> dict[str, ClientConfig]:
     """Load, validate, and normalise ``clients.yml`` (§4.2).
 
@@ -399,7 +434,8 @@ def load_clients(path: str | Path = DEFAULT_CLIENTS_PATH) -> dict[str, ClientCon
 
     Raises:
         ConfigError: If the file is missing/malformed or fails schema validation.
-        ExportParseError: If a client's column mapping targets an unknown field (E6).
+        ExportParseError: If a client's column mapping targets an unknown field (E6), or two of
+            its sources read the same GDSN sheet and attribute.
     """
     try:
         raw = Path(path).read_text(encoding="utf-8")
@@ -428,6 +464,7 @@ def load_clients(path: str | Path = DEFAULT_CLIENTS_PATH) -> dict[str, ClientCon
         except ValueError as exc:
             raise ConfigError(f"client {client_id!r} is invalid: {exc}") from exc
         _validate_column_targets(client_id, config.export)
+        _validate_unique_attributes(client_id, config.export)
         clients[client_id] = config
     return clients
 

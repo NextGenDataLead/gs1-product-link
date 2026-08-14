@@ -131,6 +131,66 @@ def test_pending_requests_skips_when_fingerprint_matches() -> None:
     assert pending_requests([product], cache, _ctx("nl")) == []
 
 
+# --- the producer's `functional_name` input (attr 3301) ----------------------
+
+
+def test_the_producer_is_seeded_with_this_languages_own_name_when_the_feed_carries_one() -> None:
+    product = _product(product_name=LocalisedText(values={"nl": "Bewateringpin", "fr": "Pic"}))
+
+    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))[0]
+
+    assert request.inputs.functional_name == "Pic"
+
+
+def test_a_unit_with_no_name_in_its_own_language_is_seeded_with_the_default_one() -> None:
+    """The producer has to know what it is describing, and the Dutch name still says so.
+
+    This used to arrive by accident: attr 3301 was declared a second time as an
+    `extras.functional_name`, extras collapsed to one language, and the Dutch value fell out of
+    that. It is now the stated rule on the single source that remains — and it is what stops a
+    French unit with no French 3301 being handed nothing at all.
+    """
+    product = _product(product_name=LocalisedText(values={"nl": "Bewateringpin"}))  # no fr
+
+    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))[0]
+
+    assert request.inputs.functional_name == "Bewateringpin"
+
+
+def test_a_functional_name_extra_no_longer_feeds_the_producer() -> None:
+    """Attr 3301 has one declaration — `product_name` — and nothing reads a second.
+
+    Pinned with an extra holding text the name does not, which is the only way to tell the two
+    reads apart: while both were declared against 3301 they could never differ, so the duplicate
+    read looked load-bearing and was not.
+    """
+    product = _product(
+        product_name=LocalisedText(values={"nl": "Bewateringpin"}),
+        extras_localised={"functional_name": LocalisedText(values={"fr": "autre chose"})},
+    )
+
+    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))[0]
+
+    assert request.inputs.functional_name == "Bewateringpin"
+
+
+def test_translation_sources_carry_only_the_fields_this_unit_is_actually_missing() -> None:
+    """Which is why retiring a duplicate source re-fingerprints the units it filled, not the cache.
+
+    `translation_sources` is part of the fingerprint and holds one key per *gap*, not one per
+    translatable field — so a product the feed carries in every language keeps its cached copy
+    when a translatable source is added or removed.
+    """
+    product = _product(
+        product_name=LocalisedText(values={"nl": "Bewateringpin", "fr": "Pic"}),
+        description_short=LocalisedText(values={"nl": "Water", "fr": "Eau"}),
+    )
+
+    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))[0]
+
+    assert set(request.inputs.translation_sources) == {"material"}  # the nl-only flat extra
+
+
 def test_pending_requests_asks_the_producer_to_fill_each_language_gap() -> None:
     product = _product()  # nl only, in product_name / description_short / material
     requests = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))

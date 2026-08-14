@@ -228,6 +228,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bare row list, so a caller cannot take the rows and leave the drops behind — which is
   what every caller did for as long as the drops were only a log line.
 
+### Changed
+- **One GDSN attribute, one field — enforced at config load, and the one attribute that broke the
+  rule is now declared once.** Attr 3301 was mapped as `product_name` *and* declared again as
+  `gdsn_extras.functional_name`. The two were byte-identical for all 127 products in both languages
+  — necessarily so, being the same sheet and attribute — so the duplication added nothing and cost
+  something everywhere the value was consumed:
+
+  - **The data-quality report asked for one MyGS1 paste twice.** §4 emitted a row per field, so one
+    cell in MyGS1 arrived as two jobs. The previous release papered over this with a dedupe on
+    `(GTIN, language, attribute, value)`; that dedupe is **removed**, because it would have quietly
+    absorbed the next duplicate instead of surfacing it. `lib.config` now raises `ExportParseError`
+    at load when two sources read the same `(sheet, attribute)` — the sheet is half the identity,
+    since GDSN numbers are unique only within a sheet. `lib.preflight.check_config` calls
+    `load_clients`, so `python -m scripts.doctor` reports it before any run.
+  - **The §0 coverage matrix carried two identical columns**, `product·3301` and `functional·name`.
+    The second is gone, so every SKU's `score` drops by one or two. The ordering is unaffected —
+    the shift is uniform.
+  - **The client templates printed the product name twice**, once in the `<h1>` and again in an
+    `{{extras.functional_name}}` block below it. A leftover from when the title came from 3318 and
+    the two were genuinely different. Both blocks are removed; left in, they would render empty and
+    log an E12 unknown-extra warning on every page.
+  - **The generator read the extra with the mapped field as a fallback**, for a value that could not
+    differ. `_gather_inputs` now reads `product_name.get(language, default_language)`. The producer's
+    input keeps the name `functional_name` — it is what the prompt and the content-generator skill
+    call it, and 3301 *is* the Functional Name — so `prompt_version` does not move. The
+    default-language fallback used to arrive by accident, via extras collapsing to one language; it
+    is now stated. That also closes a real hole: a unit with no name in its own language **and** no
+    extra was previously handed nothing at all.
+
+  Consequences worth knowing before the next run:
+  - **Edit your own `clients.yml` too.** It is gitignored and hand-carried (`docs/operator-install.md`
+    lists it among the five handover files), so merging this does not change it — and from this
+    release a `clients.yml` that still declares 3301 twice **will not load**.
+  - **Re-run `parse_export`.** `products.json` still carries `extras_localised.functional_name`
+    until you do. Verified on the real export: the re-parse removes that key and changes nothing
+    else — `product_name` is identical for all 127 products.
+  - **One cached unit is invalidated, not the cache.** `translation_sources` holds one key per
+    *gap*, not per translatable field, and 3301 is present in `fr` for 126 of 127 — so exactly
+    `08713195007649/fr` re-fingerprints. (The cache is empty anyway until the regeneration the
+    previous entry asks for.)
+  - **Every content hash moves, so every row will classify CHANGED once it reaches classification** —
+    `compute_content_hash` dumps the whole record, `extras_localised` included. Measured: all 127
+    products and all 20 live `(GTIN, language)` entries. This is free *now*, because the previous
+    entry already moved every hash and no `run_execute` has followed it; after a post-#93 publish it
+    would cost a second full rewrite of every page.
+
 ### Fixed
 - **`state.json` said `gs1_enabled: true` for products with no GS1 record at all**, and two
   `--revive` paths left a product half-restored. The field was **overloaded**: written by
