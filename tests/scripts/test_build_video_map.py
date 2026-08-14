@@ -47,8 +47,15 @@ def _media(tmp_path: Path, *, map_path: str | None = None) -> MediaConfig:
     )
 
 
-def _product(gtin: str, nl: str) -> ProductRecord:
-    return ProductRecord(gtin=gtin, brand="Acme", product_name=LocalisedText(values={"nl": nl}))
+def _product(
+    gtin: str, nl: str, extras_localised: dict[str, LocalisedText] | None = None
+) -> ProductRecord:
+    return ProductRecord(
+        gtin=gtin,
+        brand="Acme",
+        product_name=LocalisedText(values={"nl": nl}),
+        extras_localised=extras_localised or {},
+    )
 
 
 def _write_products(path: Path, products: list[ProductRecord]) -> None:
@@ -70,7 +77,7 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, cfg: ClientConfig) -> None:
 # --- Draft mode --------------------------------------------------------------
 
 
-def test_draft_lists_every_video_with_blank_gtin_and_hints(
+def test_draft_lists_every_video_in_every_language_with_a_blank_gtin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -87,7 +94,43 @@ def test_draft_lists_every_video_with_blank_gtin_and_hints(
     assert "nl:" in out and "fr:" in out
     assert "DrainSticks_NL.mpeg" in out
     assert 'gtin: ""' in out
-    assert "hint" in out.lower()
+
+
+def test_a_drafted_row_carries_the_ranked_hints_for_its_own_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The hint on each row is the whole value of the draft, and nothing asserted one.
+
+    `"hint" in out` matched the printed header, so a `rank_candidates` returning nothing useful for
+    every file — which is what reading a per-language extra out of flat `extras` did — drafted a
+    file of rows scored on `product_name` alone and this test stayed green. Asserting the row for a
+    named file also exercises `model_dump` → `model_validate` for `extras_localised`, which is the
+    path the draft actually takes.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(_media(tmp_path)))
+    _make_folder(tmp_path, "nl", ["DrainSticks_NL.mpeg"])
+    _make_folder(tmp_path, "fr", [])
+    products = tmp_path / "products.json"
+    _write_products(
+        products,
+        [
+            _product(
+                "08713195001234",
+                "reinigingssticks",
+                {"marketing_name": LocalisedText(values={"nl": "Drain Sticks"})},
+            )
+        ],
+    )
+
+    code = build_video_map.main(["acme", "--products", str(products)])
+
+    row = next(
+        line for line in capsys.readouterr().out.splitlines() if "DrainSticks_NL.mpeg" in line
+    )
+    assert code == 0
+    assert 'gtin: ""' in row
+    assert "08713195001234 'Drain Sticks' (extras.marketing_name.nl 1.00)" in row
 
 
 # --- Check mode --------------------------------------------------------------

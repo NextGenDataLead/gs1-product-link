@@ -275,6 +275,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     would cost a second full rewrite of every page.
 
 ### Fixed
+- **Video-mapping hints had been scoring on the product name alone, silently, since the localised
+  extras landed.** `lib.media_video._candidate_fields` reads `marketing_name` (attr 3318) and
+  `logistics_name` (attr 3297) to match a video filename against the feed. Those two are
+  `localised: true`, and the change that kept every language of a localised extra moved them out of
+  flat `extras` into `extras_localised` — which that function never read. The loop returned nothing
+  from then on.
+
+  It matters because **the filenames are English marketing names and the feed's English is in those
+  two extras**, not in the product name: where attr 3301 reads *"huisdierspeelgoed"* / *"Jouets
+  chiens"*, the French `marketing_name` reads *"Noviplast Pet Buddy"*. Every language of both is now
+  offered, labelled `extras.{name}.{lang}` the way `product_name.{lang}` already was.
+
+  **Measured against the mappings the client has already signed off** — 48 of the 166 rows — asking
+  where the *true* GTIN ranks: it was #1 for 23 and in the top 3 for 27; it is now **#1 for 36 and
+  in the top 3 for 39**. Sixteen rows moved and **none moved backwards**. That sample is
+  self-selected, so it is evidence the scoring improved, not a claim about the 118 rows still unset
+  — for those, the best available hint clears 0.90 for **9 files where it previously did for 2**,
+  and improves for 71 of 118. Scores can only rise here: fields are added, never removed.
+
+  Two things this deliberately does **not** do. It does not re-add `functional_name`, dropped in the
+  same release: that was a second declaration of attr 3301 and could only repeat what the product
+  name already says. And **it does not touch `input/{client}/videos/mapping.yml`.** That file is the
+  operator's document — its trailing comments are the record of *why* each GTIN was chosen — so the
+  hints already written into it are not updated and will not be. The operator shell recomputes hints
+  live, and `build_video_map` still prints its draft to stdout and writes nothing. Because the
+  stored note and the recomputed suggestions can now disagree, the shell labels the stored one
+  *"Noted in the file:"* rather than presenting it as a current hint.
+
+  Nothing on the publish path changes: this is hint ranking only. **Re-run `parse_export` if your
+  `products.json` predates the localised-extras change** — a record that still holds those names
+  flat is read through the fallback and gets exactly the old hints.
+
 - **`state.json` said `gs1_enabled: true` for products with no GS1 record at all**, and two
   `--revive` paths left a product half-restored. The field was **overloaded**: written by
   `run_unpublish` as *"was this deliberately retracted"*, read by `lib.state._is_held` the same
