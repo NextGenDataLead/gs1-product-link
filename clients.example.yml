@@ -117,8 +117,14 @@ clients:
       # Named pass-through attributes carried verbatim into ProductRecord. A `localised: true`
       # extra keeps EVERY configured language, in ProductRecord.extras_localised; the rest are
       # one flat value in ProductRecord.extras.
+      #
+      # One attribute, one field — enforced at load (lib/config._validate_unique_attributes).
+      # 3301 used to be declared here too, as `functional_name`, beside the `product_name` above.
+      # The same value arrived under two names, which nothing downstream could tell apart: the
+      # report asked for one MyGS1 paste twice, the coverage matrix carried two identical columns,
+      # and the template printed the product name under itself. Removed 2026-08-14 — `product_name`
+      # is the only reader of 3301, and the generator takes its title input from there.
       gdsn_extras:
-        functional_name:   { sheet: TradeItemDescription, attribute: "3301", localised: true, translate: true }
         # No translate: logistics_name and marketing_name are in_matrix: false because nothing
         # consumes them. Filling a language gap in a value no page reads is producer tokens
         # spent on nothing.

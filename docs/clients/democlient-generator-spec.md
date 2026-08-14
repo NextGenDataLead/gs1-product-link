@@ -33,7 +33,7 @@ data; the generator owns the handful of slots that require *writing* copy.
 
 | Input | Attr | Sheet | Coverage /127 | Role |
 |---|---|---|---|---|
-| Functional name | 3301 | TradeItemDescription | 127 nl / 126 fr | title base (already `product_name`; raw in `extras.functional_name`) |
+| Functional name | 3301 | TradeItemDescription | 127 nl / 126 fr | title base (`product_name` — its only declaration) |
 | Product variation | 3332 | TradeItemDescription | **4** nl | title suffix — near-empty, deterministic rule only |
 | Marketing message | 1083 | MarketingInformation | 113 nl / 112 fr | primary USP-generation input; blank is flagged (`description_short`) |
 | Feature/benefit | 1067 | MarketingInformation | 6 nl / 5 fr | USP seed where present (`description_long`; only slot [0] parsed today) |
@@ -70,8 +70,11 @@ generated_description: LocalisedText | None = None  # -> product_description (th
   merged at ACF-time (bypasses the hash).
 
 **Title (3301+3332)** overwrites `product_name` via `model_copy(update=...)` in the merge step (not a
-third field), so slug/title/`diff_against_state` keep working. Raw 3301 stays in
-`extras.functional_name` for distinguishability + supersession.
+third field), so slug/title/`diff_against_state` keep working. ~~Raw 3301 stays in
+`extras.functional_name` for distinguishability + supersession.~~ — **superseded 2026-08-14:** that
+extra was a second declaration of the attribute `product_name` already carries, so it distinguished
+nothing; supersession is carried by the input fingerprint. `product_name` is now the only reader of
+3301, and `lib/config` refuses a config that declares one attribute twice.
 
 ## Cache design (`lib/generator.py`)
 - **File:** `output/{client_id}/data/generated_cache.json`.
