@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 _HELD = "missing_generation_input"
 _INFERENCE = "generation_inference"
 _GENERATED = "content_generated"
+#: A value the generator rendered into a language the feed lacked — §4's MyGS1 work queue.
+_TRANSLATED = "value_translated"
 #: Issue kinds emitted by the export parser (``source_issues.json``).
 _BLANK = "value_blank"
 _INCONSISTENT = "value_inconsistent_across_markets"
@@ -109,19 +111,28 @@ def _columns(
 def _mark(product: ProductRecord, column: FieldColumn, languages: list[str]) -> tuple[str, int]:
     """The cell for one product/column, and how many language slots it fills (for the sort).
 
-    ``localised`` describes the *source attribute*, not how the value is stored. A ``gdsn_extras``
-    field lands in :attr:`ProductRecord.extras` as one flat string whatever its source looked like,
-    so it is counted as a single slot — reading it as a per-language group finds nothing and
-    reports every extra missing, which is wrong in the direction that invents work.
+    A ``gdsn_extras`` field is counted per language when the record actually carries it that way
+    (:attr:`ProductRecord.extras_localised`) and as a single slot otherwise. The distinction is
+    the record's, not the config's: ``localised`` describes the *source attribute*, and a
+    ``products.json`` written before extras were kept per language holds one flat string however
+    the attribute looked. Counting that flat value as a language group would find nothing and
+    report every extra missing — wrong in the direction that invents work for the client.
     """
     if column.field not in type(product).model_fields:
-        filled = bool(str(product.extras.get(column.field) or "").strip())
-        return (_PRESENT if filled else _ABSENT), int(filled)
+        localised = product.extras_localised.get(column.field)
+        if localised is None:
+            filled = bool(str(product.extras.get(column.field) or "").strip())
+            return (_PRESENT if filled else _ABSENT), int(filled)
+        return _language_mark(localised.values, languages)
     value = getattr(product, column.field, None)
     if not column.localised:
         filled = bool(str(value or "").strip())
         return (_PRESENT if filled else _ABSENT), int(filled)
-    values = getattr(value, "values", {}) or {}
+    return _language_mark(getattr(value, "values", {}) or {}, languages)
+
+
+def _language_mark(values: dict[str, str], languages: list[str]) -> tuple[str, int]:
+    """The cell for a per-language value: full, half, or empty, plus the slots it fills."""
     have = sum(bool(str(values.get(lang) or "").strip()) for lang in languages)
     if have == len(languages):
         return _PRESENT, have
@@ -136,6 +147,17 @@ def _stalest(freshness: dict[str, str]) -> str:
     """
     dates = [v for v in freshness.values() if len(v) == _ISO_DATE_LEN and v[:4].isdigit()]
     return min(dates) if dates else ""
+
+
+def _paste_key(issue: SourceIssue) -> tuple[str, str, str, str]:
+    """What a §4 row actually asks for: one value, into one attribute, for one language.
+
+    Two of our field names can share one source attribute (3301 feeds both ``product_name`` and
+    ``extras.functional_name``), and in MyGS1 that is one cell. Used for both the table's rows and
+    the summary's count, so the two cannot disagree — a summary that says 4 above a table of 3 is
+    the kind of small contradiction that makes a reader stop trusting the whole document.
+    """
+    return (issue.gtin, _lang(issue.field), issue.source, issue.value)
 
 
 def _blocks_publish(field: str) -> bool:
@@ -305,6 +327,13 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
             str(len([i for i in source_issues if i.issue == _WRONG_LANG])),
             "Client (MyGS1)",
             "Worth a glance",
+        ],
+        [
+            "Source",
+            "Values translated to fill a language gap",
+            str(len({_paste_key(i) for i in generated_issues if i.issue == _TRANSLATED})),
+            "Client (MyGS1)",
+            "No — §4 to paste back",
         ],
         [
             "Media",
@@ -507,9 +536,56 @@ def _source_lines(
     ]
 
 
+def _translated_lines(
+    translated: list[SourceIssue], products: dict[str, ProductRecord]
+) -> list[str]:
+    """§4 — the values the tool rendered into a language the feed did not carry them in.
+
+    A work queue, not a confession: each row is one paste into MyGS1, after which the next export
+    carries the value for real and the tool stops writing it. So unlike §2 — which is a count and
+    a pointer, because nobody acts on generated copy row by row — the text belongs in the table.
+
+    Rows whose attribute has no per-language slot in GS1 (attr 4.012 Material) say so instead of
+    naming a field, rather than sending the operator to look for one that does not exist.
+
+    Deduplicated on what a row actually asks for — GTIN, language, attribute, value — because two
+    of our field names can share one source attribute (3301 feeds both ``product_name`` and
+    ``extras.functional_name``). Both are genuinely filled and genuinely reported, but in MyGS1
+    they are one cell, and two identical rows read as two jobs.
+    """
+    seen: set[tuple[str, str, str, str]] = set()
+    rows: list[list[str]] = []
+    for issue in translated:
+        key = _paste_key(issue)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            [
+                _label(products, issue.gtin),
+                _lang(issue.field),
+                _cell(issue.source),
+                _cell(issue.value),
+            ]
+        )
+    return [
+        "## 4. Translated to fill a language gap — paste these into MyGS1",
+        "",
+        "The feed carries each of these in another language but not in this one, so the tool "
+        "**translated it** and the page shows LLM-written text where it should show the client's. "
+        "Nothing here blocks publishing. Putting the value back in MyGS1 is what ends that: the "
+        "next export carries it for real and the tool stops writing it.",
+        "",
+        "**Action: paste each value into the named attribute for that language in MyGS1.**",
+        "",
+        *_table(["GTIN", "Lang", "Source attribute", "Value to paste"], rows),
+        "",
+    ]
+
+
 def _video_lines(video_map_issues: list[SourceIssue], client_id: str) -> list[str]:
     lines = [
-        "## 4. Video mapping backlog",
+        "## 5. Video mapping backlog",
         "",
         f"**{len(video_map_issues)}** video files have no GTIN assigned yet. Client to map each "
         f"filename → GTIN in `input/{client_id}/videos/mapping.yml` (or mark `skip`), then "
@@ -533,7 +609,7 @@ def _category_lines(category_issues: list[SourceIssue]) -> list[str]:
         if category_issues
         else "No unmapped GPC bricks — every product resolves to a site category."
     )
-    return ["## 5. Categories", "", body, ""]
+    return ["## 6. Categories", "", body, ""]
 
 
 def _observations_lines(observations: list[str]) -> list[str]:
@@ -602,6 +678,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     held = sorted({i.gtin for i in generated_issues if i.issue == _HELD})
     inferences = [i for i in generated_issues if i.issue == _INFERENCE]
     generated_count = sum(1 for i in generated_issues if i.issue == _GENERATED)
+    translated = [i for i in generated_issues if i.issue == _TRANSLATED]
     blanks = [i for i in source_issues if i.issue == _BLANK]
     blocking_blanks = [i for i in blanks if _blocks_publish(i.field)]
     degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
@@ -634,6 +711,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
         *_blocking_lines(held, blocking_blanks, products, mandatory_gaps or {}, video_held or []),
         *_review_lines(inferences, generated_count, products, client_id),
         *_source_lines(degrade_blanks, inconsistent, wrong_lang, products),
+        *_translated_lines(translated, products),
         *_video_lines(video_map_issues, client_id),
         *_category_lines(category_issues),
     ]

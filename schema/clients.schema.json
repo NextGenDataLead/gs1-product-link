@@ -282,6 +282,10 @@
         "in_matrix": {
           "type": "boolean",
           "description": "Whether this field gets a column in the data-quality report's coverage matrix. Default true. Set false for a value the pipeline carries but nothing consumes — a column present for every product that feeds nothing is noise in a table whose job is to show gaps. Does not stop the field being parsed."
+        },
+        "translate": {
+          "type": "boolean",
+          "description": "Whether the generator may fill this value in a language the feed lacks, by translating it from a language the feed has. Default false — opt in per field, because every filled value costs producer tokens and puts more LLM-written text on the page. A field blank in every language is never filled and stays a source finding. Each filled value is reported so it can be put back into MyGS1."
         }
       }
     },

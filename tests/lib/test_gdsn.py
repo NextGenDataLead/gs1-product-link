@@ -504,14 +504,17 @@ def test_scalars_come_from_the_highest_priority_market_with_a_row(tmp_path: Path
 
 def _write_generator_inputs_workbook(tmp_path: Path) -> str:
     """A workbook exercising the three content-generator input shapes as ``gdsn_extras``:
-    a localised variation (3332), a with-unit dimension (3498), and a segment-matched
-    scalar material (no numeric attr id — matched by the ``Material`` path segment)."""
+    a localised variation (3332) carrying two languages, a with-unit dimension (3498), and a
+    segment-matched scalar material (no numeric attr id — matched by the ``Material`` path
+    segment)."""
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
     desc = wb.create_sheet("TradeItemDescription")
     for row in [
-        # name (3301) + brand (3336) + variation (3332), name & variation as LanguageCode/Value
+        # name (3301) + brand (3336) + variation (3332), name & variation as LanguageCode/Value.
+        # Variation carries nl in slot 0 and fr in slot 1 — the repeated-slot shape a localised
+        # attribute uses for a second language.
         [
             "Gtin",
             "TargetMarketCountryCode",
@@ -522,9 +525,29 @@ def _write_generator_inputs_workbook(tmp_path: Path) -> str:
             "BrandNameInformation",
             "Info",
             "Info",
+            "Info",
+            "Info",
         ],
-        [None, None, None, None, "Name[0]", "Name[0]", None, "Variation[0]", "Variation[0]"],
-        [None, None, None, None, "LanguageCode", "Value", "BrandName", "LanguageCode", "Value"],
+        [
+            *[None] * 4,
+            "Name[0]",
+            "Name[0]",
+            None,
+            "Variation[0]",
+            "Variation[0]",
+            "Variation[1]",
+            "Variation[1]",
+        ],
+        [
+            *[None] * 4,
+            "LanguageCode",
+            "Value",
+            "BrandName",
+            "LanguageCode",
+            "Value",
+            "LanguageCode",
+            "Value",
+        ],
         [
             "GTIN (3059)",
             "Country (3179)",
@@ -535,8 +558,14 @@ def _write_generator_inputs_workbook(tmp_path: Path) -> str:
             "Brand (3336)",
             "Variation (3332)",
             "Variation (3332)",
+            "Variation (3332)",
+            "Variation (3332)",
         ],
-        _drow("08713195000794", "528", "nl", "Voegstrijker", "Noviplast", "nl", "Set"),
+        _drow(
+            "08713195000794",
+            "528",
+            *["nl", "Voegstrijker", "Noviplast", "nl", "Set", "fr", "Ensemble"],
+        ),
     ]:
         desc.append(row)
 
@@ -587,11 +616,8 @@ def _write_generator_inputs_workbook(tmp_path: Path) -> str:
     return str(path)
 
 
-def test_gdsn_extras_carry_generator_inputs(tmp_path: Path) -> None:
-    # The generator's parser inputs ride in extras, one entry per shape: a localised token
-    # collapsed to the default language, a dimension with its unit code preserved for later
-    # decoding, and a segment-matched scalar. None of these are published fields.
-    sheets = read_workbook(_write_generator_inputs_workbook(tmp_path))
+def _generator_inputs_config() -> tuple[dict[str, GdsnSource], dict[str, GdsnSource]]:
+    """The ``gdsn_map`` / ``gdsn_extras`` pair the generator-inputs workbook is written for."""
     gdsn_map = {
         "product_name": GdsnSource(sheet="TradeItemDescription", attribute="3301", localised=True),
         "brand": GdsnSource(sheet="TradeItemDescription", attribute="3336"),
@@ -603,13 +629,53 @@ def test_gdsn_extras_carry_generator_inputs(tmp_path: Path) -> None:
         "dim_height": GdsnSource(sheet="TradeItemMeasurements", attribute="3498", with_unit=True),
         "material": GdsnSource(sheet="BrickGPCCommercialData", attribute="Material"),
     }
+    return gdsn_map, gdsn_extras
+
+
+def test_gdsn_extras_carry_generator_inputs(tmp_path: Path) -> None:
+    # The generator's parser inputs ride in extras, one entry per shape: a localised token,
+    # a dimension with its unit code preserved for later decoding, and a segment-matched
+    # scalar. None of these are published fields.
+    sheets = read_workbook(_write_generator_inputs_workbook(tmp_path))
+    gdsn_map, gdsn_extras = _generator_inputs_config()
 
     result = build_records(sheets, gdsn_map, ["528"], ["nl"], "nl", gdsn_extras=gdsn_extras)
 
     record = next(r for r in result.records if r.gtin == "08713195000794")
-    assert record.extras["product_variation"] == "Set"
+    assert record.extra("product_variation", "nl") == "Set"
     assert record.extras["dim_height"] == "250 MMT"  # unit code kept for lib/units decoding
     assert record.extras["material"] == "kunststof"
+
+
+def test_a_localised_extra_keeps_every_configured_language(tmp_path: Path) -> None:
+    """The feed's French token must survive the parse.
+
+    Resolving a localised extra to the default language threw away every other language the
+    feed carried, so a French page rendered the Dutch token — and the report then read as a
+    missing translation when the value was there all along.
+    """
+    sheets = read_workbook(_write_generator_inputs_workbook(tmp_path))
+    gdsn_map, gdsn_extras = _generator_inputs_config()
+
+    result = build_records(sheets, gdsn_map, ["528"], ["nl", "fr"], "nl", gdsn_extras=gdsn_extras)
+
+    record = next(r for r in result.records if r.gtin == "08713195000794")
+    assert record.extras_localised["product_variation"].values == {"nl": "Set", "fr": "Ensemble"}
+    assert record.extra("product_variation", "fr") == "Ensemble"
+    # A localised extra lives in extras_localised only — one home per value, so no reader has
+    # to know which of two dicts is authoritative.
+    assert "product_variation" not in record.extras
+
+
+def test_a_language_agnostic_extra_stays_a_flat_value(tmp_path: Path) -> None:
+    sheets = read_workbook(_write_generator_inputs_workbook(tmp_path))
+    gdsn_map, gdsn_extras = _generator_inputs_config()
+
+    result = build_records(sheets, gdsn_map, ["528"], ["nl", "fr"], "nl", gdsn_extras=gdsn_extras)
+
+    record = next(r for r in result.records if r.gtin == "08713195000794")
+    assert record.extras["material"] == "kunststof"
+    assert "material" not in record.extras_localised
 
 
 def _write_multivalue_workbook(tmp_path: Path) -> str:

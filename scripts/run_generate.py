@@ -60,10 +60,12 @@ from lib.generator import (
     ORIGIN_GENERATED,
     ORIGIN_TIGHTENED,
     GeneratedCache,
+    GenerationContext,
     GenerationRequest,
     GenerationResult,
     LLMClient,
     apply_result,
+    generation_context,
     load_cache,
     pending_requests,
     prefill_from_feed,
@@ -117,7 +119,9 @@ class ResultItem(BaseModel):
     gtin: str
     language: str
     usps: list[str] = Field(min_length=1)
-    product_name: str | None = None
+    #: Field name → that field's value in this unit's language, answering the request's
+    #: ``translations`` gaps. Keys the request did not ask for are dropped on ingest.
+    translations: dict[str, str] = Field(default_factory=dict)
     input_fingerprint: str | None = None
     #: Claims written beyond the literal feed text (attr 1083/1067), surfaced as
     #: ``generation_inference`` findings for human verification before publishing.
@@ -168,9 +172,9 @@ def _load_results(path: Path, client_id: str) -> ResultsFile:
 
 
 def _prepare(
-    cfg: ClientConfig, languages: list[str], products_path: Path, prompt_version: str, now: datetime
+    cfg: ClientConfig, context: GenerationContext, products_path: Path, now: datetime
 ) -> tuple[GeneratedCache, list[GenerationRequest], list[ProductRecord]]:
-    """Load products, narrow them to this run's scope, verbatim-prefill, and compute the gaps.
+    """Load products, narrow them to this run's context, verbatim-prefill, and compute the gaps.
 
     **Scope is applied here, once, because all three producer paths run through it** — ``--emit``,
     ``--ingest`` and ``--backend api``. Before this, none of them knew scope existed: the products
@@ -195,8 +199,8 @@ def _prepare(
     """
     products = in_scope(cfg, _load_products(products_path))
     cache = load_cache(cfg.client_id)
-    prefill_from_feed(products, cache, languages, prompt_version, now=now)
-    requests = pending_requests(products, cache, languages, prompt_version)
+    prefill_from_feed(products, cache, context, now=now)
+    requests = pending_requests(products, cache, context)
     return cache, requests, products
 
 
@@ -276,7 +280,7 @@ def _ingest(
     changed), is skipped with a warning rather than cached. Returns ``(applied, skipped)``.
 
     "No pending request" has **three** causes and the warning names which: the unit is already
-    cached fresh, its inputs changed, or it is no longer in scope. The third arrived when
+    cached fresh, its inputs changed, or it is no longer in context. The third arrived when
     :func:`_prepare` began narrowing to the process list and the video allowlist — a results file
     emitted before the list was pruned still holds those units, and reporting them as "already
     fresh or input changed" would send a reader looking at the feed for a scope decision.
@@ -315,7 +319,7 @@ def _ingest(
             cache,
             request,
             GenerationResult(
-                usps=item.usps, product_name=item.product_name, inferences=item.inferences
+                usps=item.usps, translations=item.translations, inferences=item.inferences
             ),
             origin=_origin_for_mode(request.mode),
             provenance=_INSESSION_PROVENANCE,
@@ -428,13 +432,20 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
         prompt_version = cfg.generator.prompt_version if cfg.generator else DEFAULT_PROMPT_VERSION
-        cache, requests, products = _prepare(cfg, languages, products_path, prompt_version, now)
+        context = generation_context(
+            languages,
+            cfg.wordpress.default_language,
+            prompt_version,
+            cfg.export.gdsn_map,
+            cfg.export.gdsn_extras,
+        )
+        cache, requests, products = _prepare(cfg, context, products_path, now)
         total_units = len(products) * len(languages)
 
         if args.backend == "api":
             filled, api_model = _run_api_backend(cfg, cache, requests, prompt_version, now)
             # Re-derive against the mutated cache so coverage reflects the post-run state.
-            requests = pending_requests(products, cache, languages, prompt_version)
+            requests = pending_requests(products, cache, context)
         elif args.ingest:
             results_path = (
                 Path(args.results) if args.results else _data_path(cfg.client_id, RESULTS_FILENAME)
@@ -443,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
             applied, skipped = _ingest(cache, requests, results, now, products)
             # Re-derive against the mutated cache so coverage reflects the post-ingest state,
             # not the gaps we started with.
-            requests = pending_requests(products, cache, languages, prompt_version)
+            requests = pending_requests(products, cache, context)
         else:
             emit_path = _emit(cfg.client_id, cache, requests, prompt_version, now)
     except (

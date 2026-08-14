@@ -512,7 +512,7 @@ Startup config/credential errors abort immediately with exit 2.
 | E18 | Language has no `product_name.{lang}` for a GTIN | That unit is dropped before classification, recorded in `plan.json` under `skipped`, and surfaced in chat |
 | E19 | State file is corrupt JSON | Backed up to `state.json.corrupt.{ts}`, fresh state, ERROR logged, **and the reset surfaced above the plan counts** |
 | E20 | Two `run_execute` runs interleave | **Not supported.** No lockfile in v0.1. Same-second runs do at least get separate log files (`{ts}-1.jsonl`) |
-| E21 | Generator on, but a `(GTIN, language)` has no generated tagline | Unit dropped so a blank page can never publish; recorded under `skipped`; gap also reported via `missing_generation_input` |
+| E21 | Generator on, but a `(GTIN, language)` has no generated tagline | Unit dropped so a blank page can never publish; recorded under `skipped`; gap also reported via `missing_generation_input` (only when 1083 is blank in every configured language — otherwise it is a pending translation, reported as `value_translated` once filled) |
 | E22 | `media.require_hero_image` set, source `image_url` blank | GTIN held out of the plan, one `skipped` entry per language; reported via `value_blank`. A runtime fetch failure still degrades per E7 |
 
 ### E19 in full — why the reset is safe, and why it must stay loud

@@ -154,6 +154,53 @@ def test_extras_substitution(tmp_path: Path) -> None:
     assert out == "Bucket"
 
 
+def test_a_localised_extra_renders_in_the_pages_own_language(tmp_path: Path) -> None:
+    """The French template must get the French token, not the Dutch one."""
+    for language in ("nl", "fr"):
+        _write(_default_path(tmp_path, language), "{{extras.functional_name}}")
+    engine = TemplateEngine(CLIENT_ID, None, base_dir=tmp_path)
+    product = make_product(
+        extras={},
+        extras_localised={"functional_name": LocalisedText(values={"nl": "Emmer", "fr": "Seau"})},
+    )
+
+    assert engine.render(product, "nl", CLIENT_META) == "Emmer"
+    assert engine.render(product, "fr", CLIENT_META) == "Seau"
+
+
+def test_a_localised_extra_this_language_lacks_falls_back_to_the_default(tmp_path: Path) -> None:
+    """Unlike ACF, a template renders one blob and a hole in it reads as a broken page.
+
+    ``client_meta['default_language']`` is already the template engine's fallback for every
+    other localised field (§3.4), so extras follow the same rule rather than inventing a
+    second one.
+    """
+    _write(_default_path(tmp_path, "fr"), "[{{extras.functional_name}}]")
+    engine = TemplateEngine(CLIENT_ID, None, base_dir=tmp_path)
+    product = make_product(
+        extras={}, extras_localised={"functional_name": LocalisedText(values={"nl": "Emmer"})}
+    )
+
+    assert engine.render(product, "fr", CLIENT_META) == "[Emmer]"
+
+
+def test_a_localised_extra_the_template_names_does_not_warn_as_unknown(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # E12 warns on an extra no product carries; one that lives in extras_localised is carried.
+    _write(_default_path(tmp_path, "nl"), "{{extras.functional_name}}")
+    engine = TemplateEngine(CLIENT_ID, None, base_dir=tmp_path)
+    product = make_product(
+        extras={}, extras_localised={"functional_name": LocalisedText(values={"nl": "Emmer"})}
+    )
+
+    with caplog.at_level(logging.WARNING, logger="lib.templates"):
+        out = engine.render(product, "nl", CLIENT_META)
+
+    assert out == "Emmer"
+    assert "functional_name" not in caplog.text
+
+
 def test_absent_optional_field_renders_empty(tmp_path: Path) -> None:
     _write(_default_path(tmp_path, "nl"), "[{{category}}]")
     engine = TemplateEngine(CLIENT_ID, None, base_dir=tmp_path)

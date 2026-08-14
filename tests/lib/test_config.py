@@ -155,6 +155,50 @@ def test_e6_accepts_valid_targets(tmp_path: Path) -> None:
     assert source.sheet == "TradeItemDescription"
 
 
+def test_translate_is_opt_in_per_field(tmp_path: Path) -> None:
+    """Filling a language gap costs producer tokens, so it is never on by accident."""
+    client = _base_client()
+    client["export"] = {
+        "format": "gdsn",
+        "path": "x.xlsx",
+        "gdsn_map": {
+            "product_name": {"sheet": "S", "attribute": "3301", "localised": True},
+            "description_short": {
+                "sheet": "S",
+                "attribute": "1083",
+                "localised": True,
+                "translate": True,
+            },
+        },
+    }
+    path = _write_config(tmp_path, client)
+
+    gdsn_map = load_clients(path)["acme"].export.gdsn_map
+    assert gdsn_map["product_name"].translate is False
+    assert gdsn_map["description_short"].translate is True
+
+
+def test_the_example_config_opts_the_published_fields_into_translation(tmp_path: Path) -> None:
+    """The example is the documentation of which fields are worth filling.
+
+    `logistics_name` and `marketing_name` are deliberately out: both are `in_matrix: false`
+    because nothing consumes them, so filling a gap in one is tokens spent on a value no page
+    reads.
+    """
+    export = load_clients("clients.example.yml")["democlient"].export
+
+    assert [n for n, s in export.gdsn_map.items() if s.translate] == [
+        "product_name",
+        "description_short",
+        "description_long",
+    ]
+    assert [n for n, s in export.gdsn_extras.items() if s.translate] == [
+        "functional_name",
+        "product_variation",
+        "material",
+    ]
+
+
 # --- GS1Config.resolve bridge ------------------------------------------------
 
 

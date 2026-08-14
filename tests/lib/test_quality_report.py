@@ -205,6 +205,126 @@ def test_categories_clean_line_when_no_issues() -> None:
     assert "No unmapped GPC bricks" in _render()
 
 
+# --- §4 translated values ------------------------------------------------------
+
+
+def _translated(gtin: str, field: str, value: str, source: str, detail: str = "d") -> SourceIssue:
+    return SourceIssue(
+        gtin=gtin,
+        field=field,
+        source=source,
+        issue="value_translated",
+        value=value,
+        detail=detail,
+    )
+
+
+def test_translated_values_are_listed_with_the_text_to_paste() -> None:
+    """The value is the deliverable here, not evidence for a count.
+
+    §2 deliberately became a pointer rather than a per-row dump, because nobody acts on generated
+    copy row by row. This section is the opposite: each row is one paste into MyGS1, so the text
+    has to be in the table.
+    """
+    gen = [
+        _translated(
+            "08713195000001",
+            "product_name.fr",
+            "Pic d'arrosage",
+            "TradeItemDescription attr 3301",
+        )
+    ]
+    md = _render(generated_issues=gen, products=_products("08713195000001"))
+
+    assert "## 4. Translated to fill a language gap" in md
+    assert "Pic d'arrosage" in md
+    assert "TradeItemDescription attr 3301" in md
+    assert "fr" in md
+
+
+def test_one_paste_is_one_row_even_when_two_fields_share_an_attribute() -> None:
+    """Seen in a real run: attr 3301 feeds both `product_name` and `extras.functional_name`.
+
+    Both are genuinely filled, so both are genuinely reported — but the table is a work queue in
+    the source system's vocabulary, where they are one cell. Two identical rows read as two jobs
+    and invite the operator to wonder what the difference is.
+    """
+    same = "TradeItemDescription attr 3301"
+    md = _render(
+        generated_issues=[
+            _translated("08713195007649", "product_name.fr", "câble magnétique", same),
+            _translated("08713195007649", "functional_name.fr", "câble magnétique", same),
+        ],
+        products=_products("08713195007649"),
+    )
+
+    section = md.partition("## 4.")[2].partition("## 5.")[0]
+    assert section.count("câble magnétique") == 1
+    # …and the summary agrees, rather than counting 2 above a table of 1.
+    row = next(line for line in md.splitlines() if "Values translated" in line)
+    assert "| 1 |" in row
+
+
+def test_two_different_values_for_one_attribute_stay_two_rows() -> None:
+    same = "TradeItemDescription attr 3301"
+    md = _render(
+        generated_issues=[
+            _translated("08713195007649", "product_name.fr", "câble magnétique", same),
+            _translated("08713195007649", "product_name.de", "Magnetkabel", same),
+        ],
+        products=_products("08713195007649"),
+    )
+
+    section = md.partition("## 4.")[2].partition("## 5.")[0]
+    assert "câble magnétique" in section
+    assert "Magnetkabel" in section
+
+
+def test_a_translated_value_lands_after_the_other_mygs1_fixes_not_among_the_blockers() -> None:
+    # It is MyGS1 work that does not hold the GTIN — §3's neighbourhood, not §1's.
+    md = _render(
+        generated_issues=[
+            _translated(
+                "08713195000001", "product_name.fr", "Pic", "TradeItemDescription attr 3301"
+            )
+        ],
+        products=_products("08713195000001"),
+    )
+
+    before, _, after = md.partition("## 3.")
+    assert "Translated to fill a language gap" in after
+    assert "Translated to fill a language gap" not in before
+
+
+def test_the_video_and_category_sections_move_down_to_make_room() -> None:
+    md = _render()
+
+    assert "## 5. Video mapping backlog" in md
+    assert "## 6. Categories" in md
+
+
+def test_an_empty_translation_section_says_none_rather_than_a_headerless_table() -> None:
+    md = _render()
+
+    section = md.partition("## 4.")[2]
+    assert "_None._" in section
+
+
+def test_the_summary_counts_translated_values_as_non_blocking_mygs1_work() -> None:
+    md = _render(
+        generated_issues=[
+            _translated(
+                "08713195000001", "product_name.fr", "Pic", "TradeItemDescription attr 3301"
+            )
+        ],
+        products=_products("08713195000001"),
+    )
+
+    row = next(line for line in md.splitlines() if "Values translated" in line)
+    assert "MyGS1" in row
+    assert "no" in row.lower()
+
+
 def test_observations_section_renders_notes() -> None:
     md = _render(
         observations=[
@@ -323,21 +443,64 @@ def test_a_localised_field_in_one_language_is_a_half_mark() -> None:
     assert "◐" in row
 
 
-def test_an_extras_field_is_one_flat_slot_not_a_language_group() -> None:
-    """Regression: `localised` describes the source attribute, not how extras are stored.
+#: A `gdsn_extras` entry whose source attribute carries a LanguageCode/Value pair.
+_LOCALISED_EXTRA = {"functional_name": GdsnSource(sheet="S", attribute="3301", localised=True)}
 
-    Reading an extra as a per-language group finds nothing and reports every one missing — wrong
-    in the direction that invents work for the client.
+
+def _extra_cell(md: str, gtin: str) -> str:
+    """Trailing cells are: … | functional·name | video | score |, so the extra sits at -4."""
+    row = next(line for line in md.splitlines() if line.startswith(f"| `{gtin}`"))
+    return row.split("|")[-4].strip()
+
+
+def test_a_localised_extra_is_counted_per_language() -> None:
+    """Now the parser keeps every language of a localised extra, the matrix can count them.
+
+    It could not before: the value collapsed to one flat string, so a per-language reading
+    found nothing and reported every extra missing.
     """
-    localised_extra = {"functional_name": GdsnSource(sheet="S", attribute="3301", localised=True)}
     md = _render(
         matrix=_matrix(
-            products=[_p("08713195000001", extras={"functional_name": "haak"})],
-            gdsn_extras=localised_extra,
+            products=[
+                _p(
+                    "08713195000001",
+                    extras_localised={
+                        "functional_name": LocalisedText(values={"nl": "haak", "fr": "crochet"})
+                    },
+                ),
+                _p(
+                    "08713195000002",
+                    extras_localised={"functional_name": LocalisedText(values={"nl": "haak"})},
+                ),
+            ],
+            gdsn_extras=_LOCALISED_EXTRA,
         )
     )
 
-    # Trailing cells are: … | functional·name | video | score |, so the extra sits at -4.
+    assert _extra_cell(md, "08713195000001") == "●"
+    assert _extra_cell(md, "08713195000002") == "◐"
+
+
+def test_a_flat_extra_from_an_older_parse_is_still_one_slot() -> None:
+    """A products.json written before extras were per-language must not read as all-missing.
+
+    Wrong in the direction that invents work for the client — the fix is to re-parse, not to
+    open a translation queue against a file that simply predates the field.
+    """
+    md = _render(
+        matrix=_matrix(
+            products=[_p("08713195000001", extras={"functional_name": "haak"})],
+            gdsn_extras=_LOCALISED_EXTRA,
+        )
+    )
+
+    assert _extra_cell(md, "08713195000001") == "●"
+
+
+def test_a_language_agnostic_extra_is_one_flat_slot() -> None:
+    # material has no LanguageCode pair in the feed, so one value fills its only slot.
+    md = _render(matrix=_matrix(products=[_p("08713195000001", extras={"material": "PP"})]))
+
     row = next(line for line in md.splitlines() if line.startswith("| `08713195000001`"))
     assert row.split("|")[-4].strip() == "●"
 

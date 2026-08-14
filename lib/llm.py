@@ -54,7 +54,8 @@ _PRODUCE_COPY_TOOL: Final[dict[str, Any]] = {
     "name": _TOOL_NAME,
     "description": (
         "Return the product's ranked USP list: usps[0] is the tagline, usps[1:] are the "
-        "Eigenschappen benefit bullets. Include product_name only when asked to translate it."
+        "Eigenschappen benefit bullets. Include translations only for the fields the request "
+        "lists as missing in this language."
     ),
     "input_schema": {
         "type": "object",
@@ -65,9 +66,14 @@ _PRODUCE_COPY_TOOL: Final[dict[str, Any]] = {
                 "minItems": 1,
                 "description": "Ranked USPs; [0] the tagline, the rest Eigenschappen bullets.",
             },
-            "product_name": {
-                "type": "string",
-                "description": "Translated product name — only when the request needs a name.",
+            "translations": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+                "description": (
+                    "Field name → that field's value rendered in this request's language. One "
+                    "key per field the request lists as missing, and no others. Translate the "
+                    "source text given; do not invent a value or elaborate on it."
+                ),
             },
         },
         "required": ["usps"],
@@ -124,10 +130,15 @@ def _render_request(request: GenerationRequest) -> str:
             "Write from the marketing message below; if it is blank, write minimally from the "
             "functional name."
         )
-    if request.needs_name:
+    if request.translations:
         lines.append(
-            f"The feed has no {request.language} name — also return product_name translated into "
-            f"{request.language}."
+            f"The feed carries these values in another language but not in {request.language}. "
+            f"Return one `translations` key per field, translated into {request.language}, "
+            "keeping the source's meaning exactly — these go back into the product datapool:"
+        )
+        lines.extend(
+            f"  - {gap.field} (from {gap.source_language}): {gap.source_value}"
+            for gap in request.translations
         )
     lines.append("Inputs:")
     lines.append(f"  - functional name: {inputs.functional_name or '(none)'}")
@@ -181,7 +192,7 @@ def _parse_result(data: dict[str, Any]) -> GenerationResult:
             payload = block.get("input") or {}
             try:
                 return GenerationResult(
-                    usps=payload["usps"], product_name=payload.get("product_name")
+                    usps=payload["usps"], translations=payload.get("translations") or {}
                 )
             except (KeyError, ValidationError) as exc:
                 raise LLMAPIError(

@@ -51,7 +51,7 @@ from lib.categories import resolve_category
 from lib.config import ClientConfig, get_client
 from lib.env import load_env
 from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError, VideoMapError
-from lib.generator import load_cache, merge_generated
+from lib.generator import generation_context, load_cache, merge_generated
 from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
 from lib.process_list import load_process_list
 from lib.records import (
@@ -219,18 +219,23 @@ def _generate_content(
     before ``diff_against_state``. Filling a missing French name from the cache also stops the E18
     skip firing for a gap the generator has since filled; a genuine gap (no fresh cache entry) gets
     no generated fields and falls to the E18 backstop. Returns the products with generated fields
-    set, plus one :class:`SourceIssue` per generated/adjusted value and per blank marketing message.
+    set, plus one :class:`SourceIssue` per generated/adjusted value, per blank marketing message,
+    and per value filled by translating the language the feed does carry it in.
+
+    The ``gdsn_map``/``gdsn_extras`` are passed because they carry the ``translate`` flags: which
+    values may be filled is a client's decision about its own page, not a rule in code.
     """
     if cfg.generator is None:
         return products, []
     cache = load_cache(cfg.client_id)
-    return merge_generated(
-        products,
-        cache,
+    context = generation_context(
         cfg.wordpress.languages,
         cfg.wordpress.default_language,
         cfg.generator.prompt_version,
+        cfg.export.gdsn_map,
+        cfg.export.gdsn_extras,
     )
+    return merge_generated(products, cache, context)
 
 
 def _write_issue_report(client_id: str, filename: str, issues: list[SourceIssue]) -> None:

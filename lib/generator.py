@@ -22,11 +22,12 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Final, Protocol
+from typing import Final, NamedTuple, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from lib.errors import GeneratorError
+from lib.gdsn import GdsnSource, source_label
 from lib.records import LocalisedText, ProductRecord, SourceIssue
 from lib.units import decode_net_content, decode_unit
 
@@ -55,6 +56,10 @@ MODE_GENERATE: Final = "generate"  # no usable 1067 — write from 1083
 #: Placeholder material values the feed carries in lieu of a real one — treated as absent.
 _PLACEHOLDER_PREFIX: Final = "zzz"
 
+#: The ``gdsn_map`` field :attr:`GenerationInputs.marketing_message` comes from. Named so the
+#: "is this a missing input or a pending translation?" test can ask about the right field.
+_MARKETING_MESSAGE_FIELD: Final = "description_short"
+
 #: Per-language labels for the assembled description. Falls back to the default language's
 #: labels for any language not listed (only nl/fr exist in the pilot data).
 _LABELS: Final[dict[str, dict[str, str]]] = {
@@ -76,6 +81,62 @@ _LABELS: Final[dict[str, dict[str, str]]] = {
 # --- Contract: inputs, requests, results, cache ------------------------------
 
 
+class TranslatableField(BaseModel):
+    """One source a client has opted into language-gap filling with ``translate: true``.
+
+    Derived from ``clients.yml`` rather than listed in code, so which values are worth filling
+    stays a property of the client's page — the same reasoning that keeps ``required`` and
+    ``in_matrix`` in config.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    #: The ``gdsn_map`` field name or ``gdsn_extras`` key.
+    field: str
+    #: The source in the words MyGS1 uses, e.g. ``"MarketingInformation attr 1083"``. What the
+    #: operator searches for when putting the filled value back.
+    source_label: str
+    #: Whether GS1 has a per-language slot for this attribute at all. ``False`` for a
+    #: language-agnostic one (attr 4.012 Material): the translation still fixes the page, but it
+    #: cannot be put back into the datapool, and a work queue that says it can wastes a trip.
+    has_language_slot: bool = True
+
+
+class TranslationGap(BaseModel):
+    """One value the feed carries in another language but not in this one.
+
+    Carries the source text, not just its name: the producer translates from it in the same call
+    it writes the copy, and it enters the fingerprint so editing the source language supersedes
+    the translation.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    field: str
+    source_language: str
+    source_value: str
+    source_label: str
+    has_language_slot: bool = True
+
+
+class GenerationContext(BaseModel):
+    """The client facts every generation step needs, gathered once by the caller.
+
+    Bundled rather than passed as four more arguments to each of ``prefill_from_feed`` /
+    ``pending_requests`` / ``merge_generated``: they are one fact — "what this client publishes,
+    in which languages, and what may be filled" — and they must always travel together. Build it
+    with :func:`generation_context`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    languages: list[str]
+    default_language: str
+    prompt_version: str
+    #: Sources marked ``translate: true``, in config order. Empty means nothing is ever filled.
+    translatable: list[TranslatableField] = Field(default_factory=list)
+
+
 class GenerationInputs(BaseModel):
     """The source-data inputs one generation is derived from, for one language.
 
@@ -94,6 +155,10 @@ class GenerationInputs(BaseModel):
     dim_width: str | None = None
     dim_depth: str | None = None
     material: str | None = None
+    #: Field → the other language's text this unit's translations are derived from. In the
+    #: fingerprint because it is a real input: without it, editing the Dutch 1083 left the French
+    #: entry looking fresh, so the translation of a value that had changed survived the edit.
+    translation_sources: dict[str, str] = Field(default_factory=dict)
 
 
 class GenerationResult(BaseModel):
@@ -102,14 +167,16 @@ class GenerationResult(BaseModel):
     ``usps`` is one ranked list: ``usps[0]`` is the tagline (the page headline, the header-video
     caption, and the description's opening line), and ``usps[1:]`` are the Eigenschappen bullets.
     The Technische-details block is not here — it is assembled deterministically from feed data
-    (net content, dimensions, material). ``product_name`` is populated only when the feed lacked a
-    name in this language and the producer supplied a translation (the missing-French fill).
+    (net content, dimensions, material). ``translations`` answers the request's
+    :class:`TranslationGap` list: field name → the value rendered in this language.
     """
 
     model_config = ConfigDict(frozen=True)
 
     usps: list[str] = Field(min_length=1)
-    product_name: str | None = None
+    #: Field → the value translated into this request's language. Only fields the request asked
+    #: for are kept; see :func:`apply_result`.
+    translations: dict[str, str] = Field(default_factory=dict)
     #: Claims the producer wrote that go *beyond* the literal feed text (e.g. "snoerloos"
     #: inferred from "batterie rechargeable"). Reported as ``generation_inference`` findings
     #: so a human verifies each before publishing. Never participates in the fingerprint.
@@ -119,8 +186,10 @@ class GenerationResult(BaseModel):
 class GenerationRequest(BaseModel):
     """One unit of copy to generate: a ``(gtin, language)`` plus its inputs and fingerprint.
 
-    ``needs_name`` tells the producer to also supply a translated ``product_name`` because the
-    feed carries none for this language.
+    ``translations`` lists the values the feed carries in another language and not this one, each
+    with the text to translate from. It replaced a single ``needs_name`` flag: the title was never
+    the only value that goes missing in one language, it was only the one that stopped a page
+    publishing.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -129,7 +198,7 @@ class GenerationRequest(BaseModel):
     language: str
     inputs: GenerationInputs
     input_fingerprint: str
-    needs_name: bool = False
+    translations: list[TranslationGap] = Field(default_factory=list)
     mode: str = MODE_GENERATE  # MODE_TIGHTEN to shorten a long 1067, else MODE_GENERATE
     candidates: list[str] = Field(default_factory=list)  # the 1067 USPs to tighten (MODE_TIGHTEN)
 
@@ -159,7 +228,10 @@ class CacheEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     usps: list[str]
-    product_name: str | None
+    #: Field → the value this language was missing, as the producer rendered it. Defaulted so a
+    #: cache written before the field existed still loads; those entries are stale anyway, since
+    #: the fingerprint gained ``translation_sources`` in the same change.
+    translations: dict[str, str] = Field(default_factory=dict)
     origin: str  # ORIGIN_FEED | ORIGIN_TIGHTENED | ORIGIN_GENERATED
     input_fingerprint: str
     provenance: str
@@ -278,17 +350,149 @@ def _is_placeholder(value: str | None) -> bool:
     return value is not None and value.strip().casefold().startswith(_PLACEHOLDER_PREFIX)
 
 
-def _material(product: ProductRecord) -> str | None:
-    """The product's material, or ``None`` when absent or a placeholder."""
-    material = product.extras.get("material")
+def _material(product: ProductRecord, language: str, fallback: str) -> str | None:
+    """The product's material for ``language``, or ``None`` when absent or a placeholder.
+
+    Falls back to the default language: until the producer has translated it, a French page
+    showing the Dutch word beats one showing no material at all.
+    """
+    material = product.extra("material", language, fallback)
     return None if _is_placeholder(material) else material
 
 
-def _gather_inputs(product: ProductRecord, language: str) -> GenerationInputs:
+def generation_context(  # noqa: PLR0913 — each argument is a distinct client fact
+    languages: list[str],
+    default_language: str,
+    prompt_version: str,
+    gdsn_map: dict[str, GdsnSource],
+    gdsn_extras: dict[str, GdsnSource],
+) -> GenerationContext:
+    """Bundle the client facts the generation steps need, reading ``translate`` from config.
+
+    Args:
+        languages: The site's configured languages, in config order.
+        default_language: The language the feed is authored in.
+        prompt_version: The active prompt version (part of every fingerprint).
+        gdsn_map: The client's ``export.gdsn_map``.
+        gdsn_extras: The client's ``export.gdsn_extras``.
+
+    Returns:
+        The context. ``translatable`` holds every source marked ``translate: true``, mapped fields
+        before extras, each carrying the MyGS1 words for its attribute.
+    """
+    translatable = [
+        TranslatableField(
+            field=name,
+            source_label=source_label(src),
+            # A per-language GDSN attribute has a slot the filled value can go back into; a
+            # language-agnostic one (attr 4.012 Material) does not.
+            has_language_slot=src.localised,
+        )
+        for sources in (gdsn_map, gdsn_extras)
+        for name, src in sources.items()
+        if src.translate
+    ]
+    return GenerationContext(
+        languages=list(languages),
+        default_language=default_language,
+        prompt_version=prompt_version,
+        translatable=translatable,
+    )
+
+
+def _carried(values: dict[str, str]) -> dict[str, str]:
+    """Drop the languages whose "value" is blank or a datapool placeholder.
+
+    A ``zzz…`` placeholder is the feed saying it has no value — :func:`_material` already reads it
+    that way for the prompt. Reading it as text to translate would ask the producer to render a
+    placeholder into French and then tell the operator to paste that into MyGS1, turning a blank
+    into fabricated master data.
+    """
+    return {
+        lang: text for lang, text in values.items() if text.strip() and not _is_placeholder(text)
+    }
+
+
+def _field_values(product: ProductRecord, field: str, default_language: str) -> dict[str, str]:
+    """Every language ``product`` carries ``field`` in, whatever shape it is stored in.
+
+    A language-agnostic extra counts as carrying its one value in the default language: that is
+    the language the feed is authored in, and treating it as language-less would mean no other
+    language could ever be seen as missing it.
+    """
+    localised = product.extras_localised.get(field)
+    if localised is not None:
+        return _carried(localised.values)
+    flat = product.extras.get(field)
+    if flat is not None:
+        return _carried({default_language: flat})
+    value = getattr(product, field, None)
+    if isinstance(value, LocalisedText):
+        return _carried(value.values)
+    return {}
+
+
+def translation_gaps(
+    product: ProductRecord, language: str, context: GenerationContext
+) -> list[TranslationGap]:
+    """Every translatable value ``product`` lacks in ``language`` but carries in another.
+
+    **Never fills from nothing.** A field blank in every configured language yields no gap: there
+    is nothing to derive from, so it stays a source finding for MyGS1 (E23) rather than becoming
+    invented product data. That line is the whole reason this is defensible — rendering a value
+    the feed already holds into a second language is translation; writing one that exists nowhere
+    is invention, and this tool does not do it.
+
+    The source language is the default language when it carries the value, else the first
+    configured language that does — so the translation is made from the feed's authored text
+    rather than from another translation, wherever there is a choice.
+
+    Args:
+        product: The record to inspect (pre-merge — the feed's own values).
+        language: The language being generated for.
+        context: The client context; its ``translatable`` list is what may be filled at all.
+
+    Returns:
+        One gap per missing value, in ``context.translatable`` order. Empty when nothing is missing,
+        nothing is translatable, or every candidate is blank everywhere.
+    """
+    gaps: list[TranslationGap] = []
+    for candidate in context.translatable:
+        values = _field_values(product, candidate.field, context.default_language)
+        if language in values:
+            continue
+        ranked = [context.default_language, *context.languages]
+        source_language = next((lang for lang in ranked if lang in values), None)
+        if source_language is None:
+            # Blank in every configured language — the guard rail. There is nothing to derive
+            # from, so this stays a source finding for MyGS1 (E23) rather than becoming an
+            # invented value. Also covers a value carried only in a language nobody publishes.
+            continue
+        gaps.append(
+            TranslationGap(
+                field=candidate.field,
+                source_language=source_language,
+                source_value=values[source_language],
+                source_label=candidate.source_label,
+                has_language_slot=candidate.has_language_slot,
+            )
+        )
+    return gaps
+
+
+def _gather_inputs(
+    product: ProductRecord, language: str, context: GenerationContext, gaps: list[TranslationGap]
+) -> GenerationInputs:
     """Assemble the generation inputs for one ``(gtin, language)`` from the record."""
-    name = None if product.product_name is None else product.product_name.get(language)
+    name = product.product_name.get(language) if product.product_name else None
     return GenerationInputs(
-        functional_name=name or product.extras.get("functional_name"),
+        # The default-language fallback is deliberate and used to be accidental: extras collapsed
+        # to one language, so a unit with no name in its own language was seeded with the Dutch
+        # one. That is the right context for the producer — it is what the copy describes — but it
+        # should be a stated rule, not a side effect of how extras were stored.
+        functional_name=(
+            name or product.extra("functional_name", language, context.default_language)
+        ),
         marketing_message=(
             product.description_short.get(language) if product.description_short else None
         ),
@@ -299,8 +503,22 @@ def _gather_inputs(product: ProductRecord, language: str) -> GenerationInputs:
         dim_height=product.extras.get("dim_height"),
         dim_width=product.extras.get("dim_width"),
         dim_depth=product.extras.get("dim_depth"),
-        material=_material(product),
+        material=_material(product, language, context.default_language),
+        translation_sources={gap.field: gap.source_value for gap in gaps},
     )
+
+
+def _prepare_unit(
+    product: ProductRecord, language: str, context: GenerationContext
+) -> tuple[GenerationInputs, list[TranslationGap], str]:
+    """The inputs, translation gaps, and fingerprint for one ``(gtin, language)``.
+
+    One function because the three are computed together everywhere: the gaps feed the inputs,
+    and the inputs are what the fingerprint is over.
+    """
+    gaps = translation_gaps(product, language, context)
+    inputs = _gather_inputs(product, language, context, gaps)
+    return inputs, gaps, _fingerprint(inputs, language, context.prompt_version)
 
 
 def _feature_candidates(inputs: GenerationInputs) -> list[str]:
@@ -315,10 +533,6 @@ def _all_short(candidates: list[str]) -> bool:
     return all(len(c) <= MAX_VERBATIM_USP_CHARS for c in candidates)
 
 
-def _has_name(product: ProductRecord, language: str) -> bool:
-    return product.product_name is not None and product.product_name.get(language) is not None
-
-
 def _is_fresh(cache: GeneratedCache, gtin: str, language: str, fingerprint: str) -> bool:
     """Whether the cache already holds an entry matching the current input fingerprint."""
     entry = cache.get(gtin, language)
@@ -328,8 +542,7 @@ def _is_fresh(cache: GeneratedCache, gtin: str, language: str, fingerprint: str)
 def prefill_from_feed(
     products: list[ProductRecord],
     cache: GeneratedCache,
-    languages: list[str],
-    prompt_version: str,
+    context: GenerationContext,
     *,
     now: datetime,
 ) -> None:
@@ -339,11 +552,14 @@ def prefill_from_feed(
     every entry is within :data:`MAX_VERBATIM_USP_CHARS`, that copy *is* the ranked USP list, so no
     producer is needed. Longer 1067 and absent 1067 are left for :func:`pending_requests`. Skips
     units already fresh in the cache. Run this before ``pending_requests``.
+
+    A unit prefilled here still records its translation gaps on the request, so the entry says
+    which values were missing — but it fills none of them: no producer ran, and the feed's 1067
+    is copy, not a translation of anything.
     """
     for product in products:
-        for language in languages:
-            inputs = _gather_inputs(product, language)
-            fingerprint = _fingerprint(inputs, language, prompt_version)
+        for language in context.languages:
+            inputs, gaps, fingerprint = _prepare_unit(product, language, context)
             if _is_fresh(cache, product.gtin, language, fingerprint):
                 continue
             candidates = _feature_candidates(inputs)
@@ -354,7 +570,7 @@ def prefill_from_feed(
                 language=language,
                 inputs=inputs,
                 input_fingerprint=fingerprint,
-                needs_name=not _has_name(product, language),
+                translations=gaps,
             )
             apply_result(
                 cache,
@@ -369,8 +585,7 @@ def prefill_from_feed(
 def pending_requests(
     products: list[ProductRecord],
     cache: GeneratedCache,
-    languages: list[str],
-    prompt_version: str,
+    context: GenerationContext,
 ) -> list[GenerationRequest]:
     """Return the ``(gtin, language)`` units still needing a producer, each with its mode.
 
@@ -383,17 +598,16 @@ def pending_requests(
     Args:
         products: The parsed products.
         cache: The current generated-copy cache (call ``prefill_from_feed`` first).
-        languages: The languages to generate for.
-        prompt_version: The active prompt version (part of the fingerprint).
+        context: The client context — languages, prompt version, and what may be translated.
 
     Returns:
-        The pending requests, each carrying its inputs, fingerprint, mode, and 1067 candidates.
+        The pending requests, each carrying its inputs, fingerprint, mode, 1067 candidates, and
+        the language gaps the producer must translate.
     """
     requests: list[GenerationRequest] = []
     for product in products:
-        for language in languages:
-            inputs = _gather_inputs(product, language)
-            fingerprint = _fingerprint(inputs, language, prompt_version)
+        for language in context.languages:
+            inputs, gaps, fingerprint = _prepare_unit(product, language, context)
             if _is_fresh(cache, product.gtin, language, fingerprint):
                 continue
             candidates = _feature_candidates(inputs)
@@ -404,7 +618,7 @@ def pending_requests(
                     language=language,
                     inputs=inputs,
                     input_fingerprint=fingerprint,
-                    needs_name=not _has_name(product, language),
+                    translations=gaps,
                     mode=mode,
                     candidates=candidates,
                 )
@@ -415,6 +629,22 @@ def pending_requests(
 def _clean_bullets(bullets: list[str]) -> list[str]:
     """Strip each bullet and drop the empties."""
     return [stripped for stripped in (b.strip() for b in bullets) if stripped]
+
+
+def _requested_translations(request: GenerationRequest, result: GenerationResult) -> dict[str, str]:
+    """The result's translations, narrowed to the fields the request actually asked for.
+
+    The write-side half of "the feed always wins": a producer that volunteers a value for a
+    language the feed already carries has it dropped here, before it can reach the cache.
+    :func:`merge_generated` enforces the same rule again on read, because one guard on a path
+    this quiet is one deploy away from being the only guard.
+    """
+    asked = {gap.field for gap in request.translations}
+    return {
+        field: value.strip()
+        for field, value in result.translations.items()
+        if field in asked and value.strip()
+    }
 
 
 def apply_result(  # noqa: PLR0913 — a validated write needs its result, provenance, and clock
@@ -454,7 +684,7 @@ def apply_result(  # noqa: PLR0913 — a validated write needs its result, prove
     )
     entry = CacheEntry(
         usps=usps,
-        product_name=result.product_name if request.needs_name else None,
+        translations=_requested_translations(request, result),
         origin=origin,
         input_fingerprint=request.input_fingerprint,
         provenance=provenance,
@@ -517,9 +747,11 @@ def _dimensions_bullet(product: ProductRecord, language: str, fallback: str) -> 
 def _technische_details(product: ProductRecord, language: str, fallback: str) -> list[str]:
     """Assemble the deterministic Technische-details bullets from feed data.
 
-    Net content and dimensions decode their unit codes per language; material is a
-    language-agnostic feed scalar shown verbatim (so a French page shows the Dutch material
-    word — a candidate for future translation, tracked in the spec).
+    Net content and dimensions decode their unit codes per language. Material is one
+    language-agnostic value in the feed (attr 4.012 has no ``LanguageCode`` pair), so it renders
+    in whatever language it was authored in until the generator has translated it — with
+    ``translate: true`` set on it, this reads the translation once one exists, and falls back to
+    the authored word until then.
     """
     bullets: list[str] = []
     net_content = decode_net_content(product.net_content, language, fallback_language=fallback)
@@ -528,7 +760,7 @@ def _technische_details(product: ProductRecord, language: str, fallback: str) ->
     dimensions = _dimensions_bullet(product, language, fallback)
     if dimensions:
         bullets.append(dimensions)
-    material = _material(product)
+    material = _material(product, language, fallback)
     if material:
         bullets.append(f"{_labels(language)['materiaal']}: {material}")
     return bullets
@@ -638,73 +870,196 @@ def _inference_issues(gtin: str, language: str, entry: CacheEntry) -> list[Sourc
     ]
 
 
+def _translated_issue(gtin: str, language: str, gap: TranslationGap, value: str) -> SourceIssue:
+    """Report one value the tool rendered into a language the feed did not carry it in.
+
+    The point of the finding is the feedback loop, not the confession: ``value`` is the text to
+    paste into MyGS1, so the next export carries it for real and the tool stops writing it. A
+    language-agnostic attribute has nowhere to paste it, and the detail says so rather than
+    sending the operator looking for a field that does not exist.
+    """
+    destination = (
+        f"add it to {gap.source_label} for {language} in MyGS1"
+        if gap.has_language_slot
+        else f"{gap.source_label} is language-agnostic in GS1, so there is no {language} slot "
+        "to hold this — it stays a page-only translation"
+    )
+    # The caveat rides on `source` as well as in the detail, because the report's table renders
+    # the source and not the detail: a row saying only "attr Material" sends the operator into
+    # MyGS1 looking for a French field that does not exist.
+    source = (
+        gap.source_label
+        if gap.has_language_slot
+        else f"{gap.source_label} — no per-language slot in GS1"
+    )
+    return SourceIssue(
+        gtin=gtin,
+        field=f"{gap.field}.{language}",
+        source=source,
+        issue="value_translated",
+        value=value,
+        detail=(
+            f"{gap.field} was written for {language} by translating the {gap.source_language} "
+            f"value ('{gap.source_value}'), which the feed carries; {destination}."
+        ),
+    )
+
+
+class _UnitRead(NamedTuple):
+    """What one ``(gtin, language)`` contributed: its fresh cache entry, if any, and its gaps."""
+
+    entry: CacheEntry | None
+    gaps: list[TranslationGap]
+    inputs: GenerationInputs
+
+
+def _read_cache(
+    product: ProductRecord, cache: GeneratedCache, context: GenerationContext
+) -> tuple[dict[str, _UnitRead], dict[str, dict[str, str]], list[SourceIssue]]:
+    """Read one product's cache entries, collecting its filled values and their findings.
+
+    Returns the per-language reads, the filled values as ``field → language → value``, and one
+    ``value_translated`` finding per filled value plus one ``missing_generation_input`` per
+    language whose marketing message is blank **and not about to be filled** — a value the feed
+    carries in another language is not a missing input, it is a pending translation.
+    """
+    reads: dict[str, _UnitRead] = {}
+    filled: dict[str, dict[str, str]] = {}
+    issues: list[SourceIssue] = []
+    for language in context.languages:
+        inputs, gaps, fingerprint = _prepare_unit(product, language, context)
+        entry = cache.get(product.gtin, language)
+        if entry is not None and entry.input_fingerprint != fingerprint:
+            entry = None  # stale — a feed edit superseded it
+        reads[language] = _UnitRead(entry, gaps, inputs)
+
+        for gap in gaps:
+            value = entry.translations.get(gap.field) if entry is not None else None
+            if value:
+                filled.setdefault(gap.field, {})[language] = value
+                issues.append(_translated_issue(product.gtin, language, gap, value))
+
+        pending = {gap.field for gap in gaps}
+        if not inputs.marketing_message and _MARKETING_MESSAGE_FIELD not in pending:
+            issues.append(_missing_input_issue(product.gtin, language, inputs))
+    return reads, filled, issues
+
+
+def _apply_translations(
+    product: ProductRecord, filled: dict[str, dict[str, str]], default_language: str
+) -> ProductRecord:
+    """Return ``product`` with each filled value merged in, the feed's own values winning.
+
+    The read-side half of "the feed always wins". :func:`_requested_translations` is the other and
+    the one every real input hits first, so no current input reaches this one — it is kept as the
+    guard that still holds if the write side ever changes, not as live logic.
+    """
+    if not filled:
+        return product
+    update: dict[str, object] = {}
+    localised_extras = dict(product.extras_localised)
+    for field, by_language in filled.items():
+        current = _stored_values(product, field, default_language)
+        merged = {**by_language, **current}  # feed values overwrite the filled ones
+        if field in type(product).model_fields:
+            update[field] = LocalisedText(values=merged)
+        else:
+            localised_extras[field] = LocalisedText(values=merged)
+    if localised_extras != product.extras_localised:
+        update["extras_localised"] = localised_extras
+    return product.model_copy(update=update) if update else product
+
+
+def _stored_values(product: ProductRecord, field: str, default_language: str) -> dict[str, str]:
+    """The record's own per-language values for ``field``, in the shape they are stored in.
+
+    A flat extra counts as carrying its one value in the default language — the same reading
+    :func:`_field_values` uses to decide it is missing elsewhere. Returning nothing for it instead
+    dropped the authored value the moment another language was filled: translating `material` into
+    French took `Materiaal: kunststof` off the *Dutch* page, because the per-language mapping that
+    replaced the flat value held only French.
+    """
+    localised = product.extras_localised.get(field)
+    if localised is not None:
+        return dict(localised.values)
+    flat = product.extras.get(field)
+    if flat is not None:
+        return {default_language: flat}
+    value = getattr(product, field, None)
+    return dict(value.values) if isinstance(value, LocalisedText) else {}
+
+
 def merge_generated(
     products: list[ProductRecord],
     cache: GeneratedCache,
-    languages: list[str],
-    default_language: str,
-    prompt_version: str,
+    context: GenerationContext,
 ) -> tuple[list[ProductRecord], list[SourceIssue]]:
-    """Fold cached generated copy onto each record and report every generated value.
+    """Fold cached generated copy and filled language gaps onto each record, reporting both.
 
-    Pure and network-free. For each product it overwrites ``product_name`` with the
-    variation-combined (and, for a feed gap, cache-filled) title, sets ``generated_tagline``
-    (from the feed message or the first cached USP), and — when the cache holds usable
-    Eigenschappen for the current inputs — sets ``generated_description`` to the assembled
-    three-part HTML. A stale or missing cache entry simply yields no description for that
-    language; the run_plan E18 backstop handles the resulting gap. Called before
-    ``diff_against_state`` so generated content is part of the content hash.
+    Pure and network-free. For each product it fills every translatable value the feed lacks in a
+    configured language, overwrites ``product_name`` with the variation-combined title, sets
+    ``generated_tagline`` (the first cached USP), and — when the cache holds usable Eigenschappen
+    for the current inputs — sets ``generated_description`` to the assembled three-part HTML. A
+    stale or missing cache entry simply yields no description for that language; the run_plan E18
+    backstop handles the resulting gap. Called before ``diff_against_state`` so generated content
+    is part of the content hash.
+
+    The fill runs before the title is combined and before the description is assembled, so a
+    translated variation suffixes the translated title and a translated material reaches the
+    Technische-details block, rather than each being one step too late.
 
     Args:
         products: The parsed products.
         cache: The generated-copy cache.
-        languages: The languages to assemble for.
-        default_language: The fallback language for unit decoding.
-        prompt_version: The active prompt version (gates cache reuse via the fingerprint).
+        context: The client context — languages, default language, prompt version, and what
+            may be translated.
 
     Returns:
-        The products with generated fields materialised, and one :class:`SourceIssue` per
-        generated value carrying the source-language input it was derived from.
+        The products with generated and filled fields materialised, and one :class:`SourceIssue`
+        per generated value and per filled value.
     """
     merged: list[ProductRecord] = []
     issues: list[SourceIssue] = []
     for product in products:
-        names = dict(product.product_name.values) if product.product_name else {}
-        taglines: dict[str, str] = {}
-        descriptions: dict[str, str] = {}
-        variation = product.extras.get("product_variation")
-        for language in languages:
-            inputs = _gather_inputs(product, language)
-            fingerprint = _fingerprint(inputs, language, prompt_version)
-            entry = cache.get(product.gtin, language)
-            if entry is not None and entry.input_fingerprint != fingerprint:
-                entry = None  # stale — a feed edit superseded it
-
-            base = names.get(language)
-            if base is None and entry is not None and entry.product_name:
-                base = entry.product_name
-            if base is not None:
-                names[language] = _combine_title(base, variation)
-
-            if not inputs.marketing_message:
-                issues.append(_missing_input_issue(product.gtin, language, inputs))
-
-            if entry is not None and entry.usps:
-                taglines[language] = entry.usps[0]
-                descriptions[language] = _assemble_description(
-                    entry.usps, product, language, default_language
-                )
-                issue = _content_issue(product.gtin, language, entry)
-                if issue is not None:
-                    issues.append(issue)
-                issues.extend(_inference_issues(product.gtin, language, entry))
-
-        update: dict[str, object] = {}
-        if product.product_name is None or names != product.product_name.values:
-            update["product_name"] = LocalisedText(values=names)
-        if taglines:
-            update["generated_tagline"] = LocalisedText(values=taglines)
-        if descriptions:
-            update["generated_description"] = LocalisedText(values=descriptions)
-        merged.append(product.model_copy(update=update) if update else product)
+        reads, filled, product_issues = _read_cache(product, cache, context)
+        issues.extend(product_issues)
+        record = _apply_translations(product, filled, context.default_language)
+        record, copy_issues = _apply_copy(record, reads, context)
+        issues.extend(copy_issues)
+        merged.append(record)
     return merged, issues
+
+
+def _apply_copy(
+    product: ProductRecord, reads: dict[str, _UnitRead], context: GenerationContext
+) -> tuple[ProductRecord, list[SourceIssue]]:
+    """Combine each language's title and assemble its generated copy from the cache reads."""
+    issues: list[SourceIssue] = []
+    names = dict(product.product_name.values) if product.product_name else {}
+    taglines: dict[str, str] = {}
+    descriptions: dict[str, str] = {}
+    for language in context.languages:
+        entry = reads[language].entry
+        base = names.get(language)
+        if base is not None:
+            variation = product.extra("product_variation", language)
+            names[language] = _combine_title(base, variation)
+        if entry is None or not entry.usps:
+            continue
+        taglines[language] = entry.usps[0]
+        descriptions[language] = _assemble_description(
+            entry.usps, product, language, context.default_language
+        )
+        issue = _content_issue(product.gtin, language, entry)
+        if issue is not None:
+            issues.append(issue)
+        issues.extend(_inference_issues(product.gtin, language, entry))
+
+    update: dict[str, object] = {}
+    if product.product_name is None or names != product.product_name.values:
+        update["product_name"] = LocalisedText(values=names)
+    if taglines:
+        update["generated_tagline"] = LocalisedText(values=taglines)
+    if descriptions:
+        update["generated_description"] = LocalisedText(values=descriptions)
+    return (product.model_copy(update=update) if update else product), issues

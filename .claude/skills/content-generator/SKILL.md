@@ -29,12 +29,23 @@ look: execute writes each page at `wordpress.post_status`, which ships as `publi
 **live the moment it is written**. `post_status: draft` is the opt-in staged variant, and it is a
 config change the operator makes deliberately — see `docs/wordpress-onboarding.md`.
 
+It also **translates**, which is a different job from writing copy and is held to a stricter rule.
+A request's `translations` list names values the feed carries in one language and not this one —
+the product name, the marketing message, the material. Render each one into this language and
+nothing more: **translate the given `source_value`, never write a fresh value or embellish it.**
+Every translation is reported in §4 of the data-quality report for the operator to paste back into
+MyGS1, so an embellishment there becomes wrong data in the client's GS1 master record, not just on
+a web page. A field the feed carries in **no** language is never in this list — that stays a source
+gap for the client to fill, and inventing one would be exactly the "never invent product data" rule
+this repo is built around.
+
 ## Inputs
 
 - `client_id` (from the trigger phrase; ask if unclear).
 - Pending requests at `output/{client}/data/generation_requests.json` (run
   `python -m scripts.run_generate {client} --emit` first if absent). It carries `prompt_version` and,
-  per unit, `gtin`, `language`, `mode`, `needs_name`, `input_fingerprint`, `candidates`, and `inputs`.
+  per unit, `gtin`, `language`, `mode`, `translations`, `input_fingerprint`, `candidates`, and
+  `inputs`.
 - The voice template `prompts/{client}/generation.{prompt_version}.md`.
 
 ## Steps
@@ -45,7 +56,7 @@ config change the operator makes deliberately — see `docs/wordpress-onboarding
    `gs1-export-parser` skill if `output/{client}/data/products.json` is missing too).
 
 2. **Read the requests.** Load `generation_requests.json`. Note `prompt_version`, the unit count, and
-   the split by `mode` (`tighten` vs `generate`) and `needs_name`.
+   the split by `mode` (`tighten` vs `generate`) and how many units carry `translations`.
 
    **That file holds only the units in scope** — `run_generate` narrows through the process list and
    the confirmed-video allowlist before computing the gaps, so its count matches the doctor's
@@ -56,7 +67,7 @@ config change the operator makes deliberately — see `docs/wordpress-onboarding
 
    Present verbatim:
    ```
-   democlient: 10 units to generate (3 tighten, 7 generate; 1 needs a French name).
+   democlient: 10 units to generate (3 tighten, 7 generate; 4 with a language gap to translate).
    Generate all, or a subset?
    [all | only-tighten | only GTIN … | cancel]
    ```
@@ -73,7 +84,12 @@ config change the operator makes deliberately — see `docs/wordpress-onboarding
      new claims. **`mode = generate`:** write from `inputs.marketing_message` (1083) using
      `functional_name`/`net_content`/dims/`material` as context; if 1083 is blank, write minimally
      from `functional_name`.
-   - **`needs_name` true:** also supply `product_name` — the name translated into this language.
+   - **`translations` non-empty:** also return one key per listed field, translated into this
+     language. Each entry gives you `field`, `source_language` and `source_value` — **translate
+     that text, do not write a new value from scratch and do not elaborate on it.** These go
+     back into the client's GS1 datapool, so a rewrite there is a wrong value in their master
+     data, not just on the page. Return no key for a field the request did not list; it would
+     be dropped on ingest anyway.
    - Never emit net content, dimensions, or material as USPs (those are added deterministically).
    Work in batch; do not narrate each unit.
 
@@ -82,14 +98,16 @@ config change the operator makes deliberately — see `docs/wordpress-onboarding
    {
      "client_id": "democlient",
      "results": [
-       { "gtin": "08713195000473", "language": "nl",
-         "usps": ["Verwijder makkelijk beschadigde schroeven", "Werkt op hout, plastic en glas"],
+       { "gtin": "08713195000473", "language": "fr",
+         "usps": ["Retirez facilement les vis abîmées", "Fonctionne sur bois, plastique et verre"],
+         "translations": { "product_name": "Extracteur de vis", "material": "plastique" },
          "input_fingerprint": "<echo from the matching request>" }
      ]
    }
    ```
    Echo each unit's `input_fingerprint` from its request (so a feed edit since emit is caught), and
-   include `product_name` only for `needs_name` units. `client_id` must equal the run's client.
+   include `translations` only for units whose request listed gaps — one key per listed field, no
+   others. `client_id` must equal the run's client.
 
 6. **Ingest.** Run `python -m scripts.run_generate {client} --ingest`. Surface its stderr line
    verbatim, e.g. `ingested 8 result(s), skipped 2; 28/30 units cached; 2 pending (…)`. Those
@@ -97,7 +115,7 @@ config change the operator makes deliberately — see `docs/wordpress-onboarding
    non-zero exit is a config error — stop and show it (step: Failure modes).
 
 7. **Review (gate #1 of 2).** Present a representative sample — a few NL and FR blocks, including any
-   `tighten` and `needs_name` units — and the coverage counts. Point to
+   `tighten` units and any that carried `translations` — and the coverage counts. Point to
    `output/{client}/data/generated_cache.json` for the full copy and
    `output/{client}/data/generated_issues.json` for the reported values. Then:
    ```

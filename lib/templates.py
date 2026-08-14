@@ -150,7 +150,10 @@ class TemplateEngine:
             "product_name": _s(product.product_name.get(language, fallback)),
             "description_short": _s(_localised(product.description_short, language, fallback)),
             "description_long": _s(_localised(product.description_long, language, fallback)),
-            "extras": dict(product.extras),
+            # Resolved for this page's language, with the default-language fallback every other
+            # localised field here already uses: a template renders one blob, and a hole in it
+            # reads as a broken page rather than as an omitted field.
+            "extras": product.extras_for(language, fallback),
             "language": language,
             "client": {
                 "display_name": _s(client_meta.get("display_name")),
@@ -167,7 +170,7 @@ class TemplateEngine:
         """Warn once per missing ``{{extras.<name>}}`` reference (edge E12)."""
         for match in _EXTRAS_TAG_RE.finditer(source):
             name = match.group(1)
-            if name in product.extras:
+            if name in product.extras or name in product.extras_localised:
                 continue
             key = (str(template_path), name)
             if key in self._warned_extras:

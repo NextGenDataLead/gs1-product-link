@@ -130,6 +130,13 @@ class GdsnSource(BaseModel):
             a column that is present for every product and feeds nothing is noise in a table whose
             job is to show where the gaps are. It does **not** stop the field being parsed — the
             value is still in ``extras`` for whatever future check wants it.
+        translate: Whether the generator may fill this value in a language the feed lacks, by
+            translating the same value from a language the feed has. Default ``False`` —
+            **opt in per field**, because every filled value costs producer tokens and adds
+            LLM-written text to a page. Deriving a French value from the Dutch one the feed
+            already carries is translation, not invention; a field blank in **every** language is
+            never filled, and stays a source finding (E23). Each filled value is reported for
+            the operator to put back into MyGS1 — see :func:`lib.generator.translation_gaps`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -146,6 +153,7 @@ class GdsnSource(BaseModel):
     required: bool = False
     required_group: str = ""
     in_matrix: bool = True
+    translate: bool = False
 
     @model_validator(mode="after")
     def _required_xor_group(self) -> GdsnSource:
@@ -507,14 +515,18 @@ def build_records(  # noqa: PLR0913 — each argument is a distinct input; bundl
     records: list[ProductRecord] = []
     issues: list[SourceIssue] = []
     for gtin in gtins:
-        acc = _Accumulator(scalars={"gtin": gtin}, localised={}, extras={}, warnings=[], issues=[])
+        acc = _Accumulator(
+            scalars={"gtin": gtin},
+            localised={},
+            extras={},
+            extras_localised={},
+            warnings=[],
+            issues=[],
+        )
         for field, src in gdsn_map.items():
             if field != "gtin":
                 _resolve_field(ctx, field, src, gtin, acc)
-        for name, src in gdsn_extras.items():
-            value = _resolve_extra(ctx, src, gtin)
-            if value is not None:
-                acc.extras[name] = value
+        _resolve_extras(ctx, gdsn_extras, gtin, acc)
         warnings.extend(acc.warnings)
         issues.extend(acc.issues)
 
@@ -525,13 +537,17 @@ def build_records(  # noqa: PLR0913 — each argument is a distinct input; bundl
         if "product_name" in gdsn_map:
             issues.extend(
                 _check_field_language(
-                    product_name, "product_name", _source_label(gdsn_map["product_name"]), gtin
+                    product_name, "product_name", source_label(gdsn_map["product_name"]), gtin
                 )
             )
         try:
             records.append(
                 build_product_record(
-                    gtin=gtin, scalars=acc.scalars, localised=acc.localised, extras=acc.extras
+                    gtin=gtin,
+                    scalars=acc.scalars,
+                    localised=acc.localised,
+                    extras=acc.extras,
+                    extras_localised=acc.extras_localised,
                 )
             )
         except ExportParseError as exc:
@@ -560,6 +576,8 @@ class _Accumulator:
     scalars: dict[str, str]
     localised: dict[str, dict[str, str]]
     extras: dict[str, str]
+    #: Pass-through extras whose source attribute is per-language, keyed name → language.
+    extras_localised: dict[str, dict[str, str]]
     #: Non-fatal notes raised while resolving this GTIN's fields; merged into
     #: :attr:`BuildResult.warnings` so ``parse_export``'s summary counts them.
     warnings: list[str]
@@ -664,8 +682,13 @@ def _check_length(value: str, limit: int, where: _Where, acc: _Accumulator) -> s
     return value
 
 
-def _source_label(src: GdsnSource) -> str:
-    """Name a field the way the *source system* does, for the report (§SourceIssue)."""
+def source_label(src: GdsnSource) -> str:
+    """Name a field the way the *source system* does, for the report (§SourceIssue).
+
+    Public because ``lib.generator`` needs the same words when it reports a value it filled:
+    the operator searches MyGS1 by the attribute, and two spellings of one attribute in one
+    report is two things to learn.
+    """
     return f"{src.sheet} attr {src.attribute}" if src.attribute else src.sheet
 
 
@@ -722,7 +745,7 @@ def _check_field_language(
 
 def _apply_checks(value: str, src: GdsnSource, field: str, gtin: str, acc: _Accumulator) -> str:
     """Apply the configured source-value expectations, in order."""
-    where = _Where(field=field, source=_source_label(src), gtin=gtin)
+    where = _Where(field=field, source=source_label(src), gtin=gtin)
     if src.strip_prefix:
         value = _strip_prefix(value, src.strip_prefix, where, acc)
     if src.max_length:
@@ -856,7 +879,7 @@ def _resolve_field(
         if chosen is not None:
             acc.scalars[field] = chosen
         elif src.report_issues:
-            _report_blank(_Where(field, _source_label(src), gtin), acc)
+            _report_blank(_Where(field, source_label(src), gtin), acc)
     else:
         _resolve_scalar(ctx, sheet, field, src, gtin, acc)
 
@@ -873,7 +896,7 @@ def _resolve_localised(  # noqa: PLR0913 — one collaborator per step; bundling
             else _localised_picker(sheet, gtin, src.attribute, lang)
         )
         chosen, per_market = _pick_ranked(picker, ctx.market_priority)
-        where = _Where(f"{field}.{lang}", _source_label(src), gtin)
+        where = _Where(f"{field}.{lang}", source_label(src), gtin)
         if src.report_issues:
             _report_inconsistency(per_market, where, acc)
         if chosen is not None:
@@ -892,7 +915,7 @@ def _resolve_scalar(  # noqa: PLR0913 — one collaborator per step; bundling hi
         lambda market: sheet.pick_scalar(gtin, market, src.attribute, src.with_unit),
         ctx.market_priority,
     )
-    where = _Where(field, _source_label(src), gtin)
+    where = _Where(field, source_label(src), gtin)
     if src.report_issues:
         _report_inconsistency(per_market, where, acc)
     if chosen is not None:
@@ -901,21 +924,58 @@ def _resolve_scalar(  # noqa: PLR0913 — one collaborator per step; bundling hi
         _report_blank(where, acc)
 
 
-def _resolve_extra(ctx: _BuildContext, src: GdsnSource, gtin: str) -> str | None:
-    """Resolve a pass-through extra to a single string (default language for localised).
+def _resolve_extras(
+    ctx: _BuildContext, gdsn_extras: dict[str, GdsnSource], gtin: str, acc: _Accumulator
+) -> None:
+    """Resolve every pass-through extra for one GTIN into the accumulator.
 
-    Extras are carried verbatim and unreported: they are not page fields, so a blank or a
-    cross-market disagreement in one is not a source-fix finding here.
+    Per-language extras land in :attr:`_Accumulator.extras_localised` and language-agnostic ones
+    in :attr:`_Accumulator.extras` — one home per value, so no reader downstream has to decide
+    which of two dicts is authoritative for a given name.
+    """
+    for name, src in gdsn_extras.items():
+        if src.localised:
+            values = _resolve_localised_extra(ctx, src, gtin)
+            if values is not None:
+                acc.extras_localised[name] = values
+            continue
+        value = _resolve_extra(ctx, src, gtin)
+        if value is not None:
+            acc.extras[name] = value
+
+
+def _resolve_localised_extra(
+    ctx: _BuildContext, src: GdsnSource, gtin: str
+) -> dict[str, str] | None:
+    """Resolve a per-language pass-through extra into every configured language.
+
+    It used to resolve to the default language alone, which silently discarded every other
+    language the feed carried — so a French page rendered the Dutch token, and the quality
+    report could not tell a genuine translation gap from one the parser had created.
+
+    Extras stay unreported here: they are not page fields, so a blank or a cross-market
+    disagreement in one is not a source-fix finding at parse time.
     """
     sheet = ctx.workbook.get(src.sheet)
     if sheet is None:
         return None
-    if src.localised:
-        chosen, _ = _pick_ranked(
-            lambda market: sheet.pick_localised(gtin, market, src.attribute, ctx.default_language),
-            ctx.market_priority,
-        )
-        return chosen
+    values: dict[str, str] = {}
+    for lang in ctx.languages:
+        picker = _localised_picker(sheet, gtin, src.attribute, lang)
+        chosen, _ = _pick_ranked(picker, ctx.market_priority)
+        if chosen is not None:
+            values[lang] = chosen
+    return values or None
+
+
+def _resolve_extra(ctx: _BuildContext, src: GdsnSource, gtin: str) -> str | None:
+    """Resolve a language-agnostic pass-through extra to a single string.
+
+    Per-language extras go through :func:`_resolve_localised_extra` instead.
+    """
+    sheet = ctx.workbook.get(src.sheet)
+    if sheet is None:
+        return None
     if src.primary_file:
         chosen, _ = _pick_ranked(
             lambda market: sheet.pick_primary_file(gtin, market), ctx.market_priority

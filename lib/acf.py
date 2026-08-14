@@ -38,7 +38,9 @@ def _resolve(product: ProductRecord, field: str, language: str) -> str | None:
     would put Dutch text on a French page).
     """
     if field.startswith(_EXTRAS_PREFIX):
-        return product.extras.get(field[len(_EXTRAS_PREFIX) :])
+        # No fallback, for the same reason as the localised branch below: an ACF field is
+        # written on its own, so omitting it beats writing another language's text into it.
+        return product.extra(field[len(_EXTRAS_PREFIX) :], language)
     value = getattr(product, field, None)
     if value is None:
         return None

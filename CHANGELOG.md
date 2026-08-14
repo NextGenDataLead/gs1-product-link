@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Every value the feed carries in one language and not another is now filled by translating it,
+  and every filled value is reported for the client to put back into MyGS1.** The generator already
+  did this for the product name, because a missing name stops a page publishing (E18) — it did it
+  for nothing else, and it emitted no finding at all, so an LLM-written French title reached a live
+  page with nothing anywhere to say so. Meanwhile the French page took the Dutch material word and
+  the Dutch variation suffix, and its copy was written from a 1083 the input gatherer read as blank.
+
+  A source opts in with **`translate: true`** in `clients.yml`, per field. Opt-in rather than
+  implied by `localised: true`, for the reason `in_matrix` is an opt-out: `logistics_name` and
+  `marketing_name` are carried and consumed by nothing, so filling them would be producer tokens
+  spent on a value no page reads. It also lets `material` join on the same one rule, which
+  `localised` could never have selected — it is language-agnostic in the feed yet renders verbatim
+  on every language's page.
+
+  **The line this does not cross:** a field blank in *every* configured language is never filled. It
+  stays a source finding for MyGS1 (E23). Rendering a value the feed already holds into a second
+  language is translation; writing one that exists nowhere would be invention, which this tool does
+  not do. The distinction is what makes the practice defensible, and the reporting is the other
+  half — this change *raises* how much LLM-written text is on a page, so **§4 of the data-quality
+  report** lists each filled value with the exact text to paste into MyGS1, after which the next
+  export carries it for real and the tool stops writing it. Video moves to §5, Categories to §6.
+
+  Consequences worth knowing before the next run:
+  - **Every existing cache entry is invalidated once.** `GenerationInputs` gained
+    `translation_sources`, without which editing the Dutch 1083 left the French entry looking fresh
+    — that entry's own inputs are all empty, so nothing else in its fingerprint moved and the
+    translation of a since-changed value would have survived the edit. Re-run
+    `run_generate --emit` → `content-generator` → `--ingest` before the next `run_plan`.
+  - **`missing_generation_input` now fires only when 1083 is blank in every language.** A value the
+    feed carries in Dutch is a pending translation, not a datapool gap; reporting it as one asked
+    the operator to write French copy for a product that already had Dutch.
+  - **A `products.json` from before this change should be re-parsed.** `ProductRecord` gained
+    `extras_localised`, because a `localised: true` pass-through extra used to resolve to the
+    default language and discard every other language the feed carried. Old files still load and
+    behave exactly as before; re-parsing is what recovers the French the feed already had.
+  - **`material` is reported but cannot be pasted back.** GS1 attr 4.012 has no per-language slot,
+    so its translation is a page fix only. The §4 row says so rather than sending a wasted trip
+    into MyGS1.
 - **A double-click install for the operator's machine — `install.command` / `install.bat`, then
   `start.command` / `start.bat`.** The shell existed but still needed a clone, a virtualenv and
   `pip`, which is most of the 33-step install the shell was built to avoid. The installer fetches
