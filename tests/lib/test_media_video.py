@@ -24,7 +24,12 @@ from lib.records import LocalisedText, ProductRecord
 
 
 def _product(
-    gtin: str, *, nl: str = "", fr: str = "", extras: dict[str, str] | None = None
+    gtin: str,
+    *,
+    nl: str = "",
+    fr: str = "",
+    extras: dict[str, str] | None = None,
+    extras_localised: dict[str, LocalisedText] | None = None,
 ) -> ProductRecord:
     values = {k: v for k, v in {"nl": nl, "fr": fr}.items() if v}
     return ProductRecord(
@@ -32,6 +37,7 @@ def _product(
         brand="Noviplast",
         product_name=LocalisedText(values=values or {"nl": gtin}),
         extras=extras or {},
+        extras_localised=extras_localised or {},
     )
 
 
@@ -78,15 +84,90 @@ def test_list_video_files_skips_system_dirs_and_dotfiles(tmp_path: Path) -> None
 # --- rank_candidates (hints only) --------------------------------------------
 
 
-def test_rank_candidates_scores_partial_hit_from_extras() -> None:
+def test_rank_candidates_reads_a_name_extra_the_record_carries_per_language() -> None:
+    """Both name extras are `localised: true`, so a current parse puts them in `extras_localised`.
+
+    A loop over flat `extras` alone found nothing there, which left every hint in the pilot scored
+    on `product_name` and nothing else — and nothing failed, because the only test of this branch
+    built a flat extra the parser no longer produces.
+    """
+    products = [
+        _product(
+            "08713195007434",
+            nl="handige lamp",
+            extras_localised={"logistics_name": LocalisedText(values={"nl": "Bulb man lamp wt"})},
+        ),
+        _product("08713195000001", nl="iets heel anders"),
+    ]
+
+    ranked = rank_candidates("bulb man", products, top_n=3)
+
+    assert ranked[0].gtin == "08713195007434"
+    assert ranked[0].field == "extras.logistics_name.nl"  # the language is part of the label
+    assert ranked[0].score > ranked[1].score
+
+
+def test_rank_candidates_reaches_every_language_of_a_name_extra() -> None:
+    """The filenames are English, and the feed's English is usually in the *French* value.
+
+    This product's `product_name` reads "huisdierspeelgoed" / "Jouets chiens" — neither is the
+    filename. `marketing_name.fr` is "Noviplast Pet Buddy". Reading one language, whichever one it
+    is, misses that.
+    """
+    products = [
+        _product(
+            "08713195007434",
+            nl="huisdierspeelgoed",
+            fr="Jouets chiens",
+            extras_localised={
+                "marketing_name": LocalisedText(
+                    values={"nl": "Noviplast Huisdierspeelgoed pluche", "fr": "Noviplast Pet Buddy"}
+                )
+            },
+        )
+    ]
+
+    ranked = rank_candidates("pet buddy", products, top_n=3)
+
+    assert ranked[0].field == "extras.marketing_name.fr"
+
+
+def test_rank_candidates_still_reads_a_name_extra_the_record_carries_flat() -> None:
+    """A `products.json` written before `extras_localised` holds one flat string per extra.
+
+    Whether a value is per-language is the record's fact, not the config's: `localised` is a
+    per-field switch another client need not set, and the draft reads a file from disk rather than
+    a fresh parse. Dropping this branch returns those hints to `product_name` alone.
+    """
     products = [
         _product("08713195007434", nl="handige lamp", extras={"logistics_name": "Bulb man"}),
         _product("08713195000001", nl="iets heel anders"),
     ]
-    ranked = rank_candidates("bulbman", products, top_n=3)
+
+    ranked = rank_candidates("bulb man", products, top_n=3)
+
     assert ranked[0].gtin == "08713195007434"
-    assert ranked[0].field == "extras.logistics_name"
-    assert ranked[0].score > ranked[1].score
+    assert ranked[0].field == "extras.logistics_name"  # no language: the record carries none
+
+
+def test_rank_candidates_never_offers_a_blank_value_as_a_certainty() -> None:
+    """Two empty strings compare 1.00, and a video named for its language alone normalizes to one.
+
+    So a language an extra carries blank would rank first at a perfect score with no name to show
+    for it — in the operator's shell, a click-to-fill button reading "08713195007434 ·  (1.00)".
+    """
+    products = [
+        _product(
+            "08713195007434",
+            nl="handige lamp",
+            extras_localised={"logistics_name": LocalisedText(values={"nl": "", "fr": "Lampe"})},
+        )
+    ]
+
+    ranked = rank_candidates(normalize_video_name("NL.mpg"), products, top_n=3)
+
+    assert ranked[0].name
+    assert ranked[0].score < 1.0
 
 
 def test_rank_candidates_pure_miss_scores_low() -> None:
