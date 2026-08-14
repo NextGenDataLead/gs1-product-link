@@ -351,7 +351,7 @@ def _is_placeholder(value: str | None) -> bool:
 
 
 def _without_placeholders(value: str | None) -> str | None:
-    """``value`` minus any placeholder slot; ``None`` when no real slot is left.
+    """``value`` minus any placeholder or empty slot; ``None`` when no real slot is left.
 
     ``Material`` repeats in the feed and the parser joins its slots, so testing the whole string
     for a ``zzz…`` prefix stopped answering the question it was asked: ``kunststof, zzzanders``
@@ -359,15 +359,18 @@ def _without_placeholders(value: str | None) -> str | None:
     a value to paste into MyGS1 — a blank turned into fabricated master data, the exact failure
     the placeholder rule exists to prevent.
 
-    A value with no placeholder slot is returned **byte-identical**, never re-joined: the split is
-    a way of finding placeholders, not a licence to normalise the feed's own punctuation.
+    Slots are dropped by the same rule whether or not the value contains a placeholder. Skipping
+    the walk for a value that has none would be the cheaper branch, but it would make an empty
+    slot survive in ``a, , b`` and vanish in ``a, , zzzanders`` — one input's rendering deciding
+    another's. Nothing legitimate is at risk from always walking: ``sep.join(s.split(sep))`` is an
+    identity, so a value whose slots are all real comes back unchanged, punctuation included, and
+    a single-slot value that merely *contains* a comma is never split into anything droppable.
     """
     if value is None:
         return None
-    parts = value.split(SCALAR_SEPARATOR)
-    if not any(_is_placeholder(part) for part in parts):
-        return value
-    kept = [part for part in parts if part.strip() and not _is_placeholder(part)]
+    kept = [
+        part for part in value.split(SCALAR_SEPARATOR) if part.strip() and not _is_placeholder(part)
+    ]
     return SCALAR_SEPARATOR.join(kept) or None
 
 

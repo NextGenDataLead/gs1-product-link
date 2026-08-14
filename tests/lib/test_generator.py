@@ -278,14 +278,29 @@ def test_a_material_of_placeholders_only_is_still_absent() -> None:
     assert "material" not in {gap.field for gap in gaps}
 
 
-def test_a_material_with_no_placeholder_slot_is_passed_through_byte_identical() -> None:
-    # The guard may only ever remove a placeholder. A value that merely *contains* the separator
-    # must come back exactly as the feed wrote it — no re-join, no whitespace normalisation.
+def test_a_material_of_real_slots_is_passed_through_byte_identical() -> None:
+    # The guard may only ever remove a placeholder or an empty slot. A value whose slots are all
+    # real comes back exactly as the feed wrote it, punctuation and stray spacing included.
     product = _product(extras={"material": "kunststof,metaal , stof"})
 
     request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))[0]
 
     assert request.inputs.material == "kunststof,metaal , stof"
+
+
+def test_an_empty_slot_is_dropped_whether_or_not_a_placeholder_is_present() -> None:
+    """One rule for slots, so no input's rendering depends on another's contents.
+
+    Walking only when a placeholder is present is the cheaper branch and was the first shape of
+    this guard. It makes the empty slot in `a, , b` survive while the one in `a, , zzzanders`
+    vanishes — the same malformed value rendering two ways depending on what sits beside it.
+    """
+    with_placeholder = _product(extras={"material": "kunststof, , zzzanders"})
+    without = _product(extras={"material": "kunststof, , metaal"})
+    cache = GeneratedCache(client_id="noviplast")
+
+    assert pending_requests([with_placeholder], cache, _ctx("nl"))[0].inputs.material == "kunststof"
+    assert pending_requests([without], cache, _ctx("nl"))[0].inputs.material == "kunststof, metaal"
 
 
 def test_a_multi_value_material_renders_as_one_technische_details_line() -> None:

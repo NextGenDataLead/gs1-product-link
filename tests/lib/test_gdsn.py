@@ -804,6 +804,7 @@ def _write_scalar_multivalue_workbook(tmp_path: Path) -> str:
             *["nl", "Set", "fr", "Ensemble", "nl", "Duopack", "fr", "Duo"],
         ),
         _drow("08713195004501", "528", *["nl", "Zeepdispenser", "Noviplast"], *[None] * 8),
+        _drow("08713195000001", "528", *["nl", "Vuilgrijper", "Noviplast"], *[None] * 8),
     ]:
         desc.append(row)
 
@@ -819,6 +820,8 @@ def _write_scalar_multivalue_workbook(tmp_path: Path) -> str:
         _drow("08713195008066", "528", "kunststof", "metaal", "stof"),
         # A hole in the middle: slot 1 is empty, slot 2 carries a real value.
         _drow("08713195004501", "528", "kunststof", None, "glas"),
+        # A hole at the FRONT: slot 0 is empty, slot 1 carries the only value.
+        _drow("08713195000001", "528", None, "metaal", None),
     ]:
         brick.append(row)
 
@@ -883,6 +886,25 @@ def test_a_scalar_extra_without_the_flag_still_reads_one_slot(tmp_path: Path) ->
 
     record = next(r for r in result.records if r.gtin == "08713195008066")
     assert record.extras["material"] == "kunststof"
+
+
+def test_a_single_value_source_reads_slot_zero_even_when_slot_zero_is_blank(tmp_path: Path) -> None:
+    """Without the flag, an empty first slot means empty — not "look in the next one".
+
+    The tempting simplification is to express `pick_scalar` as `pick_scalar_all()[0]`. It would
+    make every scalar in the map silently start falling through: a product whose `Material[0]` is
+    blank would begin reporting `Material[1]`, changing values nobody asked to change. Nothing
+    else pins this, so without it the simplification looks free.
+    """
+    sheets = read_workbook(_write_scalar_multivalue_workbook(tmp_path))
+    gdsn_extras = {"material": GdsnSource(sheet="BrickGPCCommercialData", attribute="Material")}
+
+    result = build_records(
+        sheets, _scalar_multivalue_map(), ["528"], ["nl"], "nl", gdsn_extras=gdsn_extras
+    )
+
+    record = next(r for r in result.records if r.gtin == "08713195000001")
+    assert "material" not in record.extras
 
 
 def test_a_blank_slot_is_skipped_not_joined_as_an_empty_item(tmp_path: Path) -> None:

@@ -280,6 +280,12 @@ class GdsnSheet:
         group contributes its ``Value`` leaves, and a bare column (``GpcCategoryCode``) is its own
         value. The second is only consulted when the first finds nothing, so a group's unit and
         language siblings can never be mistaken for the value.
+
+        That preference is **unfalsifiable on this feed** — mutating it away changes nothing, in
+        the suite or across all 127 real products, because no group here carries a ``Value`` leaf
+        *and* another non-unit, non-language leaf under the same attribute. It is kept because it
+        is what the single-value picker this was extracted from already did, and because the
+        fallback exists precisely for shapes this export does not have.
         """
         candidates = [c for c in self.columns if c.matches_attribute(attribute)]
         values = [c for c in candidates if c.leaf_name == _LEAF_VALUE]
@@ -328,8 +334,14 @@ class GdsnSheet:
     ) -> list[str]:
         """Return every slot's value for a language-agnostic ``attribute``, in slot order.
 
-        The language-agnostic twin of :meth:`pick_localised_all`. Blank slots are skipped rather
-        than yielded as empty strings, so a hole in the middle of ``Material[0..2]`` joins to
+        The language-agnostic twin of :meth:`pick_localised_all`, down to its truthiness test:
+        :func:`lib.records._coerce_cell` already turns ``None``, ``""`` and a whitespace-only cell
+        all into ``None``, so no falsy-but-present value can reach here and ``if value`` cannot be
+        told from ``if value is not None``. Belt and braces against a change to that coercion, not
+        live behaviour — a mutation of it survives, and is meant to.
+
+        Blank slots are skipped rather than yielded as empty strings, so a hole in the middle of
+        ``Material[0..2]`` joins to
         ``"kunststof, glas"`` and not to ``"kunststof, , glas"``.
         """
         row = self.rows_by_key.get((gtin, market))
