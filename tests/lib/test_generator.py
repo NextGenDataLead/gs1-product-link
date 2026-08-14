@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from lib.errors import GeneratorError
+from lib.gdsn import GdsnSource
 from lib.generator import (
     MODE_GENERATE,
     MODE_TIGHTEN,
@@ -24,6 +25,7 @@ from lib.generator import (
     TranslatableField,
     _combine_title,
     apply_result,
+    generation_context,
     load_cache,
     merge_generated,
     pending_requests,
@@ -161,6 +163,34 @@ def test_a_value_blank_in_every_language_is_never_filled() -> None:
     fields = {gap.field for gap in translation_gaps(product, "fr", _ctx("nl", "fr"))}
 
     assert fields == {"product_name"}  # the only value this product carries at all
+
+
+def test_the_context_selects_exactly_the_sources_marked_translate() -> None:
+    """`localised` is not the selector — `translate` is, and only where a client set it.
+
+    `logistics_name` and `marketing_name` are localised and consumed by nothing, so deriving the
+    list from `localised` would spend producer tokens on values no page reads. It also has to pick
+    up `material`, which is language-agnostic in the feed and so could never be selected that way.
+    """
+    context = generation_context(
+        ["nl", "fr"],
+        "nl",
+        "v1",
+        {
+            "product_name": GdsnSource(sheet="S", attribute="3301", localised=True, translate=True),
+            "brand": GdsnSource(sheet="S", attribute="3336"),
+        },
+        {
+            "logistics_name": GdsnSource(sheet="S", attribute="3297", localised=True),
+            "material": GdsnSource(sheet="B", attribute="Material", translate=True),
+        },
+    )
+
+    assert [f.field for f in context.translatable] == ["product_name", "material"]
+    assert context.translatable[0].source_label == "S attr 3301"
+    # A per-language GDSN attribute has a slot the filled value can go back into; 4.012 has not.
+    assert context.translatable[0].has_language_slot is True
+    assert context.translatable[1].has_language_slot is False
 
 
 def test_a_field_not_opted_in_is_never_filled() -> None:
@@ -435,6 +465,39 @@ def test_merge_fills_a_language_agnostic_extra_so_the_page_stops_reading_dutch()
     assert merged.extra("material", "fr") == "plastique"
     description = merged.generated_description
     assert description is not None
+    assert "Matériau: plastique" in (description.get("fr") or "")
+
+
+def test_filling_a_language_agnostic_extra_keeps_the_language_it_was_authored_in() -> None:
+    """Translating for French must not take the value off the Dutch page.
+
+    A flat extra has one value and no language key of its own, so moving it into a per-language
+    mapping silently dropped it out of every language but the filled one — the Dutch
+    Technische-details block lost its `Materiaal:` line the moment French was translated.
+    """
+    product = _product(product_name=LocalisedText(values={"nl": "Bewateringpin", "fr": "Pic"}))
+    cache = GeneratedCache(client_id="noviplast")
+    for request in pending_requests([product], cache, _ctx("nl", "fr")):
+        apply_result(
+            cache,
+            request,
+            _result(
+                "Slogan",
+                "Puce",
+                translations={"material": "plastique"} if request.language == "fr" else {},
+            ),
+            origin=ORIGIN_GENERATED,
+            provenance="in-session",
+            now=_NOW,
+        )
+
+    merged, _ = merge_generated([product], cache, _ctx("nl", "fr"))
+
+    assert merged[0].extra("material", "nl") == "kunststof"
+    assert merged[0].extra("material", "fr") == "plastique"
+    description = merged[0].generated_description
+    assert description is not None
+    assert "Materiaal: kunststof" in (description.get("nl") or "")
     assert "Matériau: plastique" in (description.get("fr") or "")
 
 

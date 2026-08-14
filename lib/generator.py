@@ -446,12 +446,15 @@ def translation_gaps(
     gaps: list[TranslationGap] = []
     for candidate in context.translatable:
         values = _field_values(product, candidate.field, context.default_language)
-        if not values or language in values:
+        if language in values:
             continue
         ranked = [context.default_language, *context.languages]
         source_language = next((lang for lang in ranked if lang in values), None)
         if source_language is None:
-            continue  # carried only in a language this client does not publish
+            # Blank in every configured language — the guard rail. There is nothing to derive
+            # from, so this stays a source finding for MyGS1 (E23) rather than becoming an
+            # invented value. Also covers a value carried only in a language nobody publishes.
+            continue
         gaps.append(
             TranslationGap(
                 field=candidate.field,
@@ -929,19 +932,21 @@ def _read_cache(
     return reads, filled, issues
 
 
-def _apply_translations(product: ProductRecord, filled: dict[str, dict[str, str]]) -> ProductRecord:
+def _apply_translations(
+    product: ProductRecord, filled: dict[str, dict[str, str]], default_language: str
+) -> ProductRecord:
     """Return ``product`` with each filled value merged in, the feed's own values winning.
 
-    The read-side half of "the feed always wins" (:func:`_requested_translations` is the other):
-    a filled value is only ever written into a language the record has nothing for, so a cache
-    entry can never overwrite what the datapool says.
+    The read-side half of "the feed always wins". :func:`_requested_translations` is the other and
+    the one every real input hits first, so no current input reaches this one — it is kept as the
+    guard that still holds if the write side ever changes, not as live logic.
     """
     if not filled:
         return product
     update: dict[str, object] = {}
     localised_extras = dict(product.extras_localised)
     for field, by_language in filled.items():
-        current = _stored_values(product, field)
+        current = _stored_values(product, field, default_language)
         merged = {**by_language, **current}  # feed values overwrite the filled ones
         if field in type(product).model_fields:
             update[field] = LocalisedText(values=merged)
@@ -952,14 +957,21 @@ def _apply_translations(product: ProductRecord, filled: dict[str, dict[str, str]
     return product.model_copy(update=update) if update else product
 
 
-def _stored_values(product: ProductRecord, field: str) -> dict[str, str]:
-    """The record's own per-language values for ``field``, in the shape they are stored in."""
+def _stored_values(product: ProductRecord, field: str, default_language: str) -> dict[str, str]:
+    """The record's own per-language values for ``field``, in the shape they are stored in.
+
+    A flat extra counts as carrying its one value in the default language — the same reading
+    :func:`_field_values` uses to decide it is missing elsewhere. Returning nothing for it instead
+    dropped the authored value the moment another language was filled: translating `material` into
+    French took `Materiaal: kunststof` off the *Dutch* page, because the per-language mapping that
+    replaced the flat value held only French.
+    """
     localised = product.extras_localised.get(field)
     if localised is not None:
         return dict(localised.values)
     flat = product.extras.get(field)
     if flat is not None:
-        return {}  # a flat extra has no language key of its own to preserve
+        return {default_language: flat}
     value = getattr(product, field, None)
     return dict(value.values) if isinstance(value, LocalisedText) else {}
 
@@ -998,7 +1010,7 @@ def merge_generated(
     for product in products:
         reads, filled, product_issues = _read_cache(product, cache, context)
         issues.extend(product_issues)
-        record = _apply_translations(product, filled)
+        record = _apply_translations(product, filled, context.default_language)
         record, copy_issues = _apply_copy(record, reads, context)
         issues.extend(copy_issues)
         merged.append(record)
