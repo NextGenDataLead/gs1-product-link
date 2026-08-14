@@ -242,6 +242,44 @@ def test_translated_values_are_listed_with_the_text_to_paste() -> None:
     assert "fr" in md
 
 
+def test_one_paste_is_one_row_even_when_two_fields_share_an_attribute() -> None:
+    """Seen in a real run: attr 3301 feeds both `product_name` and `extras.functional_name`.
+
+    Both are genuinely filled, so both are genuinely reported — but the table is a work queue in
+    the source system's vocabulary, where they are one cell. Two identical rows read as two jobs
+    and invite the operator to wonder what the difference is.
+    """
+    same = "TradeItemDescription attr 3301"
+    md = _render(
+        generated_issues=[
+            _translated("08713195007649", "product_name.fr", "câble magnétique", same),
+            _translated("08713195007649", "functional_name.fr", "câble magnétique", same),
+        ],
+        products=_products("08713195007649"),
+    )
+
+    section = md.partition("## 4.")[2].partition("## 5.")[0]
+    assert section.count("câble magnétique") == 1
+    # …and the summary agrees, rather than counting 2 above a table of 1.
+    row = next(line for line in md.splitlines() if "Values translated" in line)
+    assert "| 1 |" in row
+
+
+def test_two_different_values_for_one_attribute_stay_two_rows() -> None:
+    same = "TradeItemDescription attr 3301"
+    md = _render(
+        generated_issues=[
+            _translated("08713195007649", "product_name.fr", "câble magnétique", same),
+            _translated("08713195007649", "product_name.de", "Magnetkabel", same),
+        ],
+        products=_products("08713195007649"),
+    )
+
+    section = md.partition("## 4.")[2].partition("## 5.")[0]
+    assert "câble magnétique" in section
+    assert "Magnetkabel" in section
+
+
 def test_a_translated_value_lands_after_the_other_mygs1_fixes_not_among_the_blockers() -> None:
     # It is MyGS1 work that does not hold the GTIN — §3's neighbourhood, not §1's.
     md = _render(

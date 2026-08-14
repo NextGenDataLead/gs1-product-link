@@ -165,6 +165,21 @@ def test_a_value_blank_in_every_language_is_never_filled() -> None:
     assert fields == {"product_name"}  # the only value this product carries at all
 
 
+def test_a_datapool_placeholder_is_not_something_to_translate() -> None:
+    """`zzzanders` is the feed's way of saying "no value", and the generator already knows it.
+
+    Reading it as a value to translate asks the producer to render a placeholder into French and
+    then tells the operator to paste that back into MyGS1 — turning a blank into fabricated master
+    data, which is the exact failure the guard rail exists to prevent. Found in a real run: one
+    in-scope product carries it.
+    """
+    product = _product(extras={"material": "zzzanders"})
+
+    fields = {gap.field for gap in translation_gaps(product, "fr", _ctx("nl", "fr"))}
+
+    assert "material" not in fields
+
+
 def test_the_context_selects_exactly_the_sources_marked_translate() -> None:
     """`localised` is not the selector — `translate` is, and only where a client set it.
 

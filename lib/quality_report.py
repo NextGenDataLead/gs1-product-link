@@ -149,6 +149,17 @@ def _stalest(freshness: dict[str, str]) -> str:
     return min(dates) if dates else ""
 
 
+def _paste_key(issue: SourceIssue) -> tuple[str, str, str, str]:
+    """What a §4 row actually asks for: one value, into one attribute, for one language.
+
+    Two of our field names can share one source attribute (3301 feeds both ``product_name`` and
+    ``extras.functional_name``), and in MyGS1 that is one cell. Used for both the table's rows and
+    the summary's count, so the two cannot disagree — a summary that says 4 above a table of 3 is
+    the kind of small contradiction that makes a reader stop trusting the whole document.
+    """
+    return (issue.gtin, _lang(issue.field), issue.source, issue.value)
+
+
 def _blocks_publish(field: str) -> bool:
     """True when a blank in ``field`` should hold the GTIN out of publishing (title/image)."""
     return field.split(".", 1)[0] in _BLOCKING_BLANK_FIELDS
@@ -320,7 +331,7 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
         [
             "Source",
             "Values translated to fill a language gap",
-            str(by_kind[_TRANSLATED]),
+            str(len({_paste_key(i) for i in generated_issues if i.issue == _TRANSLATED})),
             "Client (MyGS1)",
             "No — §4 to paste back",
         ],
@@ -536,11 +547,27 @@ def _translated_lines(
 
     Rows whose attribute has no per-language slot in GS1 (attr 4.012 Material) say so instead of
     naming a field, rather than sending the operator to look for one that does not exist.
+
+    Deduplicated on what a row actually asks for — GTIN, language, attribute, value — because two
+    of our field names can share one source attribute (3301 feeds both ``product_name`` and
+    ``extras.functional_name``). Both are genuinely filled and genuinely reported, but in MyGS1
+    they are one cell, and two identical rows read as two jobs.
     """
-    rows = [
-        [_label(products, i.gtin), _lang(i.field), _cell(i.source), _cell(i.value)]
-        for i in translated
-    ]
+    seen: set[tuple[str, str, str, str]] = set()
+    rows: list[list[str]] = []
+    for issue in translated:
+        key = _paste_key(issue)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            [
+                _label(products, issue.gtin),
+                _lang(issue.field),
+                _cell(issue.source),
+                _cell(issue.value),
+            ]
+        )
     return [
         "## 4. Translated to fill a language gap — paste these into MyGS1",
         "",

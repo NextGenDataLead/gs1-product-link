@@ -400,6 +400,19 @@ def generation_context(  # noqa: PLR0913 — each argument is a distinct client 
     )
 
 
+def _carried(values: dict[str, str]) -> dict[str, str]:
+    """Drop the languages whose "value" is blank or a datapool placeholder.
+
+    A ``zzz…`` placeholder is the feed saying it has no value — :func:`_material` already reads it
+    that way for the prompt. Reading it as text to translate would ask the producer to render a
+    placeholder into French and then tell the operator to paste that into MyGS1, turning a blank
+    into fabricated master data.
+    """
+    return {
+        lang: text for lang, text in values.items() if text.strip() and not _is_placeholder(text)
+    }
+
+
 def _field_values(product: ProductRecord, field: str, default_language: str) -> dict[str, str]:
     """Every language ``product`` carries ``field`` in, whatever shape it is stored in.
 
@@ -409,13 +422,13 @@ def _field_values(product: ProductRecord, field: str, default_language: str) -> 
     """
     localised = product.extras_localised.get(field)
     if localised is not None:
-        return {lang: text for lang, text in localised.values.items() if text.strip()}
+        return _carried(localised.values)
     flat = product.extras.get(field)
     if flat is not None:
-        return {default_language: flat} if flat.strip() else {}
+        return _carried({default_language: flat})
     value = getattr(product, field, None)
     if isinstance(value, LocalisedText):
-        return {lang: text for lang, text in value.values.items() if text.strip()}
+        return _carried(value.values)
     return {}
 
 
