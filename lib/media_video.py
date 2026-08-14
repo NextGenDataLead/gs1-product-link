@@ -120,18 +120,35 @@ def _candidate_fields(product: ProductRecord) -> list[tuple[str, str]]:
     A ``functional_name`` extra used to be listed here too and added nothing: it was a second
     declaration of that same attribute, so it could only ever repeat what ``product_name`` says.
 
-    The two remaining name extras are read only where the feed carries them **flat**. Both are
-    ``localised: true``, so a current parse puts them in ``extras_localised`` and this loop finds
-    nothing — widening it to read per-language values is a real improvement to the hints and is
-    tracked separately, because it changes which GTIN most files are hinted at.
+    The two name extras earn their place for the opposite reason: the video filenames are
+    **English** marketing names, and the feed's English is in these two rather than in
+    ``product_name`` — where 3301 reads "huisdierspeelgoed" / "Jouets chiens", the French
+    ``marketing_name`` reads "Noviplast Pet Buddy". So every language of each is offered, labelled
+    ``extras.{name}.{lang}`` the way ``product_name.{lang}`` is.
+
+    A name the record carries **flat** is still read. Whether a value is per-language is the
+    *record's* fact, not the config's: a ``products.json`` written before ``extras_localised``
+    existed holds one flat string however the attribute was declared, and ``localised`` is a
+    per-field switch in ``clients.yml`` that another client need not set. ``lib.gdsn`` gives each
+    name exactly one home, so the two branches cannot double-count.
+
+    Blank values are dropped rather than offered. Two empty strings compare **1.00**, and a video
+    named for its language alone normalizes to one — so a language an extra carries blank would
+    rank first at a perfect score with no name to show for it.
     """
     pairs: list[tuple[str, str]] = [
         (f"product_name.{lang}", value) for lang, value in product.product_name.values.items()
     ]
     for key in ("marketing_name", "logistics_name"):
-        value = product.extras.get(key)
-        if value:
-            pairs.append((f"extras.{key}", value))
+        localised = product.extras_localised.get(key)
+        if localised is None:
+            flat = product.extras.get(key)
+            if flat:
+                pairs.append((f"extras.{key}", flat))
+            continue
+        pairs.extend(
+            (f"extras.{key}.{lang}", value) for lang, value in localised.values.items() if value
+        )
     return pairs
 
 
@@ -141,9 +158,8 @@ def rank_candidates(
     """Rank ``products`` against a normalized video name; return the top ``top_n`` hints.
 
     Scores each product by the best :class:`~difflib.SequenceMatcher` ratio across its
-    ``product_name`` (all languages) and any name extra the feed carries flat — see
-    :func:`_candidate_fields` for what that currently reaches.
-    Hints only — the operator decides the actual GTIN.
+    ``product_name`` and both name extras, in every language each of them carries — see
+    :func:`_candidate_fields`. Hints only — the operator decides the actual GTIN.
     """
     scored: list[VideoCandidate] = []
     for product in products:

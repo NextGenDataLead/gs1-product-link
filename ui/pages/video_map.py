@@ -161,7 +161,10 @@ def _row_editor(
     """The panel for one selected row: its hints, and a box to put a GTIN in."""
     with theme.section(f"{row.file}  ·  {row.language}"):
         if row.note:
-            ui.label(row.note.lstrip("# ")).classes("note")
+            # The file's own note, not a fresh hint: it was written when the row was drafted, and
+            # the suggestions below are recomputed now. On a confirmed row the note is the evidence
+            # for the GTIN; on an unset one it is an older, worse guess than the buttons below it.
+            ui.label(f"Noted in the file: {row.note.lstrip('# ')}").classes("note")
 
         current = pending.get((row.language, row.file), row.gtin)
         field = ui.input("GTIN", value=current).props("outlined dense").classes("w-96")
