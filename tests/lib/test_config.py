@@ -202,6 +202,19 @@ def test_the_example_config_opts_the_published_fields_into_translation(tmp_path:
     ]
 
 
+def test_the_example_config_reads_every_repeated_slot_of_a_multi_value_source() -> None:
+    """`multivalue` is what stops a repeated `[n]` column being truncated to its first slot.
+
+    Attr 1067 spreads USPs across `TradeItemFeatureBenefit[n]`; attr 4.012 spreads a product's
+    materials across `Material[n]`. Both need the flag, and the flag is per-source opt-in, so the
+    example is the only thing in git that records which sources actually repeat.
+    """
+    export = load_clients("clients.example.yml")["democlient"].export
+
+    assert [n for n, s in export.gdsn_map.items() if s.multivalue] == ["description_long"]
+    assert [n for n, s in export.gdsn_extras.items() if s.multivalue] == ["material"]
+
+
 def test_two_sources_reading_one_attribute_are_refused_at_load(tmp_path: Path) -> None:
     """One attribute, one field — checked where the operator's own config is read.
 
