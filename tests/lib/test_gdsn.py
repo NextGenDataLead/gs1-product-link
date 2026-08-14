@@ -769,3 +769,197 @@ def test_multivalue_joins_all_slots(tmp_path: Path) -> None:
     record = next(r for r in result.records if r.gtin == "08713195007717")
     assert record.description_long is not None
     assert record.description_long.get("nl") == "Eerste USP\nTweede USP"
+
+
+def _write_scalar_multivalue_workbook(tmp_path: Path) -> str:
+    """A workbook whose repeated ``[n]`` slots are language-agnostic, not per-language.
+
+    Mirrors the real export's ``BrickGPCCommercialData``: ``Material[0]``, ``Material[1]``,
+    ``Material[2]``, each labelled ``Material (4.012)`` with no ``LanguageCode`` sibling — so the
+    localised multivalue path never sees them. It also repeats a *unit-carrying* attribute
+    (``NetContent[n]``, each slot with its own ``MeasurementUnitCode``) and a localised extra
+    (``Variation[n]``, two slots per language), the two other shapes a slot walk must get right.
+    """
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    desc = wb.create_sheet("TradeItemDescription")
+    for row in [
+        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem"]
+        + ["TradeItemUnitDescriptorCode", "Info", "Info", "BrandNameInformation"]
+        + ["Info"] * 8,
+        [None] * 4
+        + ["Name[0]", "Name[0]", None]
+        + ["Variation[0]", "Variation[0]", "Variation[1]", "Variation[1]"]
+        + ["Variation[2]", "Variation[2]", "Variation[3]", "Variation[3]"],
+        [None] * 4 + ["LanguageCode", "Value", "BrandName"] + ["LanguageCode", "Value"] * 4,
+        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)"]
+        + ["Functional (3301)", "Functional (3301)", "Brand (3336)"]
+        + ["Variation (3332)"] * 8,
+        # Two Dutch and two French slots, interleaved the way the feed repeats the whole group.
+        _drow(
+            "08713195008066",
+            "528",
+            *["nl", "Vouwkrat", "Noviplast"],
+            *["nl", "Set", "fr", "Ensemble", "nl", "Duopack", "fr", "Duo"],
+        ),
+        _drow("08713195004501", "528", *["nl", "Zeepdispenser", "Noviplast"], *[None] * 8),
+        _drow("08713195000001", "528", *["nl", "Vuilgrijper", "Noviplast"], *[None] * 8),
+    ]:
+        desc.append(row)
+
+    brick = wb.create_sheet("BrickGPCCommercialData")
+    for row in [
+        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem"]
+        + ["TradeItemUnitDescriptorCode"]
+        + ["Information[0]"] * 3,
+        [None] * 4 + ["Material[0]", "Material[1]", "Material[2]"],
+        [None] * 4 + ["Value"] * 3,
+        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)"]
+        + ["Material (4.012)"] * 3,
+        _drow("08713195008066", "528", "kunststof", "metaal", "stof"),
+        # A hole in the middle: slot 1 is empty, slot 2 carries a real value.
+        _drow("08713195004501", "528", "kunststof", None, "glas"),
+        # A hole at the FRONT: slot 0 is empty, slot 1 carries the only value.
+        _drow("08713195000001", "528", None, "metaal", None),
+    ]:
+        brick.append(row)
+
+    meas = wb.create_sheet("TradeItemMeasurements")
+    for row in [
+        ["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem"]
+        + ["TradeItemUnitDescriptorCode"]
+        + ["TradeItemMeasurements"] * 4,
+        [None] * 4 + ["NetContent[0]", "NetContent[0]", "NetContent[1]", "NetContent[1]"],
+        [None] * 4 + ["MeasurementUnitCode", "Value"] * 2,
+        ["GTIN (3059)", "Country (3179)", "Provider (3088)", "Unit (3074)"]
+        + ["Net Content (3510)"] * 4,
+        # Each slot carries a DIFFERENT unit code — 4 pieces and 500 grams.
+        _drow("08713195008066", "528", "H87", "4", "GRM", "500"),
+        _drow("08713195004501", "528", "H87", "1", None, None),
+    ]:
+        meas.append(row)
+
+    path = tmp_path / "scalar_multivalue.xlsx"
+    wb.save(path)
+    return str(path)
+
+
+def _scalar_multivalue_map() -> dict[str, GdsnSource]:
+    """The two required fields the scalar-multivalue workbook carries, so records build."""
+    return {
+        "product_name": GdsnSource(sheet="TradeItemDescription", attribute="3301", localised=True),
+        "brand": GdsnSource(sheet="TradeItemDescription", attribute="3336"),
+    }
+
+
+def test_a_multivalue_extra_joins_every_slot(tmp_path: Path) -> None:
+    # Material repeats as Material[0..2] with no LanguageCode sibling, so the localised
+    # multivalue path never sees it: slot 0 was read and the rest silently discarded, and a
+    # product made of two materials published as one. Language-agnostic values join with ", "
+    # because that is what renders in Technische details — the newline join exists only so the
+    # generator can split attr 1067 back into ranked USPs.
+    sheets = read_workbook(_write_scalar_multivalue_workbook(tmp_path))
+    gdsn_extras = {
+        "material": GdsnSource(
+            sheet="BrickGPCCommercialData", attribute="Material", multivalue=True
+        )
+    }
+
+    result = build_records(
+        sheets, _scalar_multivalue_map(), ["528"], ["nl"], "nl", gdsn_extras=gdsn_extras
+    )
+
+    record = next(r for r in result.records if r.gtin == "08713195008066")
+    assert record.extras["material"] == "kunststof, metaal, stof"
+
+
+def test_a_scalar_extra_without_the_flag_still_reads_one_slot(tmp_path: Path) -> None:
+    # The flag is the whole switch. Same workbook, same source minus multivalue: still the first
+    # slot. Pins that this is opt-in and that no field which did not ask for it moves.
+    sheets = read_workbook(_write_scalar_multivalue_workbook(tmp_path))
+    gdsn_extras = {"material": GdsnSource(sheet="BrickGPCCommercialData", attribute="Material")}
+
+    result = build_records(
+        sheets, _scalar_multivalue_map(), ["528"], ["nl"], "nl", gdsn_extras=gdsn_extras
+    )
+
+    record = next(r for r in result.records if r.gtin == "08713195008066")
+    assert record.extras["material"] == "kunststof"
+
+
+def test_a_single_value_source_reads_slot_zero_even_when_slot_zero_is_blank(tmp_path: Path) -> None:
+    """Without the flag, an empty first slot means empty — not "look in the next one".
+
+    The tempting simplification is to express `pick_scalar` as `pick_scalar_all()[0]`. It would
+    make every scalar in the map silently start falling through: a product whose `Material[0]` is
+    blank would begin reporting `Material[1]`, changing values nobody asked to change. Nothing
+    else pins this, so without it the simplification looks free.
+    """
+    sheets = read_workbook(_write_scalar_multivalue_workbook(tmp_path))
+    gdsn_extras = {"material": GdsnSource(sheet="BrickGPCCommercialData", attribute="Material")}
+
+    result = build_records(
+        sheets, _scalar_multivalue_map(), ["528"], ["nl"], "nl", gdsn_extras=gdsn_extras
+    )
+
+    record = next(r for r in result.records if r.gtin == "08713195000001")
+    assert "material" not in record.extras
+
+
+def test_a_blank_slot_is_skipped_not_joined_as_an_empty_item(tmp_path: Path) -> None:
+    # Slot 1 is empty and slot 2 carries a value. Joining positionally would render
+    # "kunststof, , glas" on the page and offer that string for translation.
+    sheets = read_workbook(_write_scalar_multivalue_workbook(tmp_path))
+    gdsn_extras = {
+        "material": GdsnSource(
+            sheet="BrickGPCCommercialData", attribute="Material", multivalue=True
+        )
+    }
+
+    result = build_records(
+        sheets, _scalar_multivalue_map(), ["528"], ["nl"], "nl", gdsn_extras=gdsn_extras
+    )
+
+    record = next(r for r in result.records if r.gtin == "08713195004501")
+    assert record.extras["material"] == "kunststof, glas"
+
+
+def test_a_multivalue_mapped_field_pairs_each_slot_with_its_own_unit(tmp_path: Path) -> None:
+    # The mapped-field path (_resolve_scalar) walks slots too. Each slot must take the unit code
+    # from its OWN repeated group: reusing slot 0's column would read "500 H87" — five hundred
+    # pieces where the feed says five hundred grams.
+    sheets = read_workbook(_write_scalar_multivalue_workbook(tmp_path))
+    gdsn_map = {
+        **_scalar_multivalue_map(),
+        "net_content": GdsnSource(
+            sheet="TradeItemMeasurements", attribute="3510", with_unit=True, multivalue=True
+        ),
+    }
+
+    result = build_records(sheets, gdsn_map, ["528"], ["nl"], "nl")
+
+    record = next(r for r in result.records if r.gtin == "08713195008066")
+    assert record.net_content == "4 H87, 500 GRM"
+
+
+def test_a_multivalue_localised_extra_joins_each_language_separately(tmp_path: Path) -> None:
+    # multivalue was honoured on the localised MAPPED path only, so a localised extra silently
+    # dropped every slot but the first — the same defect, one function over. Slots interleave
+    # languages, so the walk must group by LanguageCode rather than by position.
+    sheets = read_workbook(_write_scalar_multivalue_workbook(tmp_path))
+    gdsn_extras = {
+        "product_variation": GdsnSource(
+            sheet="TradeItemDescription", attribute="3332", localised=True, multivalue=True
+        )
+    }
+
+    result = build_records(
+        sheets, _scalar_multivalue_map(), ["528"], ["nl", "fr"], "nl", gdsn_extras=gdsn_extras
+    )
+
+    record = next(r for r in result.records if r.gtin == "08713195008066")
+    assert record.extras_localised["product_variation"].values == {
+        "nl": "Set\nDuopack",
+        "fr": "Ensemble\nDuo",
+    }

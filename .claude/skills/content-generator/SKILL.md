@@ -90,6 +90,10 @@ this repo is built around.
      back into the client's GS1 datapool, so a rewrite there is a wrong value in their master
      data, not just on the page. Return no key for a field the request did not list; it would
      be dropped on ingest anyway.
+     A `source_value` holding a **comma-separated list** is one the feed repeats across slots —
+     `material` is the case, e.g. `"kunststof, metaal"`. Translate each item and return them
+     comma-separated in the same order (`"plastique, métal"`): keep the shape, add nothing,
+     reorder nothing, and never fold the list into a phrase.
    - Never emit net content, dimensions, or material as USPs (those are added deterministically).
    Work in batch; do not narrate each unit.
 

@@ -240,6 +240,81 @@ def test_a_datapool_placeholder_is_not_something_to_translate() -> None:
     assert "material" not in fields
 
 
+def test_a_placeholder_slot_is_dropped_from_a_multi_value_material() -> None:
+    """The placeholder guard has to read slots, not the whole string.
+
+    `Material` repeats in the feed, and the parser joins its slots. Testing `startswith("zzz")`
+    against the joined value reads `kunststof, zzzanders` as an ordinary material — so the junk
+    would reach the page and, worse, §4 of the report would tell the operator to paste it into
+    MyGS1. Same class as the placeholder finding that landed with the translation work: the guard
+    rail existed, the placeholder walked in through a door it was not standing in.
+    """
+    product = _product(extras={"material": "kunststof, zzzanders"})
+
+    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))[0]
+
+    assert request.inputs.material == "kunststof"
+
+
+def test_a_placeholder_slot_is_not_offered_for_translation() -> None:
+    # The translation source is what §4 tells the operator to put back into MyGS1, so a
+    # placeholder surviving into it is fabricated master data, not just a bad page.
+    product = _product(extras={"material": "kunststof, zzzanders"})
+
+    gaps = {gap.field: gap for gap in translation_gaps(product, "fr", _ctx("nl", "fr"))}
+
+    assert gaps["material"].source_value == "kunststof"
+
+
+def test_a_material_of_placeholders_only_is_still_absent() -> None:
+    # Dropping every slot must land back on "no material at all" — not on an empty string that
+    # renders as a bare `Materiaal:` bullet and reads as a translatable value.
+    product = _product(extras={"material": "zzzanders, zzzonbekend"})
+
+    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))[0]
+
+    assert request.inputs.material is None
+    gaps = translation_gaps(product, "fr", _ctx("nl", "fr"))
+    assert "material" not in {gap.field for gap in gaps}
+
+
+def test_a_material_of_real_slots_is_passed_through_byte_identical() -> None:
+    # The guard may only ever remove a placeholder or an empty slot. A value whose slots are all
+    # real comes back exactly as the feed wrote it, punctuation and stray spacing included.
+    product = _product(extras={"material": "kunststof,metaal , stof"})
+
+    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))[0]
+
+    assert request.inputs.material == "kunststof,metaal , stof"
+
+
+def test_an_empty_slot_is_dropped_whether_or_not_a_placeholder_is_present() -> None:
+    """One rule for slots, so no input's rendering depends on another's contents.
+
+    Walking only when a placeholder is present is the cheaper branch and was the first shape of
+    this guard. It makes the empty slot in `a, , b` survive while the one in `a, , zzzanders`
+    vanishes — the same malformed value rendering two ways depending on what sits beside it.
+    """
+    with_placeholder = _product(extras={"material": "kunststof, , zzzanders"})
+    without = _product(extras={"material": "kunststof, , metaal"})
+    cache = GeneratedCache(client_id="noviplast")
+
+    assert pending_requests([with_placeholder], cache, _ctx("nl"))[0].inputs.material == "kunststof"
+    assert pending_requests([without], cache, _ctx("nl"))[0].inputs.material == "kunststof, metaal"
+
+
+def test_a_multi_value_material_renders_as_one_technische_details_line() -> None:
+    merged = _merge_one(
+        _product(extras={**_product().extras, "material": "kunststof, metaal"}),
+        "Tagline",
+        "Bullet",
+    )
+
+    html = merged.generated_description.get("nl")
+    assert html is not None
+    assert "Materiaal: kunststof, metaal" in html
+
+
 def test_the_context_selects_exactly_the_sources_marked_translate() -> None:
     """`localised` is not the selector — `translate` is, and only where a client set it.
 
