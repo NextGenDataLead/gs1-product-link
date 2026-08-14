@@ -275,6 +275,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     would cost a second full rewrite of every page.
 
 ### Fixed
+- **A product made of two materials published as one, because only the first repeated slot of an
+  attribute was ever read.** `BrickGPCCommercialData` spreads a product's materials across
+  `Material[0]`, `Material[1]` and `Material[2]`, all three labelled `Material (4.012)`. The
+  `multivalue` flag exists for exactly this and had been solving it for attr 1067 for months — but
+  it was honoured on **one** of four resolution paths, the localised mapped field. `material` is a
+  language-agnostic *extra*, so setting the flag on it was a silent no-op; a localised *extra* was
+  truncated the same way.
+
+  `pick_scalar_all` is now the language-agnostic twin of `pick_localised_all`, and one
+  `_scalar_picker` makes the single-or-every-slot choice for both language-agnostic resolvers, so
+  the flag cannot mean one thing on one path and nothing on the others again. Three details it
+  gets right: blank slots are skipped, so a hole does not become an empty item; each slot pairs
+  with its **own** `MeasurementUnitCode`, so a repeated measurement cannot report slot 1's number
+  in slot 0's unit; and `pick_scalar` keeps its exact previous behaviour — first slot, blank
+  included — so nothing that did not ask for `multivalue` moves.
+
+  **The separator differs by kind, deliberately.** A localised source still joins with a newline,
+  because the generator splits attr 1067 back into ranked USP candidates on that character. A
+  language-agnostic one joins with `", "`, because its value renders verbatim in a page's
+  Technische details, where a newline collapses to a space and `kunststof metaal` reads as one
+  fused material.
+
+  **The `zzz…` placeholder guard had to follow, and this is the part worth reading.** It tested
+  the whole string, so a joined `"kunststof, zzzanders"` would have read as an ordinary material:
+  the datapool's own "no value" marker on the live page, and — worse — a §4 row telling the
+  operator to paste it into MyGS1, turning a blank into fabricated master data. That is the exact
+  failure the guard exists to prevent. It now drops placeholder and empty slots by the same rule
+  whether or not a placeholder is present, because walking only when one is found made the gap in
+  `a, , b` survive while the one in `a, , zzzanders` vanished.
+
+  **Measured against the real export rather than the fixtures:** re-parsing changes **exactly
+  seven** of 127 products and nothing else — `material` is the only field, in any record, that
+  differs. `…1036`, `…3276`, `…6529` and `…7649` gain a second material, `…4501` and `…8202` gain
+  glass, and `…8066` becomes `stof, kunststof, metaal`. No joined value contains a placeholder
+  slot, and the two products whose material is only `zzzanders` still resolve to absent.
+
+  **Re-run `parse_export` to pick this up.** The seven products' generation fingerprints move, so
+  their copy regenerates — free right now, because the generated-copy cache is empty (0 of 74) and
+  has to be rebuilt before the next `run_plan` regardless. This is not a third cache invalidation.
+
 - **Video-mapping hints had been scoring on the product name alone, silently, since the localised
   extras landed.** `lib.media_video._candidate_fields` reads `marketing_name` (attr 3318) and
   `logistics_name` (attr 3297) to match a video filename against the feed. Those two are

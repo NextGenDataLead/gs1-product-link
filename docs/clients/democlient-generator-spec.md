@@ -186,14 +186,18 @@ gdsn_extras:
   dim_height:        { sheet: TradeItemMeasurements,  attribute: "3498", with_unit: true }
   dim_width:         { sheet: TradeItemMeasurements,  attribute: "3520", with_unit: true }
   dim_depth:         { sheet: TradeItemMeasurements,  attribute: "3492", with_unit: true }
-  material:          { sheet: BrickGPCCommercialData, attribute: "Material" }
+  material:          { sheet: BrickGPCCommercialData, attribute: "Material", multivalue: true }
 ```
 - Dimensions carry `MeasurementUnitCode` (`MMT`) → decode via existing `lib/units` (reuse).
-- **Material** is `Information[0]/Material[0]/Value` with a non-numeric `(4.012)` label, so it is a
+- **Material** is `Information[0]/Material[n]/Value` with a non-numeric `(4.012)` label, so it is a
   **language-agnostic scalar** matched by the path segment `"Material"` (confirmed at commit 1 via
-  `inspect_export`; `matches_attribute`, `lib/gdsn.py:151-155`). Multi-value in the feed
-  (`Material[0..2]`); the parser takes the first. The value `"zzzanders"` appears in the column — the
-  generator treats obvious junk as absent.
+  `inspect_export`; `GdsnColumn.matches_attribute`). Multi-value in the feed (`Material[0..2]`, all
+  three labelled `Material (4.012)`): with `multivalue: true` every slot is read and joined with
+  `", "` — not the newline a *localised* multivalue source uses, because that separator exists so
+  the generator can split attr 1067 back into ranked USPs, while material renders verbatim. Seven
+  of the 127 products carry more than one. The value `"zzzanders"` appears in the column — the
+  generator treats obvious junk as absent, and does so **per slot**, so `"kunststof, zzzanders"`
+  reads as `"kunststof"`.
 - `product_variation` (3332) resolves at default language only (`_resolve_extra`, `lib/gdsn.py:780`) —
   fine for the base variation token.
 
