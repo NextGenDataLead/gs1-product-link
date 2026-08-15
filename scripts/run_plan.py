@@ -214,13 +214,19 @@ def _generate_content(
 
     A no-op when the client has no ``generator`` config. Otherwise loads the generated-copy cache
     and runs :func:`lib.generator.merge_generated`, materialising the combined title, tagline, and
-    three-part description onto each record so generated changes enter the content hash and
-    reclassify as CHANGED — mirroring :func:`_assign_categories`, and for the same reason it runs
-    before ``diff_against_state``. Filling a missing French name from the cache also stops the E18
-    skip firing for a gap the generator has since filled; a genuine gap (no fresh cache entry) gets
-    no generated fields and falls to the E18 backstop. Returns the products with generated fields
-    set, plus one :class:`SourceIssue` per generated/adjusted value, per blank marketing message,
-    and per value filled by translating the language the feed does carry it in.
+    three-part description onto each record.
+
+    It runs before ``diff_against_state`` because the *skip* decisions need it: E21 asks whether a
+    tagline exists, and filling a missing French name stops E18 firing for a gap the generator has
+    since closed (a genuine gap gets no generated fields and falls to the E18 backstop). What it
+    deliberately does **not** feed is the content hash — the caller passes the pre-generator
+    records as ``hash_source``, so a re-generation that words the same source data differently
+    leaves a published page UNCHANGED rather than rewriting it. Model output is not stable enough
+    to be a change signal.
+
+    Returns the products with generated fields set, plus one :class:`SourceIssue` per
+    generated/adjusted value, per blank marketing message, and per value filled by translating the
+    language the feed does carry it in.
 
     The ``gdsn_map``/``gdsn_extras`` are passed because they carry the ``translate`` flags: which
     values may be filled is a client's decision about its own page, not a rule in code.
@@ -283,6 +289,10 @@ def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> _PlanResult
     candidates, excluded = _pilot_gate(cfg, candidates, state, excluded)
 
     candidates, category_issues = _assign_categories(cfg, candidates)
+    # The record as the feed defines it, categories included and the generator's output not. This
+    # is what the classification compares against prior state, so re-generating copy over
+    # unchanged source data leaves a live page alone instead of rewriting it with new wording.
+    feed_view = {product.gtin: product for product in candidates}
     candidates, generated_issues = _generate_content(cfg, candidates)
 
     rows, skipped = diff_against_state(
@@ -294,6 +304,7 @@ def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> _PlanResult
         require_hero_image=cfg.media is not None and cfg.media.require_hero_image,
         gdsn_map=cfg.export.gdsn_map,
         video_gtins=_confirmed_video_gtins(cfg),
+        hash_source=feed_view,
     )
     counts = {c: sum(1 for row in rows if row.classification is c) for c in PlanClassification}
     plan = Plan(

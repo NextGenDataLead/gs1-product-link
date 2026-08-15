@@ -703,24 +703,59 @@ def _cache_multi(gtin: str, entries: dict[str, dict[str, Any]]) -> None:
     save_cache(cache)
 
 
-def test_generated_content_reclassifies_changed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
-    products = tmp_path / "products.json"
-    _write_products(products, [_product(GTIN_A)])
-
-    # Baseline: copy is present (E21 requires it), plan once, record state as UNCHANGED.
-    _cache_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
+def _plan_and_publish(products: Path) -> None:
+    """Plan once and record the resulting row as the live page, so the next run compares to it."""
     run_plan.main(["acme", "--products", str(products)])
     row = next(r for r in _read_plan().rows if r.gtin == GTIN_A)
     save_state(
         State(client_id="acme", entries={GTIN_A: {"nl": _entry(row.content_hash, row.target_url)}})
     )
 
-    # The generated copy changes — it enters the hash and reclassifies the row.
+
+def test_regenerated_copy_alone_does_not_reclassify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-wording the same source data must leave a published page alone.
+
+    The generated copy is on the record and does reach the page, but it is not a change signal:
+    a producer asked twice answers differently both times, so a hash that covered it would
+    rewrite the whole live site on every run having changed nothing.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    _cache_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
+    _plan_and_publish(products)
+
     _cache_with(GTIN_A, "nl", usps=["A sharper tagline", "Bullet"])
+    run_plan.main(["acme", "--products", str(products)])
+
+    row = next(r for r in _read_plan().rows if r.gtin == GTIN_A)
+    assert row.classification is PlanClassification.UNCHANGED
+    # The new copy is still on the row — only the classification ignores it.
+    assert row.product.generated_tagline is not None
+    assert row.product.generated_tagline.values["nl"] == "A sharper tagline"
+
+
+def test_a_source_edit_still_reclassifies_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half: excluding copy must not blind the plan to a real feed change.
+
+    The brick is the cleanest probe — it is in the content hash but is not a generation input, so
+    the copy is byte-identical across both runs and the CHANGED can only have come from the feed.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    _cache_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
+    _plan_and_publish(products)
+
+    _write_products(products, [_product(GTIN_A, brick="10000123")])
     run_plan.main(["acme", "--products", str(products)])
 
     row = next(r for r in _read_plan().rows if r.gtin == GTIN_A)
