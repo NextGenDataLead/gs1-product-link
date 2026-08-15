@@ -49,6 +49,8 @@ from lib.records import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from lib.config import WordPressConfig
     from lib.gdsn import GdsnSource
 
@@ -341,6 +343,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     require_hero_image: bool = False,
     gdsn_map: dict[str, GdsnSource] | None = None,
     video_gtins: frozenset[str] | None = None,
+    hash_source: Mapping[str, ProductRecord] | None = None,
 ) -> PlanDiff:
     """Classify each ``(GTIN, language)`` against prior state, building plan rows (§4.8, §8.2).
 
@@ -357,6 +360,15 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     blank-1083 product), so publishing it would render a silently-blank page. The gap is
     still reported upstream by ``merge_generated`` (``missing_generation_input``); this
     skip only keeps it out of the actionable plan.
+
+    **What the hash is allowed to notice.** By default the hash covers the record it is given,
+    whole. A caller that has enriched its records with language-model output — generated copy,
+    or a language gap filled by translating the sibling — passes the pre-enrichment records as
+    ``hash_source``, and the classification is computed from those instead. Model output is not
+    stable across runs: regenerate over unchanged feed data and the wording moves, so a hash that
+    covered it would reclassify every page CHANGED and rewrite the whole site having changed
+    nothing. The enriched record is still what the row carries and what gets rendered; only the
+    *comparison* ignores the parts a model wrote.
 
     Args:
         products: The products to plan.
@@ -379,6 +391,12 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
             product outside it is held in all languages (E24). Passing the set rather than the
             video map keeps this function free of file reading, and lets the caller decide what
             "confirmed" means.
+        hash_source: The records that *define* the content, keyed by GTIN, when they differ from
+            the records being planned — see "What the hash is allowed to notice" above. Must cover
+            every planned product: a partial mapping is a caller bug, and raising a ``KeyError``
+            on it beats silently hashing the enriched record for the one GTIN that was forgotten,
+            which would reclassify exactly that row and nothing else. Defaults to ``None``, which
+            hashes each product itself.
 
     Returns:
         A :class:`PlanDiff`: one :class:`~lib.records.PlanRow` per planned
@@ -435,6 +453,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                 for language in languages
             )
             continue
+        hashed = product if hash_source is None else hash_source[product.gtin]
         for language in languages:
             if language not in product.product_name.values:  # E18
                 skipped.append(
@@ -467,7 +486,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                 gtin14=product.gtin14,
             )
             title = product.product_name.values[language]
-            content_hash = compute_content_hash(product, language, target_url)
+            content_hash = compute_content_hash(hashed, language, target_url)
             prior = state.entries.get(product.gtin, {}).get(language)
             classification, diff = _classify(prior, content_hash, title, target_url)
             rows.append(

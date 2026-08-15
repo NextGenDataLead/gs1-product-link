@@ -229,6 +229,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Changed
+- **Generated copy no longer decides whether a page has changed.** The content hash now covers the
+  product as the feed defines it, categories included; the generator's output is excluded. A
+  re-generation over unchanged source data therefore leaves a published page **UNCHANGED** instead
+  of reclassifying it CHANGED, and the copy still reaches the page exactly as before — only the
+  comparison ignores it.
+
+  The old behaviour was deliberate: fold the copy in first, and new copy reclassifies the row. That
+  holds only while copy is *stored* and reused. Ask a producer the same question twice and it
+  answers differently both times, so once copy is regenerated per run — which is where this is
+  going — a hash that covered it would rewrite the entire live site on every run having changed
+  nothing, and UNCHANGED would stop meaning anything. Measured on the real catalogue: under the old
+  rule **253 of 253 units** re-hash on a re-generation; under the new rule, **none** do. A genuine
+  feed edit still reclassifies — one product's brand edited moves exactly its own two units.
+
+  `diff_against_state` takes the pre-generator records as **`hash_source`**; passing nothing keeps
+  the old behaviour bit-for-bit, verified byte-identical against `main` across all 253 units. The
+  skip decisions are unmoved — copy is still merged *before* classification, because E21 asks
+  whether a tagline exists and a translated French name is still what stops E18 firing.
+
+  **One-time cost, already paid.** Every live `content_hash` moves once, so the 20 live units
+  reclassify CHANGED on the next run. PRs #93/#94/#96 had already moved all of them with no
+  `run_execute` since, so this rides along free — a window that closes on the next publish.
+
+  **The trade this accepts:** better wording on a re-run will no longer publish by itself, because
+  nothing in the hash moved, and there is no force flag yet. That is the price of an idempotent
+  re-run, and it is the right way round — a rewrite of every page is not something a tool should
+  do because a model chose different adjectives.
 - **One GDSN attribute, one field — enforced at config load, and the one attribute that broke the
   rule is now declared once.** Attr 3301 was mapped as `product_name` *and* declared again as
   `gdsn_extras.functional_name`. The two were byte-identical for all 127 products in both languages

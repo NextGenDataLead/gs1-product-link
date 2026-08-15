@@ -825,6 +825,158 @@ def test_diff_keeps_row_with_generated_copy_when_required() -> None:
     assert [(s.language, s.reason) for s in skipped] == [("fr", SkipReason.NO_GENERATED_COPY)]
 
 
+# --- hash_source: what the classification is allowed to notice ----------------
+#
+# The content hash covers the product as the feed defined it, plus categories. Values a language
+# model produced — generated copy, and a language gap filled by translating the sibling — are
+# excluded, because they are not stable across runs: regenerate and the wording moves, so every
+# page would reclassify CHANGED and be rewritten with nothing actually changed. Passing the
+# pre-generator record as ``hash_source`` is how the caller says which record defines the content.
+
+
+def _plan_one(
+    product: ProductRecord,
+    state: State,
+    *,
+    hash_source: dict[str, ProductRecord] | None = None,
+) -> object:
+    """One nl row for ``product``, classified against ``state``."""
+    rows, _ = diff_against_state([product], state, ["nl"], _wp(), hash_source=hash_source)
+    return rows[0]
+
+
+def _published(row: object, product: ProductRecord) -> State:
+    """State recording ``row`` as the live page for ``product``."""
+    return _state_with(
+        product.gtin,
+        "nl",
+        content_hash=getattr(row, "content_hash"),  # noqa: B009
+        wp_url=getattr(row, "target_url"),  # noqa: B009
+    )
+
+
+def test_regenerated_copy_with_different_wording_stays_unchanged() -> None:
+    """The whole point: a fresh generation over unchanged feed data must not republish."""
+    feed = _product()
+    source = {feed.gtin: feed}
+    first = _product(generated_tagline=LocalisedText(values={"nl": "Steunt uw rug"}))
+    second = _product(generated_tagline=LocalisedText(values={"nl": "Comfort voor onderweg"}))
+
+    live = _published(
+        _plan_one(first, State(client_id="noviplast", entries={}), hash_source=source), feed
+    )
+    row = _plan_one(second, live, hash_source=source)
+
+    assert row.classification is PlanClassification.UNCHANGED
+    # And the row still carries the new copy — only the *classification* ignores it.
+    assert row.product.generated_tagline is not None
+    assert row.product.generated_tagline.values["nl"] == "Comfort voor onderweg"
+
+
+def test_a_feed_edit_still_reclassifies_changed() -> None:
+    before, after = _product(), _product(brand="Ander Merk")
+    live = _published(
+        _plan_one(
+            before, State(client_id="noviplast", entries={}), hash_source={before.gtin: before}
+        ),
+        before,
+    )
+
+    row = _plan_one(after, live, hash_source={after.gtin: after})
+
+    assert row.classification is PlanClassification.CHANGED
+
+
+def test_a_category_change_still_reclassifies_changed() -> None:
+    """Categories are assigned before the generator and stay inside the hash."""
+    before, after = _product(category="Schoonmaak"), _product(category="Tuin")
+    live = _published(
+        _plan_one(
+            before, State(client_id="noviplast", entries={}), hash_source={before.gtin: before}
+        ),
+        before,
+    )
+
+    row = _plan_one(after, live, hash_source={after.gtin: after})
+
+    assert row.classification is PlanClassification.CHANGED
+
+
+def test_a_translated_language_fill_does_not_move_the_hash() -> None:
+    """A filled gap lands on a *feed* field, so only the pre-merge record can exclude it."""
+    feed = _product(extras_localised={"material": LocalisedText(values={"nl": "kunststof"})})
+    source = {feed.gtin: feed}
+    filled = _product(
+        extras_localised={"material": LocalisedText(values={"nl": "kunststof", "fr": "plastique"})}
+    )
+
+    live = _published(
+        _plan_one(feed, State(client_id="noviplast", entries={}), hash_source=source), feed
+    )
+    row = _plan_one(filled, live, hash_source=source)
+
+    assert row.classification is PlanClassification.UNCHANGED
+
+
+def test_the_row_hash_is_the_hash_of_the_source_record() -> None:
+    """What lands in the row — and so in ``state.json`` — is the feed view, not the merged one."""
+    feed = _product()
+    merged = _product(generated_tagline=LocalisedText(values={"nl": "Slogan"}))
+
+    row = _plan_one(merged, State(client_id="noviplast", entries={}), hash_source={feed.gtin: feed})
+
+    assert row.content_hash == compute_content_hash(feed, "nl", row.target_url)
+
+
+def test_without_a_hash_source_the_whole_record_is_hashed() -> None:
+    """Back-compat pin: every caller that passes nothing keeps today's behaviour exactly."""
+    plain = _product()
+    with_copy = _product(generated_tagline=LocalisedText(values={"nl": "Slogan"}))
+    empty = State(client_id="noviplast", entries={})
+
+    bare, generated = _plan_one(plain, empty), _plan_one(with_copy, empty)
+
+    assert bare.content_hash == compute_content_hash(plain, "nl", bare.target_url)
+    assert generated.content_hash != bare.content_hash
+
+
+def test_a_partial_hash_source_raises_rather_than_hashing_the_enriched_record() -> None:
+    """Failing loud is the decision, and it is not free — so it is pinned.
+
+    The lenient spelling (``.get(gtin, product)``) passes every other test in this file, because
+    the only caller builds the mapping from the very list it plans. What it would do on the day
+    that stops being true is hash the *enriched* record for the one forgotten GTIN — reclassifying
+    that row alone and rewriting one live page, silently. A ``KeyError`` names the bug instead.
+    """
+    planned, forgotten = _product(), _product(gtin="08713195000527")
+
+    with pytest.raises(KeyError):
+        diff_against_state(
+            [planned, forgotten],
+            State(client_id="noviplast", entries={}),
+            ["nl"],
+            _wp(),
+            hash_source={planned.gtin: planned},
+        )
+
+
+def test_e21_still_fires_when_a_hash_source_is_given() -> None:
+    """Excluding copy from the hash must not disarm the hold that keeps blank pages offline."""
+    product = _product()  # no generated_tagline
+
+    rows, skipped = diff_against_state(
+        [product],
+        State(client_id="noviplast", entries={}),
+        ["nl"],
+        _wp(),
+        require_generated_copy=True,
+        hash_source={product.gtin: product},
+    )
+
+    assert rows == []
+    assert [(s.language, s.reason) for s in skipped] == [("nl", SkipReason.NO_GENERATED_COPY)]
+
+
 def test_diff_holds_gtin_with_blank_image_when_required(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
