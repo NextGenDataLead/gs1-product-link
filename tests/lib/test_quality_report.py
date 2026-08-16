@@ -7,6 +7,7 @@ No I/O, no clock (the snapshot date is injected), so the same inputs render byte
 from __future__ import annotations
 
 from lib.gdsn import GdsnSource
+from lib.mandatory import MandatoryGap
 from lib.quality_report import MatrixInput, render_quality_report
 from lib.records import LocalisedText, ProductRecord, SourceIssue
 
@@ -115,7 +116,14 @@ def test_inferences_are_listed_for_verification() -> None:
     assert "Bevestig hem op elke metalen ondergrond" in md
 
 
-def test_blank_title_blocks_publish() -> None:
+def test_blank_title_is_a_blocker_not_a_source_fix() -> None:
+    """R-c removed §1d, which listed these. What must survive it is pinned here.
+
+    §1d said what §0's `product·3301` column and the Summary row already said, and named one GTIN
+    neither did — an out-of-scope one, which is a whole-catalogue finding leaking into a scoped
+    report. Dropping the section must not quietly demote the finding to §3a's "does not block"
+    list, which is the one way this change could go wrong.
+    """
     src = [
         _issue(
             "08713195007649",
@@ -126,11 +134,9 @@ def test_blank_title_blocks_publish() -> None:
     ]
     md = _render(source_issues=src, products=_products("08713195007649"))
 
-    # A blank title is a publish blocker: it lands in section 1, not the source-fix section.
-    section_1, _, rest = md.partition("## 2.")
-    assert "08713195007649" in section_1
-    assert "title" in section_1.lower()
-    assert "Blank title / image" in md  # summary row, marked a blocker
+    assert "Blank title / image" in md  # summary row, still marked a blocker
+    _, _, source_fixes = md.partition("## 3.")
+    assert "08713195007649" not in source_fixes  # never demoted to "do not block publish"
 
 
 def test_blank_net_content_is_degrade_only() -> None:
@@ -367,7 +373,7 @@ def test_generated_copy_is_a_pointer_not_a_per_row_dump() -> None:
     ]
     md = _render(generated_issues=gen, products=_products("08713195000001", "08713195000002"))
 
-    assert "2 generated-copy row(s) are reviewed" in md  # count-based pointer
+    assert "2 generated-copy row(s) written this run are reviewed" in md  # count-based pointer
     assert "generation_results.json" in md
     assert "src" not in md and "txt" not in md  # no per-row source dump
     assert "2b." not in md  # the old subsection is gone
@@ -543,3 +549,90 @@ def test_a_field_marked_out_of_the_matrix_gets_no_column() -> None:
     header = next(line for line in md.splitlines() if line.startswith("| GTIN |"))
     assert "logistics" not in header
     assert "material" in header  # the neighbouring optional column is untouched
+
+
+# --- §1: one section, saying what it lists (R-b, R-c, and the §1c rewrite) ----
+#
+# §1 used to hold four subsections. §1a (E23) and §1b (E24) repeated what §0's matrix already
+# shows; §1d repeated the matrix's `product·3301` / `image·2485` columns and leaked a
+# whole-catalogue GTIN into a scoped report. What is left is the copy block, which had drifted
+# furthest of all: it said "the generator produced nothing for these units", while what it lists
+# is products whose attr 1083 is blank in a language.
+
+
+def _blank_1083(gtin: str, language: str = "nl") -> SourceIssue:
+    return _issue(gtin, "missing_generation_input", field=f"description_short.{language}")
+
+
+def test_the_redundant_subsections_are_gone() -> None:
+    md = _render(
+        generated_issues=[_blank_1083("08713195000001")],
+        mandatory_gaps={"08713195000002": [MandatoryGap("brand", "", "3336")]},
+        video_held=["08713195000003"],
+        source_issues=[_issue("08713195000004", "blank_value", field="image_url")],
+        products=_products(*[f"0871319500000{n}" for n in range(1, 5)]),
+    )
+
+    assert "### 1a." not in md
+    assert "### 1b." not in md
+    assert "### 1c." not in md  # collapsed into §1 itself, not renamed
+    assert "### 1d." not in md
+    assert md.count("## 1. ") == 1
+
+
+def test_section_one_says_what_it_actually_lists() -> None:
+    """It is a source-data finding about attr 1083, not a report on whether generation ran.
+
+    The old wording sent an operator to re-run generation for a gap re-running cannot close, and
+    under scoped generation it would have read as an accusation about every already-live unit.
+    """
+    md = _render(
+        generated_issues=[_blank_1083("08713195000001")],
+        products=_products("08713195000001"),
+    )
+
+    assert "1083" in md
+    assert "The generator produced nothing" not in md
+    # The distinction that stops it being read as a generation failure.
+    assert "already live" in md
+
+
+def test_a_unit_with_no_1067_either_is_named_as_held() -> None:
+    """1083 blank *and* no 1067 is the one that actually blocks: nothing to write copy from."""
+    md = _render(
+        generated_issues=[_blank_1083("08713195000001", "fr")],
+        products=_products("08713195000001"),
+    )
+
+    assert "| fr | **Held** — no 1067 either (E21) |" in md
+
+
+def test_a_unit_whose_1067_carries_the_copy_is_not_reported_as_blocking() -> None:
+    """§1's rows are not uniform, and calling them all blockers is how a blocker gets ignored.
+
+    A product whose 1083 is blank but whose 1067 carries usable copy publishes perfectly well —
+    the datapool is still missing a field, which is worth fixing, but not before this SKU ships.
+    """
+    products = _products("08713195000001")
+    gtin14 = next(iter(products))
+    products[gtin14] = products[gtin14].model_copy(
+        update={"description_long": LocalisedText(values={"nl": "Kort en krachtig"})}
+    )
+
+    md = _render(generated_issues=[_blank_1083("08713195000001")], products=products)
+
+    assert "| Publishes from 1067 |" in md
+
+
+def test_the_generated_copy_count_says_which_copy_it_counted() -> None:
+    """Under scoped generation the number means "written this run", not "all in-scope copy".
+
+    A count whose meaning moves without the words moving is the failure R-a is also about.
+    """
+    gen = [
+        _issue("08713195000001", "content_generated", field="generated_description.nl", value="s")
+    ]
+
+    md = _render(generated_issues=gen, products=_products("08713195000001"))
+
+    assert "1 generated-copy row(s) written this run" in md

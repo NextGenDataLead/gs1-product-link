@@ -277,10 +277,13 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
         ],
         [
             "Copy",
-            "Held — no marketing message (1083)",
+            "No marketing message (1083)",
             f"{by_kind[_HELD]} rows / {len(held)} GTINs",
             "Client (MyGS1)",
-            "**Yes**",
+            # Not a flat "Yes": a unit whose 1067 carries copy publishes from it. §1 marks which
+            # rows are which, and an unqualified blocker count that includes non-blockers is how
+            # the real ones stop being urgent.
+            "**Yes** — where 1067 is blank too",
         ],
         [
             "Source",
@@ -406,60 +409,69 @@ def _matrix_lines(  # noqa: PLR0913 — a matrix needs its rows, its columns, an
     ]
 
 
-def _blocking_lines(  # noqa: PLR0913 — one parameter per independent source of a block
-    held: list[str],
-    blocking_blanks: list[SourceIssue],
-    products: dict[str, ProductRecord],
-    mandatory_gaps: dict[str, list[MandatoryGap]],
-    video_held: list[str],
+def _has_feature_benefit(products: dict[str, ProductRecord], gtin: str, language: str) -> bool:
+    """Whether the feed carries attr 1067 for this unit — the fallback copy is written from.
+
+    Recomputed from ``products.json`` rather than read off the finding, the same rule
+    ``report_quality._publish_blocks`` follows for E23/E24: the report says what is true of the
+    data *today*, from an export the operator may have replaced since the last run.
+    """
+    product = products.get(gtin.zfill(14))
+    if product is None or product.description_long is None:
+        return False
+    return bool((product.description_long.values.get(language) or "").strip())
+
+
+def _blocking_lines(
+    missing_1083: list[SourceIssue], products: dict[str, ProductRecord]
 ) -> list[str]:
-    held_rows = [[_label(products, gtin), "Fill attr 1083 in nl + fr"] for gtin in held]
-    blank_rows = [[_label(products, i.gtin), i.field, _cell(i.source)] for i in blocking_blanks]
-    mandatory_rows = [
-        [_label(products, gtin), ", ".join(gap.label for gap in gaps)]
-        for gtin, gaps in sorted(mandatory_gaps.items())
+    """§1 — the units whose marketing message (attr 1083) the feed does not carry.
+
+    This was §1c, under a §1 that also held three subsections repeating §0's matrix: E23's
+    mandatory gaps (§1a), E24's missing videos (§1b), and the blank title/image findings (§1d),
+    whose only GTIN beyond the matrix was out of scope entirely — a whole-catalogue finding leaking
+    into a scoped report. All three are gone, and with one subsection left there is no subsection.
+
+    **Its own text had drifted furthest.** It said *"the generator produced nothing for these
+    units … then re-run generation"*, which was never what it listed: the rows come from
+    ``missing_generation_input``, which fires on a blank attr 1083, and no amount of re-running
+    generation fills a field the datapool does not have. Once copy is written only for the rows a
+    run publishes, that sentence would have read as an accusation about every already-live unit.
+
+    The consequence is per row rather than asserted for all of them, because it differs: a unit
+    whose 1067 also has nothing is genuinely held (E21), and one whose 1067 carries copy publishes
+    from it. Calling both a blocker is how a real blocker stops being read.
+    """
+    rows = [
+        [
+            _label(products, issue.gtin),
+            _lang(issue.field),
+            "Publishes from 1067"
+            if _has_feature_benefit(products, issue.gtin, _lang(issue.field))
+            else "**Held** — no 1067 either (E21)",
+        ]
+        for issue in sorted(missing_1083, key=lambda i: (i.gtin, i.field))
     ]
-    video_rows = [[_label(products, gtin), "Confirm a video in nl + fr"] for gtin in video_held]
     return [
-        "## 1. Blocks publish — fix before these GTINs go live",
+        "## 1. Blocks publish — no marketing message in the feed (attr 1083)",
         "",
-        "### 1a. Missing mandatory source data (E23)",
+        "Attr 1083 is what a page's copy is written from. These `(GTIN, language)` units have "
+        "none, and no other language carries it either, so there is nothing to translate from — "
+        "**this is a source finding for MyGS1, not a generator failure.** Re-running generation "
+        "cannot close it.",
         "",
-        "Every field marked `required` in `clients.yml` must carry a value, in **every** language, "
-        "before a SKU may publish — and `marketing_copy` is satisfied by **either** attr 1083 "
-        "**or** 1067, not both. A product missing any of them is **held in all languages**, so a "
-        "SKU is never half-published: a page assembled from an incomplete record still publishes, "
-        "the QR still resolves, and it looks finished until someone reads it. **Action: fill the "
-        "named attributes in MyGS1** — never downstream.",
+        "What it costs depends on attr 1067. With nothing there either, there is nothing to write "
+        "copy from at all and the unit is **held out of the plan** (E21) — the SKU does not "
+        "publish in that language. With 1067 present, the page publishes from it and only the "
+        "datapool is short a field.",
         "",
-        *_table(["GTIN", "Missing"], mandatory_rows),
+        "_Not a list of units without copy **this run**._ Copy is written for the rows a run "
+        "publishes, so a unit that is already live and unchanged has none by design and is not "
+        "listed here.",
         "",
-        "### 1b. No client-confirmed video (E24)",
+        "**Action: fill attr 1083 for the named language in MyGS1.**",
         "",
-        "`media.restrict_to_mapped_gtins` is set, so a product may publish only once a video is "
-        "confirmed for it in **every** language. These are listed on the process list and cannot "
-        "run yet. **Action: complete `input/{client}/videos/mapping.yml`** — or drop the GTIN from "
-        "the process list if it is not wanted.",
-        "",
-        *_table(["GTIN", "Fix"], video_rows),
-        "",
-        "### 1c. Held — no marketing copy generated yet (E21)",
-        "",
-        "The generator produced nothing for these units. Where 1a already names `marketing_copy`, "
-        "this is the same product seen from the copy pipeline; where it does not, the inputs "
-        "exist but generation has not run. **Action: fill attr 1083 (nl + fr) in MyGS1** if it is "
-        "blank, then re-run generation.",
-        "",
-        *_table(["GTIN", "Fix"], held_rows),
-        "",
-        "### 1d. Blank required page fields — title / image",
-        "",
-        "A blank **title** (`product_name`) leaves the page with no headline; a blank hero "
-        "**image** (`image_url`) renders it without media. Fix at source in MyGS1. _Both are also "
-        "`required`, so 1a holds them; this section names the cross-market source finding behind "
-        "the hold._",
-        "",
-        *_table(["GTIN", "Field", "Source attribute"], blank_rows),
+        *_table(["GTIN", "Lang", "Consequence"], rows),
         "",
     ]
 
@@ -480,9 +492,10 @@ def _review_lines(
         "",
         *_table(["GTIN", "Lang", "Claim to verify"], inf_rows),
         "",
-        f"_The full {generated_count} generated-copy row(s) are reviewed in context at the "
-        "operator gate (Review Gate #1); raw text in "
-        f"`output/{client_id}/data/generation_results.json`._",
+        f"_The {generated_count} generated-copy row(s) written this run are reviewed in context "
+        "at the operator gate (Review Gate #1); raw text in "
+        f"`output/{client_id}/data/generation_results.json`. Copy is written only for the rows a "
+        "run publishes, so this counts **this run's batch**, not every unit in scope._",
         "",
     ]
 
@@ -659,12 +672,14 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     Returns:
         The full markdown document.
     """
-    held = sorted({i.gtin for i in generated_issues if i.issue == _HELD})
+    missing_1083 = [i for i in generated_issues if i.issue == _HELD]
     inferences = [i for i in generated_issues if i.issue == _INFERENCE]
     generated_count = sum(1 for i in generated_issues if i.issue == _GENERATED)
     translated = [i for i in generated_issues if i.issue == _TRANSLATED]
     blanks = [i for i in source_issues if i.issue == _BLANK]
-    blocking_blanks = [i for i in blanks if _blocks_publish(i.field)]
+    # The blocking half is counted in the Summary and shown in §0's `product·3301` / `image·2485`
+    # columns; §1d used to list it a third time, and its one GTIN beyond the matrix was out of
+    # scope. `_blocks_publish` still splits them, so §3a does not pick the blocking ones up.
     degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
     inconsistent = [i for i in source_issues if i.issue == _INCONSISTENT]
     wrong_lang = [i for i in source_issues if i.issue == _WRONG_LANG]
@@ -692,7 +707,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
             if matrix is not None
             else []
         ),
-        *_blocking_lines(held, blocking_blanks, products, mandatory_gaps or {}, video_held or []),
+        *_blocking_lines(missing_1083, products),
         *_review_lines(inferences, generated_count, products, client_id),
         *_source_lines(degrade_blanks, inconsistent, wrong_lang, products),
         *_translated_lines(translated, products),
