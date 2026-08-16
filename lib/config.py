@@ -283,7 +283,7 @@ class GeneratorConfig(BaseModel):
     ``enabled``; the in-session producer needs no key. Secrets are handled as elsewhere —
     ``api_key_env`` names the env var holding the API key, never the key itself. ``prompt_version``
     selects the frozen voice template (``prompts/{client}/generation.{prompt_version}.md``) and is
-    part of every cache fingerprint, so bumping it invalidates cached copy.
+    part of every input fingerprint, so copy written under the old one reads as stale.
     """
 
     model_config = ConfigDict(frozen=True)

@@ -77,12 +77,13 @@ and the run reports success having skipped it.
 
 ### What arrives through the app, and what does not
 
-Three files change hands every batch — the export, the process list, and the copy cache. Two of
+Three files change hands every batch — the export, the process list, and the generated copy. Two of
 them have an upload control. The third does not, and looking for one is time wasted:
 
 - **The product export** — uploaded on **Data**. It replaces the configured `export.path` in place,
   keeping the previous file as `.bak.xlsx`.
-- **`generated_cache.json`** — uploaded on **Content**.
+- **`generation_results.json`** — uploaded on **Content**. Written fresh for each batch, not
+  accumulated: a newer one replaces the run's copy rather than adding to it.
 - **`process-list.xlsx` — copied by hand.** There is no upload control for it anywhere in the app.
   The Data screen only *edits* a list that is already on disk (deleting rows), and renders a red
   band when the file is absent. Put it at the path `process_list.path` names before starting.

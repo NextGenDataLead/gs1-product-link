@@ -78,7 +78,7 @@ export const GATES: readonly Gate[] = [
     "id": "content_review",
     "step": "3",
     "title": "Generated copy review (gate 1 of 2)",
-    "purpose": "The tagline and Eigenschappen are LLM-written, so they are read before they can reach a page. Review the copy against the real product, not the 'ingested N' count — this pipeline fails silently. Show the cache-coverage counts here too: a unit with no fresh cache entry is dropped from the plan entirely (E21), so an empty cache yields an empty plan and a run that reports success having published nothing.",
+    "purpose": "The tagline and Eigenschappen are LLM-written, so they are read before they can reach a page. Review the copy against the real product, not the 'validated N' count — this pipeline fails silently. Show the coverage counts here too: a unit with no copy for this version of the export is dropped from the plan entirely (E21), so a missing or stale results file yields an empty plan and a run that reports success having published nothing.",
     "required": true,
     "modes": [
       "both",
@@ -96,7 +96,7 @@ export const GATES: readonly Gate[] = [
       {
         "value": "regenerate",
         "label": "Regenerate",
-        "consequence": "Fill the cache again before planning",
+        "consequence": "Write the copy again before planning",
         "outcome": "redisplays"
       },
       {

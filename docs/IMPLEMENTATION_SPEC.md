@@ -396,7 +396,7 @@ Typed exceptions: `OrchestratorError` (base), `ConfigError`, `MissingCredentialE
 | `OverwriteError(gtin, existing)` | `gs1_dl_client.safe_upsert` | GET-before-write guard: refuses to replace an existing Digital Link without `overwrite=True`. Carries the prior snapshot for rollback. |
 | `GtinMismatchError(gtin, existing_gtin, wp_page_id)` | `wp_client.upsert_page` | E8 — a page at the target slug belongs to a different GTIN. Distinct from `WordPressAPIError` so callers **log and skip the row** rather than treating it as a transport failure. |
 | `ProcessListError` | `process_list.load_process_list` | The process list is missing/unreadable/lacks the GTIN column/contains no GTINs. Treated like `ConfigError` (exit 2) — it names which products a run may touch. |
-| `GeneratorError` | `lib.generator` | Corrupt/unwritable `generated_cache.json`, or a producer result that fails validation. |
+| `GeneratorError` | `lib.generator` | Corrupt, unwritable or wrong-client `generation_results.json`, or a producer result that fails validation. |
 | `LLMAPIError(status_code, response_body, message=None)` | `lib.llm.AnthropicClient` | API failure, transport failure (`status_code == 0`), or a 200 lacking the forced `produce_copy` tool call. Only reachable via `run_generate --backend api`. |
 
 Operator-facing reference for all 13, with symptoms and fixes: `docs/troubleshooting.md`.
@@ -845,19 +845,19 @@ codes are uniform — **0** success, **1** errors in the work, **2** config/usag
 
 ```
 Usage: python -m scripts.run_generate  CLIENT_ID [--products PATH] [--results PATH]
-                                       [--emit | --ingest | --backend api]
+                                       [--emit | --validate | --backend api]
 
---emit      Write pending requests for an in-session producer (default)
---ingest    Read a session's results back into the cache
---backend api   Fill the cache directly via the Anthropic API backend (lib/llm.py)
+--emit      Write the units an in-session producer must answer (default)
+--validate  Check a session's results against this run; writes nothing
+--backend api   Write the results file via the Anthropic API backend (lib/llm.py)
 
-Emits:  output/{client_id}/data/generated_cache.json, generated_issues.json
-        --emit also writes the pending-request file the content-generator skill consumes
+Emits:  output/{client_id}/data/generation_requests.json  (--emit)
+        output/{client_id}/data/generation_results.json   (--backend api)
 ```
 
-`--emit`/`--ingest` and `--backend api` are mutually exclusive and share one cache and contract seam.
-The in-session path needs no API key. Re-run `run_plan` after `--ingest` so the copy merges into the
-plan.
+`--emit`/`--validate` and `--backend api` are mutually exclusive and share one contract seam:
+`generation_results.json`, written fresh each run and read by `run_plan`. There is no cache, so
+every in-scope unit is generated every run. The in-session path needs no API key.
 
 ```
 Usage: python -m scripts.run_unpublish CLIENT_ID --gtin GTIN [--gtin GTIN ...] [--dry-run]

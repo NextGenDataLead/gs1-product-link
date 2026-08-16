@@ -279,23 +279,24 @@ GATES: Final[tuple[Gate, ...]] = (
         title="Generated copy review (gate 1 of 2)",
         purpose=(
             "The tagline and Eigenschappen are LLM-written, so they are read before they can "
-            "reach a page. Review the copy against the real product, not the 'ingested N' count "
-            "— this pipeline fails silently. Show the cache-coverage counts here too: a unit with "
-            "no fresh cache entry is dropped from the plan entirely (E21), so an empty cache "
-            "yields an empty plan and a run that reports success having published nothing."
+            "reach a page. Review the copy against the real product, not the 'validated N' count "
+            "— this pipeline fails silently. Show the coverage counts here too: a unit with no "
+            "copy for this version of the export is dropped from the plan entirely (E21), so a "
+            "missing or stale results file yields an empty plan and a run that reports success "
+            "having published nothing."
         ),
         options=(
             GateOption("confirm", "Copy is good", "Proceed to planning"),
             GateOption(
                 "regenerate",
                 "Regenerate",
-                "Fill the cache again before planning",
+                "Write the copy again before planning",
                 GateOutcome.REDISPLAYS,
             ),
             GateOption("cancel", "Cancel", "Abort; nothing runs", GateOutcome.STOPS),
         ),
         required=True,
-        modes=_ALL_MODES,  # links mode too: an empty cache still empties the plan
+        modes=_ALL_MODES,  # links mode too: copy this run lacks still empties the plan
         needs_generator=True,
     ),
     Gate(

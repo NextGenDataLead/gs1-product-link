@@ -221,13 +221,14 @@ clients:
       path: "./input/democlient/process-list.xlsx"
       gtin_column: "Barcode"
 
-    # Content generator (tagline + Eigenschappen copy). Two producers share one cache and
+    # Content generator (tagline + Eigenschappen copy). Two producers share one results file and
     # contract: the in-session `content-generator` skill (writes copy in-session, no API key)
     # and the headless API backend (`python -m scripts.run_generate <id> --backend api`, which
     # calls the Anthropic Messages API via lib/llm.py). `enabled: true` permits the API backend
     # when the key env var is set; the in-session path works without it. `prompt_version` selects the
-    # frozen voice template at prompts/{id}/generation.{prompt_version}.md and is part of the cache
-    # fingerprint, so bumping it invalidates cached copy. Omit this whole block to leave the
+    # frozen voice template at prompts/{id}/generation.{prompt_version}.md and is part of the input
+    # fingerprint, so bumping it makes copy written under the old one read as stale. Nothing is
+    # cached — every in-scope unit is generated every run. Omit this whole block to leave the
     # generator un-configured (the API backend then refuses to run). See
     # docs/clients/democlient-generator-spec.md.
     generator:

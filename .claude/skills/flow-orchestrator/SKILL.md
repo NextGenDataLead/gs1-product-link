@@ -45,12 +45,12 @@ guess toward the more destructive mode.
 
 Orchestrates the generate/plan/confirm/execute pipeline for one client, in whichever of the three
 modes above applies. For a client with a
-`generator` config it first fills and reviews the generated-content cache (review gate 1), then runs
-`scripts/run_plan.py` to classify each `(GTIN, language)` — which merges that cache — and presents
+`generator` config it first writes and reviews this run's generated content (review gate 1), then
+runs `scripts/run_plan.py` to classify each `(GTIN, language)` — which merges that copy — and presents
 the plan (review gate 2), collects the operator's confirmation in chat, writes a `ConfirmedPlan` to
 `output/{client}/plan.confirmed.json`, and invokes `scripts/run_execute.py` on the confirmed subset
 — then reports the outcome. Generated content is reviewed **twice before it can reach a page** (the
-cache, then `plan.json`); execute then writes at `wordpress.post_status`, which ships as `publish`,
+results file, then `plan.json`); execute then writes at `wordpress.post_status`, which ships as `publish`,
 so a page is **live the moment it is written**. Tone is **concise and business-like, not
 conversational** (§10.6): verbose text creates fatigue during batch runs.
 
@@ -67,8 +67,9 @@ updates.
 - `clients.yml` config for the client (languages, environment, `process_list`, `flow`,
   `generator`).
 - Parsed products at `output/{client}/data/products.json` (run `parse_export` if absent).
-- For a client with a `generator` config, the generated-content cache at
-  `output/{client}/data/generated_cache.json` (filled in step 3; `run_plan` reads it).
+- For a client with a `generator` config, this run's generated content at
+  `output/{client}/data/generation_results.json` (written in step 3; `run_plan` reads it). It is
+  written fresh each run and never reused — there is no cache.
 
 ## Gate index
 
@@ -181,25 +182,26 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    Default `all`. Remember the chosen subset for step 6.
 
 3. **Generate copy & review (gate 1 of 2).** Skip this step for a client with no `generator`
-   config. Otherwise fill the generated-content cache, then review it before planning — the tagline
+   config. Otherwise write this run's copy, then review it before planning — the tagline
    and Eigenschappen are LLM-written, so they are reviewed *before* they can reach a page:
    - **In-session (no API key):** run `python -m scripts.run_generate {client} --emit`, then invoke the
-     `content-generator` skill to write the copy and `--ingest` it; that skill presents the review.
+     `content-generator` skill to write the copy and `--validate` it; that skill presents the review.
    - **Headless:** run `python -m scripts.run_generate {client} --backend api` (needs the API key).
-   **That file is not this run's batch.** Nothing prunes it, so it holds every unit ever generated
-   for this client; intersect it with the in-scope GTINs (`doctor --json`, check `scope`,
+   **Copy is written fresh every run and never reused**, so this file should be this run's batch —
+   but it is not pruned to it either. A file written against a longer process list still holds
+   those units; intersect it with the in-scope GTINs (`doctor --json`, check `scope`,
    `data.in_scope_gtins`) before concluding anything from its size. The shell's Content screen
    does exactly that.
-   Then eyeball a sample of `output/{client}/data/generated_cache.json` (nl **and** fr) and the
+   Then eyeball a sample of `output/{client}/data/generation_results.json` (nl **and** fr) and the
    `output/{client}/data/generated_issues.json` work list. **This pipeline fails silently — verify
-   the copy against the real product, not the "ingested N" count.** Generation never publishes; the
+   the copy against the real product, not the "validated N" count.** Generation never publishes; the
    second gate is `plan.json` (step 5), and there is no third — execute writes each page at
    `wordpress.post_status`, `publish` by default, so it is live immediately.
 
    This step runs in **`links` mode too**, even though no page is written. Not for the copy itself —
    for the plan: with a `generator` configured, `run_plan` omits any `(GTIN, language)` that has no
-   generated tagline (E21), so an empty cache yields an empty plan and the run publishes nothing
-   while reporting success.
+   generated tagline (E21), so a missing or stale results file yields an empty plan and the run
+   publishes nothing while reporting success.
 
 4. **Plan.** Run `python -m scripts.run_plan {client}` and read
    `output/{client}/plan.json`. run_plan omits any `(GTIN, language)` with a missing

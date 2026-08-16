@@ -368,7 +368,7 @@ def test_generated_copy_is_a_pointer_not_a_per_row_dump() -> None:
     md = _render(generated_issues=gen, products=_products("08713195000001", "08713195000002"))
 
     assert "2 generated-copy row(s) are reviewed" in md  # count-based pointer
-    assert "generated_cache.json" in md
+    assert "generation_results.json" in md
     assert "src" not in md and "txt" not in md  # no per-row source dump
     assert "2b." not in md  # the old subsection is gone
 

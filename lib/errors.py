@@ -307,12 +307,12 @@ class VideoMapError(OrchestratorError):
 
 
 class GeneratorError(OrchestratorError):
-    """The generated-content cache could not be loaded, parsed, written, or validated.
+    """This run's generated content could not be loaded, parsed, written, or validated.
 
-    Raised by ``lib.generator`` for a corrupt/unwritable ``generated_cache.json`` or a
-    producer result that fails validation (e.g. empty bullet lists). Mirrors
-    :class:`StateError`: the cache is a between-runs artifact, and a malformed one is a
-    fault the operator must see rather than silently ignore.
+    Raised by ``lib.generator`` for a corrupt, unwritable, or wrong-client
+    ``generation_results.json``, or a producer result that fails validation (e.g. empty
+    bullet lists). Mirrors :class:`StateError`: the file is what a run publishes from, and a
+    malformed one is a fault the operator must see rather than silently ignore.
     """
 
 

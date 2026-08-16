@@ -482,7 +482,7 @@ def _review_lines(
         "",
         f"_The full {generated_count} generated-copy row(s) are reviewed in context at the "
         "operator gate (Review Gate #1); raw text in "
-        f"`output/{client_id}/data/generated_cache.json`._",
+        f"`output/{client_id}/data/generation_results.json`._",
         "",
     ]
 

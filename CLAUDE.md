@@ -73,8 +73,8 @@ drift silently. Read `docs/ui-operator-shell.md` before changing either.
 - `lib/` — the library. `scripts/` — eleven CLI entry points. `ui/` — the operator shell (optional
   `[ui]` extra; nothing in `lib/` or `scripts/` imports it, and the suite passes without it).
   `mcps/` — three TypeScript MCP servers (unpublished by choice, see `docs/OPEN_DECISIONS.md` OD-2).
-- **Run `python -m scripts.doctor` before a wave.** It is the preflight: config, scope, cache
-  coverage, credentials, reachability. Exit 1 on any failure; `--offline` skips everything needing
+- **Run `python -m scripts.doctor` before a wave.** It is the preflight: config, scope, generated
+  copy for this run, credentials, reachability. Exit 1 on any failure; `--offline` skips everything needing
   a secret or a socket, `--json` is what the shell parses.
 - **Credentials come from `.env`**, loaded by `lib/env.py` `load_env()` from each script's
   `if __name__ == "__main__":` block — **never from `main()`**, which the tests call directly, and
