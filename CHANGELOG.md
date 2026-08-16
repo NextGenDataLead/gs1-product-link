@@ -409,6 +409,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     would cost a second full rewrite of every page.
 
 ### Fixed
+- **The data-quality report marked its mandatory columns in bold, and markdown table headers are
+  bold already — so the mark rendered as nothing.** §0's coverage matrix separates the two facts
+  that decide what an operator does with a gap: a blank in a mandatory column **holds the whole
+  SKU** (E23, and E24 for the video), a blank in an optional one only thins the page. That
+  distinction was carried by `**…**` around the header text, which renders identically to the
+  header without it, and the legend said *"Bold columns are mandatory"* while pointing at nothing
+  visible. Fourteen columns all looked the same.
+
+  Each header cell now carries its group — `MANDATORY<br>product·3301`, `optional<br>material` —
+  because markdown has no row above the header to put a label in. The legend names the two groups
+  and counts the mandatory ones instead of describing a typeface.
+
+  **The video column moved into the mandatory block**, where it belongs: a GTIN with no
+  client-confirmed video is held out of publishing entirely, but the column rendered last, after
+  the optional ones and next to `score`, which left the table with a third group at the far end
+  and made "mandatory first" untrue of the row as a whole. `_columns` is now the only thing that
+  orders the matrix, video included, so the header and the cells cannot group them differently.
+
+  Measured on the real 37-product report: **every cell and every score is unchanged** — same
+  values under the same column names, same row order — and the rest of the report is untouched.
+  The only differences are the header text, the legend, and the position of the video cell.
+
 - **A product made of two materials published as one, because only the first repeated slot of an
   attribute was ever read.** `BrickGPCCommercialData` spreads a product's materials across
   `Material[0]`, `Material[1]` and `Material[2]`, all three labelled `Material (4.012)`. The
