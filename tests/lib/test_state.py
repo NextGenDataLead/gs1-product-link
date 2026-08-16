@@ -1046,7 +1046,7 @@ def test_diff_holds_the_whole_sku_when_a_mandatory_field_is_missing() -> None:
         State(client_id="noviplast", entries={}),
         ["nl", "fr"],
         _wp(),
-        gdsn_map=gdsn_map,
+        mandatory_sources=gdsn_map,
     )
 
     assert rows == []  # nl is held too, though nl itself is complete
@@ -1055,6 +1055,30 @@ def test_diff_holds_the_whole_sku_when_a_mandatory_field_is_missing() -> None:
         ("fr", SkipReason.MISSING_MANDATORY_FIELD),
     ]
     assert "product_name.fr (attr 3301)" in skipped[0].detail
+
+
+def test_a_required_extra_holds_the_sku_here_too_not_only_in_the_report() -> None:
+    """The plan and the coverage matrix must agree about which fields hold a SKU.
+
+    They could not before: this took the `gdsn_map` alone, so a `gdsn_extras` entry marked
+    `required` was honoured by neither — and once the matrix started reading both maps, a plan
+    still reading one would have published a SKU the report was calling held. The parameter is
+    named `mandatory_sources` rather than `gdsn_map` so that a caller has to notice which it is
+    passing; both real callers hand over `ExportConfig.all_sources`.
+    """
+    sources = _required(dim_height=GdsnSource(sheet="S", attribute="3498", required=True))
+
+    rows, skipped = diff_against_state(
+        [_product()],  # carries no dim_height extra
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        mandatory_sources=sources,
+    )
+
+    assert rows == []
+    assert [s.reason for s in skipped] == [SkipReason.MISSING_MANDATORY_FIELD] * 2
+    assert "dim_height (attr 3498)" in skipped[0].detail
 
 
 def test_diff_publishes_when_every_mandatory_field_is_present() -> None:
@@ -1067,7 +1091,7 @@ def test_diff_publishes_when_every_mandatory_field_is_present() -> None:
         State(client_id="noviplast", entries={}),
         ["nl", "fr"],
         _wp(),
-        gdsn_map=gdsn_map,
+        mandatory_sources=gdsn_map,
     )
 
     assert [r.language for r in rows] == ["nl", "fr"]
@@ -1122,7 +1146,7 @@ def test_missing_data_is_reported_ahead_of_a_missing_video() -> None:
         State(client_id="noviplast", entries={}),
         ["nl", "fr"],
         _wp(),
-        gdsn_map=gdsn_map,
+        mandatory_sources=gdsn_map,
         video_gtins=frozenset(),  # also has no video
     )
 

@@ -112,7 +112,7 @@ def _publish_blocks(
     gaps = {
         product.gtin14: found
         for product in scoped
-        if (found := missing_mandatory(product, cfg.export.gdsn_map, languages))
+        if (found := missing_mandatory(product, cfg.export.all_sources, languages))
     }
 
     media = cfg.media

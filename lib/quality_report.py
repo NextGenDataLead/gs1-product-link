@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING, NamedTuple
 
+from lib.gdsn import is_mandatory
 from lib.mandatory import MandatoryGap
 from lib.records import ProductRecord, SourceIssue
 
@@ -52,6 +53,10 @@ _ABSENT = "○"
 
 #: Column header for the video pair — not a ``gdsn_map`` field, but the same kind of fact.
 _VIDEO_COLUMN = "video"
+
+#: Suffix marking a column whose gap only thins the page. Plain text on purpose: this report is
+#: read both rendered and as raw markdown, and anything HTML shows up as a tag in the second.
+_OPTIONAL_MARK = "~"
 
 
 class MatrixInput(NamedTuple):
@@ -95,28 +100,38 @@ def _columns(
 
     Derived so the matrix cannot drift from what the pipeline actually enforces: marking a field
     ``required`` in ``clients.yml`` moves it into the mandatory block here with no code change,
-    which is the whole point of a coverage table nobody has to maintain by hand.
+    which is the whole point of a coverage table nobody has to maintain by hand. **Both maps are
+    read for it** — an extra marked ``required`` is mandatory exactly as a mapped field is, and
+    hard-coding every extra optional here made a client's flag mean nothing.
 
     **This is the only thing that orders the matrix** — the renderer takes the list as given and
     neither re-sorts nor splices. Otherwise the header could group the columns one way while the
     cells were built another, and the test pinning a single mandatory→optional crossing would be
     pinning the renderer's own partition instead of this config-derived order.
+
+    The two maps keep separate header formats because they identify a column differently: a
+    mapped field is searched in MyGS1 by its GDSN attribute number, an extra by its own name.
     """
-    mandatory = [
-        FieldColumn(name, f"{name.split('_')[0]}·{src.attribute}", src.localised, True)
+    mapped = [
+        FieldColumn(name, f"{name.split('_')[0]}·{src.attribute}", src.localised, is_mandatory(src))
         for name, src in gdsn_map.items()
-        if (src.required or src.required_group) and src.in_matrix
+        if src.in_matrix
     ]
-    optional = [
-        FieldColumn(name, f"{name.split('_')[0]}·{src.attribute}", src.localised, False)
-        for name, src in gdsn_map.items()
-        if not (src.required or src.required_group) and src.in_matrix
-    ] + [
-        FieldColumn(name, name.replace("_", "·"), src.localised, False)
+    extras = [
+        FieldColumn(name, name.replace("_", "·"), src.localised, is_mandatory(src))
         for name, src in gdsn_extras.items()
         if src.in_matrix
     ]
-    return [*mandatory, _VIDEO, *optional]
+    mandatory = [
+        *(c for c in mapped if c.required),
+        _VIDEO,
+        *(c for c in extras if c.required),
+    ]
+    return [
+        *mandatory,
+        *(c for c in mapped if not c.required),
+        *(c for c in extras if not c.required),
+    ]
 
 
 def _mark(
@@ -392,12 +407,16 @@ def _matrix_lines(  # noqa: PLR0913 — a matrix needs its rows, its columns, an
     how much is filled, so the SKUs closest to publishable sit at the top and the worst-served at
     the bottom — the order someone works in, rather than GTIN order, which carries no information.
 
-    Mandatory columns come first and say so in the header, because a gap there stops the SKU
-    while a gap in an optional column only thins the page. The two facts look identical in a
-    matrix otherwise — and marking them in **bold** did not separate them either: markdown makes
-    header cells bold anyway, so the marker rendered as nothing at all in the report as read. A
-    group label inside the cell is the version that survives, markdown having no row above the
-    header to put one in.
+    Mandatory columns come first, and only the optional ones are marked, because a gap in a
+    mandatory column stops the SKU while a gap in an optional one only thins the page — two facts
+    that look identical in a matrix otherwise.
+
+    **Marking the shorter group is the third attempt at saying that, and the first that works
+    everywhere.** ``**bold**`` was invisible: markdown makes header cells bold anyway, so the
+    marker rendered as nothing in the only form of the report anyone reads. A ``MANDATORY<br>``
+    group label inside each cell rendered correctly but put a literal HTML tag in front of any
+    reader looking at the markdown as text. A trailing ``~`` is plain text on both surfaces, and
+    it goes on the optional columns because they are the few — mandatory is most of the table.
     """
     if not products:
         return ["## 0. Coverage matrix", "", "_No products in scope._", ""]
@@ -416,22 +435,27 @@ def _matrix_lines(  # noqa: PLR0913 — a matrix needs its rows, its columns, an
 
     # Descending by fill, then by GTIN so equal rows keep a stable order between runs.
     rows.sort(key=lambda r: (-r[0], r[1][0]))
-    mandatory = sum(1 for c in columns if c.required)
+    optional = [c for c in columns if not c.required]
+    last_mandatory = [c for c in columns if c.required][-1].header
     header = (
-        ["GTIN", "Name"]
-        + [f"{'MANDATORY' if c.required else 'optional'}<br>{c.header}" for c in columns]
+        ["#", "GTIN", "Name"]
+        + [c.header if c.required else f"{c.header} {_OPTIONAL_MARK}" for c in columns]
         + ["score"]
     )
+    # The counter is applied after the sort: it numbers the worklist as shown, so "row 12" means
+    # the same thing to two people reading the same report.
+    numbered = [[str(n), *cells] for n, (_, cells) in enumerate(rows, start=1)]
     return [
         "## 0. Coverage matrix",
         "",
-        f"{_PRESENT} present · {_PARTIAL} one language only · {_ABSENT} missing. The "
-        f"**MANDATORY** columns come first: a gap in any of those {mandatory} holds the whole "
-        f"SKU, while the **optional** ones after them only thin the page. Sorted richest first; "
+        f"**{len(products)} SKU{'s' if len(products) != 1 else ''} in scope**. "
+        f"{_PRESENT} present · {_PARTIAL} one language only · {_ABSENT} missing. Every column up "
+        f"to `{last_mandatory}` is mandatory — a gap there holds the whole SKU; the "
+        f"{len(optional)} marked `{_OPTIONAL_MARK}` only thin the page. Sorted richest first; "
         f"`score` counts filled language-slots, so a localised field can contribute "
         f"{len(languages)}.",
         "",
-        *_table(header, [cells for _, cells in rows]),
+        *_table(header, numbered),
         "",
     ]
 

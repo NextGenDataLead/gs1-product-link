@@ -291,7 +291,7 @@ def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> _PlanResult
         cfg.wordpress,
         require_generated_copy=cfg.generator is not None,
         require_hero_image=cfg.media is not None and cfg.media.require_hero_image,
-        gdsn_map=cfg.export.gdsn_map,
+        mandatory_sources=cfg.export.all_sources,
         video_gtins=_confirmed_video_gtins(cfg),
         hash_source=feed_view,
     )

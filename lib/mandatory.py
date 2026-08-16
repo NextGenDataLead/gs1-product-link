@@ -10,10 +10,11 @@ configured language, and a product missing one language is held in all of them. 
 publishing nl while fr is missing — leaves a SKU half-live, which reads as success on every surface
 that counts pages.
 
-Mandatory-ness is declared in ``clients.yml`` on each ``gdsn_map`` entry, not hard-coded here:
-which fields a client's page cannot do without is a property of that client's template.
-``required_group`` covers the either-or case — Noviplast's generator writes from attr 1083 *or*
-1067 and needs only one, so neither is individually mandatory but the pair is.
+Mandatory-ness is declared in ``clients.yml`` on each source — ``gdsn_map`` **and**
+``gdsn_extras`` alike — not hard-coded here: which fields a client's page cannot do without is a
+property of that client's template. ``required_group`` covers the either-or case — Noviplast's
+generator writes from attr 1083 *or* 1067 and needs only one, so neither is individually
+mandatory but the pair is.
 
 Nothing here reads a file, and it never mutates a record.
 """
@@ -65,25 +66,30 @@ def _present(product: ProductRecord, field: str, source: GdsnSource, language: s
 
 def missing_mandatory(
     product: ProductRecord,
-    gdsn_map: dict[str, GdsnSource],
+    sources: dict[str, GdsnSource],
     languages: list[str],
 ) -> list[MandatoryGap]:
     """Every mandatory value ``product`` lacks. Empty means it may publish (E23).
 
     Args:
         product: The record to check.
-        gdsn_map: The client's ``export.gdsn_map`` — carries which fields are mandatory.
+        sources: The client's declared sources — :attr:`ExportConfig.all_sources`, *both* maps.
+            Named for what it is rather than for one of the two, because this took the
+            ``gdsn_map`` alone and so ignored ``required`` on every ``gdsn_extras`` entry: a
+            client could mark one mandatory and watch nothing happen. Pass one map and the
+            report and the plan check different sets, which holds a SKU on one surface while the
+            other publishes it.
         languages: The configured site languages; a localised field is checked in each.
 
     Returns:
-        One :class:`MandatoryGap` per missing value, in ``gdsn_map`` order then language order, so
+        One :class:`MandatoryGap` per missing value, in ``sources`` order then language order, so
         two runs over the same data report the same thing in the same sequence. A field mandatory
         in two languages and missing in both yields two gaps — the operator fixes two cells.
     """
     gaps: list[MandatoryGap] = []
     groups: dict[str, list[tuple[str, GdsnSource]]] = defaultdict(list)
 
-    for field, source in gdsn_map.items():
+    for field, source in sources.items():
         if source.required_group:
             groups[source.required_group].append((field, source))
             continue

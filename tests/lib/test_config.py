@@ -239,6 +239,27 @@ def test_two_sources_reading_one_attribute_are_refused_at_load(tmp_path: Path) -
         load_clients(path)
 
 
+def test_one_field_name_declared_in_both_maps_is_refused_at_load(tmp_path: Path) -> None:
+    """`all_sources` merges the two maps, so a shared name would silently shadow.
+
+    Every consumer that asks "is this field mandatory?" now reads one merged mapping — E23 and
+    the coverage matrix both. A name in `gdsn_map` and `gdsn_extras` would let the second
+    quietly win, which is the failure the duplicate-attribute check above exists to stop, one
+    level up: the value would arrive from the wrong sheet and nothing would say so.
+    """
+    client = _base_client()
+    client["export"] = {
+        "format": "gdsn",
+        "path": "x.xlsx",
+        "gdsn_map": {"net_content": {"sheet": "TradeItemMeasurements", "attribute": "3510"}},
+        "gdsn_extras": {"net_content": {"sheet": "MarketingInformation", "attribute": "9999"}},
+    }
+    path = _write_config(tmp_path, client)
+
+    with pytest.raises(ExportParseError, match="net_content"):
+        load_clients(path)
+
+
 def test_one_attribute_number_on_two_sheets_is_not_a_duplicate(tmp_path: Path) -> None:
     """GDSN attribute numbers are only unique within a sheet, so the sheet is half the identity.
 

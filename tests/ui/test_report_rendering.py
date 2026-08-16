@@ -1,14 +1,14 @@
-"""The §0 header labels, against the markdown renderer the Data screen actually uses.
+"""The §0 header marks, against the markdown renderer the Data screen actually uses.
 
-The bug this guards against is not a logic bug — it is markup that is correct in the source and
-invisible once rendered. `**product·3301**` in a table header is exactly that: markdown makes
-header cells bold anyway, so the marker separating "a gap here holds the whole SKU" from "a gap
-here only thins the page" showed up in the file and nowhere on screen.
+This report is read on **two** surfaces, and the mandatory/optional distinction has now been got
+wrong once on each. `**product·3301**` was invisible when rendered, because markdown makes header
+cells bold anyway. The `MANDATORY<br>…` group label that replaced it rendered correctly and put a
+literal HTML tag in front of everyone reading the markdown as text.
 
-So asserting the *source* string is only half a test. `ui/pages/data.py` renders the report with
-``ui.markdown``, which is markdown2 with ``['fenced-code-blocks', 'tables']``, and that is where
-the group label has to survive as a line break — a plain newline would be folded into a space,
-putting `MANDATORY product·3301` on one line and undoing the grouping.
+So the mark has to be plain text that survives rendering — which is not free: `~` is
+markdown-adjacent (`~~x~~` is strikethrough in several flavours), and a renderer that grew that
+extra would silently eat it. That is what these tests pin, on `ui/pages/data.py`'s actual path:
+``ui.markdown`` → markdown2 with ``['fenced-code-blocks', 'tables']``.
 
 Lives under ``tests/ui/`` because markdown2 arrives with NiceGUI: in the required CI job, which
 installs only ``.[dev]``, there is nothing here to import.
@@ -59,11 +59,16 @@ def _report() -> str:
     )
 
 
-def test_the_group_labels_reach_the_screen_as_two_lines() -> None:
-    html = markdown2.markdown(_report(), extras=_EXTRAS)
+def test_the_optional_mark_survives_rendering_and_the_header_carries_no_html() -> None:
+    report = _report()
+    html = markdown2.markdown(report, extras=_EXTRAS)
 
-    assert "<th>MANDATORY<br>product·3301</th>" in html
-    assert "<th>optional<br>material</th>" in html
+    assert "<th>material ~</th>" in html  # the mark is not eaten as strikethrough syntax
+    assert "<th>product·3301</th>" in html  # mandatory: unmarked, and no <strong> needed
+    # The other half, and the reason the group label was rejected: nothing in the header may be
+    # HTML, because the raw markdown is a surface too.
+    header = next(line for line in report.splitlines() if line.startswith("| # |"))
+    assert "<" not in header and ">" not in header
 
 
 def test_the_installed_markdown_renderer_still_makes_header_cells_bold_on_its_own() -> None:

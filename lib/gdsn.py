@@ -179,6 +179,17 @@ class GdsnSource(BaseModel):
 # --- Column / sheet models ---------------------------------------------------
 
 
+def is_mandatory(source: GdsnSource) -> bool:
+    """Whether a product missing this value may never publish (E23).
+
+    One predicate for the two ways a source can be mandatory, because "individually required" and
+    "the only member of its either-or group carrying a value" are the same fact to every reader:
+    :func:`lib.mandatory.missing_mandatory`, which holds the SKU, and the coverage matrix, which
+    tells the operator that it will. Those two must never disagree about which columns matter.
+    """
+    return bool(source.required or source.required_group)
+
+
 @dataclass(frozen=True)
 class GdsnColumn:
     """One resolved column in a GDSN sheet."""
