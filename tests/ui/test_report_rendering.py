@@ -5,9 +5,11 @@ wrong once on each. `**product·3301**` was invisible when rendered, because mar
 cells bold anyway. The `MANDATORY<br>…` group label that replaced it rendered correctly and put a
 literal HTML tag in front of everyone reading the markdown as text.
 
-So the mark has to be plain text that survives rendering — which is not free: `~` is
-markdown-adjacent (`~~x~~` is strikethrough in several flavours), and a renderer that grew that
-extra would silently eat it. That is what these tests pin, on `ui/pages/data.py`'s actual path:
+A trailing `~` fixed the tag and introduced a third problem — a bare symbol still sends the
+reader to the legend — so the label is now the word `(optional)`. Which is the one form with no
+markdown meaning at all, and that is worth pinning rather than assuming: `~~x~~` is strikethrough
+in several flavours, `*` and `_` are emphasis, and a renderer growing an extra could eat any of
+them silently. These tests check the surviving label on `ui/pages/data.py`'s actual path:
 ``ui.markdown`` → markdown2 with ``['fenced-code-blocks', 'tables']``.
 
 Lives under ``tests/ui/`` because markdown2 arrives with NiceGUI: in the required CI job, which
@@ -59,11 +61,11 @@ def _report() -> str:
     )
 
 
-def test_the_optional_mark_survives_rendering_and_the_header_carries_no_html() -> None:
+def test_the_optional_label_survives_rendering_and_the_header_carries_no_html() -> None:
     report = _report()
     html = markdown2.markdown(report, extras=_EXTRAS)
 
-    assert "<th>material ~</th>" in html  # the mark is not eaten as strikethrough syntax
+    assert "<th>material (optional)</th>" in html  # reaches the screen as written
     assert "<th>product·3301</th>" in html  # mandatory: unmarked, and no <strong> needed
     # The other half, and the reason the group label was rejected: nothing in the header may be
     # HTML, because the raw markdown is a surface too.

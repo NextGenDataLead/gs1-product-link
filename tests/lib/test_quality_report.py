@@ -431,22 +431,24 @@ def _cell_for(md: str, gtin: str, header: str) -> str:
     reorder break tests that have nothing to do with ordering — twice now. The header row is
     already the index; use it.
     """
-    idx = next(i for i, h in enumerate(_headers(md)) if h.removesuffix(" ~") == header)
+    idx = next(i for i, h in enumerate(_headers(md)) if h.removesuffix(" (optional)") == header)
     row = next(line for line in md.splitlines() if f"| `{gtin}`" in line)
     return row.split("|")[1:-1][idx].strip()
 
 
-def test_only_the_optional_columns_are_marked_because_bold_rendered_as_nothing() -> None:
-    """Two goes at this. `**…**` was invisible (markdown headers are bold anyway); the group
-    label that replaced it carried a literal `<br>` into every surface that shows markdown as
-    text. What is left is a plain-text mark on the *shorter* group — mandatory columns are the
-    majority and marking eleven of them was the noise the operator saw.
+def test_the_optional_columns_say_optional_in_words() -> None:
+    """Four goes at this, and the first three were all too clever.
+
+    `**…**` was invisible (markdown makes header cells bold anyway); `MANDATORY<br>…` rendered
+    correctly and showed a literal HTML tag to anyone reading the markdown as text; a trailing
+    `~` was plain enough but meant nothing without the legend. The word is the version a reader
+    does not have to decode.
     """
     md = _render(matrix=_matrix(products=[_p("08713195000001")]))
 
-    assert "material ~" in _headers(md)
+    assert "material (optional)" in _headers(md)
     assert "product·3301" in _headers(md)  # mandatory: unmarked
-    assert not [h for h in _headers(md) if "**" in h or "<" in h]
+    assert not [h for h in _headers(md) if "**" in h or "<" in h or "~" in h]
 
 
 def test_the_header_makes_exactly_one_crossing_from_mandatory_to_optional() -> None:
@@ -460,30 +462,72 @@ def test_the_header_makes_exactly_one_crossing_from_mandatory_to_optional() -> N
     """
     md = _render(matrix=_matrix(products=[_p("08713195000001")]))
     fields = [h for h in _headers(md) if h not in {"#", "GTIN", "Name", "score"}]
-    optional = [h.endswith(" ~") for h in fields]
+    optional = [h.endswith(" (optional)") for h in fields]
 
     assert set(optional) == {True, False}
     crossings = [(a, b) for a, b in zip(optional, optional[1:], strict=False) if a != b]
     assert crossings == [(False, True)]  # mandatory → optional, once
 
 
-def test_the_legend_names_the_last_mandatory_column_the_table_actually_has() -> None:
-    """The legend's boundary and the header are one fact, so they must not be able to disagree.
+def test_score_sits_on_the_boundary_between_the_two_groups() -> None:
+    """`score` is the divider, which is why the groups need no marker between them.
 
-    "Everything up to `X` is mandatory" is only readable if `X` is really the last one — and it
-    moves whenever a field's flag changes in a config no test can see.
+    Placed after the last mandatory column and before the first optional one, so what it counts
+    is legible from where it sits rather than from the legend.
     """
     md = _render(matrix=_matrix(products=[_p("08713195000001")]))
-    fields = [h for h in _headers(md) if h not in {"#", "GTIN", "Name", "score"}]
-    last_mandatory = [h for h in fields if not h.endswith(" ~")][-1]
-    marked = [h for h in fields if h.endswith(" ~")]
+    cols = _headers(md)
+    at = cols.index("score")
+
+    assert not cols[at - 1].endswith(" (optional)")  # last mandatory column
+    assert cols[at + 1].endswith(" (optional)")  # first optional one
+    assert all(h.endswith(" (optional)") for h in cols[at + 1 :])
+
+
+def test_score_counts_the_mandatory_columns_only() -> None:
+    """The score answers "how close is this SKU to publishable", so optional fill cannot raise it.
+
+    It used to count every column, which let a product with both optional values and a missing
+    mandatory one outrank a publishable one — and the table is *sorted* by it, so that put the
+    wrong SKU at the top of the worklist.
+    """
+    gtin = "08713195000001"
+    md = _render(
+        matrix=_matrix(
+            products=[_p(gtin, net_content="10 cm", extras={"material": "PP"})],
+            video_confirmed={"nl": {gtin}, "fr": {gtin}},
+        )
+    )
+
+    # product·3301 (2 languages) + brand (1) + video (2) = 5; net_content and material are
+    # optional and add nothing, though both are present.
+    assert _cell_for(md, gtin, "net·3510") == "●"
+    assert _cell_for(md, gtin, "material") == "●"
+    assert _cell_for(md, gtin, "score") == "5"
+
+
+def test_a_thin_sku_with_optional_extras_ranks_below_a_publishable_one() -> None:
+    """The consequence of the rule above, at the level the operator actually reads: row order."""
+    publishable = _p("08713195000001")  # both languages, no optional values
+    padded = _p(  # one language, but every optional column filled
+        "08713195000002",
+        product_name=LocalisedText(values={"nl": "a"}),
+        net_content="10 cm",
+        extras={"material": "PP"},
+    )
+    md = _render(matrix=_matrix(products=[padded, publishable]))
+
+    body = [line for line in md.splitlines() if "| `0871" in line]
+    assert body[0].startswith("| 1 | `08713195000001`")
+
+
+def test_the_legend_explains_the_boundary_score_marks() -> None:
+    """The legend and the header are one fact, so they must not be able to disagree."""
+    md = _render(matrix=_matrix(products=[_p("08713195000001")]))
     legend = next(line for line in md.splitlines() if "present ·" in line)
 
-    assert last_mandatory == "video"
-    assert f"up to `{last_mandatory}`" in legend
-    # "the N marked", not a bare N: this sentence also carries the SKU count and the language
-    # count, so a loose check lets a wrong number land on one of those and survive (#100).
-    assert f"the {len(marked)} marked" in legend
+    assert "before `score` are mandatory" in legend
+    assert "after `score`" in legend
     assert "Bold columns" not in legend  # it pointed at a marker that rendered as nothing
 
 
@@ -524,8 +568,8 @@ def test_a_required_extra_joins_the_mandatory_run() -> None:
     fields = [h for h in _headers(md) if h not in {"#", "GTIN", "Name", "score"}]
 
     assert "dim·height" in fields  # unmarked: mandatory
-    assert "material ~" in fields
-    assert fields.index("dim·height") < fields.index("material ~")
+    assert "material (optional)" in fields
+    assert fields.index("dim·height") < fields.index("material (optional)")
 
 
 def test_a_required_group_member_is_mandatory_too() -> None:
@@ -550,8 +594,8 @@ def test_a_required_group_member_is_mandatory_too() -> None:
     fields = [h for h in _headers(md) if h not in {"#", "GTIN", "Name", "score"}]
 
     assert "description·1083" in fields  # unmarked: mandatory, via the group
-    assert "net·3510 ~" in fields
-    assert fields.index("description·1083") < fields.index("net·3510 ~")
+    assert "net·3510 (optional)" in fields
+    assert fields.index("description·1083") < fields.index("net·3510 (optional)")
 
 
 def test_video_sits_with_the_mandatory_columns_not_after_the_optional_ones() -> None:
@@ -564,8 +608,8 @@ def test_video_sits_with_the_mandatory_columns_not_after_the_optional_ones() -> 
     cols = _headers(md)
 
     assert "video" in cols  # unmarked: mandatory
-    assert cols.index("video") < cols.index("material ~")
-    assert cols[-1] == "score"  # the total stays last; it is not a data column
+    assert cols.index("video") < cols.index("material (optional)")
+    assert cols.index("video") < cols.index("score")  # video counts towards it
     assert cols[0] == "#"
 
 
@@ -592,8 +636,8 @@ def test_grouping_the_header_leaves_every_cell_where_it_was() -> None:
     )
 
     row = next(line for line in md.splitlines() if f"| `{gtin}`" in line)
-    # product·3301 ◐ (nl only) · brand ● · video ◐ (nl only) | net ● · material ●
-    assert row == f"| 1 | `{gtin}` |  | ◐ | ● | ◐ | ● | ● | 5 |"
+    # mandatory: product·3301 ◐ (nl only) · brand ● · video ◐ = 3 | optional: net ● · material ●
+    assert row == f"| 1 | `{gtin}` |  | ◐ | ● | ◐ | 3 | ● | ● |"
 
 
 def test_a_localised_field_in_one_language_is_a_half_mark() -> None:
