@@ -373,7 +373,10 @@ Instead of `column_map`/`extras_columns`, a GDSN client declares:
 - `gdsn_map` — `{ProductRecord field: {sheet, attribute, localised?, with_unit?, primary_file?}}`.
   `attribute` is the GDSN attribute number (`"3297"`) or a path-segment name
   (`GpcCategoryCode`).
-- `gdsn_extras` — the same shape, carried into `ProductRecord.extras`.
+- `gdsn_extras` — the same shape, carried into `ProductRecord.extras`. Same shape means the same
+  flags: an extra marked `required` holds the SKU exactly as a mapped field does (E23), and gets
+  the same mandatory column in the coverage matrix. Consumers of that question read
+  `ExportConfig.all_sources`, which merges both maps, rather than picking one.
 
 `lib/gdsn.py` reads the workbook (`read_workbook`) and joins the sheets by GTIN into
 `ProductRecord`s (`build_records`), selecting each language's value from its configured
@@ -707,7 +710,7 @@ ownership key beyond the hash, finding one would mean inferring it.
 | E20 | Two `run_execute.py` interleave for same client | Not supported. Document risk in troubleshooting.md. No lockfile in v0.1 | doc only |
 | E21 | Generator configured but a **NEW or CHANGED** `(GTIN, language)` has no generated tagline (held, blank-1083 product) | Row SKIPPED from the plan so it can never publish a blank page, and dropped again at execute time (`run_execute._drop_without_copy`) because `--plan` confirms every row in a file. Asked **after** the classification: copy is written per run for the rows a run executes, so an UNCHANGED or HELD unit has none by design and reporting it as a skip turns a correct no-op into a work item. The gap is still reported via `missing_generation_input`, which fires only when 1083 is blank in **every** configured language — one the feed carries in another language is a pending translation, not a missing input | `state.diff_against_state` + `run_plan.py` + `run_execute.py` |
 | E22 | `media.require_hero_image` set but a GTIN's source `image_url` is blank | GTIN held out of the plan so a hero-less page can never publish; still reported via `value_blank`. A runtime image fetch failure is unaffected (degrades per E7) | `state.diff_against_state` + `run_plan.py` |
-| E23 | A `gdsn_map` field marked `required` (or every member of a `required_group`) has no value for a product | **Whole GTIN held**, in every language, so a SKU is never half-published; each unit lands in `PlanDiff.skipped` with the missing attributes named, and the data-quality report's §0 coverage matrix and Summary row show them for the client to fill in MyGS1 | `lib.mandatory.missing_mandatory` + `state.diff_against_state` |
+| E23 | A declared source marked `required` — in `gdsn_map` **or** `gdsn_extras` — (or every member of a `required_group`) has no value for a product | **Whole GTIN held**, in every language, so a SKU is never half-published; each unit lands in `PlanDiff.skipped` with the missing attributes named, and the data-quality report's §0 coverage matrix and Summary row show them for the client to fill in MyGS1 | `lib.mandatory.missing_mandatory` + `state.diff_against_state` |
 | E24 | `media.restrict_to_mapped_gtins` is set and a GTIN has no client-confirmed video in every language | **Whole GTIN held** and reported (§1b). Previously this narrowed *scope* instead, which made the gap invisible on every surface at once — the product simply vanished rather than appearing as work | `state.diff_against_state`, set supplied by `run_plan._confirmed_video_gtins` |
 
 **E19 — why recovery is safe, and why it must still be loud.** State is a *cache* of what the

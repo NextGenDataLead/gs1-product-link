@@ -476,10 +476,14 @@ def test_the_legend_names_the_last_mandatory_column_the_table_actually_has() -> 
     md = _render(matrix=_matrix(products=[_p("08713195000001")]))
     fields = [h for h in _headers(md) if h not in {"#", "GTIN", "Name", "score"}]
     last_mandatory = [h for h in fields if not h.endswith(" ~")][-1]
+    marked = [h for h in fields if h.endswith(" ~")]
     legend = next(line for line in md.splitlines() if "present ·" in line)
 
     assert last_mandatory == "video"
     assert f"up to `{last_mandatory}`" in legend
+    # "the N marked", not a bare N: this sentence also carries the SKU count and the language
+    # count, so a loose check lets a wrong number land on one of those and survive (#100).
+    assert f"the {len(marked)} marked" in legend
     assert "Bold columns" not in legend  # it pointed at a marker that rendered as nothing
 
 
@@ -522,6 +526,32 @@ def test_a_required_extra_joins_the_mandatory_run() -> None:
     assert "dim·height" in fields  # unmarked: mandatory
     assert "material ~" in fields
     assert fields.index("dim·height") < fields.index("material ~")
+
+
+def test_a_required_group_member_is_mandatory_too() -> None:
+    """Either-or membership is the other way a column blocks, and it is the live case.
+
+    Noviplast's `description_short` (1083) and `description_long` (1067) are a `required_group`:
+    neither is individually required, the pair is, and both render as mandatory in the operator's
+    report today. Nothing pinned that — a mutation dropping `required_group` from the predicate
+    survived the whole suite, which is how this test came to exist.
+    """
+    md = _render(
+        matrix=_matrix(
+            products=[_p("08713195000001")],
+            gdsn_map={
+                "description_short": GdsnSource(
+                    sheet="S", attribute="1083", localised=True, required_group="marketing_copy"
+                ),
+                "net_content": GdsnSource(sheet="S", attribute="3510"),
+            },
+        )
+    )
+    fields = [h for h in _headers(md) if h not in {"#", "GTIN", "Name", "score"}]
+
+    assert "description·1083" in fields  # unmarked: mandatory, via the group
+    assert "net·3510 ~" in fields
+    assert fields.index("description·1083") < fields.index("net·3510 ~")
 
 
 def test_video_sits_with_the_mandatory_columns_not_after_the_optional_ones() -> None:
