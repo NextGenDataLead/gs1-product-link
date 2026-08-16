@@ -488,7 +488,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     wordpress: WordPressConfig,
     require_generated_copy: bool = False,
     require_hero_image: bool = False,
-    gdsn_map: dict[str, GdsnSource] | None = None,
+    mandatory_sources: dict[str, GdsnSource] | None = None,
     video_gtins: frozenset[str] | None = None,
     hash_source: Mapping[str, ProductRecord] | None = None,
 ) -> PlanDiff:
@@ -537,11 +537,14 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
         require_hero_image: When True (``media.require_hero_image``), hold any GTIN whose source
             ``image_url`` is blank so a hero-less page is never published (E22). Off by default; a
             runtime image fetch failure still degrades gracefully and publishes (E7).
-        gdsn_map: The client's ``export.gdsn_map``. When given, a product missing any value marked
-            ``required`` — or every member of a ``required_group`` — is held in **all** languages
-            (E23), because a page assembled from an incomplete record publishes and looks finished.
-            The hold is per product on purpose: publishing nl while fr is missing leaves a SKU
-            half-live, which reads as success on every surface that counts pages.
+        mandatory_sources: The client's :attr:`ExportConfig.all_sources` — **both** declared
+            maps. When given, a product missing any value marked ``required`` — or every member of
+            a ``required_group`` — is held in **all** languages (E23), because a page assembled
+            from an incomplete record publishes and looks finished. The hold is per product on
+            purpose: publishing nl while fr is missing leaves a SKU half-live, which reads as
+            success on every surface that counts pages. Named for the question rather than for
+            one of the two maps: it took ``gdsn_map`` alone, which made ``required`` on a
+            ``gdsn_extras`` entry a silent no-op here while the report was free to honour it.
         video_gtins: GTIN-14s with a client-confirmed video in every language. When given, a
             product outside it is held in all languages (E24). Passing the set rather than the
             video map keeps this function free of file reading, and lets the caller decide what
@@ -573,7 +576,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
         # E23/E24/E22 all drop the whole product, but each is recorded per language: the plan's
         # unit of work is ``(GTIN, language)``, and a count in any other unit cannot be compared
         # with the row counts beside it.
-        gaps = missing_mandatory(product, gdsn_map, languages) if gdsn_map else []
+        gaps = missing_mandatory(product, mandatory_sources, languages) if mandatory_sources else []
         if gaps:  # E23
             detail = "missing mandatory source data: " + ", ".join(gap.label for gap in gaps)
             skipped.extend(

@@ -126,6 +126,26 @@ class ExportConfig(BaseModel):
     gdsn_map: dict[str, GdsnSource] = Field(default_factory=dict)
     gdsn_extras: dict[str, GdsnSource] = Field(default_factory=dict)
 
+    @property
+    def all_sources(self) -> dict[str, GdsnSource]:
+        """Every declared source, mapped fields first then extras, under one name.
+
+        The split between the two maps is about *where the value lands* — a `ProductRecord`
+        field or the pass-through `extras` bag — and nothing else. Questions like "is this
+        mandatory?" (E23) and "does it get a matrix column?" are properties of the source, so
+        every consumer asking one of those reads this instead of picking a map.
+
+        That is not tidiness. `missing_mandatory` walked `gdsn_map` alone, so `required` on an
+        extra was silently ignored — the shape `multivalue` had in #96, where a flag meant
+        something on one resolution path and nothing on the others. Worse, E23 decides whether a
+        SKU may publish at all: a consumer reading one map while another read both would hold a
+        product on one surface and publish it from the other.
+
+        Safe to merge because :func:`_validate_unique_field_names` refuses a config that
+        declares one name in both maps, so nothing here can shadow anything.
+        """
+        return {**self.gdsn_map, **self.gdsn_extras}
+
 
 class TaxonomyConfig(BaseModel):
     """How a WordPress taxonomy's terms are sourced."""
@@ -422,6 +442,29 @@ def _validate_unique_attributes(client_id: str, export: ExportConfig) -> None:
         seen[key] = name
 
 
+def _validate_unique_field_names(client_id: str, export: ExportConfig) -> None:
+    """One field name, one source — across both maps.
+
+    :attr:`ExportConfig.all_sources` merges ``gdsn_map`` and ``gdsn_extras`` so that every
+    consumer asking whether a field is mandatory reads one mapping. A name declared in both
+    would let the extra silently win there while the parser still wrote the mapped field, so the
+    value published and the value checked would come from different sheets with nothing to say
+    so. Sibling of :func:`_validate_unique_attributes`, one level up: that one refuses two names
+    for one attribute, this one refuses two attributes under one name.
+
+    Raises:
+        ExportParseError: If a field name appears in both maps.
+    """
+    if export.format != "gdsn":
+        return
+    for name in export.gdsn_map:
+        if name in export.gdsn_extras:
+            raise ExportParseError(
+                f"client {client_id!r}: {name!r} is declared in both gdsn_map and gdsn_extras — "
+                f"one field name, one source"
+            )
+
+
 def load_clients(path: str | Path = DEFAULT_CLIENTS_PATH) -> dict[str, ClientConfig]:
     """Load, validate, and normalise ``clients.yml`` (§4.2).
 
@@ -465,6 +508,7 @@ def load_clients(path: str | Path = DEFAULT_CLIENTS_PATH) -> dict[str, ClientCon
             raise ConfigError(f"client {client_id!r} is invalid: {exc}") from exc
         _validate_column_targets(client_id, config.export)
         _validate_unique_attributes(client_id, config.export)
+        _validate_unique_field_names(client_id, config.export)
         clients[client_id] = config
     return clients
 

@@ -143,9 +143,13 @@ clients:
         # Dimensions (all 127/127) carry a MeasurementUnitCode ("MMT" = mm); with_unit keeps
         # the code so the Technische-details assembler decodes it via lib/units like
         # net_content. Feed both the deterministic spec line and the Eigenschappen prompt.
-        dim_height:        { sheet: TradeItemMeasurements,   attribute: "3498", with_unit: true }
-        dim_width:         { sheet: TradeItemMeasurements,   attribute: "3520", with_unit: true }
-        dim_depth:         { sheet: TradeItemMeasurements,   attribute: "3492", with_unit: true }
+        # required: true — a product without its dimensions is held (E23). Safe to arm because
+        # all 127 carry all three today, so nothing is held by turning it on; what it buys is
+        # that a future export losing one becomes a loud hold instead of a thin published page.
+        # `required` works on gdsn_extras since #101 — before that it was silently ignored here.
+        dim_height:        { sheet: TradeItemMeasurements,   attribute: "3498", with_unit: true, required: true }
+        dim_width:         { sheet: TradeItemMeasurements,   attribute: "3520", with_unit: true, required: true }
+        dim_depth:         { sheet: TradeItemMeasurements,   attribute: "3492", with_unit: true, required: true }
         # Material (75/127) is language-agnostic (Information[0]/Material[n]/Value, no
         # LanguageCode pair) so it is a scalar, matched by the path segment "Material", not a
         # number. Watch for the junk value "zzzanders" — the generator treats it as absent, and

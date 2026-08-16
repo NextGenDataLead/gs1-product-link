@@ -408,7 +408,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     entry already moved every hash and no `run_execute` has followed it; after a post-#93 publish it
     would cost a second full rewrite of every page.
 
+### Added
+- **`required` now works on a `gdsn_extras` entry, and the pilot's dimensions use it.** It was
+  accepted, documented and silently ignored: `missing_mandatory` walked `gdsn_map` alone and the
+  coverage matrix hard-coded every extra optional, so a client could mark an extra mandatory and
+  watch both ignore it — the shape `multivalue` had in #96, where a flag meant something on one
+  resolution path and nothing on the others.
+
+  Both consumers now read one merged mapping, **`ExportConfig.all_sources`**, and the parameter
+  carrying it is named `mandatory_sources` rather than `gdsn_map` at every call site. Fixing only
+  one of the two would have been worse than the bug: E23 decides whether a SKU may publish at
+  all, so a report reading both maps while the plan read one means a product held on one surface
+  and published from the other. `lib.config._validate_unique_field_names` refuses a config that
+  declares one name in both maps, since the merge would otherwise let one silently shadow the
+  other — sibling of #94's one-attribute-one-field check, one level up.
+
+  `dim_height`, `dim_width` and `dim_depth` are marked `required` in both configs. **Nothing is
+  held by turning it on** — all 127 products carry all three, measured in scope (0 newly held of
+  37) and catalogue-wide (0 of 127). What it buys is that a future export losing a dimension
+  becomes a loud hold instead of a page published thin.
+
+- **The coverage matrix numbers its rows and states how many SKUs it covers.** A `#` column
+  following the sort, so two people reading the same report mean the same row by "row 12", and
+  the SKU count in the line above the table — the one number a worklist has to state, which it
+  stated nowhere.
+
 ### Fixed
+- **The `MANDATORY<br>` group label put a literal HTML tag in the report.** Correct when rendered,
+  and wrong for everyone reading the markdown as text — which is a surface too. That was the
+  second miss on the same distinction in a row: the `**bold**` it replaced was invisible when
+  rendered. The mark is now a trailing `~`, plain text on both surfaces, and it goes on the
+  **optional** columns because they are the few — with the dimensions armed it is eleven mandatory
+  against two. The legend names the last mandatory column instead of describing a typeface.
+
 - **The data-quality report marked its mandatory columns in bold, and markdown table headers are
   bold already — so the mark rendered as nothing.** §0's coverage matrix separates the two facts
   that decide what an operator does with a gap: a blank in a mandatory column **holds the whole

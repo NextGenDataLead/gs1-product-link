@@ -239,6 +239,49 @@ def test_two_sources_reading_one_attribute_are_refused_at_load(tmp_path: Path) -
         load_clients(path)
 
 
+def test_all_sources_carries_both_maps_so_a_required_extra_is_never_dropped() -> None:
+    """The single mapping E23 and the coverage matrix both read.
+
+    Returning `gdsn_map` alone here is the bug this property was added to remove — `required` on
+    a `gdsn_extras` entry would be silently ignored again, and by *both* consumers at once, so
+    nothing downstream could notice the disagreement. A mutation doing exactly that survived the
+    suite until this test existed.
+    """
+    export = load_clients("clients.example.yml")["democlient"].export
+    sources = export.all_sources
+
+    assert set(sources) == set(export.gdsn_map) | set(export.gdsn_extras)
+    # Mapped fields first, so gap order stays stable between runs.
+    assert list(sources)[: len(export.gdsn_map)] == list(export.gdsn_map)
+    # The shipped example demonstrates the capability: dimensions are mandatory extras.
+    assert [n for n, s in sources.items() if s.required and n in export.gdsn_extras] == [
+        "dim_height",
+        "dim_width",
+        "dim_depth",
+    ]
+
+
+def test_one_field_name_declared_in_both_maps_is_refused_at_load(tmp_path: Path) -> None:
+    """`all_sources` merges the two maps, so a shared name would silently shadow.
+
+    Every consumer that asks "is this field mandatory?" now reads one merged mapping — E23 and
+    the coverage matrix both. A name in `gdsn_map` and `gdsn_extras` would let the second
+    quietly win, which is the failure the duplicate-attribute check above exists to stop, one
+    level up: the value would arrive from the wrong sheet and nothing would say so.
+    """
+    client = _base_client()
+    client["export"] = {
+        "format": "gdsn",
+        "path": "x.xlsx",
+        "gdsn_map": {"net_content": {"sheet": "TradeItemMeasurements", "attribute": "3510"}},
+        "gdsn_extras": {"net_content": {"sheet": "MarketingInformation", "attribute": "9999"}},
+    }
+    path = _write_config(tmp_path, client)
+
+    with pytest.raises(ExportParseError, match="net_content"):
+        load_clients(path)
+
+
 def test_one_attribute_number_on_two_sheets_is_not_a_duplicate(tmp_path: Path) -> None:
     """GDSN attribute numbers are only unique within a sheet, so the sheet is half the identity.
 

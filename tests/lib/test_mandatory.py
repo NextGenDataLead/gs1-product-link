@@ -125,11 +125,34 @@ def test_unmarked_fields_are_never_required() -> None:
 
 
 def test_an_extras_field_can_be_required_too() -> None:
-    """``gdsn_map`` targets record fields, but the lookup falls back to ``extras``."""
-    gdsn_map = _map(material=GdsnSource(sheet="S", attribute="Material", required=True))
+    """A `gdsn_extras` entry marked `required` holds the SKU exactly as a mapped field does.
 
-    assert missing_mandatory(_product(), gdsn_map, LANGS)[0].field == "material"
-    assert missing_mandatory(_product(extras={"material": "PP"}), gdsn_map, LANGS) == []
+    This test used to declare `material` in `gdsn_map` and pass, which made the capability look
+    covered when it was not: `lib.config._validate_column_targets` rejects any `gdsn_map` name
+    that is not a `ProductRecord` field, so no real client could ever have written that config.
+    What it actually exercised was `_value_for`'s fallback to `extras`. The declaration side —
+    an extra that is allowed to be mandatory at all — is what is pinned now.
+    """
+    sources = _map(material=GdsnSource(sheet="S", attribute="Material", required=True))
+
+    assert missing_mandatory(_product(), sources, LANGS)[0].field == "material"
+    assert missing_mandatory(_product(extras={"material": "PP"}), sources, LANGS) == []
+
+
+def test_gaps_run_gdsn_map_first_then_extras() -> None:
+    """One order for two maps, so two runs over the same data report the same sequence.
+
+    The caller hands over a single merged mapping (`ExportConfig.all_sources`) precisely so that
+    the report and the plan cannot check different sets — narrow one and not the other and a SKU
+    is held by one surface and published by the other.
+    """
+    sources = {
+        "brand": GdsnSource(sheet="S", attribute="3336", required=True),
+        "dim_height": GdsnSource(sheet="S", attribute="3498", required=True),
+    }
+    product = _product(brand="")
+
+    assert [g.field for g in missing_mandatory(product, sources, LANGS)] == ["brand", "dim_height"]
 
 
 def test_gaps_are_ordered_by_field_then_language() -> None:
