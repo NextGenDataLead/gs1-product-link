@@ -2,8 +2,8 @@
 
 The screen showed a *scoped* coverage figure directly above an *unscoped* list of copy, with
 nothing to tell them apart. The figures came from the doctor; the list read
-``generated_cache.json`` off disk and rendered every GTIN in it. Since nothing ever prunes that
-file, the gap only widens with the age of the machine.
+``generation_results.json`` off disk and rendered every GTIN in it. That file is written per run
+now, but a results file produced against a longer process list carries the same trap.
 
 AST-only, so this needs no NiceGUI and runs in the required CI job rather than the optional one.
 """
@@ -66,15 +66,15 @@ def _own_calls(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
 
 
 def test_the_copy_review_filters_by_scope() -> None:
-    """The review must show this run's batch, not everything the cache has accumulated.
+    """The review must show this run's batch, not every GTIN the file happens to carry.
 
     Asserted as "it calls the splitter" rather than by inspecting the rendering, because the
     splitter is where the decision lives and ``tests/ui/test_context.py`` covers what it decides.
     """
     review = _function("_review")
-    assert "split_cache" in _calls(review), (
-        "_review does not split the cache by scope, so it is listing every GTIN ever generated "
-        "for this client under a coverage figure that is scoped to this run"
+    assert "split_results" in _calls(review), (
+        "_review does not split the copy by scope, so it is listing every GTIN in the file "
+        "under a coverage figure that is scoped to this run"
     )
     # And that it hands over the scope it was given. Calling the splitter with `None` is a legal
     # call that reproduces the defect exactly — every entry comes back as in-scope — so asserting
@@ -83,13 +83,14 @@ def test_the_copy_review_filters_by_scope() -> None:
         inner
         for inner in ast.walk(review)
         if isinstance(inner, ast.Call)
-        and (getattr(inner.func, "attr", None) or getattr(inner.func, "id", None)) == "split_cache"
+        and (getattr(inner.func, "attr", None) or getattr(inner.func, "id", None))
+        == "split_results"
     )
     passed = {arg.id for arg in call.args if isinstance(arg, ast.Name)} | {
         kw.value.id for kw in call.keywords if isinstance(kw.value, ast.Name)
     }
     assert "scope" in passed, (
-        "_review calls split_cache without passing its `scope` argument, so every cache entry "
+        "_review calls split_results without passing its `scope` argument, so every entry "
         f"comes back in scope and nothing is filtered; it passes {sorted(passed)}"
     )
 

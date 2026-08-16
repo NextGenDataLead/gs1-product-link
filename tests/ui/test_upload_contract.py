@@ -4,7 +4,7 @@ This exists because of a real failure, found on the first from-scratch operator 
 handed the handler ``event.content``, a file-like object read synchronously. NiceGUI 3 replaced it
 with ``event.file``, whose read methods are awaitable. ``pyproject.toml`` said ``nicegui>=2.0``, so
 a fresh install resolved 3.x against code written for 2.x — and **both** uploads in the shell broke
-at once: the export on the Data screen and the copy cache on the Content screen.
+at once: the export on the Data screen and the generated copy on the Content screen.
 
 What made it serious was the shape of the failure, not the cause. The handler raised inside
 NiceGUI, which logged it to the terminal; the browser showed the file at 100% with a checkmark and
@@ -68,7 +68,7 @@ def test_the_upload_handlers_are_where_we_think() -> None:
     """A guard on the guard: these checks are worthless if they match nothing."""
     handlers = _handlers()
     assert len(handlers) >= 2, (
-        "expected at least the export upload (ui/pages/data.py) and the cache import "
+        "expected at least the export upload (ui/pages/data.py) and the copy import "
         f"(ui/pages/content.py); found {len(handlers)}"
     )
 

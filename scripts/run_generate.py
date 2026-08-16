@@ -2,38 +2,41 @@
 
 Usage:
     python -m scripts.run_generate CLIENT_ID [--products PATH] [--emit]
-    python -m scripts.run_generate CLIENT_ID --ingest [--results PATH]
+    python -m scripts.run_generate CLIENT_ID --validate [--results PATH]
     python -m scripts.run_generate CLIENT_ID --backend api
 
-The spine is producer-agnostic: it prepares the pending copy-generation gaps and moves them
-through the shared cache (``lib.generator``). It
+The spine is producer-agnostic: it works out what copy this run needs and moves it through the
+shared contract in ``lib.generator``. It
 
-1. deterministically fills the cache for products whose feature/benefit copy (attr 1067) is
-   short enough to use verbatim (``prefill_from_feed``) — no producer needed;
-2. computes the remaining gaps (``pending_requests``), each tagged tighten or generate; and
-3. hands those gaps to a producer by one of two paths that write identical cache entries:
+1. computes the units needing a producer (``pending_requests``), each tagged tighten or generate —
+   **every in-scope unit, every run**, except those whose feature/benefit copy (attr 1067) is short
+   enough to publish verbatim, which ``run_plan`` materialises straight from the feed; and
+2. hands those units to a producer by one of two paths that write the same
+   ``generation_results.json``:
 
-   - **emit / ingest** (default): ``--emit`` writes the pending requests to
-     ``output/{client_id}/data/generation_requests.json`` for an in-session (Claude Code)
-     producer to fill, and ``--ingest`` reads that session's ``generation_results.json`` back
-     into the cache.
+   - **emit / validate** (default): ``--emit`` writes the pending requests to
+     ``output/{client_id}/data/generation_requests.json`` for an in-session (Claude Code) producer
+     to answer, and ``--validate`` checks the results that session wrote before a wave depends on
+     them.
    - **API backend** (``--backend api``): drives :class:`lib.llm.AnthropicClient` (the headless
-     Messages-API producer) over the gaps via :func:`run_producer`, filling the cache directly.
-     Requires an enabled ``generator`` config block and its API key.
+     Messages-API producer) over the units via :func:`run_producer` and writes the results file
+     directly. Requires an enabled ``generator`` config block and its API key.
 
-``run_plan`` later only *reads* the cache. This pipeline fails silently — verify the emitted
-requests and the cache against real parsed data, not just green tests.
+**Nothing is cached.** There is no store between runs: ``run_plan`` reads this run's results file
+and publishes from it, and a later run regenerates rather than reusing. Idempotency comes from the
+other end — generated copy is excluded from the content hash (#97), so writing it again does not
+reclassify a live page. This pipeline fails silently; verify the emitted requests and the results
+against real parsed data, not just green tests.
 
 Only the products **in scope** are considered — the process list and the confirmed-video
 allowlist, via ``lib.preflight.in_scope``, the same filter the doctor's ``scope`` check reports.
 Before that this command worked from the whole catalogue and disagreed with the doctor by two
 orders of magnitude.
 
-Emits (--emit):       output/{client_id}/data/generation_requests.json
-                      **and** output/{client_id}/data/generated_cache.json — the verbatim prefill
-                      is persisted here too, so emit and ingest may be called in either order
-Reads (--ingest):     output/{client_id}/data/generation_results.json (writes the cache)
-Writes (--backend api): output/{client_id}/data/generated_cache.json
+Emits (--emit):         output/{client_id}/data/generation_requests.json
+Reads (--validate):     output/{client_id}/data/generation_results.json (writes nothing, unless
+                        --results named another path, which is then placed at the canonical one)
+Writes (--backend api): output/{client_id}/data/generation_results.json
 Exit codes:
     0  success
     2  config error (bad client id, missing files, generator not enabled, missing key, API error)
@@ -49,7 +52,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from lib.config import ClientConfig, get_client
 from lib.env import load_env
@@ -57,19 +60,18 @@ from lib.errors import ConfigError, GeneratorError, LLMAPIError, MissingCredenti
 from lib.generator import (
     DEFAULT_PROMPT_VERSION,
     MODE_TIGHTEN,
-    ORIGIN_GENERATED,
-    ORIGIN_TIGHTENED,
-    GeneratedCache,
     GenerationContext,
     GenerationRequest,
-    GenerationResult,
     LLMClient,
-    apply_result,
+    ResultItem,
+    ResultsFile,
     generation_context,
-    load_cache,
+    load_results,
+    missing_copy,
     pending_requests,
-    prefill_from_feed,
-    save_cache,
+    result_item,
+    results_path,
+    save_results,
 )
 from lib.llm import AnthropicClient, load_voice_template
 from lib.preflight import in_scope
@@ -78,25 +80,21 @@ from lib.records import ProductRecord
 _log = logging.getLogger("scripts.run_generate")
 
 REQUESTS_FILENAME: Final = "generation_requests.json"
-RESULTS_FILENAME: Final = "generation_results.json"
-#: Named here only so the emit path can say which file it also wrote; `lib.generator` owns it.
-CACHE_FILENAME: Final = "generated_cache.json"
-
-#: Provenance recorded for cache entries filled from an in-session producer's results file.
-_INSESSION_PROVENANCE: Final = "in-session"
 
 _EXIT_OK = 0
 _EXIT_CONFIG_ERROR = 2
 
 
-# --- Emit/ingest file contract -----------------------------------------------
+# --- Emit/validate file contract ---------------------------------------------
 
 
 class RequestsFile(BaseModel):
-    """The emitted pending gaps for an in-session producer to fill (``--emit`` output).
+    """The emitted units for an in-session producer to answer (``--emit`` output).
 
     Carries the ``prompt_version`` and fingerprints so a session can echo them back in its
-    results, letting ``--ingest`` reject copy generated against inputs that have since changed.
+    results, letting ``--validate`` and ``run_plan`` reject copy written against inputs that have
+    since changed. ``ResultsFile`` — the answer to this file — lives in ``lib.generator``, because
+    ``run_plan`` and the doctor both read it and neither may import a script.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -105,36 +103,6 @@ class RequestsFile(BaseModel):
     prompt_version: str
     generated_at: datetime
     requests: list[GenerationRequest]
-
-
-class ResultItem(BaseModel):
-    """One producer's answer, keyed to its ``(gtin, language)`` request.
-
-    ``input_fingerprint`` is optional: when present it must match the pending request's, so a
-    result generated against stale inputs is skipped rather than silently cached as fresh.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    gtin: str
-    language: str
-    usps: list[str] = Field(min_length=1)
-    #: Field name → that field's value in this unit's language, answering the request's
-    #: ``translations`` gaps. Keys the request did not ask for are dropped on ingest.
-    translations: dict[str, str] = Field(default_factory=dict)
-    input_fingerprint: str | None = None
-    #: Claims written beyond the literal feed text (attr 1083/1067), surfaced as
-    #: ``generation_inference`` findings for human verification before publishing.
-    inferences: list[str] = Field(default_factory=list)
-
-
-class ResultsFile(BaseModel):
-    """An in-session producer's generated copy, read back by ``--ingest``."""
-
-    model_config = ConfigDict(frozen=True)
-
-    client_id: str
-    results: list[ResultItem]
 
 
 # --- Paths & IO --------------------------------------------------------------
@@ -156,28 +124,16 @@ def _load_products(path: Path) -> list[ProductRecord]:
     return [ProductRecord.model_validate(item) for item in data]
 
 
-def _load_results(path: Path, client_id: str) -> ResultsFile:
-    """Read and validate an in-session producer's results file.
-
-    Raises:
-        GeneratorError: If the file names a different client than the run.
-    """
-    results = ResultsFile.model_validate(json.loads(path.read_text(encoding="utf-8")))
-    if results.client_id != client_id:
-        raise GeneratorError(f"results file is for client {results.client_id!r}, not {client_id!r}")
-    return results
-
-
 # --- Preparation & the producer seam -----------------------------------------
 
 
 def _prepare(
-    cfg: ClientConfig, context: GenerationContext, products_path: Path, now: datetime
-) -> tuple[GeneratedCache, list[GenerationRequest], list[ProductRecord]]:
-    """Load products, narrow them to this run's context, verbatim-prefill, and compute the gaps.
+    cfg: ClientConfig, context: GenerationContext, products_path: Path
+) -> tuple[list[GenerationRequest], list[ProductRecord]]:
+    """Load products, narrow them to this run's scope, and compute the units needing a producer.
 
     **Scope is applied here, once, because all three producer paths run through it** — ``--emit``,
-    ``--ingest`` and ``--backend api``. Before this, none of them knew scope existed: the products
+    ``--validate`` and ``--backend api``. Before this, none of them knew scope existed: the products
     file was taken whole, so ``pending_requests`` was computed over the entire catalogue. On the
     pilot client that meant **224 requests emitted where 10 were in scope** — the doctor and this
     command answering the same question two orders of magnitude apart. Those are real tokens and
@@ -187,68 +143,42 @@ def _prepare(
     :func:`lib.preflight.in_scope` is that filter, and it is imported rather than reimplemented:
     it composes the process list and the confirmed-video allowlist, and a second implementation of
     "what will this run touch" is exactly what it exists to prevent. This is the same function the
-    doctor's ``scope`` check reports, so the two commands now agree by construction rather than by
+    doctor's ``scope`` check reports, so the two commands agree by construction rather than by
     coincidence.
 
-    Narrowing before ``prefill_from_feed`` is deliberate and is the one behaviour change a reader
-    should notice: the verbatim prefill now fills in-scope units only, so the cache stops
-    accumulating entries for products this client is not publishing.
-
-    Both emit and ingest run this so the cache always ends up with its verbatim entries, regardless
-    of which is called first. Pure apart from reading its input files.
+    Pure apart from reading its input file.
     """
     products = in_scope(cfg, _load_products(products_path))
-    cache = load_cache(cfg.client_id)
-    prefill_from_feed(products, cache, context, now=now)
-    requests = pending_requests(products, cache, context)
-    return cache, requests, products
+    return pending_requests(products, context), products
 
 
-def _origin_for_mode(mode: str) -> str:
-    """Map a request mode to the cache-entry origin it produces."""
-    return ORIGIN_TIGHTENED if mode == MODE_TIGHTEN else ORIGIN_GENERATED
+def run_producer(requests: list[GenerationRequest], client: LLMClient) -> list[ResultItem]:
+    """Drive ``client`` over every pending unit and return the items to write.
 
-
-def run_producer(
-    cache: GeneratedCache,
-    requests: list[GenerationRequest],
-    client: LLMClient,
-    *,
-    provenance: str,
-    now: datetime,
-) -> int:
-    """Drive ``client`` over every pending request, writing results into ``cache`` in place.
-
-    The shared producer loop for any :class:`~lib.generator.LLMClient` — the API backend and
-    test fakes alike. Does not persist; the caller saves the cache. Returns the count filled.
+    The shared producer loop for any :class:`~lib.generator.LLMClient` — the API backend and test
+    fakes alike. Returns a value rather than filling a store, because there is no store; the caller
+    writes the results file.
     """
-    for request in requests:
-        result = client.generate_copy(request)
-        apply_result(
-            cache,
-            request,
-            result,
-            origin=_origin_for_mode(request.mode),
-            provenance=provenance,
-            now=now,
-        )
-    return len(requests)
+    return [result_item(request, client.generate_copy(request)) for request in requests]
 
 
-# --- Emit / ingest -----------------------------------------------------------
+# --- Emit / validate ---------------------------------------------------------
 
 
 def _emit(
     client_id: str,
-    cache: GeneratedCache,
     requests: list[GenerationRequest],
     prompt_version: str,
     now: datetime,
 ) -> Path:
-    """Write the pending requests for an in-session producer and persist the verbatim prefill.
+    """Write the units an in-session producer must answer.
 
-    Written **always**, even with no pending requests, so an empty ``requests`` list means
-    "nothing to generate" rather than "no run has looked".
+    Written **always**, even with nothing pending, so an empty ``requests`` list means "nothing to
+    generate" rather than "no run has looked".
+
+    This used to write the cache as well, to persist the verbatim prefill so emit and ingest could
+    be called in either order. Both halves of that are gone: there is no cache, and feed-verbatim
+    copy is derived at plan time rather than stored anywhere.
     """
     path = _data_path(client_id, REQUESTS_FILENAME)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -262,45 +192,43 @@ def _emit(
         json.dumps(payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    save_cache(cache)
     return path
 
 
-def _ingest(
-    cache: GeneratedCache,
+def _validate(
     requests: list[GenerationRequest],
     results: ResultsFile,
-    now: datetime,
     products: list[ProductRecord],
 ) -> tuple[int, int]:
-    """Apply a session's results to ``cache`` in place and persist it.
+    """Check a producer's results against this run's units. Returns ``(usable, rejected)``.
 
-    Matches each result to a pending request by ``(gtin, language)``. A result with no pending
-    request, or one whose fingerprint no longer matches (generated against inputs that have since
-    changed), is skipped with a warning rather than cached. Returns ``(applied, skipped)``.
+    Writes nothing. It replaced ``--ingest``, which folded results into the cache: with the cache
+    gone there is nothing to fold into, and ``run_plan`` reads the results file itself. What is
+    left is the part that was always the point — telling the operator, before a wave, whether the
+    copy that was just written actually answers this run.
 
-    "No pending request" has **three** causes and the warning names which: the unit is already
-    cached fresh, its inputs changed, or it is no longer in context. The third arrived when
-    :func:`_prepare` began narrowing to the process list and the video allowlist — a results file
-    emitted before the list was pruned still holds those units, and reporting them as "already
-    fresh or input changed" would send a reader looking at the feed for a scope decision.
+    Each result is matched to a pending unit by ``(gtin, language)``. A result with no pending unit
+    has **two** possible causes and the warning names which: the unit is not in this run's scope, or
+    the feed already supplies its copy verbatim. (There used to be a third — "already cached fresh"
+    — which cannot happen now that nothing is cached.) A result whose fingerprint no longer matches
+    is rejected, the same decision ``run_plan`` will make and for the same reason.
     """
     by_key = {(r.gtin, r.language): r for r in requests}
     in_scope_gtins = {product.gtin for product in products}
-    applied = 0
-    skipped = 0
+    usable = 0
+    rejected = 0
     for item in results.results:
         request = by_key.get((item.gtin, item.language))
         if request is None:
             _log.warning(
-                "no pending request for %s/%s (%s); skipping",
+                "no pending unit for %s/%s (%s); ignoring",
                 item.gtin,
                 item.language,
                 "not in scope for this run"
                 if item.gtin not in in_scope_gtins
-                else "already fresh or input changed",
+                else "the feed supplies this unit's copy verbatim",
             )
-            skipped += 1
+            rejected += 1
             continue
         stale = (
             item.input_fingerprint is not None
@@ -309,25 +237,14 @@ def _ingest(
         if stale:
             _log.warning(
                 "stale result for %s/%s (fingerprint mismatch — inputs changed since emit); "
-                "skipping",
+                "run_plan will drop it too",
                 item.gtin,
                 item.language,
             )
-            skipped += 1
+            rejected += 1
             continue
-        apply_result(
-            cache,
-            request,
-            GenerationResult(
-                usps=item.usps, translations=item.translations, inferences=item.inferences
-            ),
-            origin=_origin_for_mode(request.mode),
-            provenance=_INSESSION_PROVENANCE,
-            now=now,
-        )
-        applied += 1
-    save_cache(cache)
-    return applied, skipped
+        usable += 1
+    return usable, rejected
 
 
 # --- API backend -------------------------------------------------------------
@@ -335,12 +252,11 @@ def _ingest(
 
 def _run_api_backend(
     cfg: ClientConfig,
-    cache: GeneratedCache,
     requests: list[GenerationRequest],
     prompt_version: str,
     now: datetime,
 ) -> tuple[int, str]:
-    """Fill the cache directly via the Anthropic API backend, in place. Returns (filled, model).
+    """Write this run's results file via the Anthropic API backend. Returns (written, model).
 
     Raises:
         ConfigError: The client has no enabled ``generator`` block.
@@ -355,24 +271,39 @@ def _run_api_backend(
         )
     voice = load_voice_template(cfg.client_id, prompt_version)
     with AnthropicClient(gen, voice) as client:
-        filled = run_producer(cache, requests, client, provenance=f"api:{gen.model}", now=now)
-    save_cache(cache)
-    return filled, gen.model
+        items = run_producer(requests, client)
+    save_results(
+        ResultsFile(
+            client_id=cfg.client_id,
+            provenance=f"api:{gen.model}",
+            generated_at=now,
+            results=items,
+        )
+    )
+    return len(items), gen.model
 
 
 # --- Summaries ---------------------------------------------------------------
 
 
-def _coverage(total_units: int, requests: list[GenerationRequest]) -> str:
-    """Render the cached-vs-pending coverage line (§ verify against real data)."""
-    pending = len(requests)
+def _coverage(
+    products: list[ProductRecord], results: ResultsFile, context: GenerationContext
+) -> str:
+    """Render how much of this run's copy is actually in hand (§ verify against real data).
+
+    Asked of the results file through :func:`lib.generator.missing_copy`, which is the same
+    function the doctor and ``run_plan`` resolve units with — so this line cannot claim coverage
+    the plan will not have.
+    """
+    total = len(products) * len(context.languages)
+    missing = len(missing_copy(products, results, context))
+    return f"{total - missing}/{total} units have copy; {missing} without"
+
+
+def _split(requests: list[GenerationRequest]) -> str:
+    """Render the tighten/generate split of the units a producer must answer."""
     tighten = sum(1 for r in requests if r.mode == MODE_TIGHTEN)
-    generate = pending - tighten
-    covered = total_units - pending
-    return (
-        f"{covered}/{total_units} units cached; "
-        f"{pending} pending ({tighten} tighten, {generate} generate)"
-    )
+    return f"{tighten} tighten, {len(requests) - tighten} generate"
 
 
 # --- CLI ---------------------------------------------------------------------
@@ -380,7 +311,7 @@ def _coverage(total_units: int, requests: list[GenerationRequest]) -> str:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="run_generate", description="Prepare and ingest generated product copy."
+        prog="run_generate", description="Prepare and check generated product copy."
     )
     parser.add_argument(
         "client_id",
@@ -394,28 +325,28 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--results",
         help=(
-            "Path to the results JSON to ingest (default: output/{id}/data/generation_results.json)"
+            "Path to the results JSON to check (default: output/{id}/data/generation_results.json)."
+            " A file given here is placed at the default location once it validates."
         ),
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--emit",
         action="store_true",
-        help=(
-            "Write pending requests for an in-session producer (default). Also saves the cache: "
-            "the verbatim prefill runs first and is persisted so emit and ingest can be called "
-            "in either order"
-        ),
+        help="Write the units an in-session producer must answer (default)",
     )
     mode.add_argument(
-        "--ingest",
+        "--validate",
         action="store_true",
-        help="Read a session's results back into the cache",
+        help=(
+            "Check a session's results against this run before publishing depends on them. "
+            "Writes nothing unless --results named another path"
+        ),
     )
     mode.add_argument(
         "--backend",
         choices=["api"],
-        help="Fill the cache directly via the API backend instead of emit/ingest",
+        help="Write the results file via the API backend instead of emit/validate",
     )
     return parser.parse_args(argv)
 
@@ -427,36 +358,34 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.now(UTC)
     try:
         cfg = get_client(args.client_id)
-        languages = cfg.wordpress.languages
         products_path = (
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
         prompt_version = cfg.generator.prompt_version if cfg.generator else DEFAULT_PROMPT_VERSION
         context = generation_context(
-            languages,
+            cfg.wordpress.languages,
             cfg.wordpress.default_language,
             prompt_version,
             cfg.export.gdsn_map,
             cfg.export.gdsn_extras,
         )
-        cache, requests, products = _prepare(cfg, context, products_path, now)
-        total_units = len(products) * len(languages)
+        requests, products = _prepare(cfg, context, products_path)
 
         if args.backend == "api":
-            filled, api_model = _run_api_backend(cfg, cache, requests, prompt_version, now)
-            # Re-derive against the mutated cache so coverage reflects the post-run state.
-            requests = pending_requests(products, cache, context)
-        elif args.ingest:
-            results_path = (
-                Path(args.results) if args.results else _data_path(cfg.client_id, RESULTS_FILENAME)
-            )
-            results = _load_results(results_path, cfg.client_id)
-            applied, skipped = _ingest(cache, requests, results, now, products)
-            # Re-derive against the mutated cache so coverage reflects the post-ingest state,
-            # not the gaps we started with.
-            requests = pending_requests(products, cache, context)
+            written, api_model = _run_api_backend(cfg, requests, prompt_version, now)
+            results = load_results(cfg.client_id)
+        elif args.validate:
+            override = Path(args.results) if args.results else None
+            results = load_results(cfg.client_id, override)
+            usable, rejected = _validate(requests, results, products)
+            if override is not None and override != results_path(cfg.client_id):
+                # Validate *and place*: a producer may write anywhere, but only one path is the
+                # one run_plan reads, and asking the operator to copy it by hand is a step to
+                # forget.
+                save_results(results)
         else:
-            emit_path = _emit(cfg.client_id, cache, requests, prompt_version, now)
+            results = load_results(cfg.client_id)
+            emit_path = _emit(cfg.client_id, requests, prompt_version, now)
     except (
         ConfigError,
         GeneratorError,
@@ -469,21 +398,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config error: {exc}", file=sys.stderr)
         return _EXIT_CONFIG_ERROR
 
-    coverage = _coverage(total_units, requests)
+    coverage = _coverage(products, results, context)
     if args.backend == "api":
-        print(f"generated {filled} via API ({api_model}); {coverage}", file=sys.stderr)
-    elif args.ingest:
-        print(f"ingested {applied} result(s), skipped {skipped}; {coverage}", file=sys.stderr)
+        print(f"generated {written} via API ({api_model}); {coverage}", file=sys.stderr)
+    elif args.validate:
+        print(f"validated {usable} result(s), rejected {rejected}; {coverage}", file=sys.stderr)
     else:
         _log.info("wrote %d request(s) to %s", len(requests), emit_path)
-        # Name the cache too. It is written on this path by design — `prefill_from_feed` runs
-        # before the gaps are computed, and persisting it here is what lets emit and ingest be
-        # called in either order — but a command called `--emit` writing a second file it never
-        # mentions is a surprise found by noticing the mtime, which is no way to find it.
         print(
-            f"emitted {len(requests)} request(s) to {emit_path}; "
-            f"saved the verbatim prefill to {_data_path(cfg.client_id, CACHE_FILENAME)}; "
-            f"{coverage}",
+            f"emitted {len(requests)} request(s) to {emit_path} ({_split(requests)}); {coverage}",
             file=sys.stderr,
         )
     return _EXIT_OK

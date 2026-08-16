@@ -195,7 +195,7 @@ class _Flow:
         ).classes("note mt-2")
 
     def _gate_content_review(self, gate: Gate) -> None:
-        entry = context.doctor_check(self.doctor, "cache_coverage")
+        entry = context.doctor_check(self.doctor, "generation_results")
         if entry is not None:
             data = entry.get("data") or {}
             with ui.row().classes("gap-12 items-end mb-3"):

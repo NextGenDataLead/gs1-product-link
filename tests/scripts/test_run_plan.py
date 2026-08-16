@@ -31,14 +31,13 @@ from lib.config import (
 from lib.errors import ConfigError
 from lib.gdsn import GdsnSource
 from lib.generator import (
-    ORIGIN_GENERATED,
-    GeneratedCache,
     GenerationContext,
     GenerationResult,
-    apply_result,
+    ResultsFile,
     generation_context,
     pending_requests,
-    save_cache,
+    result_item,
+    save_results,
 )
 from lib.records import (
     ConfirmedPlan,
@@ -676,31 +675,24 @@ def _translating_export() -> ExportConfig:
 
 
 def _ctx(language: str) -> GenerationContext:
-    """The context `run_plan` will build for `_translating_export`, for seeding a cache with."""
+    """The context `run_plan` will build for `_translating_export`, for writing results against."""
     return generation_context(
         [language], "nl", "v1", _translating_export().gdsn_map, _translating_export().gdsn_extras
     )
 
 
-def _cache_with(gtin: str, language: str, **result: Any) -> None:
-    """Build and persist a generated_cache.json with one fresh entry for (gtin, language)."""
-    _cache_multi(gtin, {language: result})
+def _copy_with(gtin: str, language: str, **result: Any) -> None:
+    """Write a generation_results.json holding this run's copy for (gtin, language)."""
+    _copy_multi(gtin, {language: result})
 
 
-def _cache_multi(gtin: str, entries: dict[str, dict[str, Any]]) -> None:
-    """Persist a cache with one fresh entry per language (lang -> GenerationResult kwargs)."""
-    cache = GeneratedCache(client_id="acme")
+def _copy_multi(gtin: str, entries: dict[str, dict[str, Any]]) -> None:
+    """Write this run's results, one item per language (lang -> GenerationResult kwargs)."""
+    items = []
     for language, result in entries.items():
-        request = pending_requests([_product(gtin)], cache, _ctx(language))[0]
-        apply_result(
-            cache,
-            request,
-            GenerationResult(**result),
-            origin=ORIGIN_GENERATED,
-            provenance="in-session",
-            now=_GEN_NOW,
-        )
-    save_cache(cache)
+        request = pending_requests([_product(gtin)], _ctx(language))[0]
+        items.append(result_item(request, GenerationResult(**result)))
+    save_results(ResultsFile(client_id="acme", results=items))
 
 
 def _plan_and_publish(products: Path) -> None:
@@ -726,10 +718,10 @@ def test_regenerated_copy_alone_does_not_reclassify(
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])
 
-    _cache_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
+    _copy_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
     _plan_and_publish(products)
 
-    _cache_with(GTIN_A, "nl", usps=["A sharper tagline", "Bullet"])
+    _copy_with(GTIN_A, "nl", usps=["A sharper tagline", "Bullet"])
     run_plan.main(["acme", "--products", str(products)])
 
     row = next(r for r in _read_plan().rows if r.gtin == GTIN_A)
@@ -737,6 +729,62 @@ def test_regenerated_copy_alone_does_not_reclassify(
     # The new copy is still on the row — only the classification ignores it.
     assert row.product.generated_tagline is not None
     assert row.product.generated_tagline.values["nl"] == "A sharper tagline"
+
+
+def test_planning_twice_over_one_results_file_gives_the_same_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run_plan` reads the run's copy and never consumes it, so re-planning is free.
+
+    Delete-after-read was a considered design for the results file and was rejected for exactly
+    this: re-running `run_plan` is a normal thing to do — after pruning the process list, after a
+    gate sends the operator back — and it must not force regenerating all 74 units.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+    _copy_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
+    results = Path("output/acme/data/generation_results.json")
+    before = results.read_text(encoding="utf-8")
+
+    run_plan.main(["acme", "--products", str(products)])
+    first = _read_plan()
+    run_plan.main(["acme", "--products", str(products)])
+    second = _read_plan()
+
+    assert results.read_text(encoding="utf-8") == before  # untouched
+    assert [r.content_hash for r in first.rows] == [r.content_hash for r in second.rows]
+    assert first.rows[0].product.generated_tagline == second.rows[0].product.generated_tagline
+
+
+def test_copy_written_for_older_inputs_is_dropped_and_the_unit_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The validity check, end to end: stale copy must not reach a page, and must not go quiet.
+
+    A results file outlives the producer session that wrote it. Without this, a `parse_export`
+    re-run between the two publishes copy describing data the feed no longer holds — the failure
+    the fingerprint is kept for, now that it is no longer a reuse key.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+    _copy_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
+
+    # The feed changes after the copy was written — a different name is a different fingerprint.
+    _write_products(products, [_product(GTIN_A, product_name={"nl": "Andere naam"})])
+    with caplog.at_level("WARNING"):
+        run_plan.main(["acme", "--products", str(products)])
+
+    plan = _read_plan()
+    assert plan.rows == []
+    assert [s.reason for s in plan.skipped] == [SkipReason.NO_GENERATED_COPY]
+    # Held because the copy was *rejected*, not because none was written — those are different
+    # failures and only one of them means "you forgot to regenerate".
+    assert "stale copy" in caplog.text
+    assert GTIN_A in caplog.text
 
 
 def test_a_source_edit_still_reclassifies_changed(
@@ -752,7 +800,7 @@ def test_a_source_edit_still_reclassifies_changed(
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])
 
-    _cache_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
+    _copy_with(GTIN_A, "nl", usps=["Tagline", "Bullet"])
     _plan_and_publish(products)
 
     _write_products(products, [_product(GTIN_A, brick="10000123")])
@@ -773,7 +821,7 @@ def test_e18_cached_french_name_is_planned(tmp_path: Path, monkeypatch: pytest.M
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])  # nl name only
     # fr fill (name + copy) lifts E18; nl needs its own copy to survive E21.
-    _cache_multi(
+    _copy_multi(
         GTIN_A,
         {
             "nl": {"usps": ["Slogan NL"]},
@@ -800,7 +848,7 @@ def test_e18_without_cache_still_skips_french(
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])  # nl name only, no fr name/fill
-    _cache_with(GTIN_A, "nl", usps=["Slogan NL"])  # nl copy so it survives E21
+    _copy_with(GTIN_A, "nl", usps=["Slogan NL"])  # nl copy so it survives E21
 
     run_plan.main(["acme", "--products", str(products)])
 
@@ -825,7 +873,7 @@ def test_e18_without_the_field_opted_in_still_skips_french(
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])
-    _cache_multi(
+    _copy_multi(
         GTIN_A,
         {
             "nl": {"usps": ["Slogan NL"]},
@@ -858,7 +906,7 @@ def test_dropped_units_are_written_into_the_plan(
     _patch_client(monkeypatch, cfg)
     products = tmp_path / "products.json"
     _write_products(products, [_product(GTIN_A)])
-    _cache_with(GTIN_A, "nl", usps=["Slogan NL"])  # nl has copy; fr has neither name nor copy
+    _copy_with(GTIN_A, "nl", usps=["Slogan NL"])  # nl has copy; fr has neither name nor copy
 
     assert run_plan.main(["acme", "--products", str(products)]) == 0
 

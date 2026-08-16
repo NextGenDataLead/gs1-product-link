@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ui.context import Scope, doctor_check, scope_from, split_cache
+from ui.context import Scope, doctor_check, group_results, scope_from, split_results
 
 
 def _payload(**overrides: Any) -> list[dict[str, Any]]:
@@ -44,7 +44,7 @@ def test_finds_a_check_by_name() -> None:
 
 
 def test_a_check_that_did_not_run_is_none_rather_than_an_error() -> None:
-    assert doctor_check(_payload(), "cache_coverage") is None
+    assert doctor_check(_payload(), "generation_results") is None
 
 
 def test_a_payload_that_is_not_a_list_is_none() -> None:
@@ -163,17 +163,17 @@ def _scope(*gtins: str) -> Scope:
     return Scope(in_scope=len(gtins), total=99, detail="", empty=False, gtins=frozenset(gtins))
 
 
-_CACHE: dict[str, Any] = {"a": {"nl": {}}, "b": {"nl": {}}, "c": {"nl": {}}}
+_COPY: dict[str, dict[str, Any]] = {"a": {"nl": {}}, "b": {"nl": {}}, "c": {"nl": {}}}
 
 
-def test_the_batch_is_separated_from_everything_else_in_the_cache() -> None:
-    """The defect: the review listed every GTIN the cache had ever accumulated.
+def test_the_batch_is_separated_from_copy_written_for_another_scope() -> None:
+    """The defect: the review listed every GTIN in the file, under a correctly scoped figure.
 
-    The cache is never pruned, so on a long-lived machine a two-product batch ends up under a
-    list of hundreds — beneath a coverage figure that *was* correctly scoped, with nothing to
-    tell the two apart.
+    It mattered most when the file was a cache that accumulated for the machine's lifetime. It
+    still matters: a results file written against a longer process list carries GTINs this run
+    will not touch, and the screen must not present them as the batch.
     """
-    split = split_cache(_CACHE, _scope("a", "c"))
+    split = split_results(_COPY, _scope("a", "c"))
 
     assert set(split.in_scope) == {"a", "c"}
     assert set(split.others) == {"b"}
@@ -181,8 +181,8 @@ def test_the_batch_is_separated_from_everything_else_in_the_cache() -> None:
 
 
 def test_in_scope_gtins_with_no_copy_are_named() -> None:
-    """Absent from the cache is the interesting case: it is the copy that still has to be made."""
-    split = split_cache(_CACHE, _scope("a", "zz", "yy"))
+    """The interesting case: it is the copy that still has to be written."""
+    split = split_results(_COPY, _scope("a", "zz", "yy"))
 
     assert split.missing == ("yy", "zz")
 
@@ -190,13 +190,13 @@ def test_in_scope_gtins_with_no_copy_are_named() -> None:
 def test_an_unknown_scope_shows_everything_rather_than_nothing() -> None:
     """Wrong in the safe direction, and the direction matters.
 
-    Filtering to an empty set would hide the whole cache and read as "there is no copy" — worse
+    Filtering to an empty set would hide the copy entirely and read as "there is none" — worse
     than the unscoped list being replaced, because it stops the operator looking. ``scoped`` is
     what lets the screen label it honestly instead.
     """
     for scope in (None, _scope()):
-        split = split_cache(_CACHE, scope)
-        assert split.in_scope == _CACHE
+        split = split_results(_COPY, scope)
+        assert split.in_scope == _COPY
         assert split.others == {}
         assert split.missing == ()
         assert not split.scoped
@@ -204,14 +204,40 @@ def test_an_unknown_scope_shows_everything_rather_than_nothing() -> None:
 
 def test_a_batch_with_no_generated_copy_at_all_is_empty_not_unscoped() -> None:
     """Distinct from an unknown scope: here the answer is known, and the answer is none."""
-    split = split_cache(_CACHE, _scope("zz"))
+    split = split_results(_COPY, _scope("zz"))
 
     assert split.in_scope == {}
     assert split.scoped
     assert split.missing == ("zz",)
 
 
-def test_the_split_does_not_mutate_the_cache_it_was_given() -> None:
-    original = dict(_CACHE)
-    split_cache(_CACHE, _scope("a"))
-    assert original == _CACHE
+def test_the_split_does_not_mutate_what_it_was_given() -> None:
+    original = dict(_COPY)
+    split_results(_COPY, _scope("a"))
+    assert original == _COPY
+
+
+def test_the_flat_results_list_is_grouped_by_gtin_and_language() -> None:
+    """A producer writes one item at a time; a screen reads one product at a time."""
+    grouped = group_results(
+        [
+            {"gtin": "a", "language": "nl", "usps": ["NL"]},
+            {"gtin": "a", "language": "fr", "usps": ["FR"]},
+            {"gtin": "b", "language": "nl", "usps": ["B"]},
+        ]
+    )
+
+    assert set(grouped) == {"a", "b"}
+    assert set(grouped["a"]) == {"nl", "fr"}
+    assert grouped["a"]["fr"]["usps"] == ["FR"]
+
+
+def test_grouping_drops_malformed_items_rather_than_raising() -> None:
+    """This reads a file a human may have hand-edited, on a screen that must still render.
+
+    A crash here takes out the copy review — the last place the text is read as text — over one
+    bad line in a file the rest of which is fine.
+    """
+    grouped = group_results(["not an object", {"language": "nl"}, {"gtin": "a", "language": "nl"}])
+
+    assert set(grouped) == {"a"}

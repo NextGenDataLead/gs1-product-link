@@ -18,7 +18,7 @@ skills and the terminal all stay valid as a fallback when something here is wron
 
 **No LLM, no ``ANTHROPIC_API_KEY``, no Anthropic egress.** Content generation happens on the
 maintainer's machine, in a Claude Code session with the ``content-generator`` skill;
-``generated_cache.json`` is handed over as a file and uploaded here. This machine never runs
+``generation_results.json`` is handed over as a file and uploaded here. This machine never runs
 ``run_generate``. See ``docs/ui-operator-shell.md``.
 
 **The gates come from** :mod:`lib.gates`, **not from this package.** They are the safety
