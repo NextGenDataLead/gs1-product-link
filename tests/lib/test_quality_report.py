@@ -418,14 +418,110 @@ def test_matrix_sorts_richest_first() -> None:
     assert body[0].startswith("| `08713195000002`")  # richer first
 
 
-def test_matrix_marks_mandatory_columns_and_puts_them_first() -> None:
+def _headers(md: str) -> list[str]:
+    """The §0 header cells, in rendered order."""
+    header = next(line for line in md.splitlines() if line.startswith("| GTIN |"))
+    return [c.strip() for c in header.split("|")[1:-1]]
+
+
+def _cell_for(md: str, gtin: str, header: str) -> str:
+    """The cell under ``header`` for one product, found by name rather than by position.
+
+    Every lookup here used to count backwards from the end of the row, which made a column
+    reorder break tests that have nothing to do with ordering — twice now. The header row is
+    already the index; use it.
+    """
+    idx = next(i for i, h in enumerate(_headers(md)) if h.split(">")[-1] == header)
+    row = next(line for line in md.splitlines() if line.startswith(f"| `{gtin}`"))
+    return row.split("|")[1:-1][idx].strip()
+
+
+def test_the_mandatory_marker_is_a_group_label_because_bold_renders_as_nothing() -> None:
+    """The defect R-a fixes: markdown table headers are *already* bold.
+
+    `**product·3301**` and `product·3301` render identically, so the mark that separated "a gap
+    here holds the whole SKU" from "a gap here only thins the page" was invisible in the only
+    form of this report anyone reads — and the legend pointed at it.
+    """
     md = _render(matrix=_matrix(products=[_p("08713195000001")]))
 
-    header = next(line for line in md.splitlines() if line.startswith("| GTIN |"))
-    cols = [c.strip() for c in header.split("|")[1:-1]]
-    assert cols[2] == "**product·3301**"  # mandatory, first after GTIN/Name
-    assert cols[-3] == "material"  # optional, after the mandatory block
-    assert cols[-2] == "**video**"
+    assert "MANDATORY<br>product·3301" in _headers(md)
+    assert "optional<br>material" in _headers(md)
+    assert not [h for h in _headers(md) if "**" in h]
+
+
+def test_the_header_makes_exactly_one_crossing_from_mandatory_to_optional() -> None:
+    """Mandatory columns first, optional after, and the boundary crossed once.
+
+    A regression pin, not a fix: `_columns` already emits them in that order. It is worth pinning
+    because the split is derived from `required` / `required_group` in the **gitignored**
+    `clients.yml`, so a field flipping its flag re-groups the header with no code change — and
+    nothing in git can see the config that did it. Interleaved groups would make the labels noise.
+    """
+    md = _render(matrix=_matrix(products=[_p("08713195000001")]))
+    groups = [h.split("<br>")[0] for h in _headers(md) if "<br>" in h]
+
+    assert set(groups) == {"MANDATORY", "optional"}
+    crossings = [(a, b) for a, b in zip(groups, groups[1:], strict=False) if a != b]
+    assert crossings == [("MANDATORY", "optional")]
+
+
+def test_the_legend_counts_the_mandatory_columns_the_table_actually_has() -> None:
+    """The legend's number and the header are one fact, so they must not be able to disagree.
+
+    It used to say "N fields plus the video" while video rendered as a separate column at the far
+    end; now video is one of the mandatory columns and counting it twice would be the easy slip.
+    """
+    md = _render(matrix=_matrix(products=[_p("08713195000001")]))
+    mandatory = [h for h in _headers(md) if h.startswith("MANDATORY<br>")]
+    legend = next(line for line in md.splitlines() if "present ·" in line)
+
+    assert len(mandatory) == 3  # product·3301, brand·3336, video
+    # "those 3 " rather than a bare "3": the language count is also a number in this line, so a
+    # loose check would let an off-by-one land on it and survive.
+    assert f"those {len(mandatory)} " in legend
+    assert "Bold columns" not in legend  # it pointed at a marker that rendered as nothing
+
+
+def test_video_sits_with_the_mandatory_columns_not_after_the_optional_ones() -> None:
+    """A missing confirmed video holds the whole SKU (E24), so it belongs in the mandatory run.
+
+    It used to render last, between `material` and `score`, which put a third group after the
+    optional block and made "mandatory first" untrue of the table as a whole.
+    """
+    md = _render(matrix=_matrix(products=[_p("08713195000001")]))
+    cols = _headers(md)
+
+    assert "MANDATORY<br>video" in cols
+    assert cols.index("MANDATORY<br>video") < cols.index("optional<br>material")
+    assert cols[-1] == "score"  # the total stays last; it is not a data column
+
+
+def test_grouping_the_header_leaves_every_cell_where_it_was() -> None:
+    """`_columns` is what `_mark` and the score iterate, so a header change can reach the cells.
+
+    Pinned against a product with one of each mark — full, half, missing, plus a video confirmed
+    in one language only — so a reorder that dropped or double-counted a column shows up here as
+    a wrong score rather than as a silently different table.
+    """
+    gtin = "08713195000001"
+    md = _render(
+        matrix=_matrix(
+            products=[
+                _p(
+                    gtin,
+                    product_name=LocalisedText(values={"nl": "a"}),
+                    net_content="10 cm",
+                    extras={"material": "PP"},
+                )
+            ],
+            video_confirmed={"nl": {gtin}, "fr": set()},
+        )
+    )
+
+    row = next(line for line in md.splitlines() if line.startswith(f"| `{gtin}`"))
+    # product·3301 ◐ (nl only) · brand ● · video ◐ (nl only) | net ● · material ●
+    assert row == f"| `{gtin}` |  | ◐ | ● | ◐ | ● | ● | 5 |"
 
 
 def test_a_localised_field_in_one_language_is_a_half_mark() -> None:
@@ -444,9 +540,7 @@ _LOCALISED_EXTRA = {"functional_name": GdsnSource(sheet="S", attribute="3301", l
 
 
 def _extra_cell(md: str, gtin: str) -> str:
-    """Trailing cells are: … | functional·name | video | score |, so the extra sits at -4."""
-    row = next(line for line in md.splitlines() if line.startswith(f"| `{gtin}`"))
-    return row.split("|")[-4].strip()
+    return _cell_for(md, gtin, "functional·name")
 
 
 def test_a_localised_extra_is_counted_per_language() -> None:
@@ -497,8 +591,7 @@ def test_a_language_agnostic_extra_is_one_flat_slot() -> None:
     # material has no LanguageCode pair in the feed, so one value fills its only slot.
     md = _render(matrix=_matrix(products=[_p("08713195000001", extras={"material": "PP"})]))
 
-    row = next(line for line in md.splitlines() if line.startswith("| `08713195000001`"))
-    assert row.split("|")[-4].strip() == "●"
+    assert _cell_for(md, "08713195000001", "material") == "●"
 
 
 def test_the_video_column_reflects_both_languages() -> None:
@@ -509,14 +602,9 @@ def test_the_video_column_reflects_both_languages() -> None:
     one = _render(matrix=_matrix(products=[_p(gtin)], video_confirmed={"nl": {gtin}, "fr": set()}))
     neither = _render(matrix=_matrix(products=[_p(gtin)]))
 
-    def video_cell(md: str) -> str:
-        return next(line for line in md.splitlines() if line.startswith(f"| `{gtin}`")).split("|")[
-            -3
-        ]
-
-    assert "●" in video_cell(both)
-    assert "◐" in video_cell(one)
-    assert "○" in video_cell(neither)
+    assert _cell_for(both, gtin, "video") == "●"
+    assert _cell_for(one, gtin, "video") == "◐"
+    assert _cell_for(neither, gtin, "video") == "○"
 
 
 def test_no_matrix_input_omits_the_section() -> None:

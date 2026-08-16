@@ -82,14 +82,25 @@ class FieldColumn(NamedTuple):
     required: bool
 
 
+#: The one column that does not come from the feed: a client-confirmed video, per language.
+#: Mandatory because a GTIN without one is held out of publishing entirely (E24), so it belongs
+#: with the other columns whose gap stops the SKU rather than off at the end of the row.
+_VIDEO = FieldColumn("video", _VIDEO_COLUMN, localised=True, required=True)
+
+
 def _columns(
     gdsn_map: dict[str, GdsnSource], gdsn_extras: dict[str, GdsnSource]
 ) -> list[FieldColumn]:
-    """Matrix columns, mandatory first, derived from config rather than listed here.
+    """Matrix columns, every mandatory one first, derived from config rather than listed here.
 
     Derived so the matrix cannot drift from what the pipeline actually enforces: marking a field
     ``required`` in ``clients.yml`` moves it into the mandatory block here with no code change,
     which is the whole point of a coverage table nobody has to maintain by hand.
+
+    **This is the only thing that orders the matrix** — the renderer takes the list as given and
+    neither re-sorts nor splices. Otherwise the header could group the columns one way while the
+    cells were built another, and the test pinning a single mandatory→optional crossing would be
+    pinning the renderer's own partition instead of this config-derived order.
     """
     mandatory = [
         FieldColumn(name, f"{name.split('_')[0]}·{src.attribute}", src.localised, True)
@@ -105,10 +116,15 @@ def _columns(
         for name, src in gdsn_extras.items()
         if src.in_matrix
     ]
-    return mandatory + optional
+    return [*mandatory, _VIDEO, *optional]
 
 
-def _mark(product: ProductRecord, column: FieldColumn, languages: list[str]) -> tuple[str, int]:
+def _mark(
+    product: ProductRecord,
+    column: FieldColumn,
+    languages: list[str],
+    video_confirmed: dict[str, set[str]],
+) -> tuple[str, int]:
     """The cell for one product/column, and how many language slots it fills (for the sort).
 
     A ``gdsn_extras`` field is counted per language when the record actually carries it that way
@@ -118,6 +134,15 @@ def _mark(product: ProductRecord, column: FieldColumn, languages: list[str]) -> 
     the attribute looked. Counting that flat value as a language group would find nothing and
     report every extra missing — wrong in the direction that invents work for the client.
     """
+    if column is _VIDEO:
+        # Confirmation is per language, which is the shape _language_mark already reads: a video
+        # in one of two languages is the same half-filled cell as a name in one of two.
+        confirmed = {
+            lang: "confirmed"
+            for lang in languages
+            if product.gtin14 in video_confirmed.get(lang, set())
+        }
+        return _language_mark(confirmed, languages)
     if column.field not in type(product).model_fields:
         localised = product.extras_localised.get(column.field)
         if localised is None:
@@ -367,8 +392,12 @@ def _matrix_lines(  # noqa: PLR0913 — a matrix needs its rows, its columns, an
     how much is filled, so the SKUs closest to publishable sit at the top and the worst-served at
     the bottom — the order someone works in, rather than GTIN order, which carries no information.
 
-    Mandatory columns come first and are marked, because a gap there stops the SKU while a gap in
-    an optional column only thins the page. The two facts look identical in a matrix otherwise.
+    Mandatory columns come first and say so in the header, because a gap there stops the SKU
+    while a gap in an optional column only thins the page. The two facts look identical in a
+    matrix otherwise — and marking them in **bold** did not separate them either: markdown makes
+    header cells bold anyway, so the marker rendered as nothing at all in the report as read. A
+    group label inside the cell is the version that survives, markdown having no row above the
+    header to put one in.
     """
     if not products:
         return ["## 0. Coverage matrix", "", "_No products in scope._", ""]
@@ -379,30 +408,28 @@ def _matrix_lines(  # noqa: PLR0913 — a matrix needs its rows, its columns, an
         gtin = product.gtin14
         cells, score = [], 0
         for column in columns:
-            mark, filled = _mark(product, column, languages)
+            mark, filled = _mark(product, column, languages, video_confirmed)
             cells.append(mark)
             score += filled
-        have = [lang for lang in languages if gtin in video_confirmed.get(lang, set())]
-        video = _PRESENT if len(have) == len(languages) else (_PARTIAL if have else _ABSENT)
-        score += len(have)
         name = _name(names, gtin)[:20]
-        rows.append((score, [f"`{gtin}`", name, *cells, video, str(score)]))
+        rows.append((score, [f"`{gtin}`", name, *cells, str(score)]))
 
     # Descending by fill, then by GTIN so equal rows keep a stable order between runs.
     rows.sort(key=lambda r: (-r[0], r[1][0]))
     mandatory = sum(1 for c in columns if c.required)
     header = (
         ["GTIN", "Name"]
-        + [f"**{c.header}**" if c.required else c.header for c in columns]
-        + [f"**{_VIDEO_COLUMN}**", "score"]
+        + [f"{'MANDATORY' if c.required else 'optional'}<br>{c.header}" for c in columns]
+        + ["score"]
     )
     return [
         "## 0. Coverage matrix",
         "",
-        f"{_PRESENT} present · {_PARTIAL} one language only · {_ABSENT} missing. "
-        f"**Bold columns are mandatory** — a gap there holds the whole SKU ({mandatory} fields "
-        f"plus the video). Everything else only thins the page. Sorted richest first; `score` "
-        f"counts filled language-slots, so a localised field can contribute {len(languages)}.",
+        f"{_PRESENT} present · {_PARTIAL} one language only · {_ABSENT} missing. The "
+        f"**MANDATORY** columns come first: a gap in any of those {mandatory} holds the whole "
+        f"SKU, while the **optional** ones after them only thin the page. Sorted richest first; "
+        f"`score` counts filled language-slots, so a localised field can contribute "
+        f"{len(languages)}.",
         "",
         *_table(header, [cells for _, cells in rows]),
         "",
