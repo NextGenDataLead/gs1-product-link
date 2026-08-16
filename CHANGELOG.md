@@ -229,6 +229,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Changed
+- **Copy is now written only for the rows a run will actually publish.** `run_generate` asks a
+  producer for the in-scope `(GTIN, language)` units that classify **NEW or CHANGED**, not for
+  every unit in scope. UNCHANGED is never confirmed by either operator surface and HELD is dropped
+  by `run_execute`, so copy for those was always text nothing would read. On the pilot client that
+  is 54 units per run instead of 74; on a catalogue mostly already live it is close to nothing.
+
+  **This is scope, not the cache coming back.** A unit is left out because nothing will be
+  published for it — never because copy for it exists somewhere. Existing copy has no vote
+  anywhere: write copy for every unit and the answer does not move. The distinction is stated in
+  `lib/generator.py`, in `pending_requests`, and in `run_generate`'s module docstring, because the
+  shape of the change looks exactly like the thing the previous entry removed.
+
+  It became possible two entries ago: with generated copy out of the content hash, a unit's
+  classification no longer depends on having copy, so a run can classify first and generate second.
+  `lib.state.classify_units` answers that question with **no** skip rule applied, over the same
+  `_plan_unit` core `diff_against_state` uses so the two cannot drift. E18 in particular must not
+  run there — a translated French name is one of the things the producer supplies, so applying it
+  would drop the unit before the producer could close the gap, and the gap would close itself out
+  of existence. `lib.preflight.units_needing_copy` composes it with `in_scope` and the category
+  assignment (lifted from `run_plan` into `lib.categories`, since the category is inside the
+  content hash and a script may not import a script). It **peeks** at state rather than loading it:
+  `load_state` quarantines a corrupt file, and consuming that reset outside `run_plan` means the
+  operator never sees "every row re-plans as NEW" at the plan gate. When the answer cannot be
+  decided — unparseable state, no URL patterns — every unit is asked for, because a run that
+  quietly writes no copy for a page it is about to publish surfaces as a blank page, not an error.
+
+- **E21 is asked after the classification, and only of a row that will be written.** Before, it
+  could not tell "nothing was written for this unit" from "nothing needed to be", so under scoped
+  generation it would have reported every already-live page as a work item — twenty of them on the
+  pilot client, in a plan whose whole job is to say what there is to do. An UNCHANGED unit with no
+  copy now keeps its row and its count; a NEW or CHANGED one is still held. A unit somebody
+  unpublished now reports **HELD** rather than `no_generated_copy`, which is what it is: it is
+  waiting for a decision, not for the generator.
+
+- **`run_execute` enforces E21 too.** Its module docstring has claimed "the pilot allowlist,
+  HELD-drop, and E21 still apply on top" since `--only` was added, and nothing enforced the third:
+  E21 lived in `run_plan` alone, so it protected a plan this tool had just written and nothing
+  else. `run_execute --plan plan.json` confirms **every** row in the file — a documented
+  invocation (`docs/setup.md`, the pilot handoff) — so once UNCHANGED rows stopped carrying copy,
+  that path would have rendered a blank tagline over a live page. Rows with no tagline for their
+  language are dropped with a warning naming them, per row rather than per GTIN, and only for
+  clients that have a `generator` configured.
+
+- **`run_generate --validate` counts surplus apart from rejected.** Rejected means copy the run
+  wanted and cannot use (stale fingerprint). A results file wider than this run's batch is now the
+  ordinary state of things — the batch shrinks as rows go live — and reporting it as `rejected 20`
+  puts an alarming number on a healthy run, which is how an operator learns to stop reading the
+  number. "No pending unit" also gained its third cause: in scope, but already live and unchanged.
+
+- **The data-quality report's section 1 is one section that says what it lists.** §1a (E23) and
+  §1b (E24) repeated what §0's coverage matrix already shows, and §1d repeated the matrix's
+  `product·3301` / `image·2485` columns — its only extra GTIN was out of scope entirely, a
+  whole-catalogue finding leaking into a scoped report. All three are gone, and with one subsection
+  left there is no subsection.
+
+  What remains had drifted furthest of all. It said *"the generator produced nothing for these
+  units … then re-run generation"*, which was never what it listed: the rows come from
+  `missing_generation_input`, which fires on a blank **attr 1083**, and re-running generation
+  cannot fill a field the datapool does not have. Under scoped generation that sentence would also
+  have read as an accusation about every already-live unit, so the section now says explicitly that
+  it is not a list of units without copy this run. Rows are per `(GTIN, language)` and each carries
+  its real consequence, recomputed from `products.json`: blank 1083 with no 1067 is genuinely held
+  (E21); blank 1083 with 1067 publishes from it. The Summary row follows — "**Yes** — where 1067 is
+  blank too" — because a blocker count that includes non-blockers is how the real ones stop being
+  urgent. §2's count now says "written this run", a number that had silently changed meaning.
+
 - **The generated-copy cache is gone. Copy is written fresh every run and never stored.**
   `generation_results.json` keeps its name and its path and changes meaning: it stops being a
   hand-off buffer that `--ingest` folded into `generated_cache.json`, and becomes *the run's copy*,

@@ -14,6 +14,12 @@ is read once; there is no cache, so no run can skip generating. What used to be 
 idempotency from the other end: generated copy is excluded from the content hash, so writing it
 again does not reclassify a page.
 
+**Scope is not reuse.** A caller may narrow generation to the units a run will actually publish
+(``pending_requests(..., units=...)``, which ``run_generate`` fills from the NEW/CHANGED
+classification). That looks like the removed cache and is its opposite: a unit is left out because
+nothing will be written for it, never because copy for it already exists. Existing copy has no
+vote anywhere in this module.
+
 The ``input_fingerprint`` survives that change as a **validity check only, never a reuse key**.
 The results file outlives the producer session that wrote it, so a ``parse_export`` re-run
 between the two would otherwise publish copy describing data the feed no longer holds.
@@ -25,6 +31,7 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Collection
 from datetime import datetime
 from pathlib import Path
 from typing import Final, NamedTuple, Protocol
@@ -223,8 +230,8 @@ class LLMClient(Protocol):
     The seam both producers satisfy — the headless API backend (``lib.llm``) and test fakes —
     so ``scripts/run_generate.py`` can drive either through one loop. The Protocol takes no
     network dependency itself, and a producer is only ever called for the units
-    :func:`pending_requests` reports — which is every in-scope unit whose copy the feed does not
-    already supply, on every run.
+    :func:`pending_requests` reports — which is every unit this run will publish whose copy the
+    feed does not already supply, on every run.
     """
 
     def generate_copy(self, request: GenerationRequest) -> GenerationResult:
@@ -645,14 +652,21 @@ def _feed_verbatim(inputs: GenerationInputs) -> list[str] | None:
 def pending_requests(
     products: list[ProductRecord],
     context: GenerationContext,
+    units: Collection[tuple[str, str]] | None = None,
 ) -> list[GenerationRequest]:
     """Return the ``(gtin, language)`` units needing a producer this run, each with its mode.
 
-    **Every unit is pending, every run.** There is no store, so nothing can report a unit as
-    already done and no argument exists through which a caller could claim it is. The one
-    exception is not an exception to that rule: a unit whose 1067 is short enough to publish
-    verbatim never needs a producer at all, and :func:`merge_generated` derives its copy from the
-    feed instead (see :func:`_feed_verbatim`).
+    **Every unit the caller asks about is pending, every run.** There is no store, so nothing can
+    report a unit as already done. Two things narrow the answer, and neither is reuse:
+
+    - A unit whose 1067 is short enough to publish verbatim never needs a producer at all, and
+      :func:`merge_generated` derives its copy from the feed instead (see :func:`_feed_verbatim`).
+    - ``units``, when the caller supplies it, is **scope, not reuse**: the units a run will
+      actually write, which ``run_generate`` takes from the classification (NEW and CHANGED — an
+      UNCHANGED row is never executed, so copy for it is text nothing will read). A unit is
+      excluded because nothing will be published for it, *never* because copy for it exists
+      somewhere. That distinction is the whole difference between this and the cache that was
+      removed, and it is worth re-reading whenever this argument looks like a freshness check.
 
     ``mode`` is :data:`MODE_TIGHTEN` when the feed carries 1067 copy that is too long to use as-is
     (the producer shortens and ranks it), else :data:`MODE_GENERATE` (the producer writes from
@@ -661,6 +675,10 @@ def pending_requests(
     Args:
         products: The parsed products, already narrowed to this run's scope by the caller.
         context: The client context — languages, prompt version, and what may be translated.
+        units: The ``(gtin, language)`` pairs this run will publish, or ``None`` to ask for every
+            unit. ``None`` keeps this function ignorant of run state, which is where that
+            knowledge belongs; an **empty** collection is a decision, not an absent one, and asks
+            for nothing.
 
     Returns:
         The pending requests, each carrying its inputs, fingerprint, mode, 1067 candidates, and
@@ -669,6 +687,8 @@ def pending_requests(
     requests: list[GenerationRequest] = []
     for product in products:
         for language in context.languages:
+            if units is not None and (product.gtin, language) not in units:
+                continue
             inputs, gaps, fingerprint = _prepare_unit(product, language, context)
             if _feed_verbatim(inputs) is not None:
                 continue  # the feed already wrote it; merge_generated materialises it
@@ -1026,7 +1046,10 @@ def _resolve_unit(
 
 
 def missing_copy(
-    products: list[ProductRecord], results: ResultsFile, context: GenerationContext
+    products: list[ProductRecord],
+    results: ResultsFile,
+    context: GenerationContext,
+    units: Collection[tuple[str, str]] | None = None,
 ) -> list[tuple[str, str]]:
     """The ``(gtin, language)`` units this run still has no usable copy for.
 
@@ -1038,11 +1061,17 @@ def missing_copy(
     Both answers come from :func:`_resolve_unit`, so the doctor's verdict and what ``run_plan``
     actually publishes cannot disagree. That is the #96 lesson applied before it can bite: one
     rule answered independently on two paths drifts into meaning two things.
+
+    ``units`` narrows it exactly as it narrows :func:`pending_requests`, and must be given the same
+    set: narrowing what is generated and not what is checked reports every already-live unit as
+    uncovered, which is a FAIL on every run after the first.
     """
     copy = _index(results)
     missing: list[tuple[str, str]] = []
     for product in products:
         for language in context.languages:
+            if units is not None and (product.gtin, language) not in units:
+                continue
             inputs, _, fingerprint = _prepare_unit(product, language, context)
             if _resolve_unit(product.gtin, language, inputs, fingerprint, copy) is None:
                 missing.append((product.gtin, language))

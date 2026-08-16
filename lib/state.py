@@ -23,6 +23,11 @@ default language too — all of which live on that config. It returns a
 :class:`PlanDiff`, not a bare list: the units it *drops* (E18/E21/E22) are as much of
 its answer as the ones it keeps, and while they were only a warning log every caller
 threw them away.
+
+``classify_units`` is the same classification asked earlier and without the skip rules, for the
+one caller that needs to know what a run would publish *before* there is anything to publish with:
+``run_generate``, which writes copy only for the NEW and CHANGED units. Both go through
+``_plan_unit``, so they cannot answer differently.
 """
 
 from __future__ import annotations
@@ -66,6 +71,11 @@ CORRUPT_BACKUP_TS_FORMAT: Final = "%Y%m%dT%H%M%SZ"
 #: The WordPress post status a live product page carries. Anything else means the page is
 #: not publicly reachable, which :func:`_is_held` reads as "taken down on purpose".
 _PUBLISHED_STATUS: Final = "publish"
+
+#: The classifications a confirmed run actually writes. UNCHANGED is never confirmed and HELD is
+#: dropped by ``run_execute`` regardless, so neither is a row that needs generated copy — which is
+#: why E21 is asked only of these two. Also the set ``run_generate`` narrows generation to.
+WILL_BE_WRITTEN: Final = frozenset({PlanClassification.NEW, PlanClassification.CHANGED})
 
 
 def state_path(client_id: str) -> Path:
@@ -278,17 +288,8 @@ def _has_no_resolver_link(prior: StateEntry) -> bool:
     return not prior.gs1_link_set_hash
 
 
-def _classify(
-    prior: StateEntry | None, content_hash: str, title: str, target_url: str
-) -> tuple[PlanClassification, dict[str, tuple[str, str]] | None]:
-    """Classify one row against its prior state entry, with a field-level diff.
-
-    The diff carries the fields whose prior value :class:`~lib.records.StateEntry`
-    actually recorded — ``title`` and ``target_url`` (old ``wp_url`` → new) — in the
-    order §10.6.2 presents them. Fields state does not keep are never fabricated, and
-    an entry written before titles were persisted (``title is None``) omits the title
-    row rather than guessing. A CHANGED row whose recorded fields all still match
-    carries no diff: the change is in the product body, which state does not retain.
+def _classify(prior: StateEntry | None, content_hash: str) -> PlanClassification:
+    """Classify one unit against its prior state entry.
 
     HELD is tested **before** the hash, because a deliberately unpublished product's hash
     still matches the content it was published with — that is what makes it invisible.
@@ -300,21 +301,167 @@ def _classify(
     so on the hash alone a ``/gs1-pages`` run followed by ``/gs1-links`` would find every
     row UNCHANGED and silently publish nothing. HELD still outranks it — a product somebody
     took down does not become actionable just because half of it was never written.
+
+    The field-level diff is :func:`_row_diff`, deliberately separate: only ``diff_against_state``
+    builds rows to put one on, and folding it in here meant :func:`classify_units` computing a
+    diff it discards — which made the title argument, and everything guarding it, unobservable.
     """
     if prior is None:
-        return PlanClassification.NEW, None
+        return PlanClassification.NEW
     if _is_held(prior):
-        return PlanClassification.HELD, None
+        return PlanClassification.HELD
     if _has_no_resolver_link(prior):
-        return PlanClassification.CHANGED, {"gs1_link": ("not written", "will be written")}
+        return PlanClassification.CHANGED
     if prior.content_hash == content_hash:
-        return PlanClassification.UNCHANGED, None
+        return PlanClassification.UNCHANGED
+    return PlanClassification.CHANGED
+
+
+def _row_diff(
+    prior: StateEntry | None,
+    classification: PlanClassification,
+    title: str,
+    target_url: str,
+) -> dict[str, tuple[str, str]] | None:
+    """The field-level diff for a plan row, or ``None`` when there is nothing to show.
+
+    Carries the fields whose prior value :class:`~lib.records.StateEntry` actually recorded —
+    ``title`` and ``target_url`` (old ``wp_url`` → new) — in the order §10.6.2 presents them.
+    Fields state does not keep are never fabricated, and an entry written before titles were
+    persisted (``title is None`` on the *entry*) omits the title row rather than guessing. A
+    CHANGED row whose recorded fields all still match carries no diff: the change is in the
+    product body, which state does not retain.
+
+    Only a CHANGED row has a diff. ``_has_no_resolver_link`` is asked again rather than passed
+    down from :func:`_classify` — it is one pure predicate called twice, not a second opinion
+    about what the classification means, and threading the reason through would give
+    :func:`classify_units` a return value it has no use for.
+    """
+    if classification is not PlanClassification.CHANGED or prior is None:
+        return None
+    if _has_no_resolver_link(prior):
+        return {"gs1_link": ("not written", "will be written")}
     diff: dict[str, tuple[str, str]] = {}
     if prior.title is not None and prior.title != title:
         diff["title"] = (prior.title, title)
     if prior.wp_url != target_url:
         diff["target_url"] = (prior.wp_url, target_url)
-    return PlanClassification.CHANGED, diff or None
+    return diff or None
+
+
+class _Patterns(NamedTuple):
+    """The two URL patterns every planned unit is built from."""
+
+    slug: str
+    target_url: str
+
+
+def _patterns(wordpress: WordPressConfig) -> _Patterns:
+    """The slug/target-URL patterns, validated once per call rather than once per unit.
+
+    Raises:
+        ConfigError: If either is unset. Both are required to build a plan — and to decide what a
+            run would publish, which is the same computation asked a different way.
+    """
+    slug_pattern = wordpress.slug_pattern
+    target_url_pattern = wordpress.target_url_pattern
+    if slug_pattern is None or target_url_pattern is None:
+        raise ConfigError(
+            "wordpress.slug_pattern and wordpress.target_url_pattern are required to build a plan"
+        )
+    return _Patterns(slug_pattern, target_url_pattern)
+
+
+class _UnitPlan(NamedTuple):
+    """Everything the classification of one ``(GTIN, language)`` produces."""
+
+    slug: str
+    target_url: str
+    content_hash: str
+    classification: PlanClassification
+
+
+def _plan_unit(  # noqa: PLR0913 — one argument per input the classification is a function of
+    product: ProductRecord,
+    language: str,
+    wordpress: WordPressConfig,
+    patterns: _Patterns,
+    hashed: ProductRecord,
+    prior: StateEntry | None,
+) -> _UnitPlan:
+    """Build one unit's slug, target URL, content hash and classification.
+
+    The single implementation behind both :func:`diff_against_state` and :func:`classify_units`.
+    They are asked the same question at different points in a run — ``run_generate`` asks which
+    units a run would create or change, so it knows which need copy written; ``run_plan`` asks
+    again once that copy is merged, to build the plan. Two implementations of it would drift, and
+    the symptom would be copy generated for one set of units and demanded for another: a plan row
+    with no copy, which reads as a producer failure rather than a classification one.
+
+    It stops at the classification. The row's title and its diff belong to the caller that builds
+    rows, and pulling them in here gave the other caller arguments whose effect it threw away.
+    """
+    slug = patterns.slug.format(gtin=product.gtin, gtin14=product.gtin14)
+    target_url = patterns.target_url.format(
+        site_url=wordpress.site_url.rstrip("/"),
+        lang_segment=_lang_segment(language, wordpress.default_language),
+        post_type=wordpress.post_type,
+        slug=slug,
+        gtin=product.gtin,
+        gtin14=product.gtin14,
+    )
+    content_hash = compute_content_hash(hashed, language, target_url)
+    return _UnitPlan(slug, target_url, content_hash, _classify(prior, content_hash))
+
+
+def classify_units(
+    products: list[ProductRecord],
+    state: State,
+    languages: list[str],
+    wordpress: WordPressConfig,
+) -> dict[tuple[str, str], PlanClassification]:
+    """How every ``(GTIN, language)`` would classify — with **no** skip rule applied.
+
+    The question "what would this run publish?", asked before there is anything to publish with.
+    ``run_generate`` needs it to write copy only for the rows a run will execute (NEW and CHANGED);
+    UNCHANGED rows are never executed, so copy for them is text nothing will read. This became
+    answerable at all with #97: the content hash covers the feed's record, so a unit's
+    classification no longer depends on having generated copy.
+
+    **Deliberately no E18/E21/E22/E23/E24.** Every one of them is downstream of this answer, and
+    two would invert the dependency outright. E18 drops a language with no ``product_name`` — but a
+    *translated* name is one of the things the producer supplies, so applying it here would drop
+    the unit before the producer could close the gap, and the gap would then close itself out of
+    existence. E21 drops a unit with no generated tagline, which before generation is all of them.
+
+    Args:
+        products: The products to classify — already narrowed to this run's scope by the caller.
+        state: The client's persisted state (the classification baseline).
+        languages: The languages to classify per product.
+        wordpress: The client's WordPress config; supplies the slug/target-URL patterns, site URL,
+            post type, and default language.
+
+    Returns:
+        ``(gtin, language) -> classification`` for every combination, in no particular order.
+
+    Raises:
+        ConfigError: If ``wordpress.slug_pattern`` or ``wordpress.target_url_pattern`` is unset.
+
+    Note:
+        There is no ``hash_source`` here, unlike :func:`diff_against_state`. That argument exists
+        to exclude what a language model wrote, and this runs *before* a model has written
+        anything: the records it is given are the feed's own by construction. Accepting one would
+        be an argument no caller could have a use for — and it was here until a mutation showed
+        that removing it broke nothing.
+    """
+    patterns = _patterns(wordpress)
+    classified: dict[tuple[str, str], PlanClassification] = {}
+    for product in products:
+        for language in languages:
+            prior = state.entries.get(product.gtin, {}).get(language)
+            unit = _plan_unit(product, language, wordpress, patterns, product, prior)
+            classified[(product.gtin, language)] = unit.classification
+    return classified
 
 
 class PlanDiff(NamedTuple):
@@ -354,12 +501,19 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     moved). An entry whose page was published without a resolver link is CHANGED whatever
     its hash says, and one that was deliberately taken down is HELD — see
     :func:`_classify`. A language with no ``product_name`` for a product is omitted with a warning
-    (edge E18) rather than emitting a row with a missing title. Likewise, when
-    ``require_generated_copy`` is set, a language with no generated tagline is omitted
-    (edge E21) — the generator is configured but this unit has no copy yet (a held,
-    blank-1083 product), so publishing it would render a silently-blank page. The gap is
-    still reported upstream by ``merge_generated`` (``missing_generation_input``); this
-    skip only keeps it out of the actionable plan.
+    (edge E18) rather than emitting a row with a missing title.
+
+    **E21 is asked after the classification, and only of a row that will be written.** When
+    ``require_generated_copy`` is set, a NEW or CHANGED unit with no generated tagline is omitted
+    — the generator is configured but this unit has no copy, so publishing it would render a
+    silently-blank page. An UNCHANGED or HELD unit is not asked at all: copy is written per run for
+    the rows a run executes, and those two are never executed (``ui/pages/publish.py`` confirms
+    neither, and ``run_execute`` drops HELD regardless), so arriving without copy is what correct
+    looks like for them. Asked before the classification, as it was until copy stopped being
+    stored, E21 could not tell "nothing was written for this" from "nothing needed to be" — and
+    reported every already-live page as a work item. The gap that E21 *does* catch is still
+    reported upstream by ``merge_generated`` (``missing_generation_input``); this skip only keeps
+    it out of the actionable plan.
 
     **What the hash is allowed to notice.** By default the hash covers the record it is given,
     whole. A caller that has enriched its records with language-model output — generated copy,
@@ -377,8 +531,9 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
         wordpress: The client's WordPress config; supplies the slug/target-URL
             patterns, site URL, post type, and default language.
         require_generated_copy: When True (the client has a generator configured), skip any
-            ``(GTIN, language)`` lacking a generated tagline so a copy-less product is never
-            published as a blank page (E21). Defaults to False for generator-less clients.
+            **NEW or CHANGED** ``(GTIN, language)`` lacking a generated tagline so a copy-less
+            product is never published as a blank page (E21). Defaults to False for
+            generator-less clients.
         require_hero_image: When True (``media.require_hero_image``), hold any GTIN whose source
             ``image_url`` is blank so a hero-less page is never published (E22). Off by default; a
             runtime image fetch failure still degrades gracefully and publishes (E7).
@@ -410,12 +565,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
         ConfigError: If ``wordpress.slug_pattern`` or ``wordpress.target_url_pattern``
             is unset — both are required to build a plan.
     """
-    slug_pattern = wordpress.slug_pattern
-    target_url_pattern = wordpress.target_url_pattern
-    if slug_pattern is None or target_url_pattern is None:
-        raise ConfigError(
-            "wordpress.slug_pattern and wordpress.target_url_pattern are required to build a plan"
-        )
+    patterns = _patterns(wordpress)
 
     rows: list[PlanRow] = []
     skipped: list[SkippedUnit] = []
@@ -465,8 +615,15 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                     )
                 )
                 continue
+            title = product.product_name.values[language]
+            prior = state.entries.get(product.gtin, {}).get(language)
+            unit = _plan_unit(product, language, wordpress, patterns, hashed, prior)
             tagline = product.generated_tagline
-            if require_generated_copy and not (tagline and tagline.values.get(language)):  # E21
+            if (
+                require_generated_copy  # E21
+                and unit.classification in WILL_BE_WRITTEN
+                and not (tagline and tagline.values.get(language))
+            ):
                 skipped.append(
                     _skip(
                         product.gtin,
@@ -476,29 +633,16 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                     )
                 )
                 continue
-            slug = slug_pattern.format(gtin=product.gtin, gtin14=product.gtin14)
-            target_url = target_url_pattern.format(
-                site_url=wordpress.site_url.rstrip("/"),
-                lang_segment=_lang_segment(language, wordpress.default_language),
-                post_type=wordpress.post_type,
-                slug=slug,
-                gtin=product.gtin,
-                gtin14=product.gtin14,
-            )
-            title = product.product_name.values[language]
-            content_hash = compute_content_hash(hashed, language, target_url)
-            prior = state.entries.get(product.gtin, {}).get(language)
-            classification, diff = _classify(prior, content_hash, title, target_url)
             rows.append(
                 PlanRow(
                     gtin=product.gtin,
                     language=language,
-                    classification=classification,
+                    classification=unit.classification,
                     title=title,
-                    slug=slug,
-                    content_hash=content_hash,
-                    target_url=target_url,
-                    diff=diff,
+                    slug=unit.slug,
+                    content_hash=unit.content_hash,
+                    target_url=unit.target_url,
+                    diff=_row_diff(prior, unit.classification, title, unit.target_url),
                     product=product,
                 )
             )

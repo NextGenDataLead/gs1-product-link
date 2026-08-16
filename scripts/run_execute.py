@@ -55,6 +55,12 @@ write a deliberate, explicit act rather than a bare ``--plan`` invocation — th
 review gates otherwise live only in the ``flow-orchestrator`` skill, not in this script. The
 pilot allowlist, HELD-drop, and E21 still apply on top.
 
+**E21 is enforced here, not only in the plan.** A row whose product carries no generated tagline
+for its language is dropped with a warning (:func:`_drop_without_copy`), for clients with a
+``generator`` configured. Copy is written per run for the rows a run executes, so an UNCHANGED row
+arrives without any — and ``--plan`` confirms *every* row in the file. Without this, that
+documented invocation would render a blank tagline over a live page.
+
 Exit codes:
     0  every confirmed row succeeded
     1  one or more rows errored (state still saved for the rows that succeeded)
@@ -913,6 +919,54 @@ def _drop_held(rows: list[PlanRow], *, revive: bool) -> list[PlanRow]:
     return [row for row in rows if row.gtin not in held]
 
 
+def _drop_without_copy(rows: list[PlanRow], *, generator_configured: bool) -> list[PlanRow]:
+    """Drop rows with no generated tagline for their language — E21, enforced where it is claimed.
+
+    This module's docstring has said "the pilot allowlist, HELD-drop, and **E21** still apply on
+    top" since ``--only`` existed, and until now only the first two were true here: E21 lived in
+    ``run_plan`` alone, so it protected a plan this tool had just written and nothing else.
+
+    That was survivable while copy was written for every in-scope unit. It stopped being so when
+    generation was scoped to the rows a run executes: an UNCHANGED row now legitimately carries no
+    copy, and ``--plan`` confirms **every** row in the file (``docs/setup.md``, the pilot handoff),
+    so the documented escape hatch would render a blank tagline and a description-less body over a
+    live page. Rendering happens per row and the template does not check, so nothing downstream
+    would have refused it.
+
+    Dropped per **row**, not per GTIN like :func:`_drop_held`: copy is per language, and a GTIN
+    with nl copy and no fr copy has one publishable row. The per-GTIN phase still refuses to write
+    a partial link set, so the resolver cannot be damaged by the survivor.
+
+    Args:
+        rows: The confirmed rows, after the HELD drop.
+        generator_configured: Whether the client has a ``generator`` block — the same condition
+            ``run_plan`` derives ``require_generated_copy`` from. Without it this guard would drop
+            every row of a client that publishes feed copy only, which is a run that does nothing
+            and reports success.
+
+    Returns:
+        The rows that carry copy, or all of them when no generator is configured.
+    """
+    if not generator_configured:
+        return rows
+    kept, dropped = [], []
+    for row in rows:
+        tagline = row.product.generated_tagline
+        if tagline and tagline.values.get(row.language):
+            kept.append(row)
+        else:
+            dropped.append(f"{row.gtin}/{row.language}")
+    if dropped:
+        _log.warning(
+            "skipping %d row(s) with no generated copy (E21): %s — an unchanged row is not "
+            "generated for, which is expected; anything else means the results file does not "
+            "answer this plan",
+            len(dropped),
+            ", ".join(dropped),
+        )
+    return kept
+
+
 def _pilot_allowlist(cfg: ClientConfig) -> frozenset[str] | None:
     """The canonical GTINs a run may touch, or ``None`` when unrestricted (§9.5).
 
@@ -1015,7 +1069,11 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
 ) -> int:
     """Execute (or preview) the confirmed plan; return the process exit code."""
     rows = _restrict_to_pilot(
-        _drop_held(_confirmed_rows(confirmed), revive=revive), _pilot_allowlist(cfg)
+        _drop_without_copy(
+            _drop_held(_confirmed_rows(confirmed), revive=revive),
+            generator_configured=cfg.generator is not None,
+        ),
+        _pilot_allowlist(cfg),
     )
     engine = TemplateEngine(cfg.client_id, cfg.template)
     ts = datetime.now(UTC)

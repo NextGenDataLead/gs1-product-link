@@ -9,8 +9,9 @@ The spine is producer-agnostic: it works out what copy this run needs and moves 
 shared contract in ``lib.generator``. It
 
 1. computes the units needing a producer (``pending_requests``), each tagged tighten or generate —
-   **every in-scope unit, every run**, except those whose feature/benefit copy (attr 1067) is short
-   enough to publish verbatim, which ``run_plan`` materialises straight from the feed; and
+   **every unit this run will publish, every run**, except those whose feature/benefit copy (attr
+   1067) is short enough to publish verbatim, which ``run_plan`` materialises straight from the
+   feed; and
 2. hands those units to a producer by one of two paths that write the same
    ``generation_results.json``:
 
@@ -33,6 +34,14 @@ allowlist, via ``lib.preflight.in_scope``, the same filter the doctor's ``scope`
 Before that this command worked from the whole catalogue and disagreed with the doctor by two
 orders of magnitude.
 
+Of those, only the ``(gtin, language)`` units a run would **create or change** are asked for
+(``lib.preflight.units_needing_copy``). An UNCHANGED row is never confirmed and never executed, so
+copy for it is text nothing will read. **That is scope, not reuse** — a unit is left out because
+nothing will be published for it, never because copy for it already exists, which is the rule the
+removed cache broke. When the answer cannot be decided (no state, no URL patterns) every unit is
+asked for, because a run that quietly writes no copy for a page it is about to publish surfaces as
+a blank page rather than as an error.
+
 Emits (--emit):         output/{client_id}/data/generation_requests.json
 Reads (--validate):     output/{client_id}/data/generation_results.json (writes nothing, unless
                         --results named another path, which is then placed at the canonical one)
@@ -50,7 +59,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Final, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -74,7 +83,7 @@ from lib.generator import (
     save_results,
 )
 from lib.llm import AnthropicClient, load_voice_template
-from lib.preflight import in_scope
+from lib.preflight import in_scope, units_needing_copy
 from lib.records import ProductRecord
 
 _log = logging.getLogger("scripts.run_generate")
@@ -127,10 +136,19 @@ def _load_products(path: Path) -> list[ProductRecord]:
 # --- Preparation & the producer seam -----------------------------------------
 
 
-def _prepare(
-    cfg: ClientConfig, context: GenerationContext, products_path: Path
-) -> tuple[list[GenerationRequest], list[ProductRecord]]:
-    """Load products, narrow them to this run's scope, and compute the units needing a producer.
+class _Prepared(NamedTuple):
+    """What this run needs a producer for, and what it decided that from."""
+
+    requests: list[GenerationRequest]
+    products: list[ProductRecord]
+    #: The ``(gtin, language)`` units this run would write, or ``None`` when that could not be
+    #: decided and every unit is therefore asked for. Carried so the coverage line and the
+    #: validation are asked about exactly the set the producer was.
+    units: set[tuple[str, str]] | None
+
+
+def _prepare(cfg: ClientConfig, context: GenerationContext, products_path: Path) -> _Prepared:
+    """Load products, narrow them to the units this run will write, and compute the requests.
 
     **Scope is applied here, once, because all three producer paths run through it** — ``--emit``,
     ``--validate`` and ``--backend api``. Before this, none of them knew scope existed: the products
@@ -140,16 +158,36 @@ def _prepare(
     real time spent writing copy for products nobody is publishing, and a content-review gate with
     hundreds of units in it, which is the surest way to make a review gate go unread.
 
-    :func:`lib.preflight.in_scope` is that filter, and it is imported rather than reimplemented:
-    it composes the process list and the confirmed-video allowlist, and a second implementation of
-    "what will this run touch" is exactly what it exists to prevent. This is the same function the
-    doctor's ``scope`` check reports, so the two commands agree by construction rather than by
-    coincidence.
+    Narrowing happens in two steps, both imported rather than reimplemented, because a second
+    implementation of "what will this run touch" is exactly what they exist to prevent:
 
-    Pure apart from reading its input file.
+    1. :func:`lib.preflight.in_scope` — the process list and the confirmed-video allowlist. The
+       same function the doctor's ``scope`` check reports.
+    2. :func:`lib.preflight.units_needing_copy` — of those, the ``(gtin, language)`` units that
+       classify NEW or CHANGED. An UNCHANGED row is never confirmed and never executed, so copy
+       for it is text nothing will read. It returns ``None`` when it cannot decide (no state, no
+       URL patterns), and every unit is asked for then — erring wide, because a run that quietly
+       writes no copy for a page it is about to publish shows up as a blank page.
+
+    **This is scope, not reuse.** A unit is left out because nothing will be published for it,
+    never because copy for it already exists — see :func:`lib.generator.pending_requests`.
+
+    Pure apart from reading its input file and peeking at ``state.json``.
     """
     products = in_scope(cfg, _load_products(products_path))
-    return pending_requests(products, context), products
+    units = units_needing_copy(cfg, products)
+    return _Prepared(pending_requests(products, context, units=units), products, units)
+
+
+def _unchanged_units(prepared: _Prepared, context: GenerationContext) -> int:
+    """How many in-scope units this run writes no copy for because they are already live.
+
+    Reported rather than left implicit: "1 request" over a two-product scope needs a reason beside
+    it, or the narrowing reads as a bug the first time an operator notices the number.
+    """
+    if prepared.units is None:
+        return 0
+    return len(prepared.products) * len(context.languages) - len(prepared.units)
 
 
 def run_producer(requests: list[GenerationRequest], client: LLMClient) -> list[ResultItem]:
@@ -195,12 +233,29 @@ def _emit(
     return path
 
 
+class _Validation(NamedTuple):
+    """How a producer's results measured up against this run's units.
+
+    ``surplus`` is separate from ``rejected`` because they mean opposite things. A rejected result
+    is copy the run *wanted* and cannot use — stale, written against inputs the feed no longer
+    holds. A surplus one is copy the run simply does not need, which under scoped generation is
+    the ordinary state of a results file written a run ago: the batch shrinks as rows go live.
+    Counting the second as the first puts an alarming number on a healthy run, and a number that
+    is alarming when nothing is wrong is a number an operator stops reading.
+    """
+
+    usable: int
+    rejected: int
+    surplus: int
+
+
 def _validate(
     requests: list[GenerationRequest],
     results: ResultsFile,
     products: list[ProductRecord],
-) -> tuple[int, int]:
-    """Check a producer's results against this run's units. Returns ``(usable, rejected)``.
+    units: set[tuple[str, str]] | None,
+) -> _Validation:
+    """Check a producer's results against this run's units.
 
     Writes nothing. It replaced ``--ingest``, which folded results into the cache: with the cache
     gone there is nothing to fold into, and ``run_plan`` reads the results file itself. What is
@@ -208,10 +263,11 @@ def _validate(
     copy that was just written actually answers this run.
 
     Each result is matched to a pending unit by ``(gtin, language)``. A result with no pending unit
-    has **two** possible causes and the warning names which: the unit is not in this run's scope, or
-    the feed already supplies its copy verbatim. (There used to be a third — "already cached fresh"
-    — which cannot happen now that nothing is cached.) A result whose fingerprint no longer matches
-    is rejected, the same decision ``run_plan`` will make and for the same reason.
+    has **three** possible causes and the warning names which: the unit is not in this run's scope;
+    it is in scope but already live and unchanged, so nothing will be published for it; or the feed
+    already supplies its copy verbatim. (There used to be a fourth — "already cached fresh" — which
+    cannot happen now that nothing is cached.) A result whose fingerprint no longer matches is
+    rejected, the same decision ``run_plan`` will make and for the same reason.
 
     A unit answered **twice** is named rather than quietly resolved. ``run_plan`` takes the last
     entry, which is deterministic and documented, but two answers for one unit means only one of
@@ -222,6 +278,7 @@ def _validate(
     seen: set[tuple[str, str]] = set()
     usable = 0
     rejected = 0
+    surplus = 0
     for item in results.results:
         if (item.gtin, item.language) in seen:
             _log.warning(
@@ -238,11 +295,9 @@ def _validate(
                 "no pending unit for %s/%s (%s); ignoring",
                 item.gtin,
                 item.language,
-                "not in scope for this run"
-                if item.gtin not in in_scope_gtins
-                else "the feed supplies this unit's copy verbatim",
+                _no_pending_reason(item.gtin, item.language, in_scope_gtins, units),
             )
-            rejected += 1
+            surplus += 1
             continue
         stale = (
             item.input_fingerprint is not None
@@ -258,7 +313,18 @@ def _validate(
             rejected += 1
             continue
         usable += 1
-    return usable, rejected
+    return _Validation(usable, rejected, surplus)
+
+
+def _no_pending_reason(
+    gtin: str, language: str, in_scope_gtins: set[str], units: set[tuple[str, str]] | None
+) -> str:
+    """Why this run never asked for ``(gtin, language)``. Ordered widest cause first."""
+    if gtin not in in_scope_gtins:
+        return "not in scope for this run"
+    if units is not None and (gtin, language) not in units:
+        return "already live and unchanged, so this run publishes nothing for it"
+    return "the feed supplies this unit's copy verbatim"
 
 
 # --- API backend -------------------------------------------------------------
@@ -301,17 +367,27 @@ def _run_api_backend(
 
 
 def _coverage(
-    products: list[ProductRecord], results: ResultsFile, context: GenerationContext
+    products: list[ProductRecord],
+    results: ResultsFile,
+    context: GenerationContext,
+    prepared: _Prepared,
 ) -> str:
     """Render how much of this run's copy is actually in hand (§ verify against real data).
 
     Asked of the results file through :func:`lib.generator.missing_copy`, which is the same
-    function the doctor and ``run_plan`` resolve units with — so this line cannot claim coverage
-    the plan will not have.
+    function the doctor and ``run_plan`` resolve units with — and asked about the same units the
+    producer was, so this line cannot claim coverage the plan will not have.
+
+    "Units" without qualification would silently change meaning the moment generation was scoped:
+    ``1/1 units have copy`` beside twenty in-scope units with none reads as full coverage. It says
+    *to publish*, and names what it left out.
     """
-    total = len(products) * len(context.languages)
-    missing = len(missing_copy(products, results, context))
-    return f"{total - missing}/{total} units have copy; {missing} without"
+    units = prepared.units
+    total = len(products) * len(context.languages) if units is None else len(units)
+    missing = len(missing_copy(products, results, context, units=units))
+    unchanged = _unchanged_units(prepared, context)
+    aside = f" ({unchanged} already live and unchanged)" if unchanged else ""
+    return f"{total - missing}/{total} unit(s) to publish have copy; {missing} without{aside}"
 
 
 def _split(requests: list[GenerationRequest]) -> str:
@@ -383,7 +459,8 @@ def main(argv: list[str] | None = None) -> int:
             cfg.export.gdsn_map,
             cfg.export.gdsn_extras,
         )
-        requests, products = _prepare(cfg, context, products_path)
+        prepared = _prepare(cfg, context, products_path)
+        requests, products = prepared.requests, prepared.products
 
         if args.backend == "api":
             written, api_model = _run_api_backend(cfg, requests, prompt_version, now)
@@ -391,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.validate:
             override = Path(args.results) if args.results else None
             results = load_results(cfg.client_id, override)
-            usable, rejected = _validate(requests, results, products)
+            checked = _validate(requests, results, products, prepared.units)
             if override is not None and override != results_path(cfg.client_id):
                 # Validate *and place*: a producer may write anywhere, but only one path is the
                 # one run_plan reads, and asking the operator to copy it by hand is a step to
@@ -412,11 +489,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config error: {exc}", file=sys.stderr)
         return _EXIT_CONFIG_ERROR
 
-    coverage = _coverage(products, results, context)
+    coverage = _coverage(products, results, context, prepared)
     if args.backend == "api":
         print(f"generated {written} via API ({api_model}); {coverage}", file=sys.stderr)
     elif args.validate:
-        print(f"validated {usable} result(s), rejected {rejected}; {coverage}", file=sys.stderr)
+        extra = f", {checked.surplus} surplus (not needed this run)" if checked.surplus else ""
+        print(
+            f"validated {checked.usable} result(s), rejected {checked.rejected}{extra}; {coverage}",
+            file=sys.stderr,
+        )
     else:
         _log.info("wrote %d request(s) to %s", len(requests), emit_path)
         print(

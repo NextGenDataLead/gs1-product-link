@@ -29,6 +29,7 @@ from lib.generator import (
     generation_context,
     load_results,
     merge_generated,
+    missing_copy,
     pending_requests,
     result_item,
     save_results,
@@ -137,8 +138,9 @@ def test_every_unit_is_pending_on_every_run() -> None:
     """No store, so nothing can make a unit look already done — the point of the whole change.
 
     The cache's freshness skip is what let a re-run reuse frozen copy. With it gone, the same call
-    must keep naming a unit however much copy already exists for it, and there is no argument left
-    through which a caller could tell it otherwise.
+    must keep naming a unit however much copy already exists for it. ``units`` is not a way back to
+    that: it says which units this run *will publish*, and existing copy has no vote in it — see
+    :func:`test_the_units_filter_is_scope_not_reuse`.
     """
     product = _product()
     context = _ctx("nl", "fr")
@@ -149,6 +151,79 @@ def test_every_unit_is_pending_on_every_run() -> None:
     assert len(written.results) == 2  # both units have copy now…
     assert pending_requests([product], context) == first  # …and both are still asked for
     assert {r.language for r in first} == {"nl", "fr"}
+
+
+def test_pending_requests_narrows_to_the_units_the_caller_names() -> None:
+    """Copy is written for the rows a run executes; an UNCHANGED row is not one of them."""
+    product = _product()
+    context = _ctx("nl", "fr")
+
+    requests = pending_requests([product], context, units={(product.gtin, "fr")})
+
+    assert [(r.gtin, r.language) for r in requests] == [(product.gtin, "fr")]
+
+
+def test_the_units_filter_is_scope_not_reuse() -> None:
+    """The distinction that keeps this from being the cache again, in one assertion.
+
+    A unit is excluded because nothing will be published for it, never because copy for it exists.
+    Write copy for every unit and the answer does not move — only the caller's scope moves it.
+    """
+    product = _product()
+    context = _ctx("nl", "fr")
+    _copy_for(product, context, "Tagline", "Bullet")  # every unit answered
+
+    both = pending_requests([product], context, units={(product.gtin, "nl"), (product.gtin, "fr")})
+
+    assert {r.language for r in both} == {"nl", "fr"}
+
+
+def test_pending_requests_without_units_asks_for_everything() -> None:
+    """Back-compat pin: the library stays ignorant of state unless a caller supplies scope."""
+    product = _product()
+    context = _ctx("nl", "fr")
+
+    assert pending_requests([product], context, units=None) == pending_requests([product], context)
+
+
+def test_an_empty_units_set_asks_for_nothing() -> None:
+    """Distinct from ``None``. "Nothing to publish" is an answer; "I did not decide" is not."""
+    assert pending_requests([_product()], _ctx("nl", "fr"), units=set()) == []
+
+
+# --- missing_copy: the read-side twin, asked about the same units -------------
+
+
+def test_missing_copy_names_every_unanswered_unit() -> None:
+    product = _product()
+
+    assert missing_copy([product], _copy(), _ctx("nl", "fr")) == [
+        (product.gtin, "nl"),
+        (product.gtin, "fr"),
+    ]
+
+
+def test_missing_copy_narrows_to_the_units_the_caller_names() -> None:
+    """It must be asked about the units generation was asked for, or it fails every scoped run.
+
+    ``pending_requests`` and this are the write and read halves of one question. Narrow the first
+    and not the second and the doctor reports every already-live unit as uncovered — a FAIL on
+    every run after the first, which is how a check stops being read.
+    """
+    product = _product()
+
+    assert missing_copy([product], _copy(), _ctx("nl", "fr"), units={(product.gtin, "fr")}) == [
+        (product.gtin, "fr")
+    ]
+
+
+def test_missing_copy_counts_an_answered_unit_as_covered() -> None:
+    product = _product()
+    context = _ctx("nl", "fr")
+
+    written = _copy_for(product, context, "Tagline", "Bullet")
+
+    assert missing_copy([product], written, context) == []
 
 
 # --- the producer's `functional_name` input (attr 3301) ----------------------

@@ -5,8 +5,10 @@ machine in a Claude Code session and handed over as ``generation_results.json``;
 imports it, says how much of the current export it covers, and shows the text per language.
 
 **Coverage is the load-bearing part.** Copy is written fresh for each run and never stored, so the
-question is not how much has piled up but whether *this* file answers every in-scope unit — and
-whether it still describes this export. Its fingerprint covers ``{inputs, language,
+question is not how much has piled up but whether *this* file answers every unit the run will
+publish — and whether it still describes this export. Not every in-scope unit: copy is written for
+the rows a run creates or changes, so an already-live, unchanged unit needs none and is excluded
+from the count rather than reported as a shortfall. Its fingerprint covers ``{inputs, language,
 prompt_version}``, so editing one product in the feed, or bumping the prompt version, leaves that
 unit uncovered. An uncovered unit with no producer on this machine is an E21 omission: it leaves
 the plan without a row. Before ``Plan.skipped`` existed it left without a trace at all, and an
@@ -131,11 +133,11 @@ def _coverage_figures(payload: Any, result: Any) -> None:
         return
     data = entry.get("data") or {}
     with ui.row().classes("gap-12 items-end mb-4"):
-        theme.figure(str(data.get("total", "—")), "units in scope")
+        theme.figure(str(data.get("total", "—")), "units to publish")
         theme.figure(str(data.get("covered", "—")), "have copy")
         theme.figure(str(data.get("pending", "—")), "pending")
     if entry["status"] == "ok":
-        theme.band("Every in-scope unit has copy for this version of the export.")
+        theme.band(str(entry["detail"]).capitalize() + ".")
     else:
         theme.band(str(entry["detail"]), "danger")
         ui.label(str(entry.get("remedy", ""))).classes("remedy")

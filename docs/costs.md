@@ -103,12 +103,18 @@ product data.
 
 ### What keeps it low — and what does not
 
-- **Re-running re-pays.** There is no cache. Copy is written fresh for every run and never stored, so
-  publishing 20 GTINs in waves costs roughly the *number of waves* times publishing them all at once.
-  This was a deliberate trade, taken 2026-08-15: at ~$1.75–$2.65 for the full 127-product catalogue,
-  cost is not the constraint, and a store that decides when to skip work is one more thing that can be
-  quietly wrong. Idempotency comes from the other end instead — generated copy is excluded from the
-  content hash, so re-writing it does not republish a page.
+- **Re-running re-pays, but only for what the re-run publishes.** There is no cache: copy is written
+  fresh for every run and never stored. What a run *asks* for, though, is the rows it will actually
+  execute — the NEW and CHANGED ones. Publishing 20 GTINs in waves therefore costs roughly those 20
+  once, not the whole scope per wave: each wave re-pays for its own rows, and the GTINs already live
+  from an earlier wave are not generated for at all. On the pilot client that is 54 units per run
+  rather than 74.
+  The no-cache half was a deliberate trade, taken 2026-08-15: at ~$1.75–$2.65 for the full
+  127-product catalogue, cost is not the constraint, and a store that decides when to skip work is
+  one more thing that can be quietly wrong. Idempotency comes from the other end instead — generated
+  copy is excluded from the content hash, so re-writing it does not republish a page. **Scoping to
+  NEW/CHANGED is not a cache in disguise:** a unit is skipped because nothing will be published for
+  it, never because copy for it exists somewhere.
 - **The feed's own copy is free.** A product whose attr 1067 is short enough to publish verbatim never
   reaches a producer at all: `merge_generated` takes it straight from the feed, every run, at no cost.
 - **Held rows cost nothing.** A GTIN with no usable source input is skipped from the plan (E21) rather
