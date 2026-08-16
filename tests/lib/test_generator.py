@@ -778,6 +778,22 @@ def test_feed_verbatim_copy_wins_over_a_result_for_the_same_unit() -> None:
     assert merged[0].generated_tagline.get("nl") == "Speciaal voor kleine honden"
 
 
+def test_a_unit_answered_twice_resolves_to_the_last_entry() -> None:
+    """Documented rather than incidental, because a mutation showed nothing pinned it.
+
+    Two answers for one unit is a defect in the file, and `run_generate --validate` names it — but
+    the read still has to pick one, and which one it picks must not depend on how a hand-written
+    file happens to be ordered. Last wins, the same rule a dict literal follows.
+    """
+    product = _product()
+    first = ResultItem(gtin=product.gtin, language="nl", usps=["Eerste"])
+    second = ResultItem(gtin=product.gtin, language="nl", usps=["Tweede"])
+
+    merged, _ = merge_generated([product], _copy(first, second), _ctx("nl"))
+
+    assert merged[0].generated_tagline.get("nl") == "Tweede"
+
+
 def test_long_1067_is_still_asked_for_and_reported_as_adjusted() -> None:
     product = _with_1067("De Noviplast Hydro Jet is een handige oplossing " * 3)  # > 80 chars
 

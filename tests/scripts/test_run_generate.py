@@ -355,6 +355,37 @@ def test_validate_rejects_a_stale_fingerprint(
     assert "run_plan will drop it too" in caplog.text
 
 
+def test_validate_names_a_unit_answered_twice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Surfaced, not absorbed — #94's removed dedupe is the precedent.
+
+    `run_plan` takes the last entry, deterministically, so nothing breaks. What is wrong is that
+    only one of the two was reviewed, and a count reading "2 validated" would claim twice the
+    review that actually happened.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    _write_products("noviplast", [_product()])
+    _write_results(
+        "noviplast",
+        [
+            {"gtin": GTIN_A, "language": "nl", "usps": ["Eerste"]},
+            {"gtin": GTIN_A, "language": "nl", "usps": ["Tweede"]},
+        ],
+    )
+
+    with caplog.at_level("WARNING"):
+        assert run_generate.main(["noviplast", "--validate"]) == 0
+
+    assert "answered more than once" in caplog.text
+    # One *unit* was answered, whatever the file's line count says.
+    assert "validated 1 result(s), rejected 0" in capsys.readouterr().err
+
+
 def test_validate_rejects_wrong_client_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

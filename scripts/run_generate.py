@@ -212,12 +212,26 @@ def _validate(
     the feed already supplies its copy verbatim. (There used to be a third — "already cached fresh"
     — which cannot happen now that nothing is cached.) A result whose fingerprint no longer matches
     is rejected, the same decision ``run_plan`` will make and for the same reason.
+
+    A unit answered **twice** is named rather than quietly resolved. ``run_plan`` takes the last
+    entry, which is deterministic and documented, but two answers for one unit means only one of
+    them was reviewed — and absorbing that silently is what #94's removed dedupe did wrong.
     """
     by_key = {(r.gtin, r.language): r for r in requests}
     in_scope_gtins = {product.gtin for product in products}
+    seen: set[tuple[str, str]] = set()
     usable = 0
     rejected = 0
     for item in results.results:
+        if (item.gtin, item.language) in seen:
+            _log.warning(
+                "%s/%s is answered more than once in this file; run_plan uses the last entry, so "
+                "only one of them is the copy that publishes",
+                item.gtin,
+                item.language,
+            )
+            continue
+        seen.add((item.gtin, item.language))
         request = by_key.get((item.gtin, item.language))
         if request is None:
             _log.warning(
