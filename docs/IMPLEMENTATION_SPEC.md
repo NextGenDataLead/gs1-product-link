@@ -705,9 +705,9 @@ ownership key beyond the hash, finding one would mean inferring it.
 | E18 | Language in `wordpress.languages` has no `product_name.{lang}` for a GTIN | Row for that language classified SKIPPED; noted in chat prompt | `run_plan.py` |
 | E19 | State file corrupt / invalid JSON | Backup as `state.json.corrupt.{ts}`, start fresh, log ERROR, **and surface the reset in the plan summary** (see below) | `state.load_state` + `run_plan.py` |
 | E20 | Two `run_execute.py` interleave for same client | Not supported. Document risk in troubleshooting.md. No lockfile in v0.1 | doc only |
-| E21 | Generator configured but a `(GTIN, language)` has no generated tagline (held, blank-1083 product) | Row SKIPPED from the plan so it can never publish a blank page; the gap is still reported via `missing_generation_input`, which fires only when 1083 is blank in **every** configured language — one the feed carries in another language is a pending translation, not a missing input | `state.diff_against_state` + `run_plan.py` |
+| E21 | Generator configured but a **NEW or CHANGED** `(GTIN, language)` has no generated tagline (held, blank-1083 product) | Row SKIPPED from the plan so it can never publish a blank page, and dropped again at execute time (`run_execute._drop_without_copy`) because `--plan` confirms every row in a file. Asked **after** the classification: copy is written per run for the rows a run executes, so an UNCHANGED or HELD unit has none by design and reporting it as a skip turns a correct no-op into a work item. The gap is still reported via `missing_generation_input`, which fires only when 1083 is blank in **every** configured language — one the feed carries in another language is a pending translation, not a missing input | `state.diff_against_state` + `run_plan.py` + `run_execute.py` |
 | E22 | `media.require_hero_image` set but a GTIN's source `image_url` is blank | GTIN held out of the plan so a hero-less page can never publish; still reported via `value_blank`. A runtime image fetch failure is unaffected (degrades per E7) | `state.diff_against_state` + `run_plan.py` |
-| E23 | A `gdsn_map` field marked `required` (or every member of a `required_group`) has no value for a product | **Whole GTIN held**, in every language, so a SKU is never half-published; each unit lands in `PlanDiff.skipped` with the missing attributes named, and the data-quality report §1a lists them for the client to fill in MyGS1 | `lib.mandatory.missing_mandatory` + `state.diff_against_state` |
+| E23 | A `gdsn_map` field marked `required` (or every member of a `required_group`) has no value for a product | **Whole GTIN held**, in every language, so a SKU is never half-published; each unit lands in `PlanDiff.skipped` with the missing attributes named, and the data-quality report's §0 coverage matrix and Summary row show them for the client to fill in MyGS1 | `lib.mandatory.missing_mandatory` + `state.diff_against_state` |
 | E24 | `media.restrict_to_mapped_gtins` is set and a GTIN has no client-confirmed video in every language | **Whole GTIN held** and reported (§1b). Previously this narrowed *scope* instead, which made the gap invisible on every surface at once — the product simply vanished rather than appearing as work | `state.diff_against_state`, set supplied by `run_plan._confirmed_video_gtins` |
 
 **E19 — why recovery is safe, and why it must still be loud.** State is a *cache* of what the
@@ -776,7 +776,9 @@ Behaviour:
 2. For each (product, language in client.languages):
    - Compute content hash, target URL
    - Compare against state
-   - Emit `PlanRow` with classification and diff, or a `SkippedUnit` when E18/E21/E22 drops it
+   - Emit `PlanRow` with classification and diff, or a `SkippedUnit` when E18/E21/E22 drops it.
+     E18 is asked first (no title, no row); E21 is asked **after** the classification and only of
+     a NEW or CHANGED row — see the E21 row in the edge table
 3. Write `plan.json`
 4. Write `plan.summary.json` — the gate exclusions, the skip tally, the E19 reset flag and the
    quarantine path, plus the summary line verbatim. Written unconditionally, so a missing file
@@ -857,7 +859,11 @@ Emits:  output/{client_id}/data/generation_requests.json  (--emit)
 
 `--emit`/`--validate` and `--backend api` are mutually exclusive and share one contract seam:
 `generation_results.json`, written fresh each run and read by `run_plan`. There is no cache, so
-every in-scope unit is generated every run. The in-session path needs no API key.
+nothing is ever reused. What *is* narrowed is scope: of the in-scope products, only the
+`(GTIN, language)` units a run would create or change are generated for (`preflight.units_needing_copy`
+→ `state.classify_units`), because an UNCHANGED row is never confirmed and never executed. A unit
+is left out because nothing will be published for it, never because copy for it exists. The
+in-session path needs no API key.
 
 ```
 Usage: python -m scripts.run_unpublish CLIENT_ID --gtin GTIN [--gtin GTIN ...] [--dry-run]

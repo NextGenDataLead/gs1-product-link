@@ -157,7 +157,9 @@ one Save. Three things it will not do:
 
 Import the copy, then look at the **coverage** figures before reading it. The copy is written fresh
 for each run and never stored, so the question is not how much has piled up but whether *this* file
-answers every in-scope unit. Its fingerprint covers `{inputs, language, prompt_version}`, so editing
+answers every unit the run will publish. Not every in-scope unit: copy is written for the rows a run
+creates or changes, so an already-live, unchanged unit needs none, and the figures say how many were
+set aside for that reason. Its fingerprint covers `{inputs, language, prompt_version}`, so editing
 one product in the feed leaves that unit uncovered — and an uncovered unit with no producer on this
 machine is dropped from the plan (E21). The screen lists those units by GTIN and language, so
 "request fresh copy" is an instruction rather than a hunch.

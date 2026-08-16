@@ -23,6 +23,11 @@ default language too — all of which live on that config. It returns a
 :class:`PlanDiff`, not a bare list: the units it *drops* (E18/E21/E22) are as much of
 its answer as the ones it keeps, and while they were only a warning log every caller
 threw them away.
+
+``classify_units`` is the same classification asked earlier and without the skip rules, for the
+one caller that needs to know what a run would publish *before* there is anything to publish with:
+``run_generate``, which writes copy only for the NEW and CHANGED units. Both go through
+``_plan_unit``, so they cannot answer differently.
 """
 
 from __future__ import annotations

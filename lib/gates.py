@@ -280,10 +280,11 @@ GATES: Final[tuple[Gate, ...]] = (
         purpose=(
             "The tagline and Eigenschappen are LLM-written, so they are read before they can "
             "reach a page. Review the copy against the real product, not the 'validated N' count "
-            "— this pipeline fails silently. Show the coverage counts here too: a unit with no "
-            "copy for this version of the export is dropped from the plan entirely (E21), so a "
-            "missing or stale results file yields an empty plan and a run that reports success "
-            "having published nothing."
+            "— this pipeline fails silently. Show the coverage counts here too: a NEW or CHANGED "
+            "unit with no copy for this version of the export is dropped from the plan entirely "
+            "(E21), so a missing or stale results file yields an empty plan and a run that "
+            "reports success having published nothing. The batch is this run's rows, not every "
+            "unit in scope — an already-live, unchanged unit is not generated for."
         ),
         options=(
             GateOption("confirm", "Copy is good", "Proceed to planning"),

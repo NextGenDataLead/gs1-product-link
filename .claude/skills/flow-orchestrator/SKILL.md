@@ -187,11 +187,14 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    - **In-session (no API key):** run `python -m scripts.run_generate {client} --emit`, then invoke the
      `content-generator` skill to write the copy and `--validate` it; that skill presents the review.
    - **Headless:** run `python -m scripts.run_generate {client} --backend api` (needs the API key).
-   **Copy is written fresh every run and never reused**, so this file should be this run's batch —
-   but it is not pruned to it either. A file written against a longer process list still holds
-   those units; intersect it with the in-scope GTINs (`doctor --json`, check `scope`,
-   `data.in_scope_gtins`) before concluding anything from its size. The shell's Content screen
-   does exactly that.
+   **Copy is written fresh every run and never reused**, and the batch is this run's rows — the
+   `(GTIN, language)` units that classify NEW or CHANGED. An already-live, unchanged page is not
+   republished, so no copy is written for it; `--emit` says how many it set aside for that reason.
+   The file is not *pruned* to the batch either, so one written against a longer process list or an
+   earlier wave still holds those units. `--validate` counts them as **surplus**, which is not a
+   rejection — a rejection is copy the run wanted and cannot use (stale fingerprint). Intersect
+   with the in-scope GTINs (`doctor --json`, check `scope`, `data.in_scope_gtins`) before
+   concluding anything from the file's size. The shell's Content screen does exactly that.
    Then eyeball a sample of `output/{client}/data/generation_results.json` (nl **and** fr) and the
    `output/{client}/data/generated_issues.json` work list. **This pipeline fails silently — verify
    the copy against the real product, not the "validated N" count.** Generation never publishes; the
@@ -199,9 +202,10 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    `wordpress.post_status`, `publish` by default, so it is live immediately.
 
    This step runs in **`links` mode too**, even though no page is written. Not for the copy itself —
-   for the plan: with a `generator` configured, `run_plan` omits any `(GTIN, language)` that has no
-   generated tagline (E21), so a missing or stale results file yields an empty plan and the run
-   publishes nothing while reporting success.
+   for the plan: with a `generator` configured, `run_plan` omits any **NEW or CHANGED**
+   `(GTIN, language)` that has no generated tagline (E21), so a missing or stale results file
+   yields an empty plan and the run publishes nothing while reporting success. (An UNCHANGED row
+   has no copy by design and keeps its row — it is not a skip and not a work item.)
 
 4. **Plan.** Run `python -m scripts.run_plan {client}` and read
    `output/{client}/plan.json`. run_plan omits any `(GTIN, language)` with a missing

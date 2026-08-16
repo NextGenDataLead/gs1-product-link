@@ -23,10 +23,10 @@ Two checks earn their place by guarding traps that are otherwise silent:
   of being held.
 * :func:`check_generation_results` catches a run whose generated copy is missing or no longer
   matches the export. Copy is written fresh every run and never stored, so the question is not
-  how much has accumulated but whether the file on disk answers every in-scope unit — and whether
-  it still describes this export. The fingerprint covers ``{inputs, language, prompt_version}``,
-  so any feed edit or version bump leaves those units uncovered, and an uncovered unit is an E21
-  omission, which is to say invisible.
+  how much has accumulated but whether the file on disk answers every unit this run would write
+  (:func:`units_needing_copy`) — and whether it still describes this export. The fingerprint covers
+  ``{inputs, language, prompt_version}``, so any feed edit or version bump leaves those units
+  uncovered, and an uncovered unit is an E21 omission, which is to say invisible.
 """
 
 from __future__ import annotations

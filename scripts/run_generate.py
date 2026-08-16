@@ -9,8 +9,9 @@ The spine is producer-agnostic: it works out what copy this run needs and moves 
 shared contract in ``lib.generator``. It
 
 1. computes the units needing a producer (``pending_requests``), each tagged tighten or generate —
-   **every in-scope unit, every run**, except those whose feature/benefit copy (attr 1067) is short
-   enough to publish verbatim, which ``run_plan`` materialises straight from the feed; and
+   **every unit this run will publish, every run**, except those whose feature/benefit copy (attr
+   1067) is short enough to publish verbatim, which ``run_plan`` materialises straight from the
+   feed; and
 2. hands those units to a producer by one of two paths that write the same
    ``generation_results.json``:
 
@@ -32,6 +33,14 @@ Only the products **in scope** are considered — the process list and the confi
 allowlist, via ``lib.preflight.in_scope``, the same filter the doctor's ``scope`` check reports.
 Before that this command worked from the whole catalogue and disagreed with the doctor by two
 orders of magnitude.
+
+Of those, only the ``(gtin, language)`` units a run would **create or change** are asked for
+(``lib.preflight.units_needing_copy``). An UNCHANGED row is never confirmed and never executed, so
+copy for it is text nothing will read. **That is scope, not reuse** — a unit is left out because
+nothing will be published for it, never because copy for it already exists, which is the rule the
+removed cache broke. When the answer cannot be decided (no state, no URL patterns) every unit is
+asked for, because a run that quietly writes no copy for a page it is about to publish surfaces as
+a blank page rather than as an error.
 
 Emits (--emit):         output/{client_id}/data/generation_requests.json
 Reads (--validate):     output/{client_id}/data/generation_results.json (writes nothing, unless

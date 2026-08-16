@@ -21,8 +21,11 @@ It reads `output/{client}/data/generation_requests.json` (written by `run_genera
 per-language copy following the versioned voice template, and writes
 `output/{client}/data/generation_results.json`, which `run_generate --validate` then checks and
 `run_plan` reads. **That file is the run's copy, not a store**: nothing is kept between runs, so
-every in-scope unit is written again next time and this producer stays interchangeable with the
-headless API backend. Tone is **concise and business-like, not
+every unit the next run publishes is written again then, and this producer stays interchangeable
+with the headless API backend. The batch is this run's rows — the units that classify NEW or
+CHANGED — not every unit in scope: an already-live, unchanged page is not republished, so writing
+copy for it would be text nothing reads. Answer the requests file as it stands; it is already
+narrowed. Tone is **concise and business-like, not
 conversational** — the operator is reviewing copy, not reading prose. Generated content is reviewed
 **twice before it can reach a page** — here (the results file) and again in `plan.json`. There is no third
 look: execute writes each page at `wordpress.post_status`, which ships as `publish`, so the page is
@@ -95,6 +98,11 @@ this repo is built around.
      comma-separated in the same order (`"plastique, métal"`): keep the shape, add nothing,
      reorder nothing, and never fold the list into a phrase.
    - Never emit net content, dimensions, or material as USPs (those are added deterministically).
+   - **`inferences`:** list any claim you wrote that goes *beyond* the literal feed text — e.g.
+     "snoerloos" derived from "batterie rechargeable". Plausible-but-derived is allowed; it is not
+     allowed to be silent. Each entry becomes a `generation_inference` finding in §2 of the
+     data-quality report, which is where a human confirms it holds for the real product. Omit the
+     key when everything you wrote is literally in 1083/1067.
    Work in batch; do not narrate each unit.
 
 5. **Write the results.** Write `output/{client}/data/generation_results.json`:
@@ -105,17 +113,21 @@ this repo is built around.
        { "gtin": "08713195000473", "language": "fr",
          "usps": ["Retirez facilement les vis abîmées", "Fonctionne sur bois, plastique et verre"],
          "translations": { "product_name": "Extracteur de vis", "material": "plastique" },
+         "inferences": ["fonctionne sur le verre"],
          "input_fingerprint": "<echo from the matching request>" }
      ]
    }
    ```
    Echo each unit's `input_fingerprint` from its request (so a feed edit since emit is caught), and
    include `translations` only for units whose request listed gaps — one key per listed field, no
-   others. `client_id` must equal the run's client.
+   others. `inferences` is optional and omitted when there are none. `client_id` must equal the
+   run's client.
 
 6. **Validate.** Run `python -m scripts.run_generate {client} --validate`. Surface its stderr line
-   verbatim, e.g. `validated 8 result(s), rejected 2; 28/30 units have copy; 2 without`. Those
-   totals are **in-scope** units, not the catalogue. It writes nothing — it checks that what was
+   verbatim, e.g. `validated 8 result(s), rejected 2; 28/30 unit(s) to publish have copy;
+   2 without`. Those totals are the units **this run publishes** — the in-scope NEW and CHANGED
+   rows — not the catalogue and not every unit in scope. A `surplus` count is not a rejection: it
+   is copy the run does not need, which is ordinary for a file written against an earlier batch. It writes nothing — it checks that what was
    just written answers this run. A non-zero exit is a config error — stop and show it (step:
    Failure modes).
 
