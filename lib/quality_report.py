@@ -15,11 +15,12 @@ snapshot date and per-source freshness) and returns markdown. All I/O and clock 
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
+from collections.abc import Callable
 from typing import TYPE_CHECKING, NamedTuple
 
 from lib.gdsn import is_mandatory
-from lib.mandatory import MandatoryGap
+from lib.mandatory import MandatoryGap, value_for
 from lib.records import ProductRecord, SourceIssue
 
 if TYPE_CHECKING:
@@ -80,9 +81,13 @@ class MatrixInput(NamedTuple):
 class FieldColumn(NamedTuple):
     """One column of the coverage matrix: where the value comes from and whether it is required."""
 
-    field: str
+    #: The field(s) behind the column. More than one for a ``required_group``, which is **one**
+    #: requirement satisfied by any member — so it is one column, and a member's own gap says
+    #: nothing on its own. Rendering the members separately made the legend's "a gap here holds
+    #: the whole SKU" untrue of each of them.
+    fields: tuple[str, ...]
     #: Short header. GDSN attribute numbers are what an operator searches MyGS1 by, so they win
-    #: over the internal field name wherever there is one.
+    #: over the internal field name wherever there is one. A group is named for the requirement.
     header: str
     localised: bool
     required: bool
@@ -91,7 +96,53 @@ class FieldColumn(NamedTuple):
 #: The one column that does not come from the feed: a client-confirmed video, per language.
 #: Mandatory because a GTIN without one is held out of publishing entirely (E24), so it belongs
 #: with the other columns whose gap stops the SKU rather than off at the end of the row.
-_VIDEO = FieldColumn("video", _VIDEO_COLUMN, localised=True, required=True)
+_VIDEO = FieldColumn((_VIDEO_COLUMN,), _VIDEO_COLUMN, localised=True, required=True)
+
+
+def _group_columns(
+    gdsn_map: dict[str, GdsnSource], gdsn_extras: dict[str, GdsnSource]
+) -> dict[str, FieldColumn]:
+    """One column per ``required_group``, keyed by group name.
+
+    Built across **both** maps, the way :func:`lib.mandatory.missing_mandatory` groups them, so a
+    group whose members are split between them stays one requirement rather than becoming two
+    half-columns that each say nothing.
+
+    A member with ``in_matrix: false`` still counts towards satisfying the group — that flag says
+    "this value needs no column of its own", not "this value does not exist". The group appears as
+    long as at least one member asked for a column.
+    """
+    members: dict[str, list[tuple[str, GdsnSource]]] = defaultdict(list)
+    for name, src in [*gdsn_map.items(), *gdsn_extras.items()]:
+        if src.required_group:
+            members[src.required_group].append((name, src))
+    return {
+        group: FieldColumn(
+            tuple(name for name, _ in group_members),
+            group.replace("_", "·"),
+            any(src.localised for _, src in group_members),
+            True,
+        )
+        for group, group_members in members.items()
+        if any(src.in_matrix for _, src in group_members)
+    }
+
+
+def _either_or_sentence(gdsn_map: dict[str, GdsnSource], gdsn_extras: dict[str, GdsnSource]) -> str:
+    """The legend clause naming each ``required_group`` and the attributes that satisfy it.
+
+    A collapsed column reads as one more mandatory field otherwise, and the attribute numbers are
+    how an operator finds the value in MyGS1 — the same reason mapped columns are headed by their
+    number rather than by the internal field name. Empty for a client with no group at all, rather
+    than a sentence explaining a concept their report does not contain.
+    """
+    sources = {**gdsn_map, **gdsn_extras}
+    clauses = []
+    for column in _group_columns(gdsn_map, gdsn_extras).values():
+        attributes = [sources[f].attribute for f in column.fields if sources[f].attribute]
+        joined = " or ".join(f"attr {a}" for a in attributes)
+        clauses.append(f"`{column.header}` is one requirement, satisfied by {joined}")
+    return (" " + "; ".join(clauses) + ".") if clauses else ""
 
 
 def _columns(
@@ -113,16 +164,28 @@ def _columns(
     The two maps keep separate header formats because they identify a column differently: a
     mapped field is searched in MyGS1 by its GDSN attribute number, an extra by its own name.
     """
-    mapped = [
-        FieldColumn(name, f"{name.split('_')[0]}·{src.attribute}", src.localised, is_mandatory(src))
-        for name, src in gdsn_map.items()
-        if src.in_matrix
-    ]
-    extras = [
-        FieldColumn(name, name.replace("_", "·"), src.localised, is_mandatory(src))
-        for name, src in gdsn_extras.items()
-        if src.in_matrix
-    ]
+    groups = _group_columns(gdsn_map, gdsn_extras)
+    emitted: set[str] = set()
+
+    def build(
+        sources: dict[str, GdsnSource], header: Callable[[str, GdsnSource], str]
+    ) -> list[FieldColumn]:
+        out: list[FieldColumn] = []
+        for name, src in sources.items():
+            if src.required_group:
+                # One column per group, at the position of its first member in declaration order.
+                if src.required_group in emitted or src.required_group not in groups:
+                    continue
+                emitted.add(src.required_group)
+                out.append(groups[src.required_group])
+            elif src.in_matrix:
+                out.append(
+                    FieldColumn((name,), header(name, src), src.localised, is_mandatory(src))
+                )
+        return out
+
+    mapped = build(gdsn_map, lambda name, src: f"{name.split('_')[0]}·{src.attribute}")
+    extras = build(gdsn_extras, lambda name, _src: name.replace("_", "·"))
     mandatory = [
         *(c for c in mapped if c.required),
         _VIDEO,
@@ -159,17 +222,45 @@ def _mark(
             if product.gtin14 in video_confirmed.get(lang, set())
         }
         return _language_mark(confirmed, languages)
-    if column.field not in type(product).model_fields:
-        localised = product.extras_localised.get(column.field)
+    if len(column.fields) > 1:
+        return _group_mark(product, column, languages)
+    field = column.fields[0]
+    if field not in type(product).model_fields:
+        localised = product.extras_localised.get(field)
         if localised is None:
-            filled = bool(str(product.extras.get(column.field) or "").strip())
+            filled = bool(str(product.extras.get(field) or "").strip())
             return (_PRESENT if filled else _ABSENT), int(filled)
         return _language_mark(localised.values, languages)
-    value = getattr(product, column.field, None)
+    value = getattr(product, field, None)
     if not column.localised:
         filled = bool(str(value or "").strip())
         return (_PRESENT if filled else _ABSENT), int(filled)
     return _language_mark(getattr(value, "values", {}) or {}, languages)
+
+
+def _group_mark(
+    product: ProductRecord, column: FieldColumn, languages: list[str]
+) -> tuple[str, int]:
+    """The cell for a ``required_group``: satisfied where **any** member carries a value.
+
+    Unioned per language rather than taken from the best member, because one member in nl and the
+    other in fr leaves nothing missing: member-wise both read half-filled, and the SKU would show
+    ◐ while being fully publishable. It asks through :func:`lib.mandatory.value_for` — the same
+    function E23 asks — so the column and the hold cannot disagree about what "present" means.
+
+    It fills at most one language-slot per language however many members carry a value: the
+    requirement is satisfied once, and ``score`` sorts the worklist by how close a SKU is to
+    publishable, not by how much text the feed happens to hold.
+    """
+    if not column.localised:
+        filled = any(value_for(product, field, "") for field in column.fields)
+        return (_PRESENT if filled else _ABSENT), int(filled)
+    satisfied = {
+        lang: "satisfied"
+        for lang in languages
+        if any(value_for(product, field, lang) for field in column.fields)
+    }
+    return _language_mark(satisfied, languages)
 
 
 def _language_mark(values: dict[str, str], languages: list[str]) -> tuple[str, int]:
@@ -460,7 +551,8 @@ def _matrix_lines(  # noqa: PLR0913 — a matrix needs its rows, its columns, an
         f"before `score` are mandatory — a gap there holds the whole SKU; `score` counts their "
         f"filled language-slots, so a localised field contributes {len(languages)}, and the "
         f"table is sorted with the closest to publishable at the top. The columns after `score` "
-        f"are marked {_OPTIONAL_LABEL} and only thin the page.",
+        f"are marked {_OPTIONAL_LABEL} and only thin the page."
+        + _either_or_sentence(gdsn_map, gdsn_extras),
         "",
         *_table(header, numbered),
         "",

@@ -45,8 +45,12 @@ class MandatoryGap(NamedTuple):
         return f"{where} (attr {self.attribute})" if self.attribute else where
 
 
-def _value_for(product: ProductRecord, field: str, language: str) -> str:
+def value_for(product: ProductRecord, field: str, language: str) -> str:
     """The product's value for ``field`` in ``language``, as a string ("" when absent).
+
+    Public because the coverage matrix asks the same question of the same fields: whether a
+    ``required_group`` is satisfied in a language is one rule, and the report saying a SKU is held
+    while the plan publishes it (or the reverse) is the failure that rule exists to prevent.
 
     Falls through to the pass-through extras, which :meth:`ProductRecord.extra` resolves for
     the asked-for language — a per-language extra read flat would report present in every
@@ -61,7 +65,7 @@ def _value_for(product: ProductRecord, field: str, language: str) -> str:
 
 def _present(product: ProductRecord, field: str, source: GdsnSource, language: str) -> bool:
     """Whether ``field`` carries a value for ``language`` (ignoring language when not localised)."""
-    return bool(_value_for(product, field, language if source.localised else ""))
+    return bool(value_for(product, field, language if source.localised else ""))
 
 
 def missing_mandatory(

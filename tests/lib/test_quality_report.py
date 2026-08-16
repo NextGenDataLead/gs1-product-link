@@ -572,30 +572,89 @@ def test_a_required_extra_joins_the_mandatory_run() -> None:
     assert fields.index("dim·height") < fields.index("material (optional)")
 
 
-def test_a_required_group_member_is_mandatory_too() -> None:
-    """Either-or membership is the other way a column blocks, and it is the live case.
+#: The live either-or: Noviplast's copy comes from attr 1083 *or* attr 1067, never both required.
+_GROUP_MAP = {
+    "description_short": GdsnSource(
+        sheet="S", attribute="1083", localised=True, required_group="marketing_copy"
+    ),
+    "description_long": GdsnSource(
+        sheet="S", attribute="1067", localised=True, required_group="marketing_copy"
+    ),
+    "net_content": GdsnSource(sheet="S", attribute="3510"),
+}
 
-    Noviplast's `description_short` (1083) and `description_long` (1067) are a `required_group`:
-    neither is individually required, the pair is, and both render as mandatory in the operator's
-    report today. Nothing pinned that — a mutation dropping `required_group` from the predicate
-    survived the whole suite, which is how this test came to exist.
+
+def _grouped(gtin: str, **over: object) -> str:
+    return _render(matrix=_matrix(products=[_p(gtin, **over)], gdsn_map=_GROUP_MAP))
+
+
+def test_a_required_group_is_one_column_named_after_the_group() -> None:
+    """Two columns for one requirement said something false about both of them.
+
+    `description_short` (1083) and `description_long` (1067) are a `required_group`: a SKU is held
+    only when **both** are blank. Rendered as two mandatory columns, the legend's "a gap here
+    holds the whole SKU" was untrue of either — and on the real report 26 of 37 in-scope SKUs
+    publish with 1067 empty, each showing a ○ that means nothing on its own.
     """
-    md = _render(
-        matrix=_matrix(
-            products=[_p("08713195000001")],
-            gdsn_map={
-                "description_short": GdsnSource(
-                    sheet="S", attribute="1083", localised=True, required_group="marketing_copy"
-                ),
-                "net_content": GdsnSource(sheet="S", attribute="3510"),
-            },
-        )
-    )
+    md = _grouped("08713195000001")
     fields = [h for h in _headers(md) if h not in {"#", "GTIN", "Name", "score"}]
 
-    assert "description·1083" in fields  # unmarked: mandatory, via the group
-    assert "net·3510 (optional)" in fields
-    assert fields.index("description·1083") < fields.index("net·3510 (optional)")
+    assert "marketing·copy" in fields
+    assert not [h for h in fields if "1083" in h or "1067" in h]
+    assert fields.index("marketing·copy") < fields.index("net·3510 (optional)")
+
+
+def test_either_member_satisfies_the_group() -> None:
+    """Which one the feed carries is not the matrix's question — whether the SKU is held is."""
+    both_langs = LocalisedText(values={"nl": "a", "fr": "b"})
+    short_only = _grouped("08713195000001", description_short=both_langs)
+    long_only = _grouped("08713195000001", description_long=both_langs)
+    neither = _grouped("08713195000001")
+
+    assert _cell_for(short_only, "08713195000001", "marketing·copy") == "●"
+    assert _cell_for(long_only, "08713195000001", "marketing·copy") == "●"
+    assert _cell_for(neither, "08713195000001", "marketing·copy") == "○"
+
+
+def test_the_group_is_satisfied_per_language_across_its_members() -> None:
+    """One member in nl and the other in fr satisfies the requirement in both languages.
+
+    The case that makes this a union per language rather than the best member's mark: taken
+    member-wise, each is half-filled, and the SKU would read as ◐ while nothing about it is
+    missing. E23 asks the same question the same way — a group is satisfied in a language when
+    **any** member carries a value in it.
+    """
+    md = _grouped(
+        "08713195000001",
+        description_short=LocalisedText(values={"nl": "a"}),
+        description_long=LocalisedText(values={"fr": "b"}),
+    )
+
+    assert _cell_for(md, "08713195000001", "marketing·copy") == "●"
+
+
+def test_the_group_scores_once_however_many_members_carry_a_value() -> None:
+    """Satisfying it twice is not more publishable than satisfying it once.
+
+    It used to score both members, so a SKU with 1083 *and* 1067 outranked one with 1083 alone by
+    two slots — on the real report that was rows 1 and 2, ranked apart by a field neither needed.
+    """
+    both = _grouped(
+        "08713195000001",
+        description_short=LocalisedText(values={"nl": "a", "fr": "b"}),
+        description_long=LocalisedText(values={"nl": "c", "fr": "d"}),
+    )
+    one = _grouped("08713195000001", description_short=LocalisedText(values={"nl": "a", "fr": "b"}))
+
+    assert _cell_for(both, "08713195000001", "score") == _cell_for(one, "08713195000001", "score")
+
+
+def test_the_legend_says_the_group_is_an_either_or() -> None:
+    """A collapsed column has to say what satisfies it, or it reads as one more mandatory field."""
+    legend = next(line for line in _grouped("08713195000001").splitlines() if "present ·" in line)
+
+    assert "`marketing·copy`" in legend
+    assert "1083" in legend and "1067" in legend
 
 
 def test_video_sits_with_the_mandatory_columns_not_after_the_optional_ones() -> None:
