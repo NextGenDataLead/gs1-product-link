@@ -117,6 +117,53 @@ def resolve_category(
     )
 
 
+def assign_categories(
+    categories: CategoryConfig | None, products: list[ProductRecord]
+) -> tuple[list[ProductRecord], list[SourceIssue]]:
+    """Set each product's site category from ``categories``, reporting what would not resolve.
+
+    Pure — it copies rather than mutating, logs nothing, and reads no file. A no-op returning the
+    same list when the client has no ``categories`` config.
+
+    This lived in ``run_plan``, and moved here when a second caller needed it. The category is part
+    of the content hash, so anything that classifies a product against prior state must assign it
+    the same way ``run_plan`` does or its hashes will not match the plan's — and for
+    ``run_generate``, which narrows generation to the rows a run would create or change, mismatched
+    hashes mean copy written for the wrong units. A script may not import another script, and one
+    of the two re-deriving "what is this product's category" is the shape this repo keeps paying
+    for.
+
+    Args:
+        categories: The client's ``categories`` config, or ``None``.
+        products: The products to categorise.
+
+    Returns:
+        The products with ``category`` set where it resolved, and one :class:`SourceIssue` per
+        product whose brick maps to nothing or that carries no brick at all. An unmapped brick
+        leaves the category unset — :func:`resolve_category` never guesses.
+    """
+    if categories is None:
+        return products, []
+
+    allowed = frozenset(categories.terms)
+    assigned: list[ProductRecord] = []
+    issues: list[SourceIssue] = []
+    for product in products:
+        resolution = resolve_category(
+            product,
+            brick_category_map=categories.brick_category_map,
+            overrides=categories.overrides,
+            allowed_terms=allowed,
+        )
+        if resolution.term is None:
+            assigned.append(product)
+        else:
+            assigned.append(product.model_copy(update={"category": resolution.term}))
+        if resolution.issue is not None:
+            issues.append(resolution.issue)
+    return assigned, issues
+
+
 def distinct_bricks(products: list[ProductRecord]) -> dict[str, list[str]]:
     """Group the GTIN-14s in ``products`` by their GPC brick.
 

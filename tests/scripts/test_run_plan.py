@@ -50,7 +50,7 @@ from lib.records import (
     State,
     StateEntry,
 )
-from lib.state import save_state
+from lib.state import diff_against_state, save_state
 from scripts import run_plan
 
 GTIN_A = "08713195007359"
@@ -1063,3 +1063,71 @@ def test_no_generated_issues_file_without_generator_config(
     run_plan.main(["acme", "--products", str(products)])
 
     assert not Path("output/acme/data/generated_issues.json").exists()
+
+
+# --- an already-live unit is a row, not a skip --------------------------------
+#
+# Copy is written per run for the rows a run executes, so an UNCHANGED unit arrives with none.
+# Reporting it as `no_generated_copy` turned a correct skip into a work item — 20 of them on the
+# pilot client — and lost the "Unchanged: N" count the operator reads at the plan gate.
+
+
+def _publish(cfg: ClientConfig, product: ProductRecord) -> None:
+    """Record ``product`` in state as live and matching, the way a successful run would."""
+    rows, _ = diff_against_state(
+        [product], State(client_id=cfg.client_id, entries={}), ["nl"], cfg.wordpress
+    )
+    row = rows[0]
+    save_state(
+        State(
+            client_id=cfg.client_id,
+            entries={
+                product.gtin: {
+                    "nl": StateEntry(
+                        wp_page_id=1,
+                        wp_url=row.target_url,
+                        wp_featured_media_id=None,
+                        content_hash=row.content_hash,
+                        gs1_link_set_hash="g" * 64,
+                        last_run=datetime(2026, 8, 16, 10, 0, tzinfo=UTC),
+                        title=row.title,
+                    )
+                }
+            },
+        )
+    )
+
+
+def test_an_already_live_unit_with_no_copy_is_planned_unchanged_not_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(generator=GeneratorConfig(enabled=True))
+    _patch_client(monkeypatch, cfg)
+    product = _product(GTIN_A)
+    _publish(cfg, product)
+    products = tmp_path / "products.json"
+    _write_products(products, [product])
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    plan = _read_plan()
+    assert [r.classification for r in plan.rows] == [PlanClassification.UNCHANGED]
+    assert plan.skipped == []
+    assert "0 new, 1 unchanged, 0 changed" in capsys.readouterr().err
+
+
+def test_a_new_unit_with_no_copy_is_still_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hold that keeps a blank page offline is untouched for the rows a run would write."""
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    run_plan.main(["acme", "--products", str(products)])
+
+    plan = _read_plan()
+    assert plan.rows == []
+    assert [s.reason for s in plan.skipped] == [SkipReason.NO_GENERATED_COPY]

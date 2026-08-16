@@ -13,6 +13,7 @@ pending however much copy already exists for it.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,8 @@ from lib.generator import (
     load_results,
     pending_requests,
 )
-from lib.records import LocalisedText, ProductRecord
+from lib.records import LocalisedText, ProductRecord, State, StateEntry
+from lib.state import diff_against_state, save_state, state_path
 from scripts import run_generate
 
 GTIN_A = "08713195007359"
@@ -67,7 +69,14 @@ def _make_config(
     languages: list[str] | None = None,
     generator: GeneratorConfig | None = None,
     process_list: ProcessListConfig | None = None,
+    **wordpress: Any,
 ) -> ClientConfig:
+    """A client config. The URL patterns are set because a publishing client has them.
+
+    ``run_generate`` reads them now: narrowing generation to the rows a run would write means
+    classifying, and a classification needs the slug and target URL a row would get. A client
+    without them cannot be narrowed, which is its own test.
+    """
     return ClientConfig(
         client_id="noviplast",
         display_name="Noviplast",
@@ -83,6 +92,11 @@ def _make_config(
             app_password_env="WP_PASS",
             default_language="nl",
             languages=languages or ["nl"],
+            **{
+                "slug_pattern": "p-{gtin}",
+                "target_url_pattern": "{site_url}/{lang_segment}{post_type}/{slug}/",
+                **wordpress,
+            },
         ),
         generator=generator,
         process_list=process_list,
@@ -166,7 +180,7 @@ def test_emit_coverage_line_to_stderr(
 
     err = capsys.readouterr().err
     assert "0 tighten, 1 generate" in err
-    assert "0/1 units have copy; 1 without" in err
+    assert "0/1 unit(s) to publish have copy; 1 without" in err
 
 
 def test_emit_writes_no_store_of_any_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,7 +215,7 @@ def test_emit_never_asks_for_copy_the_feed_already_supplies(
     run_generate.main(["noviplast"])
 
     assert _read_requests_file().requests == []
-    assert "1/1 units have copy; 0 without" in capsys.readouterr().err
+    assert "1/1 unit(s) to publish have copy; 0 without" in capsys.readouterr().err
 
 
 def test_emit_writes_empty_requests_file_when_nothing_pending(
@@ -261,7 +275,7 @@ def test_validate_accepts_results_that_answer_this_run(
     code = run_generate.main(["noviplast", "--validate"])
 
     assert code == 0
-    assert "validated 1 result(s), rejected 0; 1/1 units have copy; 0 without" in (
+    assert "validated 1 result(s), rejected 0; 1/1 unit(s) to publish have copy; 0 without" in (
         capsys.readouterr().err
     )
 
@@ -310,9 +324,16 @@ def test_emit_then_validate_round_trips(tmp_path: Path, monkeypatch: pytest.Monk
     assert load_results("noviplast").results[0].usps == ["Slogan", "Punt"]
 
 
-def test_validate_rejects_a_result_with_no_pending_unit(
+def test_validate_counts_a_result_with_no_pending_unit_as_surplus_not_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """It used to be counted as ``rejected``. Rejected means "wanted and unusable"; this is not.
+
+    The two were the same number while every in-scope unit was generated for every run, because
+    the only way to hold a result the run had not asked for was to have the wrong file. Now the
+    ordinary case is a file written against a wider batch, and a run that reports rejections when
+    nothing is wrong teaches the operator to skip the line.
+    """
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, _make_config())
     _write_products("noviplast", [_product()])
@@ -321,7 +342,8 @@ def test_validate_rejects_a_result_with_no_pending_unit(
     code = run_generate.main(["noviplast", "--validate"])
 
     assert code == 0
-    assert "validated 0 result(s), rejected 1" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "validated 0 result(s), rejected 0, 1 surplus (not needed this run)" in err
 
 
 def test_validate_rejects_a_stale_fingerprint(
@@ -445,7 +467,7 @@ def test_validate_missing_results_file_is_not_an_error(
     code = run_generate.main(["noviplast", "--validate"])
 
     assert code == 0
-    assert "0/1 units have copy; 1 without" in capsys.readouterr().err
+    assert "0/1 unit(s) to publish have copy; 1 without" in capsys.readouterr().err
 
 
 # --- the LLMClient seam ------------------------------------------------------
@@ -611,3 +633,165 @@ def test_validating_a_feed_verbatim_result_says_that_is_why(
         assert run_generate.main(["noviplast", "--validate"]) == 0
 
     assert "the feed supplies this unit's copy verbatim" in caplog.text
+
+
+# --- generation is scoped to the rows this run would write --------------------
+#
+# Copy is written per run for the rows a run executes — NEW and CHANGED. An UNCHANGED row is never
+# confirmed and never executed, so asking a producer for it spends tokens on text nothing reads.
+# This narrowing is *scope*, not reuse: what excludes a unit is that nothing will be published for
+# it, never that copy for it already exists.
+
+
+def _publish(cfg: ClientConfig, product: ProductRecord, language: str = "nl") -> None:
+    """Record ``product`` in state as live and matching, the way a successful run would."""
+    rows, _ = diff_against_state(
+        [product], State(client_id=cfg.client_id, entries={}), [language], cfg.wordpress
+    )
+    row = rows[0]
+    save_state(
+        State(
+            client_id=cfg.client_id,
+            entries={
+                product.gtin: {
+                    language: StateEntry(
+                        wp_page_id=1,
+                        wp_url=row.target_url,
+                        wp_featured_media_id=None,
+                        content_hash=row.content_hash,
+                        gs1_link_set_hash="g" * 64,
+                        last_run=datetime(2026, 8, 16, 10, 0, tzinfo=UTC),
+                        title=row.title,
+                    )
+                }
+            },
+        )
+    )
+
+
+def test_emit_skips_a_unit_that_is_already_live_and_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _patch_client(monkeypatch, cfg)
+    live, fresh = _product(GTIN_A), _product(GTIN_B)
+    _write_products("noviplast", [live, fresh])
+    _publish(cfg, live)
+
+    assert run_generate.main(["noviplast", "--emit"]) == 0
+
+    assert [(r.gtin, r.language) for r in _read_requests_file().requests] == [(GTIN_B, "nl")]
+    err = capsys.readouterr().err
+    assert "emitted 1 request(s)" in err
+    # The narrowing is stated, not silent: "1 request" over a two-product scope needs a reason.
+    assert "1 already live and unchanged" in err
+
+
+def test_emit_asks_again_for_a_unit_whose_feed_data_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CHANGED is written, so it needs copy — the other half of the rule."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _patch_client(monkeypatch, cfg)
+    product = _product(GTIN_A)
+    _publish(cfg, product)
+    _write_products("noviplast", [product.model_copy(update={"brand": "Ander Merk"})])
+
+    assert run_generate.main(["noviplast", "--emit"]) == 0
+
+    assert [r.gtin for r in _read_requests_file().requests] == [GTIN_A]
+
+
+def test_emit_asks_for_everything_when_there_is_no_state_yet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Back-compat pin: a first run has no state, so every unit is NEW and nothing narrows."""
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(languages=["nl", "fr"]))
+    _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
+
+    assert run_generate.main(["noviplast", "--emit"]) == 0
+
+    assert len(_read_requests_file().requests) == 4
+
+
+def test_emit_asks_for_everything_when_state_will_not_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Erring wide. Narrowing on a guess would write no copy for a page about to be published."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _patch_client(monkeypatch, cfg)
+    _write_products("noviplast", [_product(GTIN_A)])
+    path = state_path("noviplast")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{ not json", encoding="utf-8")
+
+    assert run_generate.main(["noviplast", "--emit"]) == 0
+
+    assert len(_read_requests_file().requests) == 1
+    assert path.read_text(encoding="utf-8") == "{ not json"  # never quarantined from here
+
+
+def test_validate_counts_a_surplus_result_apart_from_a_rejected_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A results file wider than this run's batch is normal now, and is not a rejection.
+
+    Under scoped generation the operator regenerates against a shrinking batch, so surplus copy is
+    the expected state of a file written a run ago. Counting it as "rejected" puts an alarming
+    number on a healthy run, which is how an operator learns to stop reading the number.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _patch_client(monkeypatch, cfg)
+    live, fresh = _product(GTIN_A), _product(GTIN_B)
+    _write_products("noviplast", [live, fresh])
+    _publish(cfg, live)
+    _write_results(
+        "noviplast",
+        [
+            {"gtin": GTIN_A, "language": "nl", "usps": ["Oud"]},
+            {"gtin": GTIN_B, "language": "nl", "usps": ["Nieuw"]},
+        ],
+    )
+
+    assert run_generate.main(["noviplast", "--validate"]) == 0
+
+    err = capsys.readouterr().err
+    assert "validated 1 result(s), rejected 0" in err
+    assert "1 surplus (not needed this run)" in err
+
+
+def test_validating_an_unchanged_unit_says_that_is_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The third cause of "no pending unit", and the one that is now the commonest."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    _patch_client(monkeypatch, cfg)
+    product = _product(GTIN_A)
+    _write_products("noviplast", [product])
+    _publish(cfg, product)
+    _write_results("noviplast", [{"gtin": GTIN_A, "language": "nl", "usps": ["Oud"]}])
+
+    with caplog.at_level("WARNING"):
+        assert run_generate.main(["noviplast", "--validate"]) == 0
+
+    assert "already live and unchanged" in caplog.text
+
+
+def test_emit_asks_for_everything_when_the_client_has_no_url_patterns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No patterns, no classification, no narrowing — and the run still works."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(slug_pattern=None, target_url_pattern=None)
+    _patch_client(monkeypatch, cfg)
+    _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
+
+    assert run_generate.main(["noviplast", "--emit"]) == 0
+
+    assert len(_read_requests_file().requests) == 2

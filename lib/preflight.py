@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Final
 
 import jsonschema
 
-from lib.categories import coverage_report
+from lib.categories import assign_categories, coverage_report
 from lib.config import DEFAULT_CLIENTS_PATH, ClientConfig, get_client, load_clients
 from lib.errors import (
     ConfigError,
@@ -50,6 +50,7 @@ from lib.errors import (
     MissingCredentialError,
     OrchestratorError,
     ProcessListError,
+    StateError,
     VideoMapError,
     WordPressAPIError,
 )
@@ -64,6 +65,7 @@ from lib.media_video import (
 )
 from lib.process_list import load_process_list
 from lib.records import ProductRecord
+from lib.state import WILL_BE_WRITTEN, classify_units, peek_state
 from lib.wp_client import WordPressClient, WordPressIdentity
 
 if TYPE_CHECKING:
@@ -332,14 +334,65 @@ def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult
     )
 
 
+def units_needing_copy(
+    cfg: ClientConfig, scoped_products: list[ProductRecord]
+) -> set[tuple[str, str]] | None:
+    """The ``(GTIN, language)`` units this run would create or change — the ones needing copy.
+
+    The companion to :func:`in_scope`, one question further on. ``in_scope`` says which products a
+    run could touch from configuration alone; this says which *units* it would actually write,
+    which needs the classification and therefore ``state.json``. Copy is written per run for those
+    units only: an UNCHANGED row is never confirmed and never executed, so copy for it is text
+    nothing will read. ``run_generate`` narrows the producer to this set and
+    :func:`check_generation_results` counts over it, so the two cannot disagree about what a run
+    owes.
+
+    **It reads state with :func:`~lib.state.peek_state`, never ``load_state``.** ``load_state``
+    quarantines a corrupt file (E19) and returns an empty state; doing that from here would consume
+    the reset before ``run_plan`` could report it, and the operator would never see "every row
+    re-plans as NEW" at the plan gate — the one place that warning changes a decision.
+
+    Args:
+        cfg: The client config; supplies the categories, the URL patterns and the languages.
+        scoped_products: The products already narrowed by :func:`in_scope`.
+
+    Returns:
+        The units to generate for, or ``None`` when the answer cannot be decided — an unparseable
+        state file, or URL patterns the client has not set. ``None`` means "ask for everything",
+        the same direction :func:`in_scope` errs in: a preflight may name a unit that turns out to
+        be finished, but a run that quietly writes no copy for a page it is about to publish shows
+        up as a blank page rather than as an error.
+    """
+    try:
+        state = peek_state(cfg.client_id)
+    except StateError:
+        return None  # check_state_file is where a broken state file is reported
+    # Categories are inside the content hash, so they must be assigned exactly as ``run_plan``
+    # assigns them or every live unit classifies CHANGED and the narrowing silently does nothing.
+    categorised, _ = assign_categories(cfg.categories, scoped_products)
+    try:
+        classified = classify_units(
+            categorised, state, cfg.wordpress.languages, cfg.wordpress, hash_source=None
+        )
+    except ConfigError:
+        return None  # check_config reports the missing patterns
+    return {unit for unit, kind in classified.items() if kind in WILL_BE_WRITTEN}
+
+
 def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
-    """Report whether this run's ``generation_results.json`` covers the **in-scope** export.
+    """Report whether this run's ``generation_results.json`` covers the units it will publish.
 
     The core check when copy is written on one machine and published from another. Copy is not
     stored between runs, so this is not a question about accumulated coverage: it asks whether the
-    file sitting on disk right now answers every in-scope unit, and whether it is still *about*
-    this export. A unit it does not answer is an E21 omission — it leaves the plan without a row,
-    and before ``Plan.skipped`` existed it left without a trace.
+    file sitting on disk right now answers every unit this run would write, and whether it is
+    still *about* this export. A unit it does not answer is an E21 omission — it leaves the plan
+    without a row, and before ``Plan.skipped`` existed it left without a trace.
+
+    **Scoped to the NEW/CHANGED units**, via :func:`units_needing_copy` — the same set
+    ``run_generate`` asks the producer for. An already-published, unchanged unit is not generated
+    for and must not be counted as uncovered, or this check FAILs on every run after the first,
+    which is how a check stops being read. What it excluded is stated in the detail rather than
+    dropped quietly: a narrowing nobody can see is the one that turns out to be wrong.
 
     Three ways a unit can be uncovered, and the fingerprint check is the one that matters most:
     the results file outlives the producer session that wrote it, so a ``parse_export`` re-run in
@@ -365,7 +418,9 @@ def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -
         )
 
     languages = cfg.wordpress.languages
-    total = len(products) * len(languages)
+    wanted = units_needing_copy(cfg, products)
+    total = len(products) * len(languages) if wanted is None else len(wanted)
+    unchanged = len(products) * len(languages) - total
     context = generation_context(
         languages,
         cfg.wordpress.default_language,
@@ -384,30 +439,44 @@ def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -
             Status.FAIL,
             str(exc),
             remedy="Re-run the generate cycle for this client to write a fresh results file.",
-            data={"total": total, "covered": 0, "pending": total, "pending_units": []},
+            data={
+                "total": total,
+                "covered": 0,
+                "pending": total,
+                "pending_units": [],
+                "unchanged": unchanged,
+            },
         )
-    missing = missing_copy(products, results, context)
+    missing = missing_copy(products, results, context, units=wanted)
     covered = total - len(missing)
+    already_live = (
+        f"; {unchanged} in-scope unit(s) are already live and unchanged, so this run writes "
+        "no copy for them"
+        if unchanged
+        else ""
+    )
     data: dict[str, object] = {
         "total": total,
         "covered": covered,
         "pending": len(missing),
         "pending_units": missing[:20],
+        "unchanged": unchanged,
     }
     if not missing:
         return CheckResult(
             "generation_results",
             "Generated copy for this run",
             Status.OK,
-            f"{total} unit(s), all covered",
+            f"{total} unit(s) to publish, all covered{already_live}",
             data=data,
         )
     return CheckResult(
         "generation_results",
         "Generated copy for this run",
         Status.FAIL,
-        f"{total} unit(s), {covered} covered, {len(missing)} without copy — those have nothing "
-        "written for this version of the export and will be dropped from the plan (E21)",
+        f"{total} unit(s) to publish, {covered} covered, {len(missing)} without copy — those have "
+        f"nothing written for this version of the export and will be dropped from the plan "
+        f"(E21){already_live}",
         remedy="Run the generate cycle again for the current export: "
         "`python -m scripts.run_generate --emit`, write the copy, then `--validate`. Copy goes "
         "stale on any feed edit or prompt_version bump, not only on new products.",

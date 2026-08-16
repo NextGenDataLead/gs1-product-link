@@ -47,7 +47,7 @@ from typing import NamedTuple
 
 from pydantic import ValidationError
 
-from lib.categories import resolve_category
+from lib.categories import assign_categories
 from lib.config import ClientConfig, get_client
 from lib.env import load_env
 from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError, VideoMapError
@@ -171,33 +171,17 @@ def _confirmed_video_gtins(cfg: ClientConfig) -> frozenset[str] | None:
 def _assign_categories(
     cfg: ClientConfig, products: list[ProductRecord]
 ) -> tuple[list[ProductRecord], list[SourceIssue]]:
-    """Assign each product's site category from ``cfg.categories`` (Phase 7.5).
+    """Assign each product's site category (Phase 7.5), and say out loud what did not resolve.
 
-    A no-op when the client has no ``categories`` config. Otherwise resolves every product's
-    category (per-GTIN override > brick map > none) and returns products with ``category`` set,
-    plus one :class:`SourceIssue` per product whose brick maps to nothing. An unmapped brick
-    warns and leaves the category unset — the tool never guesses. Called before classification
-    so the category is part of the content hash: a category change reclassifies as CHANGED.
+    The assignment itself is :func:`lib.categories.assign_categories`, shared with the caller that
+    has to reproduce this run's records before the generator (``run_generate``). What stays here
+    is the operator-facing warning summary: it belongs to the command the operator is watching, and
+    emitting it from the shared helper would make every caller repeat it.
+
+    Called before classification so the category is part of the content hash: a category change
+    reclassifies as CHANGED.
     """
-    if cfg.categories is None:
-        return products, []
-
-    allowed = frozenset(cfg.categories.terms)
-    assigned: list[ProductRecord] = []
-    issues: list[SourceIssue] = []
-    for product in products:
-        resolution = resolve_category(
-            product,
-            brick_category_map=cfg.categories.brick_category_map,
-            overrides=cfg.categories.overrides,
-            allowed_terms=allowed,
-        )
-        if resolution.term is None:
-            assigned.append(product)
-        else:
-            assigned.append(product.model_copy(update={"category": resolution.term}))
-        if resolution.issue is not None:
-            issues.append(resolution.issue)
+    assigned, issues = assign_categories(cfg.categories, products)
 
     for brick in sorted({i.value for i in issues if i.issue == "category_unmapped" and i.value}):
         _log.warning("GPC brick %s maps to no category term; leaving category unset", brick)

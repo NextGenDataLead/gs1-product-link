@@ -24,6 +24,7 @@ import yaml
 from lib.config import (
     ClientConfig,
     ExportConfig,
+    GeneratorConfig,
     GS1Config,
     GS1LinkConfig,
     MediaConfig,
@@ -1529,3 +1530,84 @@ def _read_outcomes(tmp_path: Path, *, newest: bool = False) -> list[dict[str, An
 
 def _mtime(path: Path) -> int:
     return path.stat().st_mtime_ns
+
+
+# --- E21 at execute time ------------------------------------------------------
+#
+# Copy is written per run for the rows a run executes, so an UNCHANGED row legitimately carries
+# none. Both interactive surfaces already refuse to confirm UNCHANGED, but `--plan` confirms every
+# row in the file (docs/setup.md and the pilot handoff both use it), and a hand-written or stale
+# plan.json can carry anything. The module docstring has claimed "E21 still applies on top" since
+# `--only` was added; nothing enforced it until here.
+
+
+def _with_copy(row: PlanRow) -> PlanRow:
+    """The row as `run_plan` builds it for a client with a generator: copy already merged on."""
+    product = row.product.model_copy(
+        update={"generated_tagline": LocalisedText(values={row.language: "Slogan"})}
+    )
+    return row.model_copy(update={"product": product})
+
+
+def _unchanged(row: PlanRow) -> PlanRow:
+    return row.model_copy(update={"classification": PlanClassification.UNCHANGED})
+
+
+def test_a_row_with_no_generated_copy_is_dropped_when_a_generator_is_configured() -> None:
+    rows = [_unchanged(_row(GTIN_A)), _with_copy(_row(GTIN_B))]
+
+    kept = run_execute._drop_without_copy(rows, generator_configured=True)
+
+    assert [row.gtin for row in kept] == [GTIN_B]
+
+
+def test_dropping_a_copy_less_row_says_so(caplog: pytest.LogCaptureFixture) -> None:
+    """Silently is how a page goes blank. The drop is correct; being quiet about it is not."""
+    with caplog.at_level("WARNING"):
+        run_execute._drop_without_copy([_unchanged(_row(GTIN_A))], generator_configured=True)
+
+    assert GTIN_A in caplog.text
+    assert "no generated copy" in caplog.text
+
+
+def test_a_generator_less_client_keeps_every_row() -> None:
+    """A blank tagline is the normal condition there, so the guard must not fire at all.
+
+    The same condition `run_plan` derives E21 from (`cfg.generator is not None`). Read without it,
+    this guard would drop every row of every client that publishes feed copy only — a run that
+    does nothing and reports success.
+    """
+    rows = [_row(GTIN_A), _row(GTIN_B)]
+
+    assert run_execute._drop_without_copy(rows, generator_configured=False) == rows
+
+
+def test_the_guard_is_per_language_not_per_gtin() -> None:
+    """A tagline for nl says nothing about fr, and the row being executed is one language."""
+    row = _row(GTIN_A, "fr")
+    nl_only = row.model_copy(
+        update={
+            "product": row.product.model_copy(
+                update={"generated_tagline": LocalisedText(values={"nl": "Slogan"})}
+            )
+        }
+    )
+
+    assert run_execute._drop_without_copy([nl_only], generator_configured=True) == []
+
+
+def test_a_copy_less_row_never_reaches_wordpress_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--plan` confirms every row in the file, so this is the path the guard exists for."""
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    path = _write_json(
+        tmp_path / "plan.json", _plan(_unchanged(_row(GTIN_A)), _with_copy(_row(GTIN_B)))
+    )
+
+    code = run_execute.main(["acme", "--plan", str(path)])
+
+    assert code == 0
+    assert [c["meta"]["gtin"] for c in rec.wp] == [GTIN_B]
+    assert set(load_state("acme").entries) == {GTIN_B}

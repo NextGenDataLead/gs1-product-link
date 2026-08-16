@@ -31,6 +31,7 @@ from lib.records import (
     StateEntry,
 )
 from lib.state import (
+    classify_units,
     compute_content_hash,
     diff_against_state,
     load_state,
@@ -1133,6 +1134,174 @@ def test_diff_empty_products_yields_no_rows() -> None:
 def test_diff_missing_patterns_raises() -> None:
     with pytest.raises(ConfigError, match="slug_pattern"):
         diff_against_state(
+            [_product()],
+            State(client_id="noviplast", entries={}),
+            ["nl"],
+            _wp(slug_pattern=None),
+        )
+
+
+# --- E21 after classification: copy is written for CREATE/CHANGED rows only ---
+#
+# Copy is generated per run for the rows a run will actually execute — NEW and CHANGED — so an
+# UNCHANGED unit legitimately arrives with none. E21 asks "was this unit supposed to have copy?",
+# and only a row that is going to be written was. Asked before the classification, as it used to
+# be, it cannot tell the two apart and reports every already-live page as work.
+
+
+def _live(product: ProductRecord, language: str = "nl") -> State:
+    """State recording ``product`` as published and matching, for ``language``."""
+    baseline = _plan_one(product, State(client_id="noviplast", entries={}))
+    return _state_with(
+        product.gtin,
+        language,
+        content_hash=getattr(baseline, "content_hash"),  # noqa: B009
+        wp_url=getattr(baseline, "target_url"),  # noqa: B009
+    )
+
+
+def test_an_unchanged_unit_without_copy_keeps_its_row() -> None:
+    """The change PR 3 turns on: already live, nothing to publish, so no copy was written."""
+    product = _product()  # no generated_tagline
+
+    rows, skipped = diff_against_state(
+        [product],
+        _live(product),
+        ["nl"],
+        _wp(),
+        require_generated_copy=True,
+        hash_source={product.gtin: product},
+    )
+
+    assert [r.classification for r in rows] == [PlanClassification.UNCHANGED]
+    # Not a skip: reporting a correctly-skipped page as a work item is what this replaces.
+    assert skipped == []
+
+
+def test_a_new_unit_without_copy_is_still_held() -> None:
+    product = _product()
+
+    rows, skipped = diff_against_state(
+        [product],
+        State(client_id="noviplast", entries={}),
+        ["nl"],
+        _wp(),
+        require_generated_copy=True,
+    )
+
+    assert rows == []
+    assert [(s.language, s.reason) for s in skipped] == [("nl", SkipReason.NO_GENERATED_COPY)]
+
+
+def test_a_changed_unit_without_copy_is_still_held() -> None:
+    """The row a run *would* write is the one E21 exists for."""
+    before, after = _product(), _product(brand="Ander Merk")
+
+    rows, skipped = diff_against_state(
+        [after],
+        _live(before),
+        ["nl"],
+        _wp(),
+        require_generated_copy=True,
+        hash_source={after.gtin: after},
+    )
+
+    assert rows == []
+    assert [(s.language, s.reason) for s in skipped] == [("nl", SkipReason.NO_GENERATED_COPY)]
+
+
+def test_a_held_unit_without_copy_is_held_rather_than_skipped() -> None:
+    """HELD outranks E21 now that E21 is asked after the classification, and should.
+
+    A product somebody took down is not waiting for copy — it is waiting for a decision. Reported
+    as ``no_generated_copy`` it read as a generator failure and sent the operator to re-run
+    generation, which would change nothing.
+    """
+    product = _product()
+    state = _live(product)
+    entry = state.entries[product.gtin]["nl"]
+    state.entries[product.gtin]["nl"] = entry.model_copy(update={"wp_status": "draft"})
+
+    rows, skipped = diff_against_state(
+        [product],
+        state,
+        ["nl"],
+        _wp(),
+        require_generated_copy=True,
+        hash_source={product.gtin: product},
+    )
+
+    assert [r.classification for r in rows] == [PlanClassification.HELD]
+    assert skipped == []
+
+
+def test_e18_still_runs_before_the_classification() -> None:
+    """Unmoved: a row with no title cannot be built at all, whatever it would classify as."""
+    product = _product(product_name=LocalisedText(values={"nl": "Rugsteun"}))  # no fr
+
+    rows, skipped = diff_against_state(
+        [product],
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        require_generated_copy=True,
+    )
+
+    assert rows == []
+    # fr is dropped for the missing name, not for the copy it was never going to be asked for
+    # (nl comes first: the skips follow the language order, not the rule order).
+    assert [(s.language, s.reason) for s in skipped] == [
+        ("nl", SkipReason.NO_GENERATED_COPY),
+        ("fr", SkipReason.MISSING_PRODUCT_NAME),
+    ]
+
+
+# --- classify_units: the same classification, with no skip rules applied ------
+
+
+def test_classify_units_agrees_with_diff_against_state() -> None:
+    """The pin that stops the two paths drifting: generation scope and the plan must match.
+
+    ``run_generate`` narrows to NEW/CHANGED using ``classify_units``; ``run_plan`` classifies with
+    ``diff_against_state``. A disagreement generates copy for the wrong units, and the symptom —
+    a plan row with no copy — looks like a producer failure rather than a classification one.
+    """
+    live, fresh = _product(), _product(gtin="08713195000527")
+    state = _live(live)
+
+    rows, _ = diff_against_state(
+        [live, fresh], state, ["nl"], _wp(), hash_source={live.gtin: live, fresh.gtin: fresh}
+    )
+    classified = classify_units(
+        [live, fresh], state, ["nl"], _wp(), hash_source={live.gtin: live, fresh.gtin: fresh}
+    )
+
+    assert classified == {(r.gtin, r.language): r.classification for r in rows}
+    assert classified[(live.gtin, "nl")] is PlanClassification.UNCHANGED
+    assert classified[(fresh.gtin, "nl")] is PlanClassification.NEW
+
+
+def test_classify_units_applies_no_skip_rules() -> None:
+    """It answers "what would this run publish", which every skip rule is downstream of.
+
+    E18 in particular: the one unit whose French name exists only once the producer translates it
+    would be dropped here, and then never generated for — the gap closing itself out of existence.
+    """
+    product = _product(product_name=LocalisedText(values={"nl": "Rugsteun"}))  # no fr, no copy
+
+    classified = classify_units(
+        [product], State(client_id="noviplast", entries={}), ["nl", "fr"], _wp()
+    )
+
+    assert classified == {
+        (product.gtin, "nl"): PlanClassification.NEW,
+        (product.gtin, "fr"): PlanClassification.NEW,
+    }
+
+
+def test_classify_units_missing_patterns_raises() -> None:
+    with pytest.raises(ConfigError, match="slug_pattern"):
+        classify_units(
             [_product()],
             State(client_id="noviplast", entries={}),
             ["nl"],

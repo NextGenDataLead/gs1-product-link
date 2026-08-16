@@ -8,6 +8,7 @@ import openpyxl
 import pytest
 
 from lib.categories import (
+    assign_categories,
     coverage_report,
     distinct_bricks,
     draft_brick_map,
@@ -303,3 +304,42 @@ def test_draft_without_datamodel_marks_all_unannotated() -> None:
     draft = draft_brick_map(distinct_bricks(products), products, datamodel=None)
     assert draft.unannotated == ["10003865"]
     assert "1 product(s)" in draft.annotations["10003865"]
+
+
+# --- assign_categories --------------------------------------------------------
+#
+# Lifted out of ``run_plan`` when ``run_generate`` had to reproduce the same records: the content
+# hash covers ``category``, so a caller that classifies without assigning categories first gets
+# different hashes from the plan's and generates copy for the wrong units.
+
+
+def test_assign_categories_sets_the_term_and_reports_nothing() -> None:
+    product = _product("08713195000123", "10003865")
+
+    assigned, issues = assign_categories(
+        CategoryConfig(terms=["tuin"], brick_category_map={"10003865": "tuin"}, overrides={}),
+        [product],
+    )
+
+    assert [p.category for p in assigned] == ["tuin"]
+    assert issues == []
+    assert product.category is None  # the input is not mutated
+
+
+def test_assign_categories_leaves_an_unmapped_brick_unset_and_reports_it() -> None:
+    assigned, issues = assign_categories(
+        CategoryConfig(terms=["tuin"], brick_category_map={"99999999": "tuin"}, overrides={}),
+        [_product("08713195000123", "10003865")],
+    )
+
+    assert [p.category for p in assigned] == [None]  # never guessed
+    assert [i.issue for i in issues] == ["category_unmapped"]
+
+
+def test_assign_categories_without_a_config_is_a_no_op() -> None:
+    products = [_product("08713195000123", "10003865")]
+
+    assigned, issues = assign_categories(None, products)
+
+    assert assigned == products
+    assert issues == []

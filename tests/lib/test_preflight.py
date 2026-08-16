@@ -15,13 +15,16 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
+from lib.categories import assign_categories
 from lib.config import (
+    CategoryConfig,
     ClientConfig,
     ExportConfig,
     GeneratorConfig,
@@ -53,9 +56,11 @@ from lib.preflight import (
     check_wordpress,
     in_scope,
     run_checks,
+    units_needing_copy,
     worst_status,
 )
-from lib.records import LocalisedText, ProductRecord
+from lib.records import LocalisedText, ProductRecord, State, StateEntry
+from lib.state import diff_against_state, save_state, state_path
 from lib.wp_client import WordPressIdentity
 
 GTIN_A = "08713195007359"
@@ -302,7 +307,140 @@ def test_scope_of_nothing_is_a_failure_not_a_quiet_pass(tmp_path: Path) -> None:
     assert "publish nothing and report success" in result.detail
 
 
+# --- units_needing_copy: which units a run would create or change -------------
+#
+# Copy is written per run for the rows a run executes — NEW and CHANGED. This is what decides
+# which those are, and it is the same answer `run_plan` will reach, because both go through
+# `lib.state`'s classifier over category-assigned records.
+
+
+def _publish(cfg: ClientConfig, product: ProductRecord, language: str = "nl") -> None:
+    """Record ``product`` in state as live and matching, the way a successful run would."""
+    rows, _ = diff_against_state(
+        [product], State(client_id=cfg.client_id, entries={}), [language], cfg.wordpress
+    )
+    row = rows[0]
+    save_state(
+        State(
+            client_id=cfg.client_id,
+            entries={
+                product.gtin: {
+                    language: StateEntry(
+                        wp_page_id=1,
+                        wp_url=row.target_url,
+                        wp_featured_media_id=None,
+                        content_hash=row.content_hash,
+                        gs1_link_set_hash="g" * 64,
+                        last_run=datetime(2026, 8, 16, 10, 0, tzinfo=UTC),
+                        title=row.title,
+                    )
+                }
+            },
+        )
+    )
+
+
+def test_units_needing_copy_is_the_new_and_changed_units(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    live, fresh = _product(GTIN_A), _product(GTIN_B)
+    _publish(cfg, live)
+
+    assert units_needing_copy(cfg, [live, fresh]) == {(GTIN_B, "nl")}
+
+
+def test_units_needing_copy_includes_a_unit_whose_content_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    product = _product(GTIN_A)
+    _publish(cfg, product)
+    edited = product.model_copy(update={"brand": "Ander Merk"})
+
+    assert units_needing_copy(cfg, [edited]) == {(GTIN_A, "nl")}
+
+
+def test_units_needing_copy_gives_up_wide_when_state_will_not_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``None`` means "could not decide", and every caller then asks for every unit.
+
+    Erring wide is the same direction ``in_scope`` errs. Narrow here and a run silently writes no
+    copy for units it is about to publish, which surfaces as blank pages rather than as an error.
+    And it must not *quarantine* the file: ``load_state`` would, and consuming the E19 reset here
+    means the operator never sees "every row re-plans as NEW" at the plan gate.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config()
+    path = state_path(cfg.client_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{ not json", encoding="utf-8")
+
+    assert units_needing_copy(cfg, [_product(GTIN_A)]) is None
+    assert path.read_text(encoding="utf-8") == "{ not json"  # left exactly as it was
+
+
+def test_units_needing_copy_gives_up_wide_without_url_patterns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    wordpress = _make_config().wordpress.model_copy(update={"slug_pattern": None})
+    cfg = _make_config(wordpress=wordpress)
+
+    assert units_needing_copy(cfg, [_product(GTIN_A)]) is None
+
+
+def test_units_needing_copy_assigns_categories_before_classifying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The category is in the content hash, so skipping it classifies every live unit CHANGED.
+
+    That failure is quiet and expensive: generation would be scoped to "everything" for ever, and
+    the narrowing would look like it worked.
+    """
+    monkeypatch.chdir(tmp_path)
+    categories = CategoryConfig(
+        terms=["tuin"], brick_category_map={"10003865": "tuin"}, overrides={}
+    )
+    cfg = _make_config(categories=categories)
+    product = _product(GTIN_A).model_copy(update={"gpc_brick_code": "10003865"})
+    categorised, _ = assign_categories(categories, [product])
+    _publish(cfg, categorised[0])
+
+    assert units_needing_copy(cfg, [product]) == set()
+
+
 # --- Generated copy for this run ---------------------------------------------
+
+
+def test_generation_results_count_only_the_units_this_run_would_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Otherwise the doctor FAILs on every run after the first, which is how a check stops working.
+
+    An already-published unit is not generated for, so counting it as uncovered would report the
+    system working correctly as a failure.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        process_list=_write_process_list(tmp_path, [GTIN_A, GTIN_B]),
+    )
+    live, fresh = _product(GTIN_A), _product(GTIN_B)
+    _publish(cfg, live)
+    save_results(_results_for(cfg, [fresh]))
+
+    result = check_generation_results(cfg, [live, fresh])
+
+    assert result.status is Status.OK
+    assert result.data["total"] == 1
+    assert result.data["covered"] == 1
+    # Named, not silently dropped: a narrowing nobody can see is the one that turns out wrong.
+    assert result.data["unchanged"] == 1
+    assert "1 in-scope unit(s) are already live and unchanged" in result.detail
 
 
 def test_generation_results_count_only_the_products_in_scope(
