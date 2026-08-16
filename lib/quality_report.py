@@ -54,9 +54,10 @@ _ABSENT = "○"
 #: Column header for the video pair — not a ``gdsn_map`` field, but the same kind of fact.
 _VIDEO_COLUMN = "video"
 
-#: Suffix marking a column whose gap only thins the page. Plain text on purpose: this report is
-#: read both rendered and as raw markdown, and anything HTML shows up as a tag in the second.
-_OPTIONAL_MARK = "~"
+#: Suffix marking a column whose gap only thins the page. A word, not a symbol: this report is read
+#: both rendered and as raw markdown, so anything HTML shows as a tag in the second — and a bare
+#: mark (`~`, bold) still sends the reader to the legend to find out what it meant.
+_OPTIONAL_LABEL = "(optional)"
 
 
 class MatrixInput(NamedTuple):
@@ -407,40 +408,46 @@ def _matrix_lines(  # noqa: PLR0913 — a matrix needs its rows, its columns, an
     how much is filled, so the SKUs closest to publishable sit at the top and the worst-served at
     the bottom — the order someone works in, rather than GTIN order, which carries no information.
 
-    Mandatory columns come first, and only the optional ones are marked, because a gap in a
-    mandatory column stops the SKU while a gap in an optional one only thins the page — two facts
-    that look identical in a matrix otherwise.
+    Mandatory columns come first and ``score`` sits on the boundary, so the two groups are
+    separated by the number that only counts the first of them: a gap before ``score`` stops the
+    SKU, a gap after it only thins the page. Those two facts look identical in a matrix otherwise.
 
-    **Marking the shorter group is the third attempt at saying that, and the first that works
-    everywhere.** ``**bold**`` was invisible: markdown makes header cells bold anyway, so the
-    marker rendered as nothing in the only form of the report anyone reads. A ``MANDATORY<br>``
-    group label inside each cell rendered correctly but put a literal HTML tag in front of any
-    reader looking at the markdown as text. A trailing ``~`` is plain text on both surfaces, and
-    it goes on the optional columns because they are the few — mandatory is most of the table.
+    **Saying which is which took four goes, and only the last reads without a legend.**
+    ``**bold**`` was invisible, markdown making header cells bold anyway. A ``MANDATORY<br>``
+    group label rendered correctly and put a literal HTML tag in front of anyone reading the
+    markdown as text — this report has both surfaces. A trailing ``~`` was plain on both and
+    meant nothing on its own. The word ``(optional)`` needs no decoding.
+
+    **``score`` counts the mandatory columns only**, because the question it answers is how close
+    this SKU is to publishable, and the table is sorted by it. Counting everything let a product
+    with both optional values and a missing mandatory one outrank a publishable one — putting the
+    wrong SKU at the top of a worklist whose whole purpose is the order.
     """
     if not products:
         return ["## 0. Coverage matrix", "", "_No products in scope._", ""]
 
     columns = _columns(gdsn_map, gdsn_extras)
+    # Mandatory first is `_columns`' contract and a test pins the single crossing, so counting
+    # them is enough to know where the boundary falls — nothing here re-sorts or re-partitions.
+    split = sum(1 for c in columns if c.required)
     rows: list[tuple[int, list[str]]] = []
     for product in products:
         gtin = product.gtin14
         cells, score = [], 0
-        for column in columns:
+        for index, column in enumerate(columns):
             mark, filled = _mark(product, column, languages, video_confirmed)
             cells.append(mark)
-            score += filled
+            score += filled if index < split else 0
         name = _name(names, gtin)[:20]
-        rows.append((score, [f"`{gtin}`", name, *cells, str(score)]))
+        rows.append((score, [f"`{gtin}`", name, *cells[:split], str(score), *cells[split:]]))
 
-    # Descending by fill, then by GTIN so equal rows keep a stable order between runs.
+    # Descending by mandatory fill, then by GTIN so equal rows keep a stable order between runs.
     rows.sort(key=lambda r: (-r[0], r[1][0]))
-    optional = [c for c in columns if not c.required]
-    last_mandatory = [c for c in columns if c.required][-1].header
     header = (
         ["#", "GTIN", "Name"]
-        + [c.header if c.required else f"{c.header} {_OPTIONAL_MARK}" for c in columns]
+        + [c.header for c in columns[:split]]
         + ["score"]
+        + [f"{c.header} {_OPTIONAL_LABEL}" for c in columns[split:]]
     )
     # The counter is applied after the sort: it numbers the worklist as shown, so "row 12" means
     # the same thing to two people reading the same report.
@@ -449,11 +456,11 @@ def _matrix_lines(  # noqa: PLR0913 — a matrix needs its rows, its columns, an
         "## 0. Coverage matrix",
         "",
         f"**{len(products)} SKU{'s' if len(products) != 1 else ''} in scope**. "
-        f"{_PRESENT} present · {_PARTIAL} one language only · {_ABSENT} missing. Every column up "
-        f"to `{last_mandatory}` is mandatory — a gap there holds the whole SKU; the "
-        f"{len(optional)} marked `{_OPTIONAL_MARK}` only thin the page. Sorted richest first; "
-        f"`score` counts filled language-slots, so a localised field can contribute "
-        f"{len(languages)}.",
+        f"{_PRESENT} present · {_PARTIAL} one language only · {_ABSENT} missing. The columns "
+        f"before `score` are mandatory — a gap there holds the whole SKU; `score` counts their "
+        f"filled language-slots, so a localised field contributes {len(languages)}, and the "
+        f"table is sorted with the closest to publishable at the top. The columns after `score` "
+        f"are marked {_OPTIONAL_LABEL} and only thin the page.",
         "",
         *_table(header, numbered),
         "",
