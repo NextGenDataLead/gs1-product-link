@@ -434,12 +434,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stated nowhere.
 
 ### Fixed
+- **The coverage matrix's `score` counted columns that cannot stop a product publishing, and the
+  table is sorted by it.** So a SKU carrying both optional values but missing a mandatory one
+  outranked a publishable one, putting the wrong product at the top of a worklist whose whole
+  purpose is the order. On the real report `08713195003344` sat at row 29 with eleven mandatory
+  slots filled, below `08713195006529` at row 24 — same eleven, ranked higher purely for carrying
+  a material.
+
+  `score` now counts the mandatory columns only and sits **between** the two groups, so what it
+  counts is legible from where it is rather than from the legend. Measured: **every mark
+  unchanged**, 25 of 37 scores drop, 31 of 37 rows move.
+
 - **The `MANDATORY<br>` group label put a literal HTML tag in the report.** Correct when rendered,
   and wrong for everyone reading the markdown as text — which is a surface too. That was the
   second miss on the same distinction in a row: the `**bold**` it replaced was invisible when
-  rendered. The mark is now a trailing `~`, plain text on both surfaces, and it goes on the
-  **optional** columns because they are the few — with the dimensions armed it is eleven mandatory
-  against two. The legend names the last mandatory column instead of describing a typeface.
+  rendered. It went to a trailing `~` — plain on both surfaces, but still a symbol to look up —
+  and finally to the word **`(optional)`**, which needs no legend. It goes on the optional columns
+  because they are the few: with the dimensions armed it is eleven mandatory against two.
 
 - **The data-quality report marked its mandatory columns in bold, and markdown table headers are
   bold already — so the mark rendered as nothing.** §0's coverage matrix separates the two facts
