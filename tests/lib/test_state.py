@@ -667,6 +667,10 @@ def test_diff_held_outranks_a_missing_resolver_link() -> None:
     rows, _ = diff_against_state([product], state, ["nl"], _wp())
 
     assert rows[0].classification is PlanClassification.HELD
+    # And it carries no diff. This row is the one place the two facts can contradict each other:
+    # the resolver link *is* missing, so the field-level diff would happily say "will be written"
+    # — on a row nothing will be written for. The operator reads that diff at the plan gate.
+    assert rows[0].diff is None
 
 
 def test_diff_changed_in_body_only_has_no_diff() -> None:
@@ -1269,12 +1273,8 @@ def test_classify_units_agrees_with_diff_against_state() -> None:
     live, fresh = _product(), _product(gtin="08713195000527")
     state = _live(live)
 
-    rows, _ = diff_against_state(
-        [live, fresh], state, ["nl"], _wp(), hash_source={live.gtin: live, fresh.gtin: fresh}
-    )
-    classified = classify_units(
-        [live, fresh], state, ["nl"], _wp(), hash_source={live.gtin: live, fresh.gtin: fresh}
-    )
+    rows, _ = diff_against_state([live, fresh], state, ["nl"], _wp())
+    classified = classify_units([live, fresh], state, ["nl"], _wp())
 
     assert classified == {(r.gtin, r.language): r.classification for r in rows}
     assert classified[(live.gtin, "nl")] is PlanClassification.UNCHANGED

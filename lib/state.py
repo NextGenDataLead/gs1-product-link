@@ -288,21 +288,8 @@ def _has_no_resolver_link(prior: StateEntry) -> bool:
     return not prior.gs1_link_set_hash
 
 
-def _classify(
-    prior: StateEntry | None, content_hash: str, title: str | None, target_url: str
-) -> tuple[PlanClassification, dict[str, tuple[str, str]] | None]:
-    """Classify one row against its prior state entry, with a field-level diff.
-
-    The diff carries the fields whose prior value :class:`~lib.records.StateEntry`
-    actually recorded — ``title`` and ``target_url`` (old ``wp_url`` → new) — in the
-    order §10.6.2 presents them. Fields state does not keep are never fabricated, and
-    an entry written before titles were persisted (``title is None``) omits the title
-    row rather than guessing. A CHANGED row whose recorded fields all still match
-    carries no diff: the change is in the product body, which state does not retain.
-
-    ``title`` is likewise optional, for :func:`classify_units`, which asks only *what* a unit
-    would classify as and has no row to put a diff on. A caller with no title gets no title
-    diff rather than a fabricated one.
+def _classify(prior: StateEntry | None, content_hash: str) -> PlanClassification:
+    """Classify one unit against its prior state entry.
 
     HELD is tested **before** the hash, because a deliberately unpublished product's hash
     still matches the content it was published with — that is what makes it invisible.
@@ -314,21 +301,52 @@ def _classify(
     so on the hash alone a ``/gs1-pages`` run followed by ``/gs1-links`` would find every
     row UNCHANGED and silently publish nothing. HELD still outranks it — a product somebody
     took down does not become actionable just because half of it was never written.
+
+    The field-level diff is :func:`_row_diff`, deliberately separate: only ``diff_against_state``
+    builds rows to put one on, and folding it in here meant :func:`classify_units` computing a
+    diff it discards — which made the title argument, and everything guarding it, unobservable.
     """
     if prior is None:
-        return PlanClassification.NEW, None
+        return PlanClassification.NEW
     if _is_held(prior):
-        return PlanClassification.HELD, None
+        return PlanClassification.HELD
     if _has_no_resolver_link(prior):
-        return PlanClassification.CHANGED, {"gs1_link": ("not written", "will be written")}
+        return PlanClassification.CHANGED
     if prior.content_hash == content_hash:
-        return PlanClassification.UNCHANGED, None
+        return PlanClassification.UNCHANGED
+    return PlanClassification.CHANGED
+
+
+def _row_diff(
+    prior: StateEntry | None,
+    classification: PlanClassification,
+    title: str,
+    target_url: str,
+) -> dict[str, tuple[str, str]] | None:
+    """The field-level diff for a plan row, or ``None`` when there is nothing to show.
+
+    Carries the fields whose prior value :class:`~lib.records.StateEntry` actually recorded —
+    ``title`` and ``target_url`` (old ``wp_url`` → new) — in the order §10.6.2 presents them.
+    Fields state does not keep are never fabricated, and an entry written before titles were
+    persisted (``title is None`` on the *entry*) omits the title row rather than guessing. A
+    CHANGED row whose recorded fields all still match carries no diff: the change is in the
+    product body, which state does not retain.
+
+    Only a CHANGED row has a diff. ``_has_no_resolver_link`` is asked again rather than passed
+    down from :func:`_classify` — it is one pure predicate called twice, not a second opinion
+    about what the classification means, and threading the reason through would give
+    :func:`classify_units` a return value it has no use for.
+    """
+    if classification is not PlanClassification.CHANGED or prior is None:
+        return None
+    if _has_no_resolver_link(prior):
+        return {"gs1_link": ("not written", "will be written")}
     diff: dict[str, tuple[str, str]] = {}
-    if prior.title is not None and title is not None and prior.title != title:
+    if prior.title is not None and prior.title != title:
         diff["title"] = (prior.title, title)
     if prior.wp_url != target_url:
         diff["target_url"] = (prior.wp_url, target_url)
-    return PlanClassification.CHANGED, diff or None
+    return diff or None
 
 
 class _Patterns(NamedTuple):
@@ -361,7 +379,6 @@ class _UnitPlan(NamedTuple):
     target_url: str
     content_hash: str
     classification: PlanClassification
-    diff: dict[str, tuple[str, str]] | None
 
 
 def _plan_unit(  # noqa: PLR0913 — one argument per input the classification is a function of
@@ -371,7 +388,6 @@ def _plan_unit(  # noqa: PLR0913 — one argument per input the classification i
     patterns: _Patterns,
     hashed: ProductRecord,
     prior: StateEntry | None,
-    title: str | None,
 ) -> _UnitPlan:
     """Build one unit's slug, target URL, content hash and classification.
 
@@ -381,6 +397,9 @@ def _plan_unit(  # noqa: PLR0913 — one argument per input the classification i
     again once that copy is merged, to build the plan. Two implementations of it would drift, and
     the symptom would be copy generated for one set of units and demanded for another: a plan row
     with no copy, which reads as a producer failure rather than a classification one.
+
+    It stops at the classification. The row's title and its diff belong to the caller that builds
+    rows, and pulling them in here gave the other caller arguments whose effect it threw away.
     """
     slug = patterns.slug.format(gtin=product.gtin, gtin14=product.gtin14)
     target_url = patterns.target_url.format(
@@ -392,8 +411,7 @@ def _plan_unit(  # noqa: PLR0913 — one argument per input the classification i
         gtin14=product.gtin14,
     )
     content_hash = compute_content_hash(hashed, language, target_url)
-    classification, diff = _classify(prior, content_hash, title, target_url)
-    return _UnitPlan(slug, target_url, content_hash, classification, diff)
+    return _UnitPlan(slug, target_url, content_hash, _classify(prior, content_hash))
 
 
 def classify_units(
@@ -401,7 +419,6 @@ def classify_units(
     state: State,
     languages: list[str],
     wordpress: WordPressConfig,
-    hash_source: Mapping[str, ProductRecord] | None = None,
 ) -> dict[tuple[str, str], PlanClassification]:
     """How every ``(GTIN, language)`` would classify — with **no** skip rule applied.
 
@@ -423,32 +440,26 @@ def classify_units(
         languages: The languages to classify per product.
         wordpress: The client's WordPress config; supplies the slug/target-URL patterns, site URL,
             post type, and default language.
-        hash_source: The records that define the content, keyed by GTIN, when they differ from the
-            records passed in — see :func:`diff_against_state`. Callers upstream of the generator
-            have nothing to exclude and pass nothing.
 
     Returns:
         ``(gtin, language) -> classification`` for every combination, in no particular order.
 
     Raises:
         ConfigError: If ``wordpress.slug_pattern`` or ``wordpress.target_url_pattern`` is unset.
+
+    Note:
+        There is no ``hash_source`` here, unlike :func:`diff_against_state`. That argument exists
+        to exclude what a language model wrote, and this runs *before* a model has written
+        anything: the records it is given are the feed's own by construction. Accepting one would
+        be an argument no caller could have a use for — and it was here until a mutation showed
+        that removing it broke nothing.
     """
     patterns = _patterns(wordpress)
     classified: dict[tuple[str, str], PlanClassification] = {}
     for product in products:
-        hashed = product if hash_source is None else hash_source[product.gtin]
         for language in languages:
             prior = state.entries.get(product.gtin, {}).get(language)
-            unit = _plan_unit(
-                product,
-                language,
-                wordpress,
-                patterns,
-                hashed,
-                prior,
-                # No title: this answers what a unit would classify as, not what its row says.
-                None,
-            )
+            unit = _plan_unit(product, language, wordpress, patterns, product, prior)
             classified[(product.gtin, language)] = unit.classification
     return classified
 
@@ -606,7 +617,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                 continue
             title = product.product_name.values[language]
             prior = state.entries.get(product.gtin, {}).get(language)
-            unit = _plan_unit(product, language, wordpress, patterns, hashed, prior, title)
+            unit = _plan_unit(product, language, wordpress, patterns, hashed, prior)
             tagline = product.generated_tagline
             if (
                 require_generated_copy  # E21
@@ -631,7 +642,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                     slug=unit.slug,
                     content_hash=unit.content_hash,
                     target_url=unit.target_url,
-                    diff=unit.diff,
+                    diff=_row_diff(prior, unit.classification, title, unit.target_url),
                     product=product,
                 )
             )

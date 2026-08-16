@@ -371,9 +371,7 @@ def units_needing_copy(
     # assigns them or every live unit classifies CHANGED and the narrowing silently does nothing.
     categorised, _ = assign_categories(cfg.categories, scoped_products)
     try:
-        classified = classify_units(
-            categorised, state, cfg.wordpress.languages, cfg.wordpress, hash_source=None
-        )
+        classified = classify_units(categorised, state, cfg.wordpress.languages, cfg.wordpress)
     except ConfigError:
         return None  # check_config reports the missing patterns
     return {unit for unit, kind in classified.items() if kind in WILL_BE_WRITTEN}
