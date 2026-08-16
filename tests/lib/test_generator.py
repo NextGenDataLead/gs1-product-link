@@ -1,8 +1,11 @@
 """Unit tests for the content-generator core (``lib.generator``).
 
-Pure and network-free: exercises the cache, the request/result contract, and the deterministic
-merge. No LLM is involved — a producer's output is simulated by constructing
+Pure and network-free: exercises the per-run results seam, the request/result contract, and the
+deterministic merge. No LLM is involved — a producer's output is simulated by constructing
 :class:`~lib.generator.GenerationResult` directly.
+
+There is no store. Copy arrives in one ``generation_results.json`` per run, is read once by
+:func:`~lib.generator.merge_generated`, and is never reused to let a later run skip work.
 """
 
 from __future__ import annotations
@@ -17,20 +20,18 @@ from lib.gdsn import GdsnSource
 from lib.generator import (
     MODE_GENERATE,
     MODE_TIGHTEN,
-    ORIGIN_GENERATED,
-    ORIGIN_TIGHTENED,
-    GeneratedCache,
     GenerationContext,
     GenerationResult,
+    ResultItem,
+    ResultsFile,
     TranslatableField,
     _combine_title,
-    apply_result,
     generation_context,
-    load_cache,
+    load_results,
     merge_generated,
     pending_requests,
-    prefill_from_feed,
-    save_cache,
+    result_item,
+    save_results,
     translation_gaps,
 )
 from lib.records import LocalisedText, ProductRecord
@@ -87,6 +88,24 @@ def _result(
     )
 
 
+def _copy(*items: ResultItem, provenance: str = "in-session") -> ResultsFile:
+    """One run's results file, holding exactly these items."""
+    return ResultsFile(client_id="noviplast", provenance=provenance, results=list(items))
+
+
+def _copy_for(
+    product: ProductRecord,
+    context: GenerationContext,
+    *usps: str,
+    translations: dict[str, str] | None = None,
+    inferences: list[str] | None = None,
+) -> ResultsFile:
+    """A results file answering every pending request for ``product`` with the same copy."""
+    result = _result(*usps, translations=translations, inferences=inferences)
+    requests = pending_requests([product], context)
+    return _copy(*(result_item(request, result) for request in requests))
+
+
 # --- title combiner ----------------------------------------------------------
 
 
@@ -107,28 +126,29 @@ def test_combine_title(name: str, variation: str | None, expected: str) -> None:
 # --- pending_requests --------------------------------------------------------
 
 
-def test_pending_requests_flags_every_language_when_cache_empty() -> None:
-    cache = GeneratedCache(client_id="noviplast")
-    requests = pending_requests([_product()], cache, _ctx("nl", "fr"))
+def test_pending_requests_flags_every_language() -> None:
+    requests = pending_requests([_product()], _ctx("nl", "fr"))
 
     assert {r.language for r in requests} == {"nl", "fr"}
     assert requests[0].inputs.marketing_message == "Water voor je planten"
 
 
-def test_pending_requests_skips_when_fingerprint_matches() -> None:
-    cache = GeneratedCache(client_id="noviplast")
-    product = _product()
-    request = next(r for r in pending_requests([product], cache, _ctx("nl")))
-    apply_result(
-        cache,
-        request,
-        _result("Tagline", "Bullet"),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
-    )
+def test_every_unit_is_pending_on_every_run() -> None:
+    """No store, so nothing can make a unit look already done — the point of the whole change.
 
-    assert pending_requests([product], cache, _ctx("nl")) == []
+    The cache's freshness skip is what let a re-run reuse frozen copy. With it gone, the same call
+    must keep naming a unit however much copy already exists for it, and there is no argument left
+    through which a caller could tell it otherwise.
+    """
+    product = _product()
+    context = _ctx("nl", "fr")
+
+    first = pending_requests([product], context)
+    written = _copy_for(product, context, "Tagline", "Bullet")
+
+    assert len(written.results) == 2  # both units have copy now…
+    assert pending_requests([product], context) == first  # …and both are still asked for
+    assert {r.language for r in first} == {"nl", "fr"}
 
 
 # --- the producer's `functional_name` input (attr 3301) ----------------------
@@ -137,7 +157,7 @@ def test_pending_requests_skips_when_fingerprint_matches() -> None:
 def test_the_producer_is_seeded_with_this_languages_own_name_when_the_feed_carries_one() -> None:
     product = _product(product_name=LocalisedText(values={"nl": "Bewateringpin", "fr": "Pic"}))
 
-    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))[0]
+    request = pending_requests([product], _ctx("fr"))[0]
 
     assert request.inputs.functional_name == "Pic"
 
@@ -152,7 +172,7 @@ def test_a_unit_with_no_name_in_its_own_language_is_seeded_with_the_default_one(
     """
     product = _product(product_name=LocalisedText(values={"nl": "Bewateringpin"}))  # no fr
 
-    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))[0]
+    request = pending_requests([product], _ctx("fr"))[0]
 
     assert request.inputs.functional_name == "Bewateringpin"
 
@@ -169,31 +189,30 @@ def test_a_functional_name_extra_no_longer_feeds_the_producer() -> None:
         extras_localised={"functional_name": LocalisedText(values={"fr": "autre chose"})},
     )
 
-    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))[0]
+    request = pending_requests([product], _ctx("fr"))[0]
 
     assert request.inputs.functional_name == "Bewateringpin"
 
 
 def test_translation_sources_carry_only_the_fields_this_unit_is_actually_missing() -> None:
-    """Which is why retiring a duplicate source re-fingerprints the units it filled, not the cache.
+    """`translation_sources` holds one key per *gap*, not one per translatable field.
 
-    `translation_sources` is part of the fingerprint and holds one key per *gap*, not one per
-    translatable field — so a product the feed carries in every language keeps its cached copy
-    when a translatable source is added or removed.
+    It is part of the fingerprint, so the narrower reading is what stops a product the feed carries
+    in every language re-fingerprinting whenever a translatable source is added or removed.
     """
     product = _product(
         product_name=LocalisedText(values={"nl": "Bewateringpin", "fr": "Pic"}),
         description_short=LocalisedText(values={"nl": "Water", "fr": "Eau"}),
     )
 
-    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))[0]
+    request = pending_requests([product], _ctx("fr"))[0]
 
     assert set(request.inputs.translation_sources) == {"material"}  # the nl-only flat extra
 
 
 def test_pending_requests_asks_the_producer_to_fill_each_language_gap() -> None:
     product = _product()  # nl only, in product_name / description_short / material
-    requests = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("fr"))
+    requests = pending_requests([product], _ctx("fr"))
 
     gaps = {gap.field: gap for gap in requests[0].translations}
     assert set(gaps) == {"product_name", "description_short", "material"}
@@ -251,7 +270,7 @@ def test_a_placeholder_slot_is_dropped_from_a_multi_value_material() -> None:
     """
     product = _product(extras={"material": "kunststof, zzzanders"})
 
-    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))[0]
+    request = pending_requests([product], _ctx("nl"))[0]
 
     assert request.inputs.material == "kunststof"
 
@@ -271,7 +290,7 @@ def test_a_material_of_placeholders_only_is_still_absent() -> None:
     # renders as a bare `Materiaal:` bullet and reads as a translatable value.
     product = _product(extras={"material": "zzzanders, zzzonbekend"})
 
-    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))[0]
+    request = pending_requests([product], _ctx("nl"))[0]
 
     assert request.inputs.material is None
     gaps = translation_gaps(product, "fr", _ctx("nl", "fr"))
@@ -283,7 +302,7 @@ def test_a_material_of_real_slots_is_passed_through_byte_identical() -> None:
     # real comes back exactly as the feed wrote it, punctuation and stray spacing included.
     product = _product(extras={"material": "kunststof,metaal , stof"})
 
-    request = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))[0]
+    request = pending_requests([product], _ctx("nl"))[0]
 
     assert request.inputs.material == "kunststof,metaal , stof"
 
@@ -297,10 +316,9 @@ def test_an_empty_slot_is_dropped_whether_or_not_a_placeholder_is_present() -> N
     """
     with_placeholder = _product(extras={"material": "kunststof, , zzzanders"})
     without = _product(extras={"material": "kunststof, , metaal"})
-    cache = GeneratedCache(client_id="noviplast")
 
-    assert pending_requests([with_placeholder], cache, _ctx("nl"))[0].inputs.material == "kunststof"
-    assert pending_requests([without], cache, _ctx("nl"))[0].inputs.material == "kunststof, metaal"
+    assert pending_requests([with_placeholder], _ctx("nl"))[0].inputs.material == "kunststof"
+    assert pending_requests([without], _ctx("nl"))[0].inputs.material == "kunststof, metaal"
 
 
 def test_a_multi_value_material_renders_as_one_technische_details_line() -> None:
@@ -353,90 +371,50 @@ def test_a_field_not_opted_in_is_never_filled() -> None:
     assert gaps == []
 
 
-# --- apply_result ------------------------------------------------------------
+# --- result_item -------------------------------------------------------------
 
 
-def test_apply_result_stores_entry() -> None:
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([_product()], cache, _ctx("nl")))
+def test_result_item_carries_the_copy_and_the_fingerprint_it_answered() -> None:
+    request = pending_requests([_product()], _ctx("nl"))[0]
 
-    apply_result(
-        cache,
-        request,
-        _result("Tagline", "Bullet"),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
-    )
+    item = result_item(request, _result("Tagline", "Bullet"))
 
-    entry = cache.get("08713195007359", "nl")
-    assert entry is not None
-    assert entry.usps == ["Tagline", "Bullet"]
-    assert entry.provenance == "in-session"
+    assert item.gtin == "08713195007359"
+    assert item.language == "nl"
+    assert item.usps == ["Tagline", "Bullet"]
+    # Echoed so `run_plan` can tell copy written for these inputs from copy written for older ones.
+    assert item.input_fingerprint == request.input_fingerprint
 
 
-def test_apply_result_rejects_empty_usps() -> None:
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([_product()], cache, _ctx("nl")))
+def test_result_item_rejects_empty_usps() -> None:
+    request = pending_requests([_product()], _ctx("nl"))[0]
 
     with pytest.raises(GeneratorError, match="empty generation result"):
-        apply_result(
-            cache,
-            request,
-            _result("   "),
-            origin=ORIGIN_GENERATED,
-            provenance="in-session",
-            now=_NOW,
-        )
+        result_item(request, _result("   "))
 
 
-def test_apply_result_stores_inferences() -> None:
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([_product()], cache, _ctx("nl")))
+def test_result_item_keeps_inferences() -> None:
+    request = pending_requests([_product()], _ctx("nl"))[0]
 
-    apply_result(
-        cache,
-        request,
-        _result("Tagline", "Bullet", inferences=["snoerloos"]),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
-    )
+    item = result_item(request, _result("Tagline", "Bullet", inferences=["snoerloos"]))
 
-    entry = cache.get("08713195007359", "nl")
-    assert entry is not None
-    assert entry.inferences == ["snoerloos"]
+    assert item.inferences == ["snoerloos"]
 
 
-def test_apply_result_defaults_inferences_to_empty() -> None:
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([_product()], cache, _ctx("nl")))
+def test_result_item_defaults_inferences_to_empty() -> None:
+    request = pending_requests([_product()], _ctx("nl"))[0]
 
-    apply_result(
-        cache,
-        request,
-        _result("Tagline"),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
-    )
+    item = result_item(request, _result("Tagline"))
 
-    entry = cache.get("08713195007359", "nl")
-    assert entry is not None
-    assert entry.inferences == []
+    assert item.inferences == []
 
 
 # --- merge_generated ---------------------------------------------------------
 
 
-def _merge_one(product: ProductRecord, *usps: str, **kw: object) -> ProductRecord:
+def _merge_one(product: ProductRecord, *usps: str) -> ProductRecord:
     """Generate for ``product`` (nl) and return the merged record."""
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([product], cache, _ctx("nl")))
-    apply_result(
-        cache, request, _result(*usps), origin=ORIGIN_GENERATED, provenance="in-session", now=_NOW
-    )
-    merged, _ = merge_generated([product], cache, _ctx("nl"))
+    merged, _ = merge_generated([product], _copy_for(product, _ctx("nl"), *usps), _ctx("nl"))
     return merged[0]
 
 
@@ -463,19 +441,11 @@ def test_merge_assembles_the_three_part_description() -> None:
 
 
 def test_merge_reports_one_generated_issue_with_source_input() -> None:
-    cache = GeneratedCache(client_id="noviplast")
     product = _product()
-    request = next(r for r in pending_requests([product], cache, _ctx("nl")))
-    apply_result(
-        cache,
-        request,
-        _result("Tagline", "Bullet"),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
-    )
 
-    _, issues = merge_generated([product], cache, _ctx("nl"))
+    _, issues = merge_generated(
+        [product], _copy_for(product, _ctx("nl"), "Tagline", "Bullet"), _ctx("nl")
+    )
 
     generated = [i for i in issues if i.issue == "content_generated"]
     assert len(generated) == 1
@@ -484,19 +454,12 @@ def test_merge_reports_one_generated_issue_with_source_input() -> None:
 
 
 def test_merge_reports_one_generation_inference_per_claim() -> None:
-    cache = GeneratedCache(client_id="noviplast")
     product = _product()
-    request = next(r for r in pending_requests([product], cache, _ctx("nl")))
-    apply_result(
-        cache,
-        request,
-        _result("Tagline", "Bullet", inferences=["snoerloos", "oplaadbaar"]),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
+    written = _copy_for(
+        product, _ctx("nl"), "Tagline", "Bullet", inferences=["snoerloos", "oplaadbaar"]
     )
 
-    _, issues = merge_generated([product], cache, _ctx("nl"))
+    _, issues = merge_generated([product], written, _ctx("nl"))
 
     inferred = [i for i in issues if i.issue == "generation_inference"]
     assert len(inferred) == 2
@@ -505,46 +468,85 @@ def test_merge_reports_one_generation_inference_per_claim() -> None:
 
 
 def test_merge_reports_no_inference_issue_when_none_declared() -> None:
-    cache = GeneratedCache(client_id="noviplast")
     product = _product()
-    request = next(r for r in pending_requests([product], cache, _ctx("nl")))
-    apply_result(
-        cache,
-        request,
-        _result("Tagline", "Bullet"),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
-    )
 
-    _, issues = merge_generated([product], cache, _ctx("nl"))
+    _, issues = merge_generated(
+        [product], _copy_for(product, _ctx("nl"), "Tagline", "Bullet"), _ctx("nl")
+    )
 
     assert [i for i in issues if i.issue == "generation_inference"] == []
 
 
-def test_merge_ignores_stale_entry_when_feed_changed() -> None:
-    # A cached entry keyed on old inputs must not be used after a feed edit (supersession).
-    cache = GeneratedCache(client_id="noviplast")
-    old = _product(description_short=LocalisedText(values={"nl": "Oud"}))
-    request = next(r for r in pending_requests([old], cache, _ctx("nl")))
-    apply_result(
-        cache,
-        request,
-        _result("Tagline", "Bullet"),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
+def test_the_provenance_of_the_run_reaches_the_report() -> None:
+    """Which producer wrote the copy is a property of the file, not of each row in it.
+
+    One producer writes one results file per run, so per-entry provenance never carried anything
+    the file could not — but the report still has to name it, because "review this copy" is a
+    different instruction depending on where it came from.
+    """
+    product = _product()
+    written = _copy_for(product, _ctx("nl"), "Tagline", "Bullet")
+
+    _, issues = merge_generated(
+        [product], _copy(*written.results, provenance="api:claude-sonnet-5"), _ctx("nl")
     )
 
-    edited = _product(description_short=LocalisedText(values={"nl": "Nieuw"}))
-    merged, _ = merge_generated([edited], cache, _ctx("nl"))
+    generated = next(i for i in issues if i.issue == "content_generated")
+    assert "api:claude-sonnet-5" in generated.detail
 
-    assert merged[0].generated_description is None  # stale entry ignored
+
+def test_merge_ignores_a_result_written_for_older_inputs() -> None:
+    """Copy keyed on inputs the feed no longer has must not be published (supersession).
+
+    This is the only job the fingerprint still does. It is never a reuse key — nothing lets a run
+    skip generating — but `generation_results.json` outlives the producer session that wrote it, so
+    a `parse_export` re-run between the two would otherwise publish copy about data that is gone.
+    """
+    old = _product(description_short=LocalisedText(values={"nl": "Oud"}))
+    written = _copy_for(old, _ctx("nl"), "Tagline", "Bullet")
+
+    edited = _product(description_short=LocalisedText(values={"nl": "Nieuw"}))
+    merged, _ = merge_generated([edited], written, _ctx("nl"))
+
+    assert merged[0].generated_description is None  # stale result ignored
+
+
+def test_a_stale_result_says_so_rather_than_going_quiet(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Dropping the copy is right; dropping it silently is how wrong pages used to happen.
+
+    The unit then trips E21 and is held out of the plan, which is visible — but only if someone
+    reads the skip list. The warning names the unit at the moment the decision is made.
+    """
+    old = _product(description_short=LocalisedText(values={"nl": "Oud"}))
+    written = _copy_for(old, _ctx("nl"), "Tagline", "Bullet")
+    edited = _product(description_short=LocalisedText(values={"nl": "Nieuw"}))
+
+    with caplog.at_level("WARNING"):
+        merge_generated([edited], written, _ctx("nl"))
+
+    assert "08713195007359" in caplog.text
+    assert "nl" in caplog.text
+
+
+def test_a_result_without_a_fingerprint_is_taken_at_face_value() -> None:
+    """`input_fingerprint` is optional on the contract, and a hand-written file may omit it.
+
+    Rejecting those would make the field mandatory by the back door and break the in-session
+    producer, whose whole contract is a small JSON file a human can write.
+    """
+    product = _product()
+    item = ResultItem(gtin=product.gtin, language="nl", usps=["Tagline", "Bullet"])
+
+    merged, _ = merge_generated([product], _copy(item), _ctx("nl"))
+
+    assert merged[0].generated_tagline.get("nl") == "Tagline"
 
 
 def test_merge_flags_a_marketing_message_blank_in_every_language() -> None:
     product = _product(description_short=None)  # no 1083 anywhere
-    _, issues = merge_generated([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))
+    _, issues = merge_generated([product], _copy(), _ctx("nl"))
 
     flags = [i for i in issues if i.issue == "missing_generation_input"]
     assert len(flags) == 1
@@ -559,7 +561,7 @@ def test_a_marketing_message_the_feed_has_in_another_language_is_not_a_missing_i
     Dutch.
     """
     product = _product()  # 1083 in nl only
-    _, issues = merge_generated([product], GeneratedCache(client_id="noviplast"), _ctx("nl", "fr"))
+    _, issues = merge_generated([product], _copy(), _ctx("nl", "fr"))
 
     assert [i for i in issues if i.issue == "missing_generation_input"] == []
 
@@ -569,28 +571,20 @@ def test_merge_combines_title_with_variation() -> None:
         product_name=LocalisedText(values={"nl": "Emmer"}),
         extras_localised={"product_variation": LocalisedText(values={"nl": "Set"})},
     )
-    merged, _ = merge_generated([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))
+    merged, _ = merge_generated([product], _copy(), _ctx("nl"))
 
     assert merged[0].product_name.get("nl") == "Emmer Set"
 
 
 def _fill_one(product: ProductRecord, language: str, **translations: str) -> ProductRecord:
     """Generate for one language, answering its gaps, and return the merged record."""
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([product], cache, _ctx(language)))
-    apply_result(
-        cache,
-        request,
-        _result("Slogan", "Puce", translations=translations),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
-    )
-    merged, _ = merge_generated([product], cache, _ctx(language))
+    context = _ctx(language)
+    written = _copy_for(product, context, "Slogan", "Puce", translations=translations)
+    merged, _ = merge_generated([product], written, context)
     return merged[0]
 
 
-def test_merge_fills_a_missing_name_from_the_cache() -> None:
+def test_merge_fills_a_missing_name_from_the_results() -> None:
     product = _product(product_name=LocalisedText(values={"nl": "Bewateringpin"}))  # no fr
 
     merged = _fill_one(product, "fr", product_name="Pic d'arrosage")
@@ -626,22 +620,22 @@ def test_filling_a_language_agnostic_extra_keeps_the_language_it_was_authored_in
     Technische-details block lost its `Materiaal:` line the moment French was translated.
     """
     product = _product(product_name=LocalisedText(values={"nl": "Bewateringpin", "fr": "Pic"}))
-    cache = GeneratedCache(client_id="noviplast")
-    for request in pending_requests([product], cache, _ctx("nl", "fr")):
-        apply_result(
-            cache,
-            request,
-            _result(
-                "Slogan",
-                "Puce",
-                translations={"material": "plastique"} if request.language == "fr" else {},
-            ),
-            origin=ORIGIN_GENERATED,
-            provenance="in-session",
-            now=_NOW,
+    context = _ctx("nl", "fr")
+    written = _copy(
+        *(
+            result_item(
+                request,
+                _result(
+                    "Slogan",
+                    "Puce",
+                    translations={"material": "plastique"} if request.language == "fr" else {},
+                ),
+            )
+            for request in pending_requests([product], context)
         )
+    )
 
-    merged, _ = merge_generated([product], cache, _ctx("nl", "fr"))
+    merged, _ = merge_generated([product], written, context)
 
     assert merged[0].extra("material", "nl") == "kunststof"
     assert merged[0].extra("material", "fr") == "plastique"
@@ -659,47 +653,33 @@ def test_merge_fills_a_missing_marketing_message() -> None:
     assert merged.description_short.get("nl") == "Water voor je planten"  # feed value kept
 
 
-def test_the_feed_wins_over_a_cached_translation() -> None:
+def test_the_feed_wins_over_a_written_translation() -> None:
     """Read-side half of the precedence rule; `_requested_translations` is the write-side half.
 
     A producer that answers for a language the feed already carries must never overwrite the
     datapool's own text — that is silent wrong content on a live page.
     """
     both = _product(product_name=LocalisedText(values={"nl": "Bewateringpin", "fr": "Pic"}))
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([both], cache, _ctx("fr")))
-    apply_result(
-        cache,
-        request,
-        _result("Slogan", "Puce", translations={"product_name": "Autre chose"}),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
+    written = _copy_for(
+        both, _ctx("fr"), "Slogan", "Puce", translations={"product_name": "Autre chose"}
     )
 
-    merged, _ = merge_generated([both], cache, _ctx("fr"))
+    merged, _ = merge_generated([both], written, _ctx("fr"))
 
     assert merged[0].product_name.get("fr") == "Pic"
 
 
 def test_every_filled_value_is_reported_for_mygs1() -> None:
     product = _product(product_name=LocalisedText(values={"nl": "Bewateringpin"}))
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([product], cache, _ctx("fr")))
-    apply_result(
-        cache,
-        request,
-        _result(
-            "Slogan",
-            "Puce",
-            translations={"product_name": "Pic d'arrosage", "material": "plastique"},
-        ),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
+    written = _copy_for(
+        product,
+        _ctx("fr"),
+        "Slogan",
+        "Puce",
+        translations={"product_name": "Pic d'arrosage", "material": "plastique"},
     )
 
-    _, issues = merge_generated([product], cache, _ctx("fr"))
+    _, issues = merge_generated([product], written, _ctx("fr"))
 
     translated = {i.field: i for i in issues if i.issue == "value_translated"}
     assert set(translated) == {"product_name.fr", "material.fr"}
@@ -713,7 +693,7 @@ def test_every_filled_value_is_reported_for_mygs1() -> None:
 def test_a_translated_value_with_no_gs1_slot_says_so_rather_than_sending_a_wasted_trip() -> None:
     _, issues = merge_generated(
         [_product()],
-        _cache_with_translations(_product(), "fr", {"material": "plastique"}),
+        _copy_with_translations(_product(), "fr", {"material": "plastique"}),
         _ctx("fr"),
     )
 
@@ -725,30 +705,19 @@ def test_a_translated_value_with_no_gs1_slot_says_so_rather_than_sending_a_waste
     assert material.source == "BrickGPCCommercialData attr Material — no per-language slot in GS1"
 
 
-def _cache_with_translations(
+def _copy_with_translations(
     product: ProductRecord, language: str, translations: dict[str, str]
-) -> GeneratedCache:
-    """A cache holding one fresh entry for ``(product, language)`` with these translations."""
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([product], cache, _ctx(language)))
-    apply_result(
-        cache,
-        request,
-        _result("Slogan", "Puce", translations=translations),
-        origin=ORIGIN_GENERATED,
-        provenance="in-session",
-        now=_NOW,
-    )
-    return cache
+) -> ResultsFile:
+    """A results file holding one entry for ``(product, language)`` with these translations."""
+    return _copy_for(product, _ctx(language), "Slogan", "Puce", translations=translations)
 
 
-def test_a_translation_the_request_did_not_ask_for_never_reaches_the_cache() -> None:
+def test_a_translation_the_request_did_not_ask_for_never_reaches_the_results_file() -> None:
     both = _product(product_name=LocalisedText(values={"nl": "Bewateringpin", "fr": "Pic"}))
-    cache = _cache_with_translations(both, "fr", {"product_name": "Autre chose"})
+    written = _copy_with_translations(both, "fr", {"product_name": "Autre chose"})
 
-    entry = cache.get(both.gtin, "fr")
-    assert entry is not None
-    assert "product_name" not in entry.translations
+    item = next(r for r in written.results if r.language == "fr")
+    assert "product_name" not in item.translations
 
 
 def test_editing_the_source_language_supersedes_the_translation() -> None:
@@ -758,12 +727,12 @@ def test_editing_the_source_language_supersedes_the_translation() -> None:
     moves — the translation of a value that had since changed would have survived the edit.
     """
     product = _product(product_name=LocalisedText(values={"nl": "Bewateringpin"}))
-    cache = _cache_with_translations(product, "fr", {"product_name": "Pic d'arrosage"})
+    written = _copy_with_translations(product, "fr", {"product_name": "Pic d'arrosage"})
 
     renamed = _product(product_name=LocalisedText(values={"nl": "Waterpin"}))
-    merged, _ = merge_generated([renamed], cache, _ctx("fr"))
+    merged, _ = merge_generated([renamed], written, _ctx("fr"))
 
-    assert merged[0].product_name.get("fr") is None  # stale entry ignored
+    assert merged[0].product_name.get("fr") is None  # stale result ignored
 
 
 # --- 1067 routing: verbatim / tighten / generate -----------------------------
@@ -773,104 +742,154 @@ def _with_1067(text: str) -> ProductRecord:
     return _product(description_long=LocalisedText(values={"nl": text}))
 
 
-def test_prefill_uses_short_1067_verbatim() -> None:
-    cache = GeneratedCache(client_id="noviplast")
+def test_short_1067_is_published_verbatim_without_ever_reaching_a_producer() -> None:
+    """The feed's own short 1067 *is* the copy, so it is materialised at plan time and free.
+
+    This used to be `prefill_from_feed`, which wrote those units into the cache. With no cache
+    there is nowhere to write them, so the same rule is applied where the copy is read: the unit
+    is never a request (no tokens), and `merge_generated` derives it from the feed on every run.
+    """
     product = _with_1067("Speciaal voor kleine honden\nGemaakt van kunststof")
 
-    prefill_from_feed([product], cache, _ctx("nl"), now=_NOW)
+    assert pending_requests([product], _ctx("nl")) == []  # never costs a producer call
 
-    entry = cache.get("08713195007359", "nl")
-    assert entry is not None
-    assert entry.origin == "feed"
-    assert entry.usps == ["Speciaal voor kleine honden", "Gemaakt van kunststof"]
-    # a verbatim-filled unit is no longer pending
-    assert pending_requests([product], cache, _ctx("nl")) == []
+    merged, issues = merge_generated([product], _copy(), _ctx("nl"))
+
+    assert merged[0].generated_tagline.get("nl") == "Speciaal voor kleine honden"
+    html = merged[0].generated_description.get("nl")
+    assert html is not None
+    assert "• Gemaakt van kunststof" in html
+    # Feed copy is authoritative — it is reported nowhere.
+    assert [i for i in issues if i.issue in {"content_generated", "content_adjusted"}] == []
 
 
-def test_prefill_skips_long_1067() -> None:
-    cache = GeneratedCache(client_id="noviplast")
+def test_feed_verbatim_copy_wins_over_a_result_for_the_same_unit() -> None:
+    """`prefill_from_feed` ran before `pending_requests`, so the feed already won; keep it so.
+
+    Nothing should normally write a result for a verbatim unit, because it is never requested — but
+    a hand-written results file can, and the feed's own words stay the authoritative ones rather
+    than the decision depending on which of the two happens to be consulted first.
+    """
+    product = _with_1067("Speciaal voor kleine honden")
+    stray = ResultItem(gtin=product.gtin, language="nl", usps=["Iets heel anders"])
+
+    merged, _ = merge_generated([product], _copy(stray), _ctx("nl"))
+
+    assert merged[0].generated_tagline.get("nl") == "Speciaal voor kleine honden"
+
+
+def test_a_unit_answered_twice_resolves_to_the_last_entry() -> None:
+    """Documented rather than incidental, because a mutation showed nothing pinned it.
+
+    Two answers for one unit is a defect in the file, and `run_generate --validate` names it — but
+    the read still has to pick one, and which one it picks must not depend on how a hand-written
+    file happens to be ordered. Last wins, the same rule a dict literal follows.
+    """
+    product = _product()
+    first = ResultItem(gtin=product.gtin, language="nl", usps=["Eerste"])
+    second = ResultItem(gtin=product.gtin, language="nl", usps=["Tweede"])
+
+    merged, _ = merge_generated([product], _copy(first, second), _ctx("nl"))
+
+    assert merged[0].generated_tagline.get("nl") == "Tweede"
+
+
+def test_long_1067_is_still_asked_for_and_reported_as_adjusted() -> None:
     product = _with_1067("De Noviplast Hydro Jet is een handige oplossing " * 3)  # > 80 chars
 
-    prefill_from_feed([product], cache, _ctx("nl"), now=_NOW)
-
-    assert cache.get("08713195007359", "nl") is None  # left for the producer
-
-
-def test_pending_request_mode_tighten_for_long_1067() -> None:
-    product = _with_1067("De Noviplast Hydro Jet is een handige oplossing " * 3)
-    requests = pending_requests([product], GeneratedCache(client_id="noviplast"), _ctx("nl"))
-
+    requests = pending_requests([product], _ctx("nl"))
     assert requests[0].mode == MODE_TIGHTEN
     assert requests[0].candidates  # the 1067 text to shorten
 
+    _, issues = merge_generated(
+        [product], _copy_for(product, _ctx("nl"), "Kort", "Bullet"), _ctx("nl")
+    )
+
+    assert [i.issue for i in issues if i.issue.startswith("content_")] == ["content_adjusted"]
+
 
 def test_pending_request_mode_generate_without_1067() -> None:
-    requests = pending_requests([_product()], GeneratedCache(client_id="noviplast"), _ctx("nl"))
+    requests = pending_requests([_product()], _ctx("nl"))
 
     assert requests[0].mode == MODE_GENERATE
 
 
-def test_feed_verbatim_copy_is_not_reported() -> None:
-    cache = GeneratedCache(client_id="noviplast")
-    product = _with_1067("Speciaal voor kleine honden\nGemaakt van kunststof")
-    prefill_from_feed([product], cache, _ctx("nl"), now=_NOW)
+def test_how_the_copy_came_to_be_is_derived_from_the_feed_not_declared_by_the_producer() -> None:
+    """`--ingest` used to stamp `origin` from the request's mode; nothing stamps it now.
 
-    _, issues = merge_generated([product], cache, _ctx("nl"))
+    The in-session producer hand-writes `generation_results.json`, and asking it to label its own
+    copy `tighten` or `generate` would put a fact the feed already answers into a file a human
+    edits. Recomputing it at read time means a results file cannot mislabel its own provenance.
+    """
+    tightened = _with_1067("A very long feature benefit sentence " * 3)
+    generated = _product()
 
-    assert [i for i in issues if i.issue in {"content_generated", "content_adjusted"}] == []
-
-
-def test_tightened_copy_is_reported_as_adjusted() -> None:
-    cache = GeneratedCache(client_id="noviplast")
-    product = _with_1067("A very long feature benefit sentence " * 3)
-    request = next(r for r in pending_requests([product], cache, _ctx("nl")))
-    apply_result(
-        cache,
-        request,
-        _result("Kort", "Bullet"),
-        origin=ORIGIN_TIGHTENED,
-        provenance="in-session",
-        now=_NOW,
+    _, from_1067 = merge_generated(
+        [tightened], _copy_for(tightened, _ctx("nl"), "Kort", "B"), _ctx("nl")
+    )
+    _, from_1083 = merge_generated(
+        [generated], _copy_for(generated, _ctx("nl"), "Tagline", "B"), _ctx("nl")
     )
 
-    _, issues = merge_generated([product], cache, _ctx("nl"))
-
-    adjusted = [i for i in issues if i.issue == "content_adjusted"]
-    assert len(adjusted) == 1
+    assert [i.issue for i in from_1067 if i.issue.startswith("content_")] == ["content_adjusted"]
+    assert [i.issue for i in from_1083 if i.issue.startswith("content_")] == ["content_generated"]
 
 
-# --- cache IO ----------------------------------------------------------------
+# --- results file IO ---------------------------------------------------------
 
 
-def test_cache_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_results_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    cache = GeneratedCache(client_id="noviplast")
-    request = next(r for r in pending_requests([_product()], cache, _ctx("nl")))
-    apply_result(
-        cache,
-        request,
-        _result("Tagline", "Bullet"),
-        origin=ORIGIN_GENERATED,
+    request = pending_requests([_product()], _ctx("nl"))[0]
+    results = ResultsFile(
+        client_id="noviplast",
         provenance="in-session",
-        now=_NOW,
+        generated_at=_NOW,
+        results=[result_item(request, _result("Tagline", "Bullet"))],
     )
 
-    save_cache(cache)
-    reloaded = load_cache("noviplast")
+    save_results(results)
 
-    assert reloaded == cache
+    assert load_results("noviplast") == results
 
 
-def test_load_cache_absent_returns_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_results_absent_returns_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An absent file is "no copy this run", not an error — the doctor is what makes it loud.
+
+    `run_plan` then holds every unit out of the plan under E21, which is the same shape the empty
+    cache produced and is caught by `check_generation_results` before a wave starts.
+    """
     monkeypatch.chdir(tmp_path)
-    assert load_cache("noviplast").entries == {}
+
+    assert load_results("noviplast").results == []
 
 
-def test_load_cache_corrupt_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_results_corrupt_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    path = tmp_path / "output" / "noviplast" / "data" / "generated_cache.json"
+    path = tmp_path / "output" / "noviplast" / "data" / "generation_results.json"
     path.parent.mkdir(parents=True)
     path.write_text("{ not json", encoding="utf-8")
 
     with pytest.raises(GeneratorError, match="corrupt"):
-        load_cache("noviplast")
+        load_results("noviplast")
+
+
+def test_load_results_for_another_client_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A results file names the client it was produced for, and copy is not interchangeable.
+
+    The check lived in `run_generate --ingest`; it moves here so every reader gets it, `run_plan`
+    included — that one publishes, and it never saw the check before.
+
+    Written to the path by hand rather than through `save_results`, because that derives the path
+    from `client_id` and so can never produce this. The operator shell can: the Content screen
+    saves whatever file is uploaded to *this* client's path.
+    """
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "output" / "noviplast" / "data" / "generation_results.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"client_id": "acme", "results": []}', encoding="utf-8")
+
+    with pytest.raises(GeneratorError, match="acme"):
+        load_results("noviplast")

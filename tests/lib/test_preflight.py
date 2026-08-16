@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,12 +31,20 @@ from lib.config import (
     WordPressConfig,
 )
 from lib.errors import GS1APIError, MissingCredentialError, WordPressAPIError
-from lib.generator import ORIGIN_GENERATED, CacheEntry, GeneratedCache, save_cache
+from lib.generator import (
+    GenerationResult,
+    ResultItem,
+    ResultsFile,
+    generation_context,
+    pending_requests,
+    result_item,
+    save_results,
+)
 from lib.preflight import (
     Status,
-    check_cache_coverage,
     check_config,
     check_ffmpeg,
+    check_generation_results,
     check_generator,
     check_gs1,
     check_process_list,
@@ -173,19 +180,20 @@ def test_generator_block_present_is_ok() -> None:
     assert "held out of the plan" in result.detail
 
 
-def test_generator_block_missing_with_a_cache_present_fails(
+def test_generator_block_missing_with_generated_copy_present_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The trap: the block looks like dead config on a machine with no API key. It is the switch.
 
     ``run_plan`` derives ``require_generated_copy = cfg.generator is not None``, so deleting
     the block does not raise — it turns off the E21 hold, and copy-less units publish blank
-    taglines. A cache on disk proves a generator *was* configured for this client.
+    taglines. Generated copy on disk proves a generator *was* configured for this client. That
+    evidence used to be the cache's entry count; the results file is what carries it now.
     """
     monkeypatch.chdir(tmp_path)
-    # A cache with no entries is not evidence that a generator was ever configured; one with
-    # entries is — that copy came from somewhere.
-    save_cache(GeneratedCache(client_id="acme", entries={GTIN_A: {"nl": _cache_entry()}}))
+    # An empty results file is not evidence that a generator was ever configured; one holding
+    # copy is — that copy came from somewhere.
+    save_results(ResultsFile(client_id="acme", results=[_written_unit()]))
 
     result = check_generator(_make_config())
 
@@ -194,7 +202,7 @@ def test_generator_block_missing_with_a_cache_present_fails(
     assert "not a credential" in result.remedy
 
 
-def test_generator_block_missing_with_no_cache_is_not_applicable(
+def test_generator_block_missing_with_no_generated_copy_is_not_applicable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -202,15 +210,27 @@ def test_generator_block_missing_with_no_cache_is_not_applicable(
     assert result.status is Status.NA
 
 
-def _cache_entry() -> CacheEntry:
-    return CacheEntry(
-        usps=["Een voordeel"],
-        product_name="Rugsteun",
-        origin=ORIGIN_GENERATED,
-        input_fingerprint="fp",
-        provenance="test",
-        source_input="1083",
-        generated_at=datetime(2026, 1, 1, tzinfo=UTC),
+def _written_unit(gtin: str = GTIN_A, fingerprint: str = "fp") -> ResultItem:
+    return ResultItem(
+        gtin=gtin, language="nl", usps=["Een voordeel"], input_fingerprint=fingerprint
+    )
+
+
+def _results_for(cfg: ClientConfig, products: list[ProductRecord]) -> ResultsFile:
+    """A results file answering every unit these products make pending, fingerprints matching."""
+    context = generation_context(
+        cfg.wordpress.languages,
+        cfg.wordpress.default_language,
+        cfg.generator.prompt_version if cfg.generator else "v1",
+        cfg.export.gdsn_map,
+        cfg.export.gdsn_extras,
+    )
+    return ResultsFile(
+        client_id=cfg.client_id,
+        results=[
+            result_item(request, GenerationResult(usps=["Een voordeel", "Nog een"]))
+            for request in pending_requests(products, context)
+        ],
     )
 
 
@@ -282,32 +302,95 @@ def test_scope_of_nothing_is_a_failure_not_a_quiet_pass(tmp_path: Path) -> None:
     assert "publish nothing and report success" in result.detail
 
 
-# --- Cache coverage -----------------------------------------------------------
+# --- Generated copy for this run ---------------------------------------------
 
 
-def test_cache_coverage_counts_only_the_products_in_scope(
+def test_generation_results_count_only_the_products_in_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reporting 224 missing entries the run will never need teaches the operator to look away."""
+    """Reporting 224 missing units the run will never need teaches the operator to look away."""
     monkeypatch.chdir(tmp_path)
     cfg = _make_config(
         generator=GeneratorConfig(enabled=True),
         process_list=_write_process_list(tmp_path, [GTIN_A]),
     )
-    save_cache(GeneratedCache(client_id="acme", entries={}))
+    save_results(ResultsFile(client_id="acme", results=[]))
 
-    result = check_cache_coverage(cfg, [_product(GTIN_A), _product(GTIN_B)])
+    result = check_generation_results(cfg, [_product(GTIN_A), _product(GTIN_B)])
 
     assert result.status is Status.FAIL
     assert result.data["total"] == 1  # one in-scope product × one language
     assert result.data["pending"] == 1
 
 
-def test_cache_coverage_without_a_generator_is_not_applicable(
+def test_generation_results_are_ok_when_every_in_scope_unit_is_answered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    assert check_cache_coverage(_make_config(), [_product()]).status is Status.NA
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        process_list=_write_process_list(tmp_path, [GTIN_A]),
+    )
+    save_results(_results_for(cfg, [_product(GTIN_A)]))
+
+    result = check_generation_results(cfg, [_product(GTIN_A)])
+
+    assert result.status is Status.OK
+    assert result.data["covered"] == 1
+    assert result.data["pending"] == 0
+
+
+def test_generation_results_written_for_older_inputs_do_not_count_as_covered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check that makes a forgotten regeneration loud instead of wrong copy on a live page.
+
+    A results file outlives the producer session that wrote it, so a `parse_export` re-run in
+    between leaves copy describing data the feed no longer holds. `run_plan` drops it — this is
+    what says so before a wave starts rather than after.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        process_list=_write_process_list(tmp_path, [GTIN_A]),
+    )
+    save_results(ResultsFile(client_id="acme", results=[_written_unit(fingerprint="stale")]))
+
+    result = check_generation_results(cfg, [_product(GTIN_A)])
+
+    assert result.status is Status.FAIL
+    assert result.data["pending"] == 1
+    assert "prompt_version bump" in result.remedy
+
+
+def test_a_results_file_for_another_client_is_reported_rather_than_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The doctor exists to say what is wrong before a wave; crashing on it does the opposite.
+
+    Reachable from the operator shell, which saves whatever file is uploaded to *this* client's
+    path — so the wrong file is one mis-click away, and it used to take the doctor down with it.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        process_list=_write_process_list(tmp_path, [GTIN_A]),
+    )
+    path = tmp_path / "output" / "acme" / "data" / "generation_results.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"client_id": "other", "results": []}', encoding="utf-8")
+
+    result = check_generation_results(cfg, [_product(GTIN_A)])
+
+    assert result.status is Status.FAIL
+    assert "other" in result.detail
+
+
+def test_generation_results_without_a_generator_is_not_applicable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert check_generation_results(_make_config(), [_product()]).status is Status.NA
 
 
 # --- Process list -------------------------------------------------------------

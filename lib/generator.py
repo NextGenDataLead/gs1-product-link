@@ -1,17 +1,22 @@
-"""Content-generator core: cache, request/result contract, and deterministic merge.
+"""Content-generator core: request/result contract, per-run results seam, deterministic merge.
 
 The generator writes the copy WordPress shows for a product — the tagline and the
 ``Eigenschappen`` benefit bullets — while everything else on the page stays deterministic
-assembly. This module is **producer-agnostic and network-free**: it defines the cache that
-stores generated copy between runs, the :class:`GenerationRequest`/:class:`GenerationResult`
-contract both producers (the in-session producer and the headless API backend) fill, and
-the pure :func:`merge_generated` step that folds cached copy onto :class:`ProductRecord`
-before classification (mirroring ``run_plan._assign_categories``). See
+assembly. This module is **producer-agnostic and network-free**: it defines the
+:class:`GenerationRequest`/:class:`GenerationResult` contract both producers (the in-session
+producer and the headless API backend) fill, the :class:`ResultsFile` they write it into, and
+the pure :func:`merge_generated` step that folds that copy onto :class:`ProductRecord` before
+classification (mirroring ``run_plan._assign_categories``). See
 ``docs/clients/democlient-generator-spec.md``.
 
-Determinism comes from the cache, not the producer: each entry is keyed by a fingerprint of
-the source inputs plus a ``prompt_version``, so re-runs reuse frozen copy and a feed edit (a
-new fingerprint) supersedes a stale generated value.
+**Nothing is stored between runs.** Copy arrives in one ``generation_results.json`` per run and
+is read once; there is no cache, so no run can skip generating. What used to be reuse is now
+idempotency from the other end: generated copy is excluded from the content hash, so writing it
+again does not reclassify a page.
+
+The ``input_fingerprint`` survives that change as a **validity check only, never a reuse key**.
+The results file outlives the producer session that wrote it, so a ``parse_export`` re-run
+between the two would otherwise publish copy describing data the feed no longer holds.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final, NamedTuple, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from lib.errors import GeneratorError
 from lib.gdsn import SCALAR_SEPARATOR, GdsnSource, source_label
@@ -33,18 +38,27 @@ from lib.units import decode_net_content, decode_unit
 
 _log = logging.getLogger(__name__)
 
-CACHE_FILENAME: Final = "generated_cache.json"
+#: The run's copy: what the producer writes and what ``run_plan`` reads. One file per run, never
+#: accumulated and never reused to skip work.
+RESULTS_FILENAME: Final = "generation_results.json"
 
-#: Default prompt version — part of every cache fingerprint. Lives here (not in a script) so
-#: ``run_generate`` and, later, ``run_plan`` fingerprint identically; bumping it invalidates
-#: cached copy. Moves into ``GeneratorConfig`` when the API backend lands.
+#: Provenance recorded when a results file does not name its producer — the in-session producer
+#: hand-writes the file, and it is the only one that would omit it.
+DEFAULT_PROVENANCE: Final = "in-session"
+
+#: Provenance for copy taken verbatim from the feed's attr 1067, which no producer wrote.
+FEED_PROVENANCE: Final = "feed:1067"
+
+#: Default prompt version — part of every input fingerprint. Lives here (not in a script) so
+#: ``run_generate`` and ``run_plan`` fingerprint identically.
 DEFAULT_PROMPT_VERSION: Final = "v1"
 
 #: Longest a feed USP (attr 1067) may be to use verbatim; a longer one is tightened by the
 #: producer instead. Roughly one readable line — the live taglines run ~30-60 chars.
 MAX_VERBATIM_USP_CHARS: Final = 80
 
-#: How a cache entry's copy came to be — drives what the report says about it.
+#: How a unit's copy came to be — drives what the report says about it. Derived from the feed at
+#: read time (see :func:`_resolve_unit`), never declared by the producer.
 ORIGIN_FEED: Final = "feed"  # 1067 used verbatim (short); authoritative, not reported
 ORIGIN_TIGHTENED: Final = "tightened"  # 1067 shortened by the producer; reported as adjusted
 ORIGIN_GENERATED: Final = "generated"  # produced from 1083 (no usable 1067); reported as generated
@@ -78,7 +92,7 @@ _LABELS: Final[dict[str, dict[str, str]]] = {
 }
 
 
-# --- Contract: inputs, requests, results, cache ------------------------------
+# --- Contract: inputs, requests, results -------------------------------------
 
 
 class TranslatableField(BaseModel):
@@ -208,8 +222,9 @@ class LLMClient(Protocol):
 
     The seam both producers satisfy — the headless API backend (``lib.llm``) and test fakes —
     so ``scripts/run_generate.py`` can drive either through one loop. The Protocol takes no
-    network dependency itself; determinism still comes from the cache, so a producer is only
-    ever called for the gaps :func:`pending_requests` reports.
+    network dependency itself, and a producer is only ever called for the units
+    :func:`pending_requests` reports — which is every in-scope unit whose copy the feed does not
+    already supply, on every run.
     """
 
     def generate_copy(self, request: GenerationRequest) -> GenerationResult:
@@ -217,95 +232,143 @@ class LLMClient(Protocol):
         ...
 
 
-class CacheEntry(BaseModel):
-    """A stored generation for one ``(gtin, language)``.
+class ResultItem(BaseModel):
+    """One ``(gtin, language)`` of copy in a run's results file.
 
-    ``input_fingerprint`` gates reuse; ``provenance`` and ``source_input`` are audit metadata
-    (which producer made it, and the source-language text it was derived from) surfaced in the
-    generated-content report. ``source_input`` never participates in the fingerprint.
+    This is the shape the in-session producer hand-writes, so it holds only what a producer can
+    honestly answer: the copy, the translations it was asked for, and the fingerprint of the
+    request it answered. How the copy came to be (:data:`ORIGIN_TIGHTENED` vs
+    :data:`ORIGIN_GENERATED`) is **not** here — the feed already answers that, and recomputing it
+    at read time is what stops a hand-edited file mislabelling its own copy.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    usps: list[str]
-    #: Field → the value this language was missing, as the producer rendered it. Defaulted so a
-    #: cache written before the field existed still loads; those entries are stale anyway, since
-    #: the fingerprint gained ``translation_sources`` in the same change.
+    gtin: str
+    language: str
+    usps: list[str] = Field(min_length=1)
+    #: Field → the value this language was missing, as the producer rendered it.
     translations: dict[str, str] = Field(default_factory=dict)
-    origin: str  # ORIGIN_FEED | ORIGIN_TIGHTENED | ORIGIN_GENERATED
-    input_fingerprint: str
-    provenance: str
-    source_input: str
-    generated_at: datetime
+
+    @field_validator("usps")
+    @classmethod
+    def _clean_usps(cls, value: list[str]) -> list[str]:
+        """Strip each USP and drop the blanks, requiring at least one to survive.
+
+        Cleaned in the model rather than at each reader, so ``usps`` is clean everywhere it is
+        read — including in a file a human wrote by hand, which is the one path that does not go
+        through :func:`result_item`. A list of nothing but whitespace passes ``min_length`` and
+        would otherwise reach the page as a tagline that is not there.
+        """
+        cleaned = [stripped for stripped in (item.strip() for item in value) if stripped]
+        if not cleaned:
+            raise ValueError("at least one non-blank USP is required")
+        return cleaned
+
+    #: The request's fingerprint, echoed back. Optional because a hand-written file may omit it;
+    #: when present it is checked on read, and a mismatch drops the copy rather than publishing
+    #: text about data the feed no longer holds. **Never a reuse key.**
+    input_fingerprint: str | None = None
     #: Claims written beyond the literal feed text, surfaced as ``generation_inference``
     #: findings in the generated-content report. Never participates in the fingerprint.
     inferences: list[str] = Field(default_factory=list)
 
 
-class GeneratedCache(BaseModel):
-    """The persisted generated-copy cache for a client, keyed ``entries[gtin][language]``.
+class ResultsFile(BaseModel):
+    """One run's generated copy — what a producer writes and ``run_plan`` reads.
 
-    Mutable, like :class:`~lib.records.State`: it is a between-runs artifact that producers
-    upsert into and :func:`merge_generated` reads.
+    Replaced the accumulating cache. It is not a store: nothing merges a previous run's file into
+    this one, and holding copy for a unit never lets that unit skip generation next time.
+
+    ``provenance`` sits on the file rather than on each item because one producer writes one file
+    per run, so a per-item field could not carry anything the file does not.
     """
 
     client_id: str
-    entries: dict[str, dict[str, CacheEntry]] = Field(default_factory=dict)
-
-    def get(self, gtin: str, language: str) -> CacheEntry | None:
-        """Return the entry for ``(gtin, language)``, or ``None`` when absent."""
-        return self.entries.get(gtin, {}).get(language)
-
-
-# --- Cache IO (mirrors lib.state atomic write) -------------------------------
+    provenance: str = DEFAULT_PROVENANCE
+    #: When the producer wrote it. Optional — the in-session producer hand-writes this file.
+    generated_at: datetime | None = None
+    results: list[ResultItem] = Field(default_factory=list)
 
 
-def cache_path(client_id: str) -> Path:
-    """Return the cache path (``output/{client_id}/data/generated_cache.json``)."""
-    return Path("output") / client_id / "data" / CACHE_FILENAME
+class GeneratedUnit(BaseModel):
+    """One unit's copy as this run resolved it, ready for the merge and the report.
+
+    Assembled in memory by :func:`_resolve_unit` from either the feed (short attr 1067, used
+    verbatim) or the run's results file. Never serialised: ``origin``, ``provenance`` and
+    ``source_input`` are derived, so there is nowhere for them to drift out of step with the feed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    usps: list[str]
+    translations: dict[str, str] = Field(default_factory=dict)
+    origin: str  # ORIGIN_FEED | ORIGIN_TIGHTENED | ORIGIN_GENERATED
+    provenance: str
+    source_input: str
+    inferences: list[str] = Field(default_factory=list)
 
 
-def load_cache(client_id: str) -> GeneratedCache:
-    """Load a client's generated-copy cache, or an empty one when none exists.
+# --- Results IO (mirrors lib.state atomic write) -----------------------------
+
+
+def results_path(client_id: str) -> Path:
+    """Return the results path (``output/{client_id}/data/generation_results.json``)."""
+    return Path("output") / client_id / "data" / RESULTS_FILENAME
+
+
+def load_results(client_id: str, path: Path | None = None) -> ResultsFile:
+    """Load a client's results for this run, or an empty one when none exists.
 
     Args:
-        client_id: The client whose cache to load.
+        client_id: The client whose results to load.
+        path: Where to read from, for ``run_generate --validate --results PATH``. Defaults to
+            this client's canonical location. The client check below applies either way — that
+            is the point of routing the override through here rather than around it.
 
     Returns:
-        The persisted cache, or an empty cache when no file is present.
+        The results file, or an empty one when no file is present. Absent is not an error: it
+        means no copy this run, and every unit is then held out of the plan under E21. The
+        doctor's ``generation_results`` check is what makes that loud *before* a wave.
 
     Raises:
-        GeneratorError: If the file exists but cannot be read or parsed. Unlike state, a
-            corrupt cache is not silently reset — losing generated copy re-bills the producer,
-            so the operator is told rather than have it quietly regenerated.
+        GeneratorError: If the file exists but cannot be read or parsed, or names another
+            client. The client check lived in ``run_generate --ingest``; it belongs here so
+            every reader gets it, ``run_plan`` included — that one publishes.
     """
-    path = cache_path(client_id)
+    path = path or results_path(client_id)
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return GeneratedCache(client_id=client_id)
+        return ResultsFile(client_id=client_id)
     except OSError as exc:
-        raise GeneratorError(f"cannot read cache for {client_id!r} at {path}: {exc}") from exc
+        raise GeneratorError(f"cannot read results for {client_id!r} at {path}: {exc}") from exc
     try:
-        return GeneratedCache.model_validate(json.loads(raw))
+        results = ResultsFile.model_validate(json.loads(raw))
     except (json.JSONDecodeError, ValidationError) as exc:
-        raise GeneratorError(f"cache for {client_id!r} at {path} is corrupt: {exc}") from exc
+        raise GeneratorError(f"results for {client_id!r} at {path} are corrupt: {exc}") from exc
+    if results.client_id != client_id:
+        raise GeneratorError(
+            f"results at {path} are for {results.client_id!r}, not {client_id!r}; "
+            "copy is not interchangeable between clients"
+        )
+    return results
 
 
-def save_cache(cache: GeneratedCache) -> None:
-    """Atomically persist ``cache`` to ``output/{client_id}/data/generated_cache.json``.
+def save_results(results: ResultsFile) -> None:
+    """Atomically persist ``results`` to ``output/{client_id}/data/generation_results.json``.
 
     Writes to a temporary file in the destination directory and ``os.replace``s it over the
     target, so a crash mid-write leaves either the old file or the whole new one.
 
     Args:
-        cache: The cache to persist; its ``client_id`` determines the path.
+        results: The results to persist; their ``client_id`` determines the path.
 
     Raises:
         GeneratorError: If the directory or file cannot be written.
     """
-    path = cache_path(cache.client_id)
-    payload = json.dumps(cache.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    path = results_path(results.client_id)
+    payload = json.dumps(results.model_dump(mode="json"), ensure_ascii=False, indent=2)
     tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -317,7 +380,7 @@ def save_cache(cache: GeneratedCache) -> None:
     except OSError as exc:
         tmp_path.unlink(missing_ok=True)
         raise GeneratorError(
-            f"cannot write cache for {cache.client_id!r} at {path}: {exc}"
+            f"cannot write results for {results.client_id!r} at {path}: {exc}"
         ) from exc
 
 
@@ -329,8 +392,8 @@ def _fingerprint(inputs: GenerationInputs, language: str, prompt_version: str) -
 
     Canonical (sorted keys, fixed separators) like ``lib.state.compute_content_hash``, so it is
     deterministic across runs. The producer/model is deliberately excluded: the in-session and
-    API backends are interchangeable producers of the same logical copy, so switching between them
-    must not invalidate the cache.
+    API backends are interchangeable producers of the same logical copy, so which one wrote a
+    results file must not decide whether that file is still about this product.
     """
     canonical = json.dumps(
         {
@@ -560,71 +623,43 @@ def _all_short(candidates: list[str]) -> bool:
     return all(len(c) <= MAX_VERBATIM_USP_CHARS for c in candidates)
 
 
-def _is_fresh(cache: GeneratedCache, gtin: str, language: str, fingerprint: str) -> bool:
-    """Whether the cache already holds an entry matching the current input fingerprint."""
-    entry = cache.get(gtin, language)
-    return entry is not None and entry.input_fingerprint == fingerprint
+def _feed_verbatim(inputs: GenerationInputs) -> list[str] | None:
+    """The feed's 1067 USPs when they are short enough to publish as they stand, else ``None``.
 
+    One helper for both sides of the decision: :func:`pending_requests` skips a unit because of it,
+    and :func:`merge_generated` materialises that unit's copy because of it. They must agree — a
+    unit skipped here and not materialised there publishes nothing at all — and #96's lesson is
+    that one rule answered independently on two paths drifts into meaning two things.
 
-def prefill_from_feed(
-    products: list[ProductRecord],
-    cache: GeneratedCache,
-    context: GenerationContext,
-    *,
-    now: datetime,
-) -> None:
-    """Fill the cache in place for units whose 1067 USPs are short enough to use verbatim.
-
-    Deterministic and network-free: when the feed carries feature/benefit copy (attr 1067) and
-    every entry is within :data:`MAX_VERBATIM_USP_CHARS`, that copy *is* the ranked USP list, so no
-    producer is needed. Longer 1067 and absent 1067 are left for :func:`pending_requests`. Skips
-    units already fresh in the cache. Run this before ``pending_requests``.
-
-    A unit prefilled here still records its translation gaps on the request, so the entry says
-    which values were missing — but it fills none of them: no producer ran, and the feed's 1067
-    is copy, not a translation of anything.
+    This is what became of ``prefill_from_feed``. It used to write these units into the cache; with
+    no cache there is nowhere to write them, so the rule is applied where the copy is read instead.
+    The feed's own short 1067 *is* the ranked USP list, so no producer is needed and no tokens are
+    spent — 8 of 254 units in the pilot catalogue, none of them currently in scope.
     """
-    for product in products:
-        for language in context.languages:
-            inputs, gaps, fingerprint = _prepare_unit(product, language, context)
-            if _is_fresh(cache, product.gtin, language, fingerprint):
-                continue
-            candidates = _feature_candidates(inputs)
-            if not candidates or not _all_short(candidates):
-                continue
-            request = GenerationRequest(
-                gtin=product.gtin,
-                language=language,
-                inputs=inputs,
-                input_fingerprint=fingerprint,
-                translations=gaps,
-            )
-            apply_result(
-                cache,
-                request,
-                GenerationResult(usps=candidates),
-                origin=ORIGIN_FEED,
-                provenance="feed:1067",
-                now=now,
-            )
+    candidates = _feature_candidates(inputs)
+    if candidates and _all_short(candidates):
+        return candidates
+    return None
 
 
 def pending_requests(
     products: list[ProductRecord],
-    cache: GeneratedCache,
     context: GenerationContext,
 ) -> list[GenerationRequest]:
-    """Return the ``(gtin, language)`` units still needing a producer, each with its mode.
+    """Return the ``(gtin, language)`` units needing a producer this run, each with its mode.
 
-    A unit is pending when it has no fresh cache entry (no entry, or a fingerprint that no longer
-    matches the inputs after a feed edit or ``prompt_version`` bump) and it was not verbatim-filled
-    by :func:`prefill_from_feed`. Its ``mode`` is :data:`MODE_TIGHTEN` when the feed carries 1067
-    copy that is too long to use as-is (the producer shortens and ranks it), else
-    :data:`MODE_GENERATE` (the producer writes from 1083).
+    **Every unit is pending, every run.** There is no store, so nothing can report a unit as
+    already done and no argument exists through which a caller could claim it is. The one
+    exception is not an exception to that rule: a unit whose 1067 is short enough to publish
+    verbatim never needs a producer at all, and :func:`merge_generated` derives its copy from the
+    feed instead (see :func:`_feed_verbatim`).
+
+    ``mode`` is :data:`MODE_TIGHTEN` when the feed carries 1067 copy that is too long to use as-is
+    (the producer shortens and ranks it), else :data:`MODE_GENERATE` (the producer writes from
+    1083).
 
     Args:
-        products: The parsed products.
-        cache: The current generated-copy cache (call ``prefill_from_feed`` first).
+        products: The parsed products, already narrowed to this run's scope by the caller.
         context: The client context — languages, prompt version, and what may be translated.
 
     Returns:
@@ -635,8 +670,8 @@ def pending_requests(
     for product in products:
         for language in context.languages:
             inputs, gaps, fingerprint = _prepare_unit(product, language, context)
-            if _is_fresh(cache, product.gtin, language, fingerprint):
-                continue
+            if _feed_verbatim(inputs) is not None:
+                continue  # the feed already wrote it; merge_generated materialises it
             candidates = _feature_candidates(inputs)
             mode = MODE_TIGHTEN if candidates else MODE_GENERATE
             requests.append(
@@ -653,18 +688,13 @@ def pending_requests(
     return requests
 
 
-def _clean_bullets(bullets: list[str]) -> list[str]:
-    """Strip each bullet and drop the empties."""
-    return [stripped for stripped in (b.strip() for b in bullets) if stripped]
-
-
 def _requested_translations(request: GenerationRequest, result: GenerationResult) -> dict[str, str]:
     """The result's translations, narrowed to the fields the request actually asked for.
 
     The write-side half of "the feed always wins": a producer that volunteers a value for a
-    language the feed already carries has it dropped here, before it can reach the cache.
-    :func:`merge_generated` enforces the same rule again on read, because one guard on a path
-    this quiet is one deploy away from being the only guard.
+    language the feed already carries has it dropped here, before it can reach the results file.
+    :func:`merge_generated` enforces the same rule again on read — which is not belt and braces,
+    because the in-session producer hand-writes that file and never passes through here at all.
     """
     asked = {gap.field for gap in request.translations}
     return {
@@ -674,52 +704,42 @@ def _requested_translations(request: GenerationRequest, result: GenerationResult
     }
 
 
-def apply_result(  # noqa: PLR0913 — a validated write needs its result, provenance, and clock
-    cache: GeneratedCache,
-    request: GenerationRequest,
-    result: GenerationResult,
-    *,
-    origin: str,
-    provenance: str,
-    now: datetime,
-) -> None:
-    """Validate a producer's result and upsert it into ``cache`` in place.
+def _source_input(inputs: GenerationInputs) -> str:
+    """The source-language text a generation was derived from, for the report's audit column."""
+    return inputs.feature_benefit or inputs.marketing_message or inputs.functional_name or ""
+
+
+def result_item(request: GenerationRequest, result: GenerationResult) -> ResultItem:
+    """Validate a producer's result into the :class:`ResultItem` a results file holds.
+
+    Pure: it builds a value rather than upserting into a store, because there is no store. Used by
+    the API backend and by tests; the in-session producer writes the same shape by hand.
 
     Args:
-        cache: The cache to update (mutated).
-        request: The request this result answers (supplies gtin/language/fingerprint/inputs).
+        request: The request this result answers (supplies gtin/language/fingerprint).
         result: The producer's copy.
-        origin: How the copy came to be — :data:`ORIGIN_TIGHTENED` (shortened from 1067) or
-            :data:`ORIGIN_GENERATED` (written from 1083). :data:`ORIGIN_FEED` is set by
-            :func:`prefill_from_feed`, not here.
-        provenance: Which producer made it, e.g. ``"api:claude-sonnet-5"`` or ``"in-session"``.
-        now: The generation timestamp (injected for determinism).
+
+    Returns:
+        The item to write into this run's :class:`ResultsFile`.
 
     Raises:
-        GeneratorError: If the result has no usable USPs after cleaning.
+        GeneratorError: If the result has no usable USPs. The rule lives on
+            :class:`ResultItem`; this only restates the failure in terms of the unit it
+            happened to, which a bare pydantic error does not name.
     """
-    usps = _clean_bullets(result.usps)
-    if not usps:
+    try:
+        return ResultItem(
+            gtin=request.gtin,
+            language=request.language,
+            usps=list(result.usps),
+            translations=_requested_translations(request, result),
+            input_fingerprint=request.input_fingerprint,
+            inferences=list(result.inferences),
+        )
+    except ValidationError as exc:
         raise GeneratorError(
             f"empty generation result for {request.gtin}/{request.language}: usps={result.usps!r}"
-        )
-    source_input = (
-        request.inputs.feature_benefit
-        or request.inputs.marketing_message
-        or request.inputs.functional_name
-        or ""
-    )
-    entry = CacheEntry(
-        usps=usps,
-        translations=_requested_translations(request, result),
-        origin=origin,
-        input_fingerprint=request.input_fingerprint,
-        provenance=provenance,
-        source_input=source_input,
-        generated_at=now,
-        inferences=list(result.inferences),
-    )
-    cache.entries.setdefault(request.gtin, {})[request.language] = entry
+        ) from exc
 
 
 # --- Deterministic assembly --------------------------------------------------
@@ -838,7 +858,7 @@ def _missing_input_issue(gtin: str, language: str, inputs: GenerationInputs) -> 
     )
 
 
-def _content_issue(gtin: str, language: str, entry: CacheEntry) -> SourceIssue | None:
+def _content_issue(gtin: str, language: str, unit: GeneratedUnit) -> SourceIssue | None:
     """Report generated or adjusted copy; verbatim feed copy needs no report.
 
     Feed copy (attr 1067 used as-is) is authoritative and reported nowhere. Tightened copy — the
@@ -846,17 +866,17 @@ def _content_issue(gtin: str, language: str, entry: CacheEntry) -> SourceIssue |
     shortening and fixes 1067 at source. Fully generated copy (no usable 1067) is flagged for
     review with its source-language input.
     """
-    if entry.origin == ORIGIN_FEED:
+    if unit.origin == ORIGIN_FEED:
         return None
-    if entry.origin == ORIGIN_TIGHTENED:
+    if unit.origin == ORIGIN_TIGHTENED:
         return SourceIssue(
             gtin=gtin,
             field=f"generated_description.{language}",
             source="adjusted from TradeItemFeatureBenefit attr 1067",
             issue="content_adjusted",
-            value=entry.source_input,
+            value=unit.source_input,
             detail=(
-                f"1067 copy for {language} was too long and was shortened ({entry.provenance}); "
+                f"1067 copy for {language} was too long and was shortened ({unit.provenance}); "
                 "review the adjusted copy and tighten attr 1067 at the source."
             ),
         )
@@ -865,15 +885,15 @@ def _content_issue(gtin: str, language: str, entry: CacheEntry) -> SourceIssue |
         field=f"generated_description.{language}",
         source="generated (usps: tagline + Eigenschappen)",
         issue="content_generated",
-        value=entry.source_input,
+        value=unit.source_input,
         detail=(
-            f"Tagline and Eigenschappen for {language} were generated ({entry.provenance}); "
+            f"Tagline and Eigenschappen for {language} were generated ({unit.provenance}); "
             "review the copy before publishing."
         ),
     )
 
 
-def _inference_issues(gtin: str, language: str, entry: CacheEntry) -> list[SourceIssue]:
+def _inference_issues(gtin: str, language: str, unit: GeneratedUnit) -> list[SourceIssue]:
     """One :class:`SourceIssue` per claim the producer inferred beyond the feed text.
 
     Inferences are honest-but-derived claims (e.g. "snoerloos" from "batterie rechargeable"):
@@ -893,7 +913,7 @@ def _inference_issues(gtin: str, language: str, entry: CacheEntry) -> list[Sourc
                 "verify it is true for this product before publishing."
             ),
         )
-        for claim in entry.inferences
+        for claim in unit.inferences
     ]
 
 
@@ -933,17 +953,106 @@ def _translated_issue(gtin: str, language: str, gap: TranslationGap, value: str)
 
 
 class _UnitRead(NamedTuple):
-    """What one ``(gtin, language)`` contributed: its fresh cache entry, if any, and its gaps."""
+    """What one ``(gtin, language)`` contributed: the copy resolved for it, and its gaps."""
 
-    entry: CacheEntry | None
+    unit: GeneratedUnit | None
     gaps: list[TranslationGap]
     inputs: GenerationInputs
 
 
-def _read_cache(
-    product: ProductRecord, cache: GeneratedCache, context: GenerationContext
+class _Copy(NamedTuple):
+    """This run's copy, indexed for lookup, with the provenance of the file it came from."""
+
+    by_unit: dict[tuple[str, str], ResultItem]
+    provenance: str
+
+
+def _index(results: ResultsFile) -> _Copy:
+    """Index a results file by ``(gtin, language)``.
+
+    A later duplicate wins, which is the same rule a dict literal follows and the only one that
+    does not depend on how a hand-written file happens to be ordered.
+    """
+    return _Copy(
+        by_unit={(item.gtin, item.language): item for item in results.results},
+        provenance=results.provenance,
+    )
+
+
+def _resolve_unit(
+    gtin: str, language: str, inputs: GenerationInputs, fingerprint: str, copy: _Copy
+) -> GeneratedUnit | None:
+    """The copy for one unit: the feed's own if it is usable, else this run's result, else none.
+
+    The feed is consulted first and wins. That is the order ``prefill_from_feed`` established by
+    running before ``pending_requests``, and keeping it means a stray result for a verbatim unit
+    cannot quietly replace the client's own words.
+
+    A result whose echoed fingerprint no longer matches is dropped, loudly. It is the only thing
+    the fingerprint still does: the results file outlives the producer session that wrote it, so
+    without the check a ``parse_export`` re-run in between would publish copy about data the feed
+    no longer holds — silently, which is how wrong pages used to happen.
+    """
+    verbatim = _feed_verbatim(inputs)
+    if verbatim is not None:
+        return GeneratedUnit(
+            usps=verbatim,
+            origin=ORIGIN_FEED,
+            provenance=FEED_PROVENANCE,
+            source_input=inputs.feature_benefit or "",
+        )
+    item = copy.by_unit.get((gtin, language))
+    if item is None:
+        return None
+    if item.input_fingerprint is not None and item.input_fingerprint != fingerprint:
+        _log.warning(
+            "stale copy for %s/%s: written for inputs the feed no longer has, so it is dropped "
+            "and the unit is held out of the plan (E21); re-run the generate cycle",
+            gtin,
+            language,
+        )
+        return None
+    return GeneratedUnit(
+        # Already stripped and non-empty: `ResultItem` cleans on validation, so there is no
+        # second cleaning step here that could disagree with it.
+        usps=list(item.usps),
+        translations=dict(item.translations),
+        # Derived, not declared: the feed already answers how this copy came to be.
+        origin=ORIGIN_TIGHTENED if _feature_candidates(inputs) else ORIGIN_GENERATED,
+        provenance=copy.provenance,
+        source_input=_source_input(inputs),
+        inferences=list(item.inferences),
+    )
+
+
+def missing_copy(
+    products: list[ProductRecord], results: ResultsFile, context: GenerationContext
+) -> list[tuple[str, str]]:
+    """The ``(gtin, language)`` units this run still has no usable copy for.
+
+    The read-side twin of :func:`pending_requests`: the same question asked of a results file
+    rather than of the producer. ``pending_requests`` says what must be written; this says what is
+    still missing once it has been — units with no result, with a result written for older inputs,
+    or with a result that cleans to nothing.
+
+    Both answers come from :func:`_resolve_unit`, so the doctor's verdict and what ``run_plan``
+    actually publishes cannot disagree. That is the #96 lesson applied before it can bite: one
+    rule answered independently on two paths drifts into meaning two things.
+    """
+    copy = _index(results)
+    missing: list[tuple[str, str]] = []
+    for product in products:
+        for language in context.languages:
+            inputs, _, fingerprint = _prepare_unit(product, language, context)
+            if _resolve_unit(product.gtin, language, inputs, fingerprint, copy) is None:
+                missing.append((product.gtin, language))
+    return missing
+
+
+def _read_copy(
+    product: ProductRecord, copy: _Copy, context: GenerationContext
 ) -> tuple[dict[str, _UnitRead], dict[str, dict[str, str]], list[SourceIssue]]:
-    """Read one product's cache entries, collecting its filled values and their findings.
+    """Resolve one product's copy, collecting its filled values and their findings.
 
     Returns the per-language reads, the filled values as ``field → language → value``, and one
     ``value_translated`` finding per filled value plus one ``missing_generation_input`` per
@@ -955,13 +1064,11 @@ def _read_cache(
     issues: list[SourceIssue] = []
     for language in context.languages:
         inputs, gaps, fingerprint = _prepare_unit(product, language, context)
-        entry = cache.get(product.gtin, language)
-        if entry is not None and entry.input_fingerprint != fingerprint:
-            entry = None  # stale — a feed edit superseded it
-        reads[language] = _UnitRead(entry, gaps, inputs)
+        unit = _resolve_unit(product.gtin, language, inputs, fingerprint, copy)
+        reads[language] = _UnitRead(unit, gaps, inputs)
 
         for gap in gaps:
-            value = entry.translations.get(gap.field) if entry is not None else None
+            value = unit.translations.get(gap.field) if unit is not None else None
             if value:
                 filled.setdefault(gap.field, {})[language] = value
                 issues.append(_translated_issue(product.gtin, language, gap, value))
@@ -1018,18 +1125,21 @@ def _stored_values(product: ProductRecord, field: str, default_language: str) ->
 
 def merge_generated(
     products: list[ProductRecord],
-    cache: GeneratedCache,
+    results: ResultsFile,
     context: GenerationContext,
 ) -> tuple[list[ProductRecord], list[SourceIssue]]:
-    """Fold cached generated copy and filled language gaps onto each record, reporting both.
+    """Fold this run's generated copy and filled language gaps onto each record, reporting both.
 
     Pure and network-free. For each product it fills every translatable value the feed lacks in a
     configured language, overwrites ``product_name`` with the variation-combined title, sets
-    ``generated_tagline`` (the first cached USP), and — when the cache holds usable Eigenschappen
-    for the current inputs — sets ``generated_description`` to the assembled three-part HTML. A
-    stale or missing cache entry simply yields no description for that language; the run_plan E18
-    backstop handles the resulting gap. Called before ``diff_against_state`` so generated content
-    is part of the content hash.
+    ``generated_tagline`` (the first USP), and — when copy resolved for the current inputs — sets
+    ``generated_description`` to the assembled three-part HTML. A stale or missing result simply
+    yields no description for that language; the run_plan E18/E21 backstop handles the gap.
+
+    Called before ``diff_against_state``, but **not** because the copy is hashed — it is not. Since
+    #97 the content hash is taken over the pre-generator record, so re-generating unchanged copy
+    does not reclassify a page. The order still matters for the *skip* decisions: E21 needs a
+    tagline to exist, and a translated French name is what stops E18 holding the unit.
 
     The fill runs before the title is combined and before the description is assembled, so a
     translated variation suffixes the translated title and a translated material reaches the
@@ -1037,7 +1147,7 @@ def merge_generated(
 
     Args:
         products: The parsed products.
-        cache: The generated-copy cache.
+        results: This run's copy, as the producer wrote it.
         context: The client context — languages, default language, prompt version, and what
             may be translated.
 
@@ -1045,10 +1155,11 @@ def merge_generated(
         The products with generated and filled fields materialised, and one :class:`SourceIssue`
         per generated value and per filled value.
     """
+    copy = _index(results)
     merged: list[ProductRecord] = []
     issues: list[SourceIssue] = []
     for product in products:
-        reads, filled, product_issues = _read_cache(product, cache, context)
+        reads, filled, product_issues = _read_copy(product, copy, context)
         issues.extend(product_issues)
         record = _apply_translations(product, filled, context.default_language)
         record, copy_issues = _apply_copy(record, reads, context)
@@ -1060,27 +1171,27 @@ def merge_generated(
 def _apply_copy(
     product: ProductRecord, reads: dict[str, _UnitRead], context: GenerationContext
 ) -> tuple[ProductRecord, list[SourceIssue]]:
-    """Combine each language's title and assemble its generated copy from the cache reads."""
+    """Combine each language's title and assemble its generated copy from the resolved units."""
     issues: list[SourceIssue] = []
     names = dict(product.product_name.values) if product.product_name else {}
     taglines: dict[str, str] = {}
     descriptions: dict[str, str] = {}
     for language in context.languages:
-        entry = reads[language].entry
+        unit = reads[language].unit
         base = names.get(language)
         if base is not None:
             variation = product.extra("product_variation", language)
             names[language] = _combine_title(base, variation)
-        if entry is None or not entry.usps:
+        if unit is None or not unit.usps:
             continue
-        taglines[language] = entry.usps[0]
+        taglines[language] = unit.usps[0]
         descriptions[language] = _assemble_description(
-            entry.usps, product, language, context.default_language
+            unit.usps, product, language, context.default_language
         )
-        issue = _content_issue(product.gtin, language, entry)
+        issue = _content_issue(product.gtin, language, unit)
         if issue is not None:
             issues.append(issue)
-        issues.extend(_inference_issues(product.gtin, language, entry))
+        issues.extend(_inference_issues(product.gtin, language, unit))
 
     update: dict[str, object] = {}
     if product.product_name is None or names != product.product_name.values:

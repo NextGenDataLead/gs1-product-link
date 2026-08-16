@@ -26,7 +26,7 @@ webview available.
 
 **It has no LLM, no `ANTHROPIC_API_KEY`, and no connection to Anthropic.** Content generation
 happens on the maintainer's machine, in a Claude Code session with the `content-generator` skill;
-`generated_cache.json` is handed over as a file and uploaded on the Content screen. This machine
+`generation_results.json` is handed over as a file and uploaded on the Content screen. This machine
 never runs `run_generate`.
 
 That is a deliberate split, not an omission. It removes an entire class of IT objection and a
@@ -48,7 +48,7 @@ through `flow-orchestrator`. The shell is a second surface over the same gates, 
 |---|---|---|
 | 1 | **Setup** | The operator-facing half of `clients.yml` and `.env`, as a form, with live Test buttons. |
 | 2 | **Data** | Upload the export, prune the process list, edit the video mapping, read the data-quality report. |
-| 3 | **Content** | Import `generated_cache.json`, check its coverage, read the copy. |
+| 3 | **Content** | Import `generation_results.json`, check its coverage, read the copy. |
 | 4 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
 | 5 | **Publish** | The nine gates, one at a time. |
 | 6 | **Runs** | Every row of every run, as it was recorded at the time, and whether the site agrees. |
@@ -155,30 +155,30 @@ one Save. Three things it will not do:
 
 ### Content
 
-Import the cache, then look at the **coverage** figures before the copy. A cache entry's
-fingerprint covers `{inputs, language, prompt_version}`, so editing one product in the feed makes
-that unit *pending* again — and a pending unit with no producer on this machine is dropped from the
-plan (E21). The screen lists the pending units by GTIN and language, so "request a fresh cache" is
-an instruction rather than a hunch.
+Import the copy, then look at the **coverage** figures before reading it. The copy is written fresh
+for each run and never stored, so the question is not how much has piled up but whether *this* file
+answers every in-scope unit. Its fingerprint covers `{inputs, language, prompt_version}`, so editing
+one product in the feed leaves that unit uncovered — and an uncovered unit with no producer on this
+machine is dropped from the plan (E21). The screen lists those units by GTIN and language, so
+"request fresh copy" is an instruction rather than a hunch.
 
-**The copy review shows this run's batch, not the cache.** `generated_cache.json` is never pruned,
-so it holds every unit ever generated for this client on this machine. The review used to list all
-of it — captioned "N GTIN(s) in the cache" — directly beneath coverage figures that *were* scoped,
-with nothing to tell the two apart, and the gap widens with the age of the machine. It now reads
-`in_scope_gtins` from the doctor's `scope` check and splits the file: this run's entries, then the
-in-scope GTINs that have **no** entry (the copy still to be made), then everything else folded away
-under a count. Folded rather than dropped — it is real copy, and a reader who wants it should reach
-it; what it must not do is pad this run's list.
+**The copy review shows this run's batch, not the whole file.** It reads `in_scope_gtins` from the
+doctor's `scope` check and splits: this run's entries, then the in-scope GTINs with **no** copy (the
+work still to do), then anything outside this run's scope. That last group used to be ordinary —
+the cache accumulated every unit ever generated on this machine — and it is not any more. A per-run
+file holding GTINs this run will not touch means it was written against a *different process list*,
+so the screen says so as a warning and keeps the list behind a fold rather than presenting it as
+background.
 
 Scope is not recomputed here. `lib.preflight.in_scope` stays the single implementation and the
-doctor carries the answer across. If it cannot be read the screen shows the whole cache and *says*
+doctor carries the answer across. If it cannot be read the screen shows the whole file and *says*
 so, because filtering to nothing would read as "there is no copy" — wrong in the direction that
 stops an operator looking.
 
 Coverage and the review come from **one** preflight run, and the import button refreshes both: they
 describe the file it just replaced.
 
-**Asking for that cache is a conversation, not a button, and deliberately so.** This machine never
+**Asking for that copy is a conversation, not a button, and deliberately so.** This machine never
 runs `run_generate` — no API key, no Anthropic egress — so it cannot produce
 `generation_requests.json` either; that command runs on the maintainer's machine, in a Claude Code
 session with the `content-generator` skill, which reads the pending units itself from the same

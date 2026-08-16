@@ -151,11 +151,11 @@ cache and contract:
 
 ```bash
 python -m scripts.run_generate --emit      # queue requests for the in-session producer
-python -m scripts.run_generate --ingest    # read results back into the cache
+python -m scripts.run_generate --validate  # check the results against this run
 python -m scripts.run_generate --backend api
 ```
 
-`--emit` / `--ingest` needs **no API key** — Claude writes the copy in session. Re-run `run_plan`
+`--emit` / `--validate` needs **no API key** — Claude writes the copy in session. Re-run `run_plan`
 afterwards so the copy merges into the plan. See [`costs.md`](costs.md).
 
 **E21:** if the generator is enabled but a `(GTIN, language)` has no generated tagline — for instance

@@ -229,6 +229,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what every caller did for as long as the drops were only a log line.
 
 ### Changed
+- **The generated-copy cache is gone. Copy is written fresh every run and never stored.**
+  `generation_results.json` keeps its name and its path and changes meaning: it stops being a
+  hand-off buffer that `--ingest` folded into `generated_cache.json`, and becomes *the run's copy*,
+  read directly by `run_plan`. Nothing accumulates, nothing is reused, and no run can skip
+  generating. **BREAKING** for anyone driving `run_generate` by hand: `--ingest` is now
+  `--validate`, and it writes nothing.
+
+  The cache existed to make re-runs cheap and stable. It bought stability at the price of a store
+  that decides when to skip work — and that store was quietly wrong: the live file held 30 units
+  across 16 GTINs stamped 19–28 July, **20 of them from the Cowork experiment that no longer
+  exists**, still loaded on every run, because nothing has ever pruned it. Idempotency now comes
+  from the other end instead. Since the previous entry the content hash excludes generated copy, so
+  writing it again does not republish a page; that is what makes always-regenerate affordable, and
+  it is why the two changes had to land in this order.
+
+  Cost is the trade, and it was measured before it was accepted: a full 127-product catalogue is
+  ~$1.75–$2.65, so `docs/costs.md` no longer claims that re-runs "do not re-pay" — they do.
+
+  **`input_fingerprint` survives as a validity check only, never a reuse key.** The results file
+  outlives the producer session that wrote it, so a `parse_export` re-run in between would publish
+  copy describing data the feed no longer holds. A mismatch now drops the unit, says so, and E21
+  holds it out of the plan; `check_generation_results` catches the same thing *before* a wave,
+  which is what turns a forgotten regeneration into a loud failure rather than wrong copy on a live
+  page.
+
+  Three facts the cache stored are now derived when the copy is read, so a hand-written file cannot
+  mislabel itself: `origin` comes from the feed (a short attr 1067 is FEED, a long one TIGHTENED,
+  none GENERATED — the same rule `pending_requests` already used for `mode`), `source_input` from
+  the inputs, and `provenance` moves to the file, because one producer writes one file per run.
+
+  **`prefill_from_feed` is gone and its rule is not.** It wrote feed-verbatim copy into the cache;
+  with no cache there is nowhere to write it, so `_feed_verbatim` is consulted by both
+  `pending_requests` — which skips those units, so they still cost no producer call — and
+  `merge_generated`, which derives the copy from the feed on every run. One helper for both sides
+  deliberately: #96's lesson is that one rule answered independently on two paths drifts into
+  meaning two things. Measured: 8 of 254 catalogue units, 4 GTINs, **0 of the 74 in scope**.
+
+  `--backend api` writes the results file too, so both producers feed one seam rather than the
+  headless one bypassing it. The Content screen imports `generation_results.json`; copy in it for a
+  GTIN outside this run's scope used to be ordinary accumulation and now means the file was written
+  against a different process list, so the screen says so.
 - **Generated copy no longer decides whether a page has changed.** The content hash now covers the
   product as the feed defines it, categories included; the generator's output is excluded. A
   re-generation over unchanged source data therefore leaves a published page **UNCHANGED** instead

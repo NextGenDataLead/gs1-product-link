@@ -312,7 +312,7 @@ def _files(editor: _Editor, cfg: ClientConfig) -> None:
 
         _file_row("Parsed products", f"output/{cfg.client_id}/data/products.json")
         if cfg.generator is not None:
-            _file_row("Generated copy", f"output/{cfg.client_id}/data/generated_cache.json")
+            _file_row("Generated copy", f"output/{cfg.client_id}/data/generation_results.json")
 
 
 def _file_row(label: str, path: str) -> None:

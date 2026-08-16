@@ -3,7 +3,7 @@
 Every failure this module reports was previously a failure the operator met *late*. A missing
 secret surfaced as :class:`~lib.errors.MissingCredentialError` at the first API call (E15), so
 parse, plan and dry-run could all pass before it fired. A blank ``clients.yml`` field surfaced
-as the first pydantic error and only the first. A copy cache that no longer matched the export
+as the first pydantic error and only the first. Generated copy that no longer matched the export
 surfaced not at all: those units simply vanished from the plan (E21). The point of a preflight
 is to move each of those to a moment where nothing is half-done and nothing is permanent.
 
@@ -21,9 +21,11 @@ Two checks earn their place by guarding traps that are otherwise silent:
   derives ``require_generated_copy = cfg.generator is not None``, so deleting the block does not
   raise — it disables the E21 guard, and units with no copy publish with blank taglines instead
   of being held.
-* :func:`check_cache_coverage` catches a generated-copy cache that no longer matches the export.
-  The fingerprint covers ``{inputs, language, prompt_version}``, so any feed edit or version bump
-  makes those units *pending* again — and a pending unit with no producer to fill it is an E21
+* :func:`check_generation_results` catches a run whose generated copy is missing or no longer
+  matches the export. Copy is written fresh every run and never stored, so the question is not
+  how much has accumulated but whether the file on disk answers every in-scope unit — and whether
+  it still describes this export. The fingerprint covers ``{inputs, language, prompt_version}``,
+  so any feed edit or version bump leaves those units uncovered, and an uncovered unit is an E21
   omission, which is to say invisible.
 """
 
@@ -32,7 +34,6 @@ from __future__ import annotations
 import json
 import shutil
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from enum import StrEnum
 from http import HTTPStatus
 from pathlib import Path
@@ -52,7 +53,7 @@ from lib.errors import (
     VideoMapError,
     WordPressAPIError,
 )
-from lib.generator import generation_context, load_cache, pending_requests, prefill_from_feed
+from lib.generator import generation_context, load_results, missing_copy
 from lib.gs1_dl_client import GS1DigitalLinkClient
 from lib.media_video import (
     VideoMapSummary,
@@ -203,9 +204,9 @@ def check_generator(cfg: ClientConfig) -> CheckResult:
     This matters most on a machine that has no API key and never generates anything, where the
     block genuinely *looks* like dead configuration. It is not: it is the switch.
 
-    An absent block is only reported as a failure when a generated-copy cache exists, which is
-    proof that copy was generated for this client and so that a generator was configured once.
-    With no cache and no block, the client simply has no generator and E21 does not apply.
+    An absent block is only reported as a failure when generated copy exists for this client,
+    which is proof that a generator was configured once. With no copy and no block, the client
+    simply has no generator and E21 does not apply.
     """
     if cfg.generator is not None:
         return CheckResult(
@@ -215,13 +216,13 @@ def check_generator(cfg: ClientConfig) -> CheckResult:
             f"present (prompt_version {cfg.generator.prompt_version}); "
             "units with no generated copy will be held out of the plan",
         )
-    if _cache_entry_count(cfg.client_id):
+    if _generated_unit_count(cfg.client_id):
         return CheckResult(
             "generator_block",
             "Generator block (E21 guard)",
             Status.FAIL,
-            "clients.yml has no `generator` block, but a generated-copy cache exists for this "
-            "client — so one was configured before. Without it run_plan sets "
+            "clients.yml has no `generator` block, but generated copy exists for this client — "
+            "so one was configured before. Without it run_plan sets "
             "require_generated_copy=False and a unit with no copy publishes a blank tagline "
             "instead of being held.",
             remedy="Restore the `generator:` block in clients.yml. It is required even on a "
@@ -232,7 +233,7 @@ def check_generator(cfg: ClientConfig) -> CheckResult:
         "generator_block",
         "Generator block (E21 guard)",
         Status.NA,
-        "no `generator` block and no generated-copy cache — this client does not use generated "
+        "no `generator` block and no generated copy — this client does not use generated "
         "copy, so E21 does not apply",
     )
 
@@ -302,14 +303,14 @@ def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult
         # have to re-derive scope, and a second implementation of "what will this run touch" is
         # the mistake `in_scope` exists to prevent.
         #
-        # ``ProductRecord.gtin`` verbatim — the same field the generator keys its cache by
-        # (``entries[gtin][language]``). A normalised variant here would silently fail to match
-        # for any client whose feed carries 13-digit codes, and the failure would look like
-        # "nothing is in scope" rather than like a bug.
+        # ``ProductRecord.gtin`` verbatim — the same field the generator keys its results by
+        # (``(gtin, language)``). A normalised variant here would silently fail to match for any
+        # client whose feed carries 13-digit codes, and the failure would look like "nothing is
+        # in scope" rather than like a bug.
         #
-        # Deliberately uncapped, unlike ``cache_coverage``'s ``pending_units``: that is a list to
-        # read, this is a list to filter with, and a truncated filter hides in-scope work — the
-        # exact failure this data is here to fix.
+        # Deliberately uncapped, unlike ``generation_results``'s ``pending_units``: that is a
+        # list to read, this is a list to filter with, and a truncated filter hides in-scope
+        # work — the exact failure this data is here to fix.
         "in_scope_gtins": [product.gtin for product in scoped],
     }
     if not scoped:
@@ -331,37 +332,40 @@ def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult
     )
 
 
-def check_cache_coverage(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
-    """Report how much of the **in-scope** export the generated-copy cache still covers.
+def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
+    """Report whether this run's ``generation_results.json`` covers the **in-scope** export.
 
-    The core check when copy is generated on one machine and published from another. A cache
-    entry's fingerprint covers ``{inputs, language, prompt_version}``, so editing one product
-    in the feed — or bumping ``prompt_version`` — makes that unit *pending* again. A pending
-    unit with no producer to fill it is an E21 omission: it leaves the plan without a row, and
-    before ``Plan.skipped`` existed it left without a trace.
+    The core check when copy is written on one machine and published from another. Copy is not
+    stored between runs, so this is not a question about accumulated coverage: it asks whether the
+    file sitting on disk right now answers every in-scope unit, and whether it is still *about*
+    this export. A unit it does not answer is an E21 omission — it leaves the plan without a row,
+    and before ``Plan.skipped`` existed it left without a trace.
 
-    Entirely offline. It answers "is the cache I was handed still the right one for this
-    export?", which is the question a stale handover fails.
+    Three ways a unit can be uncovered, and the fingerprint check is the one that matters most:
+    the results file outlives the producer session that wrote it, so a ``parse_export`` re-run in
+    between leaves copy describing data the feed no longer holds. Catching that here is what turns
+    a forgotten regeneration into a loud failure *before* a wave rather than wrong copy on a live
+    page. Entirely offline.
     """
     if cfg.generator is None:
         return CheckResult(
-            "cache_coverage",
-            "Generated-copy cache",
+            "generation_results",
+            "Generated copy for this run",
             Status.NA,
             "no `generator` block — this client publishes feed copy only",
         )
     products = in_scope(cfg, products)
     if not products:
         return CheckResult(
-            "cache_coverage",
-            "Generated-copy cache",
+            "generation_results",
+            "Generated copy for this run",
             Status.WARN,
-            "no in-scope products to check the cache against",
+            "no in-scope products to check the copy against",
             remedy="Run `python -m scripts.parse_export` first, and check the scope above.",
         )
 
-    cache = load_cache(cfg.client_id)
     languages = cfg.wordpress.languages
+    total = len(products) * len(languages)
     context = generation_context(
         languages,
         cfg.wordpress.default_language,
@@ -369,35 +373,44 @@ def check_cache_coverage(cfg: ClientConfig, products: list[ProductRecord]) -> Ch
         cfg.export.gdsn_map,
         cfg.export.gdsn_extras,
     )
-    # prefill_from_feed fills the units whose feed copy is usable verbatim, and pending_requests
-    # is documented as needing it to have run first. It mutates the cache *in memory* only —
-    # nothing here writes it back, so the file on disk is untouched by looking at it.
-    prefill_from_feed(products, cache, context, now=datetime.now(UTC))
-    pending = pending_requests(products, cache, context)
-    total = len(products) * len(languages)
-    covered = total - len(pending)
+    try:
+        results = load_results(cfg.client_id)
+    except OrchestratorError as exc:
+        # Reported rather than raised: the doctor exists to tell the operator what is wrong
+        # before a wave, and crashing on the file it was asked to inspect does the opposite.
+        return CheckResult(
+            "generation_results",
+            "Generated copy for this run",
+            Status.FAIL,
+            str(exc),
+            remedy="Re-run the generate cycle for this client to write a fresh results file.",
+            data={"total": total, "covered": 0, "pending": total, "pending_units": []},
+        )
+    missing = missing_copy(products, results, context)
+    covered = total - len(missing)
     data: dict[str, object] = {
         "total": total,
         "covered": covered,
-        "pending": len(pending),
-        "pending_units": [(request.gtin, request.language) for request in pending[:20]],
+        "pending": len(missing),
+        "pending_units": missing[:20],
     }
-    if not pending:
+    if not missing:
         return CheckResult(
-            "cache_coverage",
-            "Generated-copy cache",
+            "generation_results",
+            "Generated copy for this run",
             Status.OK,
-            f"{total} unit(s), all cached",
+            f"{total} unit(s), all covered",
             data=data,
         )
     return CheckResult(
-        "cache_coverage",
-        "Generated-copy cache",
+        "generation_results",
+        "Generated copy for this run",
         Status.FAIL,
-        f"{total} unit(s), {covered} cached, {len(pending)} pending — the pending ones have no "
-        "copy for this version of the export and will be dropped from the plan (E21)",
-        remedy="Request a fresh generated_cache.json for the current export before publishing. "
-        "A cache goes stale on any feed edit or prompt_version bump, not only on new products.",
+        f"{total} unit(s), {covered} covered, {len(missing)} without copy — those have nothing "
+        "written for this version of the export and will be dropped from the plan (E21)",
+        remedy="Run the generate cycle again for the current export: "
+        "`python -m scripts.run_generate --emit`, write the copy, then `--validate`. Copy goes "
+        "stale on any feed edit or prompt_version bump, not only on new products.",
         data=data,
     )
 
@@ -903,7 +916,7 @@ def run_checks(
         config,
         check_scope(cfg, products),
         check_generator(cfg),
-        check_cache_coverage(cfg, products),
+        check_generation_results(cfg, products),
         check_process_list(cfg),
         check_category_coverage(cfg, products),
         check_video_coverage(cfg),
@@ -926,10 +939,16 @@ def worst_status(results: list[CheckResult]) -> Status:
     return Status.NA
 
 
-def _cache_entry_count(client_id: str) -> int:
-    """How many entries the generated-copy cache holds, or 0 when there is no cache."""
+def _generated_unit_count(client_id: str) -> int:
+    """How many units this client's results file holds, or 0 when there is none.
+
+    Evidence that a generator was configured here once — the job the cache's entry count used to
+    do. A results file is per-run rather than accumulated, so this answers "was copy written for
+    this client" over a narrower window than the cache did; that is the honest signal available,
+    and it is still the one that matters, because a client that generates copy has a file here.
+    """
     try:
-        return len(load_cache(client_id).entries)
+        return len(load_results(client_id).results)
     except OrchestratorError:
         return 0
 

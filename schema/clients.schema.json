@@ -398,7 +398,7 @@
     "generator": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Content-generator (LLM copy) settings. The API backend is opt-in via enabled; api_key_env names the env var holding the key, never the key. prompt_version selects the frozen voice template prompts/{client}/generation.{prompt_version}.md and is part of the cache fingerprint.",
+      "description": "Content-generator (LLM copy) settings. The API backend is opt-in via enabled; api_key_env names the env var holding the key, never the key. prompt_version selects the frozen voice template prompts/{client}/generation.{prompt_version}.md and is part of the input fingerprint.",
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -410,7 +410,7 @@
         },
         "prompt_version": {
           "type": "string",
-          "description": "Voice/prompt template version; selects prompts/{client}/generation.{prompt_version}.md and gates cache reuse."
+          "description": "Voice/prompt template version; selects prompts/{client}/generation.{prompt_version}.md and is part of the input fingerprint, so bumping it makes existing copy read as stale."
         },
         "api_key_env": {
           "type": "string",

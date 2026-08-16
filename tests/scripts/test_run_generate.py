@@ -1,16 +1,18 @@
 """Tests for scripts/run_generate.py (generator SPEC, commit 4).
 
-run_generate is the producer-agnostic spine: it prefills verbatim copy, computes the pending
-gaps, and moves them through the cache via emit/ingest or an injected ``LLMClient``. No LLM is
-involved here — the producer is simulated with a fake client or a hand-written results file.
-Cache/contract logic itself is covered in ``tests/lib/test_generator.py``; these tests drive
-``main`` and the seam over a temp working directory and a fake ``get_client``.
+run_generate is the producer-agnostic spine: it computes the units this run needs copy for and
+moves them to a producer via emit/validate or an injected ``LLMClient``. No LLM is involved here —
+the producer is simulated with a fake client or a hand-written results file. The contract and the
+merge are covered in ``tests/lib/test_generator.py``; these tests drive ``main`` and the seam over
+a temp working directory and a fake ``get_client``.
+
+Nothing is cached, so several of these assert an *absence*: no store is written, and a unit stays
+pending however much copy already exists for it.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,21 +28,17 @@ from lib.config import (
     WordPressConfig,
 )
 from lib.generator import (
-    ORIGIN_GENERATED,
-    GeneratedCache,
     GenerationContext,
     GenerationRequest,
     GenerationResult,
-    load_cache,
+    load_results,
     pending_requests,
-    prefill_from_feed,
 )
 from lib.records import LocalisedText, ProductRecord
 from scripts import run_generate
 
 GTIN_A = "08713195007359"
 GTIN_B = "08713195007360"
-_NOW = datetime(2026, 7, 18, tzinfo=UTC)
 
 
 # --- Builders ----------------------------------------------------------------
@@ -115,10 +113,11 @@ def _write_products(client_id: str, products: list[ProductRecord]) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _write_results(client_id: str, results: list[dict[str, Any]]) -> None:
+def _write_results(client_id: str, results: list[dict[str, Any]], **extra: Any) -> None:
     path = Path("output") / client_id / "data" / "generation_results.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"client_id": client_id, "results": results}), encoding="utf-8")
+    payload = {"client_id": client_id, "results": results, **extra}
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _patch_client(monkeypatch: pytest.MonkeyPatch, cfg: ClientConfig) -> None:
@@ -166,26 +165,43 @@ def test_emit_coverage_line_to_stderr(
     run_generate.main(["noviplast", "--emit"])
 
     err = capsys.readouterr().err
-    assert "0/1 units cached" in err
-    assert "1 pending (0 tighten, 1 generate)" in err
+    assert "0 tighten, 1 generate" in err
+    assert "0/1 units have copy; 1 without" in err
 
 
-def test_emit_prefills_short_1067_verbatim_and_omits_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_emit_writes_no_store_of_any_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--emit` used to write the cache too, to persist the verbatim prefill. Both halves are gone.
+
+    Asserted as an absence because that is the change: a second file appearing beside the requests
+    is how the old behaviour would come back, and it would come back silently.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    _write_products("noviplast", [_product(short_1067="Kort en krachtig")])
+
+    run_generate.main(["noviplast", "--emit"])
+
+    written = {p.name for p in Path("output/noviplast/data").iterdir()}
+    assert written == {"products.json", "generation_requests.json"}
+
+
+def test_emit_never_asks_for_copy_the_feed_already_supplies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A short 1067 *is* the copy, so the unit costs no producer call and still counts as covered.
+
+    This is what became of `prefill_from_feed`. It wrote those units into the cache; now nothing
+    is written at all and `merge_generated` derives them from the feed at plan time. The coverage
+    line has to agree, or the operator is told to go and generate something that needs nothing.
+    """
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, _make_config())
     _write_products("noviplast", [_product(short_1067="Kort en krachtig")])
 
     run_generate.main(["noviplast"])
 
-    # verbatim unit is not a pending request...
     assert _read_requests_file().requests == []
-    # ...and its feed copy is persisted in the cache
-    entry = load_cache("noviplast").get(GTIN_A, "nl")
-    assert entry is not None
-    assert entry.origin == "feed"
-    assert entry.usps == ["Kort en krachtig"]
+    assert "1/1 units have copy; 0 without" in capsys.readouterr().err
 
 
 def test_emit_writes_empty_requests_file_when_nothing_pending(
@@ -201,10 +217,40 @@ def test_emit_writes_empty_requests_file_when_nothing_pending(
     assert _read_requests_file().requests == []
 
 
-# --- ingest ------------------------------------------------------------------
+def test_emit_asks_again_for_a_unit_that_already_has_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Always-regenerate, at the command the operator actually runs.
+
+    The cache's freshness skip lived here: a unit with a matching fingerprint was dropped from the
+    emitted requests, which is precisely the reuse the operator asked to remove.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    _write_products("noviplast", [_product()])
+    run_generate.main(["noviplast", "--emit"])
+    request = _read_requests_file().requests[0]
+    _write_results(
+        "noviplast",
+        [
+            {
+                "gtin": request.gtin,
+                "language": request.language,
+                "usps": ["Slogan", "Punt"],
+                "input_fingerprint": request.input_fingerprint,
+            }
+        ],
+    )
+
+    run_generate.main(["noviplast", "--emit"])
+
+    assert [r.gtin for r in _read_requests_file().requests] == [GTIN_A]
 
 
-def test_ingest_applies_results_into_cache(
+# --- validate ----------------------------------------------------------------
+
+
+def test_validate_accepts_results_that_answer_this_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -212,19 +258,34 @@ def test_ingest_applies_results_into_cache(
     _write_products("noviplast", [_product()])
     _write_results("noviplast", [{"gtin": GTIN_A, "language": "nl", "usps": ["Slogan", "Punt"]}])
 
-    code = run_generate.main(["noviplast", "--ingest"])
+    code = run_generate.main(["noviplast", "--validate"])
 
     assert code == 0
-    entry = load_cache("noviplast").get(GTIN_A, "nl")
-    assert entry is not None
-    assert entry.usps == ["Slogan", "Punt"]
-    assert entry.origin == ORIGIN_GENERATED
-    assert entry.provenance == "in-session"
-    # coverage reflects the post-ingest state: the one gap is now cached
-    assert "ingested 1 result(s), skipped 0; 1/1 units cached; 0 pending" in capsys.readouterr().err
+    assert "validated 1 result(s), rejected 0; 1/1 units have copy; 0 without" in (
+        capsys.readouterr().err
+    )
 
 
-def test_emit_then_ingest_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """It replaced `--ingest`, which folded results into the cache. There is nothing to fold into.
+
+    What is left is the report, and a check that reports must not also mutate the thing it is
+    reporting on — otherwise running it twice is not the same as running it once.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    _write_products("noviplast", [_product()])
+    _write_results("noviplast", [{"gtin": GTIN_A, "language": "nl", "usps": ["Slogan", "Punt"]}])
+    path = Path("output/noviplast/data/generation_results.json")
+    before = path.read_text(encoding="utf-8")
+
+    run_generate.main(["noviplast", "--validate"])
+
+    assert path.read_text(encoding="utf-8") == before
+    assert not Path("output/noviplast/data/generated_cache.json").exists()
+
+
+def test_emit_then_validate_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, _make_config())
     _write_products("noviplast", [_product()])
@@ -243,13 +304,13 @@ def test_emit_then_ingest_round_trips(tmp_path: Path, monkeypatch: pytest.Monkey
         ],
     )
 
-    code = run_generate.main(["noviplast", "--ingest"])
+    code = run_generate.main(["noviplast", "--validate"])
 
     assert code == 0
-    assert load_cache("noviplast").get(GTIN_A, "nl") is not None
+    assert load_results("noviplast").results[0].usps == ["Slogan", "Punt"]
 
 
-def test_ingest_skips_result_with_no_pending_request(
+def test_validate_rejects_a_result_with_no_pending_unit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -257,14 +318,21 @@ def test_ingest_skips_result_with_no_pending_request(
     _write_products("noviplast", [_product()])
     _write_results("noviplast", [{"gtin": GTIN_B, "language": "nl", "usps": ["X"]}])  # unknown gtin
 
-    code = run_generate.main(["noviplast", "--ingest"])
+    code = run_generate.main(["noviplast", "--validate"])
 
     assert code == 0
-    assert load_cache("noviplast").get(GTIN_B, "nl") is None
-    assert "ingested 0 result(s), skipped 1" in capsys.readouterr().err
+    assert "validated 0 result(s), rejected 1" in capsys.readouterr().err
 
 
-def test_ingest_skips_stale_fingerprint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_validate_rejects_a_stale_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The same decision `run_plan` will make, said early enough to act on.
+
+    Rejecting here is not a second implementation of the rule: it reads the same echoed
+    fingerprint against the same freshly computed one, so a result this rejects is exactly a
+    result the plan would drop.
+    """
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, _make_config())
     _write_products("noviplast", [_product()])
@@ -280,12 +348,45 @@ def test_ingest_skips_stale_fingerprint(tmp_path: Path, monkeypatch: pytest.Monk
         ],
     )
 
-    run_generate.main(["noviplast", "--ingest"])
+    with caplog.at_level("WARNING"):
+        run_generate.main(["noviplast", "--validate"])
 
-    assert load_cache("noviplast").get(GTIN_A, "nl") is None  # stale copy not cached
+    assert "stale result" in caplog.text
+    assert "run_plan will drop it too" in caplog.text
 
 
-def test_ingest_rejects_wrong_client_id(
+def test_validate_names_a_unit_answered_twice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Surfaced, not absorbed — #94's removed dedupe is the precedent.
+
+    `run_plan` takes the last entry, deterministically, so nothing breaks. What is wrong is that
+    only one of the two was reviewed, and a count reading "2 validated" would claim twice the
+    review that actually happened.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    _write_products("noviplast", [_product()])
+    _write_results(
+        "noviplast",
+        [
+            {"gtin": GTIN_A, "language": "nl", "usps": ["Eerste"]},
+            {"gtin": GTIN_A, "language": "nl", "usps": ["Tweede"]},
+        ],
+    )
+
+    with caplog.at_level("WARNING"):
+        assert run_generate.main(["noviplast", "--validate"]) == 0
+
+    assert "answered more than once" in caplog.text
+    # One *unit* was answered, whatever the file's line count says.
+    assert "validated 1 result(s), rejected 0" in capsys.readouterr().err
+
+
+def test_validate_rejects_wrong_client_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -295,41 +396,70 @@ def test_ingest_rejects_wrong_client_id(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"client_id": "other", "results": []}), encoding="utf-8")
 
-    code = run_generate.main(["noviplast", "--ingest"])
+    code = run_generate.main(["noviplast", "--validate"])
 
     assert code == 2
     assert "config error" in capsys.readouterr().err
 
 
-def test_ingest_missing_results_file_exits_2(
+def test_validate_places_a_results_file_given_elsewhere(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Validate *and place*: only one path is the one `run_plan` reads.
+
+    A producer may write anywhere, and asking the operator to copy the file into position by hand
+    is a step to forget — after which the plan silently uses whatever was there before.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    _write_products("noviplast", [_product()])
+    elsewhere = tmp_path / "from-the-producer.json"
+    elsewhere.write_text(
+        json.dumps(
+            {
+                "client_id": "noviplast",
+                "results": [{"gtin": GTIN_A, "language": "nl", "usps": ["Slogan", "Punt"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = run_generate.main(["noviplast", "--validate", "--results", str(elsewhere)])
+
+    assert code == 0
+    assert load_results("noviplast").results[0].usps == ["Slogan", "Punt"]
+
+
+def test_validate_missing_results_file_is_not_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ "No copy yet" is a state to report, not a crash — the doctor says the same thing.
+
+    `--ingest` exited 2 here because it had nothing to ingest. `--validate` answers a question,
+    and "none of it is written yet" is a valid answer to that question.
+    """
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, _make_config())
     _write_products("noviplast", [_product()])
 
-    assert run_generate.main(["noviplast", "--ingest"]) == 2
+    code = run_generate.main(["noviplast", "--validate"])
+
+    assert code == 0
+    assert "0/1 units have copy; 1 without" in capsys.readouterr().err
 
 
 # --- the LLMClient seam ------------------------------------------------------
 
 
-def test_run_producer_fills_cache_via_fake_client() -> None:
-    cache = GeneratedCache(client_id="noviplast")
-    product = _product()
-    prefill_from_feed([product], cache, _ctx("nl"), now=_NOW)
-    requests = pending_requests([product], cache, _ctx("nl"))
+def test_run_producer_returns_the_items_to_write() -> None:
+    requests = pending_requests([_product()], _ctx("nl"))
 
-    filled = run_generate.run_producer(
-        cache, requests, _FakeClient(), provenance="api:test", now=_NOW
-    )
+    items = run_generate.run_producer(requests, _FakeClient())
 
-    assert filled == 1
-    entry = cache.get(GTIN_A, "nl")
-    assert entry is not None
-    assert entry.usps == ["Tagline nl", "Bullet"]
-    assert entry.origin == ORIGIN_GENERATED
-    assert entry.provenance == "api:test"
+    assert len(items) == 1
+    assert items[0].usps == ["Tagline nl", "Bullet"]
+    assert items[0].gtin == GTIN_A
+    assert items[0].input_fingerprint == requests[0].input_fingerprint
 
 
 # --- API backend (--backend api) ---------------------------------------------
@@ -359,9 +489,15 @@ def test_backend_api_without_generator_config_exits_2(
     assert "generator" in capsys.readouterr().err
 
 
-def test_backend_api_fills_cache_via_mocked_messages_api(
+def test_backend_api_writes_the_results_file_via_mocked_messages_api(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, httpx_mock: HTTPXMock
 ) -> None:
+    """Both producers now write the same file, which is what keeps the headless path usable.
+
+    It used to fill the cache directly and never touch the seam, so removing the cache would have
+    stranded it. `provenance` is where the difference between the two survives, and the report
+    reads it.
+    """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TEST_KEY", "sk-test")
     cfg = _make_config(
@@ -377,11 +513,10 @@ def test_backend_api_fills_cache_via_mocked_messages_api(
     code = run_generate.main(["noviplast", "--backend", "api"])
 
     assert code == 0
-    entry = load_cache("noviplast").get(GTIN_A, "nl")
-    assert entry is not None
-    assert entry.usps == ["Tagline", "Bullet"]
-    assert entry.provenance == "api:claude-sonnet-5"
-    assert entry.origin == ORIGIN_GENERATED
+    results = load_results("noviplast")
+    assert results.provenance == "api:claude-sonnet-5"
+    assert results.results[0].usps == ["Tagline", "Bullet"]
+    assert not Path("output/noviplast/data/generated_cache.json").exists()
 
 
 # --- shared failure paths ----------------------------------------------------
@@ -417,16 +552,16 @@ def test_emit_only_asks_for_copy_the_run_would_publish(
     assert [request.gtin for request in payload.requests] == [GTIN_A]
 
 
-def test_emit_and_the_doctor_now_report_the_same_number(
+def test_emit_and_the_doctor_report_the_same_number(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The issue's actual acceptance test, and it is a cross-check rather than a restatement.
 
-    ``check_cache_coverage`` and ``--emit`` compute pending units independently, in different
-    modules. They agree only because both now narrow through ``lib.preflight.in_scope``; before
-    this they disagreed by 22x on real data, and nothing anywhere noticed.
+    ``check_generation_results`` and ``--emit`` compute what this run needs independently, in
+    different modules. They agree only because both narrow through ``lib.preflight.in_scope``;
+    before that they disagreed by 22x on real data, and nothing anywhere noticed.
     """
-    from lib.preflight import check_cache_coverage  # noqa: PLC0415 — only this test needs it
+    from lib.preflight import check_generation_results  # noqa: PLC0415 — only this test needs it
 
     monkeypatch.chdir(tmp_path)
     cfg = _make_config(
@@ -440,72 +575,39 @@ def test_emit_and_the_doctor_now_report_the_same_number(
     assert run_generate.main(["noviplast", "--emit"]) == 0
 
     emitted = len(_read_requests_file().requests)
-    assert emitted == check_cache_coverage(cfg, products).data["pending"]
+    assert emitted == check_generation_results(cfg, products).data["pending"]
 
 
-def test_the_verbatim_prefill_stops_at_the_edge_of_scope(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Narrowing happens *before* the prefill, which is the one behaviour change to notice.
-
-    ``--emit`` persists the prefill, so an unscoped one would keep seeding the cache with copy for
-    products this client is not publishing — the same unbounded accumulation the Content screen
-    now has to fold away.
-    """
-    monkeypatch.chdir(tmp_path)
-    _patch_client(monkeypatch, _make_config(process_list=_write_process_list(tmp_path, [GTIN_A])))
-    _write_products(
-        "noviplast",
-        [_product(GTIN_A, short_1067="Kort en bruikbaar"), _product(GTIN_B, short_1067="Ook kort")],
-    )
-
-    assert run_generate.main(["noviplast", "--emit"]) == 0
-
-    assert set(load_cache("noviplast").entries) == {GTIN_A}
-
-
-def test_emit_says_it_wrote_the_cache_as_well(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Writing the cache here is deliberate; doing it silently was not.
-
-    The prefill runs before the gaps are computed and is persisted so emit and ingest can be
-    called in either order. That is worth keeping and worth saying: a command named ``--emit``
-    that writes a second file it never mentions is a surprise found by noticing an mtime.
-    """
-    monkeypatch.chdir(tmp_path)
-    _patch_client(monkeypatch, _make_config())
-    _write_products("noviplast", [_product(short_1067="Kort en bruikbaar")])
-
-    run_generate.main(["noviplast", "--emit"])
-
-    assert "generated_cache.json" in capsys.readouterr().err
-
-
-def test_ingesting_an_out_of_scope_result_says_that_is_why(
+def test_validating_an_out_of_scope_result_says_that_is_why(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A results file emitted before the process list was pruned still holds those units.
+    """A results file written before the process list was pruned still holds those units.
 
-    They are correctly skipped, but "already fresh or input changed" would send a reader to the
-    feed to explain a scope decision. Three causes, and the warning names which.
+    They are correctly ignored, but a vague reason would send a reader to the feed to explain a
+    scope decision. Two causes now — out of scope, or the feed supplies the copy — because
+    "already cached fresh" cannot happen when nothing is cached.
     """
     monkeypatch.chdir(tmp_path)
     _patch_client(monkeypatch, _make_config(process_list=_write_process_list(tmp_path, [GTIN_A])))
     _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
-    _data_dir = Path("output/noviplast/data")
-    _data_dir.mkdir(parents=True, exist_ok=True)
-    (_data_dir / "generation_results.json").write_text(
-        json.dumps(
-            {
-                "client_id": "noviplast",
-                "results": [{"gtin": GTIN_B, "language": "nl", "usps": ["Tagline", "Bullet"]}],
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_results("noviplast", [{"gtin": GTIN_B, "language": "nl", "usps": ["Tagline", "Bullet"]}])
 
     with caplog.at_level("WARNING"):
-        assert run_generate.main(["noviplast", "--ingest"]) == 0
+        assert run_generate.main(["noviplast", "--validate"]) == 0
 
     assert "not in scope for this run" in caplog.text
+
+
+def test_validating_a_feed_verbatim_result_says_that_is_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The other cause, and the one a reader would otherwise misread as "out of scope"."""
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    _write_products("noviplast", [_product(short_1067="Kort en krachtig")])
+    _write_results("noviplast", [{"gtin": GTIN_A, "language": "nl", "usps": ["Iets anders"]}])
+
+    with caplog.at_level("WARNING"):
+        assert run_generate.main(["noviplast", "--validate"]) == 0
+
+    assert "the feed supplies this unit's copy verbatim" in caplog.text

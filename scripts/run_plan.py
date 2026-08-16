@@ -51,7 +51,7 @@ from lib.categories import resolve_category
 from lib.config import ClientConfig, get_client
 from lib.env import load_env
 from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError, VideoMapError
-from lib.generator import generation_context, load_cache, merge_generated
+from lib.generator import generation_context, load_results, merge_generated
 from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
 from lib.process_list import load_process_list
 from lib.records import (
@@ -210,11 +210,16 @@ def _assign_categories(
 def _generate_content(
     cfg: ClientConfig, products: list[ProductRecord]
 ) -> tuple[list[ProductRecord], list[SourceIssue]]:
-    """Fold cached generated copy onto each product (generator SPEC), cache-only — no network.
+    """Fold this run's generated copy onto each product (generator SPEC) — file-only, no network.
 
-    A no-op when the client has no ``generator`` config. Otherwise loads the generated-copy cache
-    and runs :func:`lib.generator.merge_generated`, materialising the combined title, tagline, and
-    three-part description onto each record.
+    A no-op when the client has no ``generator`` config. Otherwise reads this run's
+    ``generation_results.json`` and runs :func:`lib.generator.merge_generated`, materialising the
+    combined title, tagline, and three-part description onto each record.
+
+    It reads that file and never writes it, so re-running the plan is free and repeatable. There
+    is nothing to reuse from a previous run: copy is written fresh each time, and a result whose
+    fingerprint no longer matches the feed is dropped rather than published — see
+    :func:`lib.generator.merge_generated`.
 
     It runs before ``diff_against_state`` because the *skip* decisions need it: E21 asks whether a
     tagline exists, and filling a missing French name stops E18 firing for a gap the generator has
@@ -233,7 +238,7 @@ def _generate_content(
     """
     if cfg.generator is None:
         return products, []
-    cache = load_cache(cfg.client_id)
+    results = load_results(cfg.client_id)
     context = generation_context(
         cfg.wordpress.languages,
         cfg.wordpress.default_language,
@@ -241,7 +246,7 @@ def _generate_content(
         cfg.export.gdsn_map,
         cfg.export.gdsn_extras,
     )
-    return merge_generated(products, cache, context)
+    return merge_generated(products, results, context)
 
 
 def _write_issue_report(client_id: str, filename: str, issues: list[SourceIssue]) -> None:

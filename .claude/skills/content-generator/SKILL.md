@@ -1,6 +1,6 @@
 ---
 name: content-generator
-description: "Write the product tagline and Eigenschappen text as the in-session producer (no API key) for the (GTIN, language) units the generator flagged, then ingest them into the cache. Use when the operator says 'generate content for {client}', 'generate copy for {client}', or 'write product copy for {client}' — the older 'copy' phrasings are kept as triggers so existing habits keep working."
+description: "Write the product tagline and Eigenschappen text as the in-session producer (no API key) for the (GTIN, language) units this run needs copy for, then validate them for the run. Use when the operator says 'generate content for {client}', 'generate copy for {client}', or 'write product copy for {client}' — the older 'copy' phrasings are kept as triggers so existing habits keep working."
 ---
 
 # Content Generator
@@ -11,20 +11,20 @@ Trigger phrases: **"generate content for {client}"** ← preferred, plus **"gene
 {client}"** and **"write product copy for {client}"**, kept so existing habits keep working — e.g.
 "generate content for democlient". Load this skill to act as the in-session producer: read the
 pending generation requests, write the tagline + Eigenschappen copy in the client's brand voice, and
-ingest the results into the generated-content cache. No API key — generation happens in this session.
+validate the results for the run. No API key — generation happens in this session.
 
 ## What this skill does
 
 Fills the handful of product slots that need *writing* — the tagline (`usps[0]`) and the
-Eigenschappen bullets (`usps[1:]`) — for the `(GTIN, language)` units the generator flagged as gaps.
+Eigenschappen bullets (`usps[1:]`) — for the `(GTIN, language)` units this run needs copy for.
 It reads `output/{client}/data/generation_requests.json` (written by `run_generate --emit`), produces
-per-language copy following the versioned voice template, writes
-`output/{client}/data/generation_results.json`, and hands it back via `run_generate --ingest`, which
-validates each result into `output/{client}/data/generated_cache.json`. Determinism lives in the
-cache, not here: a unit is only generated once per input fingerprint, and this producer is
-interchangeable with the headless API backend. Tone is **concise and business-like, not
+per-language copy following the versioned voice template, and writes
+`output/{client}/data/generation_results.json`, which `run_generate --validate` then checks and
+`run_plan` reads. **That file is the run's copy, not a store**: nothing is kept between runs, so
+every in-scope unit is written again next time and this producer stays interchangeable with the
+headless API backend. Tone is **concise and business-like, not
 conversational** — the operator is reviewing copy, not reading prose. Generated content is reviewed
-**twice before it can reach a page** — here (the cache) and again in `plan.json`. There is no third
+**twice before it can reach a page** — here (the results file) and again in `plan.json`. There is no third
 look: execute writes each page at `wordpress.post_status`, which ships as `publish`, so the page is
 **live the moment it is written**. `post_status: draft` is the opt-in staged variant, and it is a
 config change the operator makes deliberately — see `docs/wordpress-onboarding.md`.
@@ -59,8 +59,8 @@ this repo is built around.
    the split by `mode` (`tighten` vs `generate`) and how many units carry `translations`.
 
    **That file holds only the units in scope** — `run_generate` narrows through the process list and
-   the confirmed-video allowlist before computing the gaps, so its count matches the doctor's
-   `cache_coverage` pending figure. It used to be the whole catalogue: 224 units where 10 were in
+   the confirmed-video allowlist before computing the units, so its count matches the doctor's
+   `generation_results` pending figure. It used to be the whole catalogue: 224 units where 10 were in
    scope, which is copy nobody publishes and a review gate too long to read. If the count looks like
    the size of the export rather than the size of the batch, stop — the process list is probably not
    configured, and generating against it wastes real tokens.
@@ -89,7 +89,7 @@ this repo is built around.
      that text, do not write a new value from scratch and do not elaborate on it.** These go
      back into the client's GS1 datapool, so a rewrite there is a wrong value in their master
      data, not just on the page. Return no key for a field the request did not list; it would
-     be dropped on ingest anyway.
+     be dropped on read anyway.
      A `source_value` holding a **comma-separated list** is one the feed repeats across slots —
      `material` is the case, e.g. `"kunststof, metaal"`. Translate each item and return them
      comma-separated in the same order (`"plastique, métal"`): keep the shape, add nothing,
@@ -113,28 +113,28 @@ this repo is built around.
    include `translations` only for units whose request listed gaps — one key per listed field, no
    others. `client_id` must equal the run's client.
 
-6. **Ingest.** Run `python -m scripts.run_generate {client} --ingest`. Surface its stderr line
-   verbatim, e.g. `ingested 8 result(s), skipped 2; 28/30 units cached; 2 pending (…)`. Those
-   totals are **in-scope** units, not the catalogue. A
-   non-zero exit is a config error — stop and show it (step: Failure modes).
+6. **Validate.** Run `python -m scripts.run_generate {client} --validate`. Surface its stderr line
+   verbatim, e.g. `validated 8 result(s), rejected 2; 28/30 units have copy; 2 without`. Those
+   totals are **in-scope** units, not the catalogue. It writes nothing — it checks that what was
+   just written answers this run. A non-zero exit is a config error — stop and show it (step:
+   Failure modes).
 
 7. **Review (gate #1 of 2).** Present a representative sample — a few NL and FR blocks, including any
    `tighten` units and any that carried `translations` — and the coverage counts. Point to
-   `output/{client}/data/generated_cache.json` for the full copy and
+   `output/{client}/data/generation_results.json` for the full copy and
    `output/{client}/data/generated_issues.json` for the reported values. Then:
    ```
-   Generated content is in the cache (reviewed once here). run_plan is the second review before publish.
+   Generated content is written for this run (reviewed once here). run_plan is the second review before publish.
    [looks good — continue to run_plan | regenerate GTIN … | cancel]
    ```
    - `looks good` — done; the operator proceeds to the `flow-orchestrator` skill / `run_plan`.
-   - `regenerate GTIN …` — redo those units (edit their results, re-run `--ingest`; a fresh
-     fingerprint supersedes the old entry).
-   - `cancel` — stop; the cache keeps whatever ingested so far (nothing is published).
+   - `regenerate GTIN …` — redo those units (edit their results, re-run `--validate`).
+   - `cancel` — stop; the results file keeps whatever was written so far (nothing is published).
    Off-menu reply → the same canned reply as step 2. Never offer to publish from here.
 
 ## How the work is done
 
-Python. This skill drives `scripts/run_generate.py` (`--emit` / `--ingest`) and reads/writes
+Python. This skill drives `scripts/run_generate.py` (`--emit` / `--validate`) and reads/writes
 the `output/{client}/data/` JSON artifacts. The copy itself is written by Claude in-session, so no
 API key is involved; `lib/llm.py` is the alternative headless producer. No MCP server is involved
 and there is no `.mcp.json`.
@@ -143,20 +143,22 @@ and there is no `.mcp.json`.
 
 - **Requests file missing.** `generation_requests.json` is absent — run
   `python -m scripts.run_generate {client} --emit` first; do not hand-write requests.
-- **`--ingest` exits 2.** A config error (unknown client, unreadable products, a results file whose
-  `client_id` differs from the run, or missing results): surface the stderr `config error: …` and
-  stop. Do not proceed to `run_plan` against a cache the ingest did not update.
-- **Fingerprint mismatch → stale skip.** `--ingest` warns and skips a result whose
-  `input_fingerprint` no longer matches the pending request (the feed changed since `--emit`). Re-emit
-  and regenerate those units rather than forcing the old copy.
-- **No pending request → skip.** A result for a `(gtin, language)` that is already fresh, verbatim
-  (short 1067, `origin=feed`), or not pending is skipped with a warning — expected, not an error.
-  The warning names which of three causes it was; the third is **not in scope for this run**, which
-  happens when the process list was pruned between `--emit` and `--ingest`. That is also expected:
-  the operator narrowed the batch, and the copy is kept in the results file rather than cached.
+- **`--validate` exits 2.** A config error (unknown client, unreadable products, or a results file
+  whose `client_id` differs from the run): surface the stderr `config error: …` and stop. A
+  *missing* results file is not an error — it reports `0/N units have copy` and you have not
+  written it yet.
+- **Fingerprint mismatch → stale rejection.** `--validate` warns and rejects a result whose
+  `input_fingerprint` no longer matches the pending request (the feed changed since `--emit`).
+  `run_plan` drops the same result for the same reason, so re-emit and rewrite those units rather
+  than forcing the old copy.
+- **No pending unit → ignored.** A result for a `(gtin, language)` that is not pending is ignored
+  with a warning — expected, not an error. Two causes and the warning names which: **not in scope
+  for this run** (the process list was pruned between `--emit` and `--validate`), or **the feed
+  supplies this unit's copy verbatim** (a short attr 1067, published as-is and never requested).
 - **Blank marketing message.** A `generate` unit whose 1083 is empty still gets copy written from
   `functional_name` + context, and the gap is reported as `missing_generation_input` in
   `generated_issues.json` — surface it so the operator fixes 1083 in MyGS1.
-- **This pipeline fails silently.** A green `--ingest` only means the JSON validated. Eyeball the
-  actual NL and FR blocks in `generated_cache.json` against the real product before continuing — never
-  trust the "ingested N" count alone. Never put specs into `usps`; never publish from this skill.
+- **This pipeline fails silently.** A green `--validate` only means the JSON validated and matched
+  this run's units. Eyeball the actual NL and FR blocks in `generation_results.json` against the
+  real product before continuing — never trust the "validated N" count alone. Never put specs into
+  `usps`; never publish from this skill.

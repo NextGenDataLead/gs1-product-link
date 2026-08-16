@@ -193,43 +193,59 @@ def scope_from(payload: Any) -> Scope | None:
 
 
 @dataclass(frozen=True)
-class CacheSplit:
-    """The generated-copy cache divided into this run's units and everything else.
+class ResultsSplit:
+    """A results file divided into this run's units and everything else.
 
-    The cache is a machine-lifetime accumulation — every unit ever generated for this client stays
-    in it and nothing prunes it — so on a long-lived machine a two-product batch eventually sits
-    under a list of hundreds. Splitting it is what lets a screen show the batch and put the rest
-    behind a fold instead of padding one with the other.
+    The file is written per run rather than accumulated, so ``others`` no longer means "copy from
+    older batches this machine kept". It now means the file was produced against a **different
+    scope** than the one about to run — which is a stronger signal than the old accumulation was,
+    and the screen says so rather than folding it away as normal.
     """
 
-    #: Cache entries for GTINs this run would touch.
+    #: Copy for GTINs this run would touch.
     in_scope: dict[str, Any]
-    #: Cache entries for everything else — real copy, generated for other batches.
+    #: Copy for everything else — written for a scope that is not this one.
     others: dict[str, Any]
-    #: In-scope GTINs with no cache entry at all, sorted.
+    #: In-scope GTINs with no copy at all, sorted.
     missing: tuple[str, ...]
     #: Whether the split actually happened. ``False`` means scope was unknown, so ``in_scope``
-    #: holds the whole cache unfiltered and a caller must say so rather than present it as
+    #: holds the whole file unfiltered and a caller must say so rather than present it as
     #: the batch.
     scoped: bool
 
 
-def split_cache(entries: dict[str, Any], scope: Scope | None) -> CacheSplit:
-    """Divide cache entries into this run's and the rest.
+def group_results(results: list[Any]) -> dict[str, dict[str, Any]]:
+    """Group a results file's flat item list into ``{gtin: {language: item}}``.
+
+    The file is a list because that is what a producer writes one entry at a time; a screen reads
+    it per product. Items that are not objects, or carry no gtin, are dropped rather than raising:
+    this runs against a file a human may have hand-edited.
+    """
+    grouped: dict[str, dict[str, Any]] = {}
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        gtin, language = item.get("gtin"), item.get("language")
+        if isinstance(gtin, str) and isinstance(language, str):
+            grouped.setdefault(gtin, {})[language] = item
+    return grouped
+
+
+def split_results(entries: dict[str, dict[str, Any]], scope: Scope | None) -> ResultsSplit:
+    """Divide this run's copy into the GTINs it covers and the rest.
 
     Membership is a plain set test against :attr:`Scope.gtins`, which the doctor reports as
-    ``ProductRecord.gtin`` — the same field the cache is keyed by. Nothing is renormalised here,
+    ``ProductRecord.gtin`` — the same field the results are keyed by. Nothing is renormalised here,
     deliberately: a second opinion about how a GTIN is spelled is a second opinion about what a
     run covers.
 
     An unknown scope returns everything as ``in_scope`` with ``scoped=False`` rather than an
-    empty split. Filtering to nothing would hide the whole cache and read as "there is no copy",
-    which is a worse failure than the unscoped list this replaces — it is wrong in the direction
-    that stops an operator looking.
+    empty split. Filtering to nothing would hide the copy entirely and read as "there is none",
+    which is wrong in the direction that stops an operator looking.
     """
     if scope is None or not scope.gtins:
-        return CacheSplit(in_scope=dict(entries), others={}, missing=(), scoped=False)
-    return CacheSplit(
+        return ResultsSplit(in_scope=dict(entries), others={}, missing=(), scoped=False)
+    return ResultsSplit(
         in_scope={gtin: value for gtin, value in entries.items() if gtin in scope.gtins},
         others={gtin: value for gtin, value in entries.items() if gtin not in scope.gtins},
         missing=tuple(sorted(scope.gtins - set(entries))),

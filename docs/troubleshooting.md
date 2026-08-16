@@ -11,7 +11,7 @@ python -m scripts.doctor             # or --offline, for the checks that need no
 ```
 
 One line per check, a remedy under each failure, exit `1` if anything failed. It catches the
-config errors, missing secrets, stale copy caches and empty-scope conditions described below
+config errors, missing secrets, stale generated copy and empty-scope conditions described below
 *before* a run, which is the only time they are cheap. `--json` emits the same results for a
 caller to parse.
 
@@ -439,19 +439,22 @@ Preparing the file is now the operator's job precisely because only the operator
 
 ### `GeneratorError` ✚
 
-`generated_cache.json` is corrupt or unwritable, or a producer result failed validation (for example
-empty bullet lists). Like `StateError`, a between-runs artifact whose corruption the operator must
-see.
+`generation_results.json` is corrupt, unwritable, or names a different client, or a producer result
+failed validation (for example empty bullet lists). Like `StateError`, an on-disk artifact a run
+publishes from, whose corruption the operator must see.
 
-**Fix:** inspect the cache, or delete it and re-run `run_generate --emit` to regenerate. Never
-hand-edit it into a shape that fails the contract.
+A *missing* file is not this error — it means no copy has been written for this run yet, which the
+doctor reports as `generation_results` and `run_plan` turns into E21 holds.
+
+**Fix:** inspect the file, or delete it and run the generate cycle again — `run_generate --emit`,
+write the copy, then `--validate`. Never hand-edit it into a shape that fails the contract.
 
 ### `LLMAPIError` ✚
 
 The Anthropic Messages API failed, or returned a 200 whose body lacks the forced `produce_copy` tool
 call. Attributes: `status_code` (`0` for transport failure), `response_body`.
 
-Only reachable via `run_generate --backend api`. The in-session producer (`--emit` / `--ingest`)
+Only reachable via `run_generate --backend api`. The in-session producer (`--emit` / `--validate`)
 needs no API key and cannot raise this.
 
 ---

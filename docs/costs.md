@@ -42,7 +42,7 @@ This is the one place the tool can spend money, and it is **optional in two sens
 
 ```bash
 python -m scripts.run_generate --emit      # queue pending requests
-python -m scripts.run_generate --ingest    # read results back
+python -m scripts.run_generate --validate  # check the results against this run
 ```
 
 Claude writes the copy **inside your Claude Code session**. It needs **no API key** and adds **no API
@@ -101,11 +101,16 @@ Illustrative, at ~1.5k input and ~400 output tokens per unit on `claude-sonnet-5
 per-unit estimate above — `client.messages.count_tokens()` gives real numbers for your prompt and
 product data.
 
-### Three things that keep it low
+### What keeps it low — and what does not
 
-- **The cache.** Generated content is cached and keyed by an input fingerprint, so re-running does **not**
-  re-pay. Only units whose source data actually changed are regenerated. Publishing 20 GTINs in waves
-  costs the same as publishing them all at once.
+- **Re-running re-pays.** There is no cache. Copy is written fresh for every run and never stored, so
+  publishing 20 GTINs in waves costs roughly the *number of waves* times publishing them all at once.
+  This was a deliberate trade, taken 2026-08-15: at ~$1.75–$2.65 for the full 127-product catalogue,
+  cost is not the constraint, and a store that decides when to skip work is one more thing that can be
+  quietly wrong. Idempotency comes from the other end instead — generated copy is excluded from the
+  content hash, so re-writing it does not republish a page.
+- **The feed's own copy is free.** A product whose attr 1067 is short enough to publish verbatim never
+  reaches a producer at all: `merge_generated` takes it straight from the feed, every run, at no cost.
 - **Held rows cost nothing.** A GTIN with no usable source input is skipped from the plan (E21) rather
   than sent to the model to have copy invented for it. Fixing source data in MyGS1 is both cheaper and
   more correct than generating around a gap.
@@ -116,8 +121,9 @@ product data.
 ## Not a cost
 
 - **QR rendering** — local, `qrcode[pil]`, free at any volume.
-- **Re-runs** — idempotent. Re-running converges on the same state; it does not duplicate pages,
-  attachments, or GS1 records, and it does not re-pay for generated content.
+- **Re-runs** — idempotent *in what they publish*. Re-running converges on the same state; it does
+  not duplicate pages, attachments, or GS1 records. It **does** re-pay for generated content, which
+  is the trade described above.
 - **Dry runs** — `--dry-run` performs no writes and makes no billable calls.
 
 ## Summary

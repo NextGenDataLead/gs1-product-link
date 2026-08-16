@@ -1,14 +1,16 @@
 """Screen 3 — the generated copy, which was written somewhere else.
 
-This machine has no LLM, no API key and no Anthropic egress. Copy is generated on the maintainer's
-machine in a Claude Code session and handed over as ``generated_cache.json``; this screen imports
-it, says how much of the current export it covers, and shows the text side by side per language.
+This machine has no LLM, no API key and no Anthropic egress. Copy is written on the maintainer's
+machine in a Claude Code session and handed over as ``generation_results.json``; this screen
+imports it, says how much of the current export it covers, and shows the text per language.
 
-**Coverage is the load-bearing part.** A cache entry's fingerprint covers
-``{inputs, language, prompt_version}``, so editing one product in the feed — or bumping the prompt
-version — makes that unit *pending* again. A pending unit with no producer on this machine is an
-E21 omission: it leaves the plan without a row. Before ``Plan.skipped`` existed it left without a
-trace at all, and an empty plan looked exactly like a plan with nothing to do.
+**Coverage is the load-bearing part.** Copy is written fresh for each run and never stored, so the
+question is not how much has piled up but whether *this* file answers every in-scope unit — and
+whether it still describes this export. Its fingerprint covers ``{inputs, language,
+prompt_version}``, so editing one product in the feed, or bumping the prompt version, leaves that
+unit uncovered. An uncovered unit with no producer on this machine is an E21 omission: it leaves
+the plan without a row. Before ``Plan.skipped`` existed it left without a trace at all, and an
+empty plan looked exactly like a plan with nothing to do.
 
 So the count is shown before the copy is, and a shortfall is stated as a shortfall.
 """
@@ -44,52 +46,51 @@ def render() -> None:
             ).classes("note")
             return
 
-        cache_path = REPO_ROOT / "output" / cid / "data" / "generated_cache.json"
-        _coverage_and_review(cid, cache_path, list(cfg.wordpress.languages))
+        results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
+        _coverage_and_review(cid, results_path, list(cfg.wordpress.languages))
 
 
-def _import(cache_path: Path, refresh: Callable[[], None]) -> None:
+def _import(results_path: Path, refresh: Callable[[], None]) -> None:
     with theme.section("Import"):
         ui.label(
             "Generation runs on the maintainer's machine, in a Claude Code session with the "
             "content-generator skill. That keeps this machine free of an API key and of any "
-            "connection to Anthropic — and it is why the file arrives by hand."
+            "connection to Anthropic — and it is why the file arrives by hand. It is written "
+            "fresh for each run: importing a newer one replaces this run's copy rather than "
+            "adding to it."
         ).classes("note")
 
         # Async for the same reason as the export upload — see ui/pages/data.py.
         async def upload(event: events.UploadEventArguments) -> None:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            if cache_path.exists():
-                cache_path.with_suffix(".bak.json").write_bytes(cache_path.read_bytes())
-            await event.file.save(cache_path)
+            results_path.parent.mkdir(parents=True, exist_ok=True)
+            if results_path.exists():
+                results_path.with_suffix(".bak.json").write_bytes(results_path.read_bytes())
+            await event.file.save(results_path)
             # Refresh rather than ask them to: both sections below now describe the file that was
-            # just replaced, and a screen that keeps showing the previous cache after a successful
+            # just replaced, and a screen that keeps showing the previous copy after a successful
             # import is the silent-staleness this project keeps designing against.
             refresh()
-            ui.notify("Cache imported — coverage and copy below are for the new file.", "positive")
+            ui.notify("Copy imported — coverage and text below are for the new file.", "positive")
 
         ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(
             'accept=".json" flat bordered'
         ).classes("w-full max-w-xl")
 
-        fact = context.file_fact(cache_path)
+        fact = context.file_fact(results_path)
         ui.label(
-            f"{cache_path.relative_to(REPO_ROOT)} — {fact.age}"
+            f"{results_path.relative_to(REPO_ROOT)} — {fact.age}"
             if fact.exists
-            else "No cache imported yet."
+            else "No copy imported yet."
         ).classes("mono mt-2")
 
 
-def _coverage_and_review(cid: str, cache_path: Path, languages: list[str]) -> None:
+def _coverage_and_review(cid: str, results_path: Path, languages: list[str]) -> None:
     """Import, coverage and the copy itself — all fed by one preflight run.
 
     They used to be three independent sections, and the middle one was the only one that knew
     what this run covers. Coverage came from the doctor and was correctly scoped; the review read
-    ``generated_cache.json`` straight off disk and listed **every GTIN in it**, captioned "N
-    GTIN(s) in the cache". So one screen showed a scoped number above an unscoped list with
-    nothing to tell them apart — and because the cache accumulates every unit ever generated on
-    that machine, the gap only widens: a two-product batch eventually sits under a list of
-    hundreds.
+    the copy file straight off disk and listed **every GTIN in it**. So one screen showed a scoped
+    number above an unscoped list with nothing to tell them apart.
 
     Drawing them together is not tidiness. They answer the same question at two zoom levels, and
     a re-check that moved the count without moving the list would restore exactly the disagreement
@@ -106,9 +107,9 @@ def _coverage_and_review(cid: str, cache_path: Path, languages: list[str]) -> No
         with coverage_body:
             _coverage_figures(payload, result)
         with review_body:
-            _review(context.scope_from(payload), cache_path, languages)
+            _review(context.scope_from(payload), results_path, languages)
 
-    _import(cache_path, refresh)
+    _import(results_path, refresh)
     with theme.section("Coverage against the current export"):
         theme.quiet_action("Re-check against the current export", refresh)
         coverage_body = ui.column().classes("w-full mt-4")
@@ -116,15 +117,15 @@ def _coverage_and_review(cid: str, cache_path: Path, languages: list[str]) -> No
         ui.label(
             "The second gate on this text is the plan, and execution is draft-first — but this is "
             "the last place it is read as text rather than as a count. Check it against the real "
-            "product: this pipeline fails silently, and an 'ingested N' figure proves only that "
-            "N things were stored."
+            "product: this pipeline fails silently, and a 'validated N' figure proves only that "
+            "N things were shaped correctly."
         ).classes("note")
         review_body = ui.column().classes("w-full")
     refresh()
 
 
 def _coverage_figures(payload: Any, result: Any) -> None:
-    entry = context.doctor_check(payload, "cache_coverage")
+    entry = context.doctor_check(payload, "generation_results")
     if entry is None:
         theme.band(getattr(result, "stderr", "") or "Could not read the coverage check.", "warn")
         return
@@ -144,56 +145,55 @@ def _coverage_figures(payload: Any, result: Any) -> None:
             ui.label(f"Pending: {named}").classes("mono mt-3 scroll-x")
 
 
-def _review(scope: context.Scope | None, cache_path: Path, languages: list[str]) -> None:
-    """The copy for *this run*, with everything else in the cache put behind a fold.
-
-    The cache is a machine-lifetime accumulation: every unit ever generated for this client stays
-    in it, and nothing prunes it. Listing it whole under a scoped coverage figure invited the
-    reader to check copy for products this run will not touch, and to conclude a batch was larger
-    than it is.
+def _review(scope: context.Scope | None, results_path: Path, languages: list[str]) -> None:
+    """The copy for *this run*, with anything written for another scope called out.
 
     Scope is not recomputed here. It arrives from the doctor's ``scope`` check, whose GTINs are
-    ``ProductRecord.gtin`` — the same field the cache is keyed by — so the filter is a set
+    ``ProductRecord.gtin`` — the same field the results are keyed by — so the filter is a set
     membership test and not a second opinion about what a run covers.
+
+    A GTIN outside that set used to be ordinary: the cache accumulated every unit ever generated
+    on this machine. The file is per-run now, so copy for a GTIN this run will not touch means it
+    was written against a different scope — worth saying, not worth hiding.
     """
     import json  # noqa: PLC0415 — only this section needs it
 
     try:
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-        entries: dict[str, Any] = data.get("entries", {})
+        data = json.loads(results_path.read_text(encoding="utf-8"))
+        entries = context.group_results(data.get("results", []))
     except (OSError, json.JSONDecodeError, AttributeError):
-        ui.label("No readable cache to review yet.").classes("note")
+        ui.label("No readable copy to review yet.").classes("note")
         return
 
     if not entries:
-        ui.label("The cache is empty.").classes("note")
+        ui.label("No copy has been written for this run yet.").classes("note")
         return
 
-    split = context.split_cache(entries, scope)
+    split = context.split_results(entries, scope)
     if not split.scoped:
-        ui.label(f"{len(entries)} GTIN(s) in the cache").classes("note mb-1")
+        ui.label(f"{len(entries)} GTIN(s) in this file").classes("note mb-1")
         theme.band(
-            "Showing the whole cache: the preflight did not report which GTINs are in scope, so "
-            "this list is everything ever generated for this client and not this run's batch.",
+            "Showing the whole file: the preflight did not report which GTINs are in scope, so "
+            "this list is everything it holds and not necessarily this run's batch.",
             "warn",
         )
-        _entries(split.in_scope, languages, cache_path)
+        _entries(split.in_scope, languages, results_path)
         return
 
     ui.label(
-        f"{len(split.in_scope)} of {len(entries)} GTIN(s) in the cache are in scope for this run"
+        f"{len(split.in_scope)} of {len(entries)} GTIN(s) in this file are in scope for this run"
     ).classes("note mb-3")
     if not split.in_scope:
         theme.band(
-            "None of this run's GTINs have generated copy yet — everything in the cache belongs "
-            "to other batches. The coverage figures above say how many units are pending.",
+            "None of this run's GTINs have copy in this file — it was written for a different "
+            "batch. The coverage figures above say how many units are uncovered.",
             "warn",
         )
-    _entries(split.in_scope, languages, cache_path)
+    _entries(split.in_scope, languages, results_path)
 
     if split.missing:
         ui.label(
-            f"{len(split.missing)} in-scope GTIN(s) have no cache entry at all: "
+            f"{len(split.missing)} in-scope GTIN(s) have no copy at all: "
             + ", ".join(split.missing[:_MAX_NAMED])
             + (
                 f" …and {len(split.missing) - _MAX_NAMED} more"
@@ -203,22 +203,28 @@ def _review(scope: context.Scope | None, cache_path: Path, languages: list[str])
         ).classes("note mono scroll-x mt-3")
 
     if split.others:
-        # Folded rather than dropped. They are real entries and a reader who wants them should be
-        # able to reach them; what they must not do is pad this run's list.
+        theme.band(
+            f"{len(split.others)} GTIN(s) in this file are outside this run's scope, so it was "
+            "written against a different process list than the one about to run. Confirming the "
+            "plan will not publish them, but check the file is the one you meant to import.",
+            "warn",
+        )
         with ui.expansion(
-            f"{len(split.others)} cache entry(s) outside this run's scope", icon="unfold_more"
-        ).classes("w-full mt-4"):
-            ui.label(
-                "Generated for other batches and kept — nothing prunes this file. They are not "
-                "part of this run and confirming the plan will not publish them."
-            ).classes("note mb-2")
+            f"{len(split.others)} GTIN(s) outside this run's scope", icon="unfold_more"
+        ).classes("w-full mt-2"):
             ui.label(", ".join(sorted(split.others)[:_MAX_NAMED])).classes("mono scroll-x")
             if len(split.others) > _MAX_NAMED:
                 ui.label(f"…and {len(split.others) - _MAX_NAMED} more.").classes("note")
 
 
-def _entries(entries: dict[str, Any], languages: list[str], cache_path: Path) -> None:
-    """Render the copy for each GTIN, one card per product, capped and counted."""
+def _entries(entries: dict[str, Any], languages: list[str], results_path: Path) -> None:
+    """Render the copy for each GTIN, one card per product, capped and counted.
+
+    The tagline is ``usps[0]`` and the Eigenschappen bullets are the rest, which is the same
+    reading ``_assemble_description`` uses. There is no product name here: the copy contract
+    never carried one, and the field this used to render was silently absent on every entry — a
+    column of em-dashes that looked like missing data rather than like a bug.
+    """
     for gtin, per_language in list(entries.items())[:_MAX_SHOWN]:
         with ui.element("div").classes("gate mb-3"):
             ui.label(gtin).classes("mono gate-step")
@@ -230,11 +236,13 @@ def _entries(entries: dict[str, Any], languages: list[str], cache_path: Path) ->
                         if entry is None:
                             ui.label("no copy").classes("tag tag-fail")
                             continue
-                        ui.label(entry.get("product_name") or "—").classes("font-medium")
-                        for usp in entry.get("usps", []):
+                        usps = entry.get("usps", [])
+                        if usps:
+                            ui.label(usps[0]).classes("font-medium")
+                        for usp in usps[1:]:
                             ui.label(f"• {usp}").classes("note")
     if len(entries) > _MAX_SHOWN:
-        ui.label(f"Showing the first {_MAX_SHOWN}. The rest are in {cache_path.name}.").classes(
+        ui.label(f"Showing the first {_MAX_SHOWN}. The rest are in {results_path.name}.").classes(
             "note"
         )
 
