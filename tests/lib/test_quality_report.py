@@ -59,6 +59,7 @@ def _render(**over: object) -> str:
         "products": {},
         "snapshot": "2026-07-27",
         "freshness": _FRESH,
+        "languages": ["nl", "fr"],
     }
     base.update(over)
     return render_quality_report(**base)  # type: ignore[arg-type]
@@ -278,9 +279,20 @@ def test_every_filled_value_is_one_row_and_the_summary_says_the_same_number() ->
     assert "câble magnétique" in section
     assert "Magnetkabel" in section
     rows = [line for line in section.splitlines() if line.startswith("| `0871")]
-    row = next(line for line in md.splitlines() if "Values translated" in line)
-    assert f"| {len(rows)} |" in row
-    assert len(rows) == 2
+    filled = sum(cell.strip() != "" for row in rows for cell in row.split("|")[3:-1])
+    summary = next(line for line in md.splitlines() if "Values translated" in line)
+
+    # One row now, carrying two pastes: the same field in two languages is one place to paste in
+    # MyGS1 per language, and the row is keyed on the field. So the Summary's count is filled
+    # *cells*, not rows — and the section states both, or a reader counts rows and finds a
+    # contradiction that is not there.
+    assert len(rows) == 1
+    assert f"| {filled} |" in summary
+    assert "2 values to paste, across 1 row" in section
+    # `de` is not among the configured languages here, and its column is appended rather than
+    # dropped: a stale findings file must not make a MyGS1 paste instruction vanish silently.
+    header = next(line for line in section.splitlines() if line.startswith("| GTIN |"))
+    assert header.strip().endswith("| Value to paste (de) |")
 
 
 def test_a_translated_value_lands_after_the_other_mygs1_fixes_not_among_the_blockers() -> None:
@@ -398,7 +410,6 @@ def _matrix(**over: object) -> MatrixInput:
             "net_content": GdsnSource(sheet="S", attribute="3510"),
         },
         "gdsn_extras": {"material": GdsnSource(sheet="S", attribute="Material")},
-        "languages": ["nl", "fr"],
         "video_confirmed": {"nl": set(), "fr": set()},
     }
     base.update(over)
@@ -1069,6 +1080,106 @@ def test_section_one_names_both_attributes_of_the_requirement() -> None:
     heading = next(line for line in md.splitlines() if line.startswith("## 1."))
 
     assert "1083" in heading and "1067" in heading
+
+
+def _inference(gtin: str, language: str, claim: str) -> SourceIssue:
+    return _issue(
+        gtin, "generation_inference", field=f"generated_description.{language}", value=claim
+    )
+
+
+def test_section_two_puts_each_language_in_its_own_column() -> None:
+    """One row per product, a column per configured language.
+
+    A row per (GTIN, language) put the two claims for one product on adjacent rows, to be read as
+    a pair by eye — and they are **not** translations of each other: on the real report `…3344`'s
+    Dutch claim derives the placement from the product type while the French one also derives the
+    pain relief from the Dutch 1083. Side by side they can be compared. It also stops the section
+    growing a row per language: 39 rows became 20, and a third language would have made it 59.
+    """
+    md = _render(
+        generated_issues=[
+            _inference("08713195000001", "nl", "afgeleid van het producttype"),
+            _inference("08713195000001", "fr", "déduit du type de produit"),
+        ],
+        products=_products("08713195000001"),
+    )
+    section = md.partition("## 2.")[2].partition("## 3.")[0]
+    header = next(line for line in section.splitlines() if line.startswith("| GTIN |"))
+
+    assert [c.strip() for c in header.split("|")[1:-1]] == [
+        "GTIN",
+        "Claim to verify (nl)",
+        "Claim to verify (fr)",
+    ]
+    rows = [line for line in section.splitlines() if line.startswith("| `0871")]
+    assert len(rows) == 1
+    assert "afgeleid van het producttype" in rows[0]
+    assert "déduit du type de produit" in rows[0]
+
+
+def test_a_claim_in_one_language_only_leaves_the_other_cell_empty() -> None:
+    """An empty cell is the finding: nothing was inferred in that language."""
+    md = _render(
+        generated_issues=[_inference("08713195000001", "nl", "alleen Nederlands")],
+        products=_products("08713195000001"),
+    )
+    row = next(line for line in md.partition("## 2.")[2].splitlines() if line.startswith("| `0871"))
+
+    assert [c.strip() for c in row.split("|")[1:-1]][1:] == ["alleen Nederlands", ""]
+
+
+def test_section_four_keeps_one_row_per_field_and_a_column_per_language() -> None:
+    """§4's stable key is (GTIN, field); the language is the axis that multiplies.
+
+    Every translation is French today, so this collapses nothing — the point is that it does not
+    *grow* when a language is added. `material` and `product_name` stay separate rows because the
+    "Source attribute" tells the operator where to paste, and that differs per field.
+    """
+    md = _render(
+        generated_issues=[
+            _translated("08713195000001", "material.fr", "métal", "attr Material"),
+            _translated("08713195000001", "product_name.fr", "Brosse", "attr 3301"),
+        ],
+        products=_products("08713195000001"),
+    )
+    section = md.partition("## 4.")[2].partition("## 5.")[0]
+    header = next(line for line in section.splitlines() if line.startswith("| GTIN |"))
+
+    assert [c.strip() for c in header.split("|")[1:-1]] == [
+        "GTIN",
+        "Source attribute",
+        "Value to paste (nl)",
+        "Value to paste (fr)",
+    ]
+    rows = [line for line in section.splitlines() if line.startswith("| `0871")]
+    assert len(rows) == 2  # one per field, not one per language
+    assert all(row.split("|")[3].strip() == "" for row in rows)  # nothing to paste in nl
+
+
+def test_both_sections_widen_with_the_configured_languages() -> None:
+    """The reason for the whole change, and the only part today's export cannot show.
+
+    Columns come from `wordpress.languages`, so adding German widens the tables and changes no
+    code. As rows, a third language would have taken §2 from 39 to ~59 and §4 from 21 to ~41.
+    """
+    md = _render(
+        languages=["nl", "fr", "de"],
+        generated_issues=[
+            _inference("08713195000001", "de", "aus dem Produkttyp abgeleitet"),
+            _translated("08713195000001", "material.de", "Metall", "attr Material"),
+        ],
+        products=_products("08713195000001"),
+    )
+
+    for section, label in (("## 2.", "Claim to verify"), ("## 4.", "Value to paste")):
+        header = next(
+            line for line in md.partition(section)[2].splitlines() if line.startswith("| GTIN |")
+        )
+        assert f"{label} (de)" in header, section
+        assert [c for c in header.split("|") if "(nl)" in c or "(fr)" in c or "(de)" in c] != []
+    assert "aus dem Produkttyp abgeleitet" in md
+    assert "Metall" in md
 
 
 def test_the_generated_copy_count_says_which_copy_it_counted() -> None:

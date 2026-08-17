@@ -73,7 +73,6 @@ class MatrixInput(NamedTuple):
     products: list[ProductRecord]
     gdsn_map: dict[str, GdsnSource]
     gdsn_extras: dict[str, GdsnSource]
-    languages: list[str]
     #: Language → GTIN-14s with a client-confirmed video in it.
     video_confirmed: dict[str, set[str]]
 
@@ -622,6 +621,7 @@ def _blocking_lines(
     mandatory_gaps: dict[str, list[MandatoryGap]],
     products: dict[str, ProductRecord],
     matrix: MatrixInput | None,
+    languages: list[str],
 ) -> list[str]:
     """§1 — the SKUs an either-or source requirement holds, and which slot would release them.
 
@@ -644,7 +644,6 @@ def _blocking_lines(
     """
     groups = _group_columns(matrix.gdsn_map, matrix.gdsn_extras) if matrix else {}
     sources = {**matrix.gdsn_map, **matrix.gdsn_extras} if matrix else {}
-    languages = matrix.languages if matrix else []
     attributes = [f"attr {sources[field].attribute}" for c in groups.values() for field in c.fields]
     tables: list[str] = []
     for group, column in groups.items():
@@ -670,13 +669,84 @@ def _blocking_lines(
     ]
 
 
+def _counted(n: int, noun: str) -> str:
+    """``"1 value"`` / ``"21 values"`` — a count and its noun, so a pluralised label cannot lie.
+
+    Both pivoted sections carry two counts (findings, and the rows they fold into) because the
+    Summary counts the *work* — one paste, one claim — while the table counts subjects. Stating
+    both is what stops a reader counting rows against the Summary and concluding one is wrong.
+    """
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+class _ExtraKey(NamedTuple):
+    """Row-key parts beyond the GTIN, with their column titles — kept together so they cannot
+    disagree about how many there are."""
+
+    of: Callable[[SourceIssue], tuple[str, ...]]
+    headers: tuple[str, ...]
+
+
+def _by_language(
+    issues: list[SourceIssue],
+    products: dict[str, ProductRecord],
+    languages: list[str],
+    value_header: str,
+    extra_key: _ExtraKey | None = None,
+) -> tuple[list[str], list[list[str]]]:
+    """Pivot per-language findings into one row per subject, one column per language.
+
+    **Rows scale with the language count; columns do not.** A row per ``(subject, language)`` was
+    two rows for a two-language client and would be three for a three-language one — the shape of
+    a table should follow the configured languages rather than however many the current export
+    happens to have filled. Columns come from ``wordpress.languages``, so adding German widens
+    these tables and changes no code.
+
+    An empty cell is a finding in its own right: nothing was written for that language.
+
+    Args:
+        issues: Findings whose ``field`` ends in ``.<language>``.
+        products: For the GTIN label.
+        languages: The configured site languages, in order — the column set.
+        value_header: Column title; each language gets ``"{value_header} ({lang})"``.
+        extra_key: Extra row-key parts beyond the GTIN, for a subject that is not the product
+            alone — §4 keys on the field too, because the paste target differs per field.
+
+    Returns:
+        ``(header, rows)`` ready for :func:`_table`, rows in first-seen order so two runs over the
+        same findings render identically.
+    """
+    rows: dict[tuple[str, ...], dict[str, str]] = {}
+    for issue in issues:
+        row = rows.setdefault((issue.gtin, *(extra_key.of(issue) if extra_key else ())), {})
+        row[_lang(issue.field)] = _cell(issue.value)
+    # A finding in a language the client has not configured still gets a column, appended after
+    # the configured ones. It should not happen — the generator writes the configured languages —
+    # but a `generated_issues.json` left over from a config that named more of them would
+    # otherwise drop a MyGS1 paste instruction off the table with nothing to say so. Config leads
+    # the order; the anomaly shows up at the end rather than disappearing.
+    unexpected = [
+        lang
+        for lang in dict.fromkeys(found for row in rows.values() for found in row)
+        if lang not in languages
+    ]
+    columns = [*languages, *unexpected]
+    headers = extra_key.headers if extra_key else ()
+    header = ["GTIN", *headers, *(f"{value_header} ({lang})" for lang in columns)]
+    return header, [
+        [_label(products, subject[0]), *subject[1:], *(values.get(lang, "") for lang in columns)]
+        for subject, values in rows.items()
+    ]
+
+
 def _review_lines(
     inferences: list[SourceIssue],
     generated_count: int,
     products: dict[str, ProductRecord],
     client_id: str,
+    languages: list[str],
 ) -> list[str]:
-    inf_rows = [[_label(products, i.gtin), _lang(i.field), _cell(i.value)] for i in inferences]
+    header, inf_rows = _by_language(inferences, products, languages, "Claim to verify")
     return [
         "## 2. Review before publish — inferred claims",
         "",
@@ -684,7 +754,12 @@ def _review_lines(
         "Confirm each holds for the real product before it goes live — this is the actionable "
         "slice of copy review.",
         "",
-        *_table(["GTIN", "Lang", "Claim to verify"], inf_rows),
+        f"One row per product, one column per language: {_counted(len(inferences), 'claim')} "
+        f"across {_counted(len(inf_rows), 'product')}. The claims are **not** translations of each "
+        "other — each language's copy is written separately, so they can infer different things "
+        "about the same product, and side by side you can see where they disagree.",
+        "",
+        *_table(header, inf_rows),
         "",
         f"_The {generated_count} generated-copy row(s) written this run are reviewed in context "
         "at the operator gate (Review Gate #1); raw text in "
@@ -736,7 +811,7 @@ def _source_lines(
 
 
 def _translated_lines(
-    translated: list[SourceIssue], products: dict[str, ProductRecord]
+    translated: list[SourceIssue], products: dict[str, ProductRecord], languages: list[str]
 ) -> list[str]:
     """§4 — the values the tool rendered into a language the feed did not carry them in.
 
@@ -753,15 +828,13 @@ def _translated_lines(
     declaration is gone and ``lib.config`` now refuses one at load, which is the better place for
     it: a dedupe here would have quietly absorbed the next one instead of surfacing it.
     """
-    rows = [
-        [
-            _label(products, issue.gtin),
-            _lang(issue.field),
-            _cell(issue.source),
-            _cell(issue.value),
-        ]
-        for issue in translated
-    ]
+    header, rows = _by_language(
+        translated,
+        products,
+        languages,
+        "Value to paste",
+        extra_key=_ExtraKey(lambda issue: (_cell(issue.source),), ("Source attribute",)),
+    )
     return [
         "## 4. Translated to fill a language gap — paste these into MyGS1",
         "",
@@ -770,9 +843,11 @@ def _translated_lines(
         "Nothing here blocks publishing. Putting the value back in MyGS1 is what ends that: the "
         "next export carries it for real and the tool stops writing it.",
         "",
-        "**Action: paste each value into the named attribute for that language in MyGS1.**",
+        f"**Action: paste each value into the named attribute for that language in MyGS1.** "
+        f"{_counted(len(translated), 'value')} to paste, across {_counted(len(rows), 'row')} — a "
+        f"row can carry a paste in more than one language.",
         "",
-        *_table(["GTIN", "Lang", "Source attribute", "Value to paste"], rows),
+        *_table(header, rows),
         "",
     ]
 
@@ -839,6 +914,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     products: dict[str, ProductRecord],
     snapshot: str,
     freshness: dict[str, str],
+    languages: list[str],
     observations: list[str] | None = None,
     mandatory_gaps: dict[str, list[MandatoryGap]] | None = None,
     video_held: list[str] | None = None,
@@ -856,6 +932,12 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
         snapshot: The report date (injected, so the output is deterministic).
         freshness: Last-updated date per source, keyed ``generated``/``source``/``video_map``/
             ``category`` — each source has its own producer run, so they can differ.
+        languages: The client's configured site languages, in order. **One list for the whole
+            document**: §0's per-language marks, §2's claim columns and §4's paste columns are all
+            derived from it, and two sources for it could disagree about how many columns a table
+            has. It is the column set, not the languages the current export happens to have filled
+            — a configured language with nothing in it renders as an empty cell, which is itself
+            the finding.
         observations: Free-text, in-session review notes (``observations.json``) — the
             assistant's own qualitative flags for this run. ``None``/empty renders a placeholder.
         mandatory_gaps: Missing mandatory source values per GTIN (E23), from
@@ -894,17 +976,17 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
                 matrix.products,
                 matrix.gdsn_map,
                 matrix.gdsn_extras,
-                matrix.languages,
+                languages,
                 matrix.video_confirmed,
                 products,
             )
             if matrix is not None
             else []
         ),
-        *_blocking_lines(mandatory_gaps or {}, products, matrix),
-        *_review_lines(inferences, generated_count, products, client_id),
+        *_blocking_lines(mandatory_gaps or {}, products, matrix, languages),
+        *_review_lines(inferences, generated_count, products, client_id, languages),
         *_source_lines(inconsistent, wrong_lang, products),
-        *_translated_lines(translated, products),
+        *_translated_lines(translated, products, languages),
         *_video_lines(video_map_issues, client_id),
         *_category_lines(category_issues),
     ]

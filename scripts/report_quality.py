@@ -128,6 +128,22 @@ def _publish_blocks(
     return gaps, sorted(held)
 
 
+def _languages(client_id: str, issues: dict[str, list[SourceIssue]]) -> list[str]:
+    """The client's configured site languages — the column set for §2 and §4, and §0's marks.
+
+    Falls back to the languages the findings themselves name when the config cannot be read, so a
+    report still renders (``doctor`` reports config problems; blanking the document helps nobody).
+    Sorted in that case, because there is no configured order to honour.
+    """
+    try:
+        return get_client(client_id).wordpress.languages
+    except (ConfigError, ExportParseError):
+        found = (
+            i.field.rsplit(".", 1)[-1] for group in issues.values() for i in group if "." in i.field
+        )
+        return sorted({lang for lang in found if lang})
+
+
 def _scoped_issues(
     client_id: str, products: dict[str, ProductRecord], issues: list[SourceIssue]
 ) -> list[SourceIssue]:
@@ -189,7 +205,6 @@ def _matrix_input(client_id: str, products: dict[str, ProductRecord]) -> MatrixI
         products=in_scope(cfg, list(products.values())),
         gdsn_map=cfg.export.gdsn_map,
         gdsn_extras=cfg.export.gdsn_extras,
-        languages=languages,
         video_confirmed=confirmed,
     )
 
@@ -255,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
 
     markdown = render_quality_report(
         client_id=client_id,
+        languages=_languages(client_id, issues),
         source_issues=issues["source"],
         generated_issues=issues["generated"],
         video_map_issues=issues["video_map"],
