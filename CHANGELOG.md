@@ -434,6 +434,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stated nowhere.
 
 ### Fixed
+- **§1 listed units a blank attr 1083 does not actually block, under a heading reading "Blocks
+  publish".** 1083 is half of the `marketing_copy` `required_group`, so a unit whose 1067 carries
+  the copy publishes perfectly well — the section's own `Consequence` column said so, on a branch
+  that fires for **0 of 37 in-scope units**. It was accurate by luck, and the first non-blocking
+  row would have sat under a heading its own cells disproved.
+
+  It lists what the requirement holds now — the E23 gaps — and a blank 1083 the feed rescues joins
+  the other non-blocking datapool gaps in §3. §1 and §3 cannot claim the same unit, which is
+  derived from the E23 gaps rather than recomputed.
+
+  The rows are a grid: **one row per SKU, one column per (attribute, language)**, so the slot to
+  fill is named rather than inferred from two rows. That closes the hole the previous entry opened
+  — collapsing 1083 and 1067 into one `marketing·copy` column was right, but it removed the only
+  place that said which member was missing, and §1 is where that belongs. Measured: §1 16 rows →
+  8, the same 8 GTINs, every other section byte-identical.
+
 - **An either-or requirement rendered as two mandatory columns, and neither of them was one.**
   `description_short` (1083) and `description_long` (1067) are a `required_group`: a SKU is held
   only when **both** are blank. Shown as two columns, the legend's *"a gap there holds the whole

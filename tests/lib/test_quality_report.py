@@ -1010,6 +1010,36 @@ def test_held_gtins_are_named_under_a_heading_that_says_they_block() -> None:
     assert "BLOCKS" in md.upper()
 
 
+def test_a_sku_held_for_something_else_is_not_listed_as_a_copy_block() -> None:
+    """§1 answers for one requirement, so it filters the gaps to that requirement.
+
+    Two in-scope SKUs are held for `image_url` alone. Taking every gap on the product would put
+    them in this grid with all four copy slots ○ and a consequence claiming the copy is what
+    holds them — a false blocker, in the section whose job is to be believed.
+    """
+    product = _p("08713195007922")
+    md = _render(
+        products={product.gtin14: product},
+        mandatory_gaps={product.gtin14: [MandatoryGap("image_url", "", "2485")]},
+        matrix=_matrix(products=[product], gdsn_map=_GROUP_MAP),
+    )
+
+    assert "08713195007922" not in md.partition("## 1.")[2].partition("## 2.")[0]
+
+
+def test_a_held_unit_is_not_also_listed_as_a_non_blocking_source_fix() -> None:
+    """§1 and §3 must not claim the same unit: one says it blocks, the other says it does not."""
+    md = _render(
+        generated_issues=[_blank_1083("08713195000001", "nl")],
+        products=_products("08713195000001"),
+        mandatory_gaps={"08713195000001": _group_gap("nl")},
+        matrix=_matrix(products=[_p("08713195000001")], gdsn_map=_GROUP_MAP),
+    )
+
+    assert "08713195000001" in md.partition("## 1.")[2].partition("## 2.")[0]
+    assert "08713195000001" not in md.partition("## 3.")[2].partition("## 4.")[0]
+
+
 def test_section_one_names_both_attributes_of_the_requirement() -> None:
     """Naming only 1083 said the requirement was 1083, which is the misreading this fixes."""
     md = _blocked("08713195000001", _group_gap("nl", "fr"))
