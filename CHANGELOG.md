@@ -434,6 +434,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stated nowhere.
 
 ### Fixed
+- **§3 reported on the whole catalogue while every other section reported on the run.** Its rows
+  came straight from `source_issues.json`, which `parse_export` writes over the entire workbook,
+  whereas §0's matrix and §1's holds are computed over the process list. **Four of §3's eleven
+  GTINs were outside the run** — findable nowhere else in the document, which is how it surfaced:
+  by looking one up in the coverage matrix and not finding it.
+
+  Half of this was fixed once already. R-c deleted §1d in #99 for leaking exactly one out-of-scope
+  GTIN into a scoped report — `08713195002439`. That GTIN was still in the document, one section
+  down. §1d was where the leak was noticed, not where it lived.
+
+  Every issue list is now narrowed to the run's scope in `report_quality` (the renderer is pure
+  and scope needs the client config). Findings with no GTIN — an unmapped video file — are kept,
+  being about the input rather than a product. Measured: **40 distinct GTINs → 37, none out of
+  scope**; Summary corrections blank title/image 4 → 3, blank non-critical 2 → 0, cross-market
+  5 → 4.
+
+- **§3a listed what the coverage matrix already shows.** Every field it could name has a matrix
+  column, so a blank `net_content` was the ○ under `net·3510` written out again, with the
+  attribute number the header carries. Its entire content was the two out-of-scope `net_content`
+  blanks, so scoping emptied it anyway. §3b and §3c become §3a and §3b; the Summary keeps both
+  blank counts, as it has since §1d went.
+
+  *One deliberate loss:* a blank attr 1083 whose 1067 carries the copy is now reported nowhere —
+  §0 shows the requirement rather than its members, and §3 no longer lists blank fields. No
+  in-scope product has ever been in that state (1083 is the primary source, 1067 the fallback).
+
 - **§1 listed units a blank attr 1083 does not actually block, under a heading reading "Blocks
   publish".** 1083 is half of the `marketing_copy` `required_group`, so a unit whose 1067 carries
   the copy publishes perfectly well — the section's own `Consequence` column said so, on a branch

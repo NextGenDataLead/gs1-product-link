@@ -124,6 +124,36 @@ def test_findings_for_out_of_scope_gtins_never_reach_the_report(
             for gtin in (in_scope_gtin, out_of_scope_gtin)
         ],
     )
+    # Every issue file, not only the one where the leak was noticed. `generated_issues` happens
+    # to be scoped already — generation only runs for in-scope units — so a narrowing applied to
+    # `source` alone passes today and leaks the moment that stops being true.
+    _write(
+        data / "generated_issues.json",
+        [
+            {
+                "gtin": out_of_scope_gtin,
+                "field": "generated_description.nl",
+                "source": "inferred",
+                "issue": "generation_inference",
+                "value": "a claim about a product this run will not touch",
+                "detail": "d",
+            }
+        ],
+    )
+    # A finding with no GTIN is about the *input*, not a product, so scope cannot apply to it.
+    _write(
+        data / "video_map_issues.json",
+        [
+            {
+                "gtin": "",
+                "field": "video",
+                "source": "mapping.yml",
+                "issue": "video_unconfirmed",
+                "value": "Aqua Mat v2.mp4",
+                "detail": "d",
+            }
+        ],
+    )
     products = json.loads((data / "products.json").read_text())
     products.append(
         ProductRecord(
@@ -139,6 +169,8 @@ def test_findings_for_out_of_scope_gtins_never_reach_the_report(
     text = (tmp_path / "output" / "noviplast" / "data-quality-report.md").read_text()
     assert in_scope_gtin in text
     assert out_of_scope_gtin not in text
+    assert "a claim about a product this run will not touch" not in text
+    assert "Aqua Mat v2.mp4" in text  # kept: it names a video file, not a GTIN
 
 
 def test_missing_data_dir_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
