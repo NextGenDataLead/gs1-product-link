@@ -89,19 +89,6 @@ def test_a_missing_freshness_entry_does_not_become_an_ancient_date() -> None:
     assert "**Generated 2026-08-13 22:02 CEST**" in md
 
 
-def test_held_gtins_block_publish() -> None:
-    gen = [
-        _issue("08713195003276", "missing_generation_input", field="description_short.nl"),
-        _issue("08713195003276", "missing_generation_input", field="description_short.fr"),
-    ]
-    md = _render(generated_issues=gen, products=_products("08713195003276"))
-
-    assert "Held" in md
-    assert "08713195003276" in md
-    assert "prod-3276" in md  # product name resolved
-    assert "BLOCKS" in md.upper()
-
-
 def test_inferences_are_listed_for_verification() -> None:
     gen = [
         _issue(
@@ -121,7 +108,7 @@ def test_blank_title_is_a_blocker_not_a_source_fix() -> None:
 
     §1d said what §0's `product·3301` column and the Summary row already said, and named one GTIN
     neither did — an out-of-scope one, which is a whole-catalogue finding leaking into a scoped
-    report. Dropping the section must not quietly demote the finding to §3a's "does not block"
+    report. Dropping the section must not quietly demote the finding to §3's "does not block"
     list, which is the one way this change could go wrong.
     """
     src = [
@@ -139,7 +126,14 @@ def test_blank_title_is_a_blocker_not_a_source_fix() -> None:
     assert "08713195007649" not in source_fixes  # never demoted to "do not block publish"
 
 
-def test_blank_net_content_is_degrade_only() -> None:
+def test_a_blank_non_critical_field_is_counted_but_not_listed_again() -> None:
+    """§0's matrix is where a blank field is read; §3a listed the same thing in prose.
+
+    Every field §3a could name has a matrix column — `net·3510` for this one — so the section
+    repeated the ○ already on the row, with the attribute number the header carries too. The
+    Summary keeps the count, exactly as it does for the blank title/image findings whose section
+    (§1d) went for the same reason.
+    """
     src = [
         _issue(
             "08713195000794",
@@ -150,11 +144,24 @@ def test_blank_net_content_is_degrade_only() -> None:
     ]
     md = _render(source_issues=src, products=_products("08713195000794"))
 
-    # net_content degrades but does not block: it belongs under source fixes, not section 1.
-    section_1, _, after = md.partition("## 2.")
-    assert "08713195000794" not in section_1
-    assert "08713195000794" in after
-    assert "Blank non-critical fields" in md
+    assert "Blank non-critical fields" in md  # the Summary row survives
+    assert "Blank non-critical fields" not in md.partition("## 3.")[2]  # the section does not
+    assert "08713195000794" not in md.partition("## 3.")[2]
+
+
+def test_section_three_subsections_are_renumbered_after_the_blanks_go() -> None:
+    """A dangling `3b.` under a `3.` with no `3a.` is the drift this report keeps being read for."""
+    md = _render(
+        source_issues=[
+            _issue("08713195000001", "value_inconsistent_across_markets", field="product_name.nl"),
+            _issue("08713195000002", "value_wrong_language", field="product_name.fr", value="x"),
+        ],
+        products=_products("08713195000001", "08713195000002"),
+    )
+
+    assert "### 3a. Values inconsistent across markets" in md
+    assert "### 3b. Possible wrong-language values" in md
+    assert "### 3c." not in md
 
 
 def test_cross_market_values_shown_side_by_side() -> None:
@@ -185,8 +192,8 @@ def test_wrong_language_values_are_listed() -> None:
     ]
     md = _render(source_issues=src, products=_products("08713195000527"))
 
-    assert "Possible wrong-language values" in md  # summary + §3c heading
-    assert "3c." in md
+    assert "Possible wrong-language values" in md  # summary + §3b heading
+    assert "3b." in md
     assert "Schoonmaakdoek" in md
 
 
@@ -921,31 +928,147 @@ def test_section_one_says_what_it_actually_lists() -> None:
     assert "already live" in md
 
 
-def test_a_unit_with_no_1067_either_is_named_as_held() -> None:
-    """1083 blank *and* no 1067 is the one that actually blocks: nothing to write copy from."""
-    md = _render(
-        generated_issues=[_blank_1083("08713195000001", "fr")],
-        products=_products("08713195000001"),
+#: A held SKU as E23 reports it: the either-or group unsatisfied, per language.
+def _group_gap(*languages: str) -> list[MandatoryGap]:
+    return [MandatoryGap("marketing_copy", lang, "1083/1067") for lang in languages]
+
+
+def _blocked(gtin: str, gaps: list[MandatoryGap], **over: object) -> str:
+    product = _p(gtin, **over)
+    return _render(
+        products={product.gtin14: product},
+        mandatory_gaps={product.gtin14: gaps},
+        matrix=_matrix(products=[product], gdsn_map=_GROUP_MAP),
     )
 
-    assert "| fr | **Held** — no 1067 either (E21) |" in md
+
+def test_section_one_shows_every_slot_of_the_requirement_on_one_row() -> None:
+    """One row per SKU, one column per (attribute, language) — the cell to fill, named.
+
+    It used to be one row per *language* with an identical consequence in each, and §0 no longer
+    says which member is missing: #103 collapsed 1083 and 1067 into one `marketing·copy` column
+    precisely because neither is individually mandatory. So this is the only place left that can
+    say which of the four slots to fill, and it now says it.
+    """
+    md = _blocked("08713195000001", _group_gap("nl", "fr"))
+    section = md.partition("## 1.")[2].partition("## 2.")[0]
+    header = next(line for line in section.splitlines() if line.startswith("| GTIN |"))
+
+    assert [c.strip() for c in header.split("|")[1:-1]] == [
+        "GTIN",
+        "1083 nl",
+        "1083 fr",
+        "1067 nl",
+        "1067 fr",
+        "Consequence",
+    ]
+    assert len([line for line in section.splitlines() if line.startswith("| `0871")]) == 1
 
 
-def test_a_unit_whose_1067_carries_the_copy_is_not_reported_as_blocking() -> None:
-    """§1's rows are not uniform, and calling them all blockers is how a blocker gets ignored.
+def test_the_grid_shows_which_slot_the_feed_does_carry() -> None:
+    """The case the old layout rendered as two rows to be diffed by eye.
 
-    A product whose 1083 is blank but whose 1067 carries usable copy publishes perfectly well —
-    the datapool is still missing a field, which is worth fixing, but not before this SKU ships.
+    1083 present in nl, nothing else: the SKU is held for fr, and the row says exactly that
+    rather than leaving the reader to compare a `nl` row against a `fr` row.
+    """
+    md = _blocked(
+        "08713195000001",
+        _group_gap("fr"),
+        description_short=LocalisedText(values={"nl": "Kort en krachtig"}),
+    )
+    row = next(
+        line
+        for line in md.partition("## 1.")[2].splitlines()
+        if line.startswith("| `08713195000001`")
+    )
+
+    assert [c.strip() for c in row.split("|")[2:-2]] == ["●", "○", "○", "○"]
+    assert "fr" in row.split("|")[-2]
+
+
+def test_section_one_lists_what_the_requirement_holds_not_every_blank_1083() -> None:
+    """The title says "blocks publish", so the rows have to be the ones that block.
+
+    It listed every unit with a blank attr 1083 — including those whose 1067 carries the copy,
+    which publish perfectly well. That was accurate only by luck: no in-scope unit is in that
+    state today, so the "publishes from 1067" row never appeared. The first one would have sat
+    under a heading its own cells disproved.
+
+    Such a unit is now reported nowhere, and that is a deliberate consequence of two decisions
+    taken together: §0 shows the requirement rather than its members, and §3 no longer lists
+    blank fields because the matrix does. It costs a finding no in-scope product has ever had —
+    1083 is the primary copy source and 1067 the fallback, so carrying only the fallback is the
+    unusual direction. Worth revisiting if a product ever turns up in that state.
     """
     products = _products("08713195000001")
     gtin14 = next(iter(products))
     products[gtin14] = products[gtin14].model_copy(
-        update={"description_long": LocalisedText(values={"nl": "Kort en krachtig"})}
+        update={"description_long": LocalisedText(values={"nl": "a", "fr": "b"})}
+    )
+    md = _render(
+        generated_issues=[_blank_1083("08713195000001")],
+        products=products,
+        mandatory_gaps={},  # 1067 satisfies the group, so E23 holds nothing
+        matrix=_matrix(products=[_p("08713195000001")], gdsn_map=_GROUP_MAP),
     )
 
-    md = _render(generated_issues=[_blank_1083("08713195000001")], products=products)
+    assert "08713195000001" not in md.partition("## 1.")[2].partition("## 2.")[0]
 
-    assert "| Publishes from 1067 |" in md
+
+def test_held_gtins_are_named_under_a_heading_that_says_they_block() -> None:
+    """The hold comes from the either-or gap now, not from a `missing_generation_input` finding.
+
+    A blank attr 1083 is half of a requirement and holds nothing on its own — which is why this
+    test used to pass with no E23 gap anywhere in its inputs.
+    """
+    md = _blocked(
+        "08713195003276",
+        _group_gap("nl", "fr"),
+        product_name=LocalisedText(values={"nl": "plasmaaansteker", "fr": "briquet"}),
+    )
+
+    assert "**Held**" in md
+    assert "08713195003276" in md
+    assert "plasmaaansteker" in md  # product name resolved
+    assert "BLOCKS" in md.upper()
+
+
+def test_a_sku_held_for_something_else_is_not_listed_as_a_copy_block() -> None:
+    """§1 answers for one requirement, so it filters the gaps to that requirement.
+
+    Two in-scope SKUs are held for `image_url` alone. Taking every gap on the product would put
+    them in this grid with all four copy slots ○ and a consequence claiming the copy is what
+    holds them — a false blocker, in the section whose job is to be believed.
+    """
+    product = _p("08713195007922")
+    md = _render(
+        products={product.gtin14: product},
+        mandatory_gaps={product.gtin14: [MandatoryGap("image_url", "", "2485")]},
+        matrix=_matrix(products=[product], gdsn_map=_GROUP_MAP),
+    )
+
+    assert "08713195007922" not in md.partition("## 1.")[2].partition("## 2.")[0]
+
+
+def test_a_held_unit_is_not_also_listed_as_a_non_blocking_source_fix() -> None:
+    """§1 and §3 must not claim the same unit: one says it blocks, the other says it does not."""
+    md = _render(
+        generated_issues=[_blank_1083("08713195000001", "nl")],
+        products=_products("08713195000001"),
+        mandatory_gaps={"08713195000001": _group_gap("nl")},
+        matrix=_matrix(products=[_p("08713195000001")], gdsn_map=_GROUP_MAP),
+    )
+
+    assert "08713195000001" in md.partition("## 1.")[2].partition("## 2.")[0]
+    assert "08713195000001" not in md.partition("## 3.")[2].partition("## 4.")[0]
+
+
+def test_section_one_names_both_attributes_of_the_requirement() -> None:
+    """Naming only 1083 said the requirement was 1083, which is the misreading this fixes."""
+    md = _blocked("08713195000001", _group_gap("nl", "fr"))
+    heading = next(line for line in md.splitlines() if line.startswith("## 1."))
+
+    assert "1083" in heading and "1067" in heading
 
 
 def test_the_generated_copy_count_says_which_copy_it_counted() -> None:

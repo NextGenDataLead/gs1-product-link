@@ -572,57 +572,101 @@ def _has_feature_benefit(products: dict[str, ProductRecord], gtin: str, language
     return bool((product.description_long.values.get(language) or "").strip())
 
 
+class _Requirement(NamedTuple):
+    """One either-or requirement, as §1 needs it: the group's name, its column, and its sources."""
+
+    group: str
+    column: FieldColumn
+    sources: dict[str, GdsnSource]
+
+
+def _requirement_rows(
+    requirement: _Requirement,
+    gaps: dict[str, list[MandatoryGap]],
+    products: dict[str, ProductRecord],
+    languages: list[str],
+) -> tuple[list[str], list[list[str]]]:
+    """The header and rows of one either-or requirement's grid: a slot per (attribute, language).
+
+    One row per SKU rather than per language: the hold is per *product* — E23 holds it in every
+    language the moment one is short — so a row per language repeated the same consequence and
+    left the reader diffing two rows to find the slot to fill.
+    """
+    fields, sources = requirement.column.fields, requirement.sources
+    header = [
+        "GTIN",
+        *(f"{sources[field].attribute} {lang}" for field in fields for lang in languages),
+        "Consequence",
+    ]
+    rows = []
+    for gtin, product_gaps in sorted(gaps.items()):
+        short = [g.language for g in product_gaps if g.field == requirement.group]
+        if not short:
+            continue
+        product = products.get(gtin)
+        cells = [
+            _PRESENT if product is not None and value_for(product, field, lang) else _ABSENT
+            for field in fields
+            for lang in languages
+        ]
+        why = (
+            "no language carries either"
+            if len(short) == len(languages)
+            else f"{', '.join(short)} carries neither"
+        )
+        rows.append([_label(products, gtin), *cells, f"**Held** — {why}"])
+    return header, rows
+
+
 def _blocking_lines(
-    missing_1083: list[SourceIssue], products: dict[str, ProductRecord]
+    mandatory_gaps: dict[str, list[MandatoryGap]],
+    products: dict[str, ProductRecord],
+    matrix: MatrixInput | None,
 ) -> list[str]:
-    """§1 — the units whose marketing message (attr 1083) the feed does not carry.
+    """§1 — the SKUs an either-or source requirement holds, and which slot would release them.
 
     This was §1c, under a §1 that also held three subsections repeating §0's matrix: E23's
     mandatory gaps (§1a), E24's missing videos (§1b), and the blank title/image findings (§1d),
     whose only GTIN beyond the matrix was out of scope entirely — a whole-catalogue finding leaking
     into a scoped report. All three are gone, and with one subsection left there is no subsection.
 
-    **Its own text had drifted furthest.** It said *"the generator produced nothing for these
-    units … then re-run generation"*, which was never what it listed: the rows come from
-    ``missing_generation_input``, which fires on a blank attr 1083, and no amount of re-running
-    generation fills a field the datapool does not have. Once copy is written only for the rows a
-    run publishes, that sentence would have read as an accusation about every already-live unit.
+    **It listed the wrong population.** The rows came from ``missing_generation_input``, which
+    fires on a blank attr 1083 — but 1083 is half of a ``required_group``, so a unit whose 1067
+    carries the copy publishes perfectly well. Under a heading reading *"Blocks publish"* that was
+    accurate only by luck: no in-scope unit is in that state, so the non-blocking row never
+    appeared. It lists what the requirement actually holds now, and a blank 1083 the feed rescues
+    is a datapool gap in §3 instead.
 
-    The consequence is per row rather than asserted for all of them, because it differs: a unit
-    whose 1067 also has nothing is genuinely held (E21), and one whose 1067 carries copy publishes
-    from it. Calling both a blocker is how a real blocker stops being read.
+    **The grid is here because §0 stopped saying it.** #103 collapsed the members into one
+    ``marketing·copy`` column, since neither is individually mandatory — so this is the only place
+    left that can name the slot to fill, and one row per SKU says it where one row per *language*
+    left two rows to be compared by eye.
     """
-    rows = [
-        [
-            _label(products, issue.gtin),
-            _lang(issue.field),
-            "Publishes from 1067"
-            if _has_feature_benefit(products, issue.gtin, _lang(issue.field))
-            else "**Held** — no 1067 either (E21)",
-        ]
-        for issue in sorted(missing_1083, key=lambda i: (i.gtin, i.field))
-    ]
+    groups = _group_columns(matrix.gdsn_map, matrix.gdsn_extras) if matrix else {}
+    sources = {**matrix.gdsn_map, **matrix.gdsn_extras} if matrix else {}
+    languages = matrix.languages if matrix else []
+    attributes = [f"attr {sources[field].attribute}" for c in groups.values() for field in c.fields]
+    tables: list[str] = []
+    for group, column in groups.items():
+        header, rows = _requirement_rows(
+            _Requirement(group, column, sources), mandatory_gaps, products, languages
+        )
+        tables += [*_table(header, rows), ""]
     return [
-        "## 1. Blocks publish — no marketing message in the feed (attr 1083)",
+        f"## 1. Blocks publish — no marketing message in the feed ({' or '.join(attributes)})",
         "",
-        "Attr 1083 is what a page's copy is written from. These `(GTIN, language)` units have "
-        "none, and no other language carries it either, so there is nothing to translate from — "
-        "**this is a source finding for MyGS1, not a generator failure.** Re-running generation "
-        "cannot close it.",
+        "A page's copy is written from these attributes, and the requirement is satisfied by "
+        "**either** of them. A SKU carrying neither, in any one configured language, has nothing "
+        "to write copy from and nothing to translate from — so it is **held out of the plan "
+        "entirely**, in *every* language, rather than published half-live.",
         "",
-        "What it costs depends on attr 1067. With nothing there either, there is nothing to write "
-        "copy from at all and the unit is **held out of the plan** (E21) — the SKU does not "
-        "publish in that language. With 1067 present, the page publishes from it and only the "
-        "datapool is short a field.",
+        "**This is a source finding for MyGS1, not a generator failure.** Re-running generation "
+        "cannot fill a field the datapool does not have, and a unit already live and unchanged "
+        "has no copy written this run by design — neither is what this lists.",
         "",
-        "_Not a list of units without copy **this run**._ Copy is written for the rows a run "
-        "publishes, so a unit that is already live and unchanged has none by design and is not "
-        "listed here.",
+        "**Action: fill any one ● -less slot on a row, for every language, in MyGS1.**",
         "",
-        "**Action: fill attr 1083 for the named language in MyGS1.**",
-        "",
-        *_table(["GTIN", "Lang", "Consequence"], rows),
-        "",
+        *(tables or [*_table(["GTIN", "Consequence"], []), ""]),
     ]
 
 
@@ -651,25 +695,28 @@ def _review_lines(
 
 
 def _source_lines(
-    degrade_blanks: list[SourceIssue],
     inconsistent: list[SourceIssue],
     wrong_lang: list[SourceIssue],
     products: dict[str, ProductRecord],
 ) -> list[str]:
-    blank_rows = [[_label(products, i.gtin), i.field, _cell(i.source)] for i in degrade_blanks]
+    """§3 — source findings that are worth fixing but hold nothing.
+
+    **There is no blank-fields subsection.** It listed every non-blocking blank with its source
+    attribute, which is what §0's matrix already shows: a blank ``net_content`` is the ○ under
+    ``net·3510``, and the header carries the attribute number the subsection was repeating. The
+    Summary keeps the count, exactly as it does for the blank title/image findings whose own
+    subsection (§1d) went for the same reason.
+
+    What is left is the two findings a matrix *cannot* show, because both are about the value
+    rather than its presence: markets disagreeing about a value, and a value that reads as the
+    wrong language.
+    """
     inc_rows = [[_label(products, i.gtin), i.field, _market_cell(i)] for i in inconsistent]
     lang_rows = [[_label(products, i.gtin), i.field, _cell(i.value)] for i in wrong_lang]
     return [
         "## 3. Source-data fixes in MyGS1 (do not block publish)",
         "",
-        "### 3a. Blank non-critical fields",
-        "",
-        "These degrade the page (e.g. a missing spec line in Technische details) but don't break "
-        "it, so they don't hold the GTIN. Worth filling at source.",
-        "",
-        *_table(["GTIN", "Field", "Source attribute"], blank_rows),
-        "",
-        "### 3b. Values inconsistent across markets",
+        "### 3a. Values inconsistent across markets",
         "",
         "The same field carries different text across GS1 target markets (priority "
         "`528 > 056 > 276 > 442`); the tool used the highest-ranked (marked ✓). Both/all market "
@@ -677,7 +724,7 @@ def _source_lines(
         "",
         *_table(["GTIN", "Field", "Value per market (✓ = used)"], inc_rows),
         "",
-        "### 3c. Possible wrong-language values (worth a glance)",
+        "### 3b. Possible wrong-language values (worth a glance)",
         "",
         "Heuristic: a localised value carrying letter patterns that belong to the *other* language "
         "(e.g. a French title still reading `Schoonmaakdoek`). Not a blocker — skim and fix the "
@@ -822,15 +869,12 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     Returns:
         The full markdown document.
     """
-    missing_1083 = [i for i in generated_issues if i.issue == _HELD]
     inferences = [i for i in generated_issues if i.issue == _INFERENCE]
     generated_count = sum(1 for i in generated_issues if i.issue == _GENERATED)
     translated = [i for i in generated_issues if i.issue == _TRANSLATED]
-    blanks = [i for i in source_issues if i.issue == _BLANK]
-    # The blocking half is counted in the Summary and shown in §0's `product·3301` / `image·2485`
-    # columns; §1d used to list it a third time, and its one GTIN beyond the matrix was out of
-    # scope. `_blocks_publish` still splits them, so §3a does not pick the blocking ones up.
-    degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
+    # `value_blank` findings are not listed anywhere: §0's matrix is where a missing value is
+    # read, one ○ under the column whose header already carries the attribute number. The Summary
+    # keeps both counts — blocking (title/image) and degrading — as it has since §1d went.
     inconsistent = [i for i in source_issues if i.issue == _INCONSISTENT]
     wrong_lang = [i for i in source_issues if i.issue == _WRONG_LANG]
 
@@ -857,9 +901,9 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
             if matrix is not None
             else []
         ),
-        *_blocking_lines(missing_1083, products),
+        *_blocking_lines(mandatory_gaps or {}, products, matrix),
         *_review_lines(inferences, generated_count, products, client_id),
-        *_source_lines(degrade_blanks, inconsistent, wrong_lang, products),
+        *_source_lines(inconsistent, wrong_lang, products),
         *_translated_lines(translated, products),
         *_video_lines(video_map_issues, client_id),
         *_category_lines(category_issues),

@@ -128,6 +128,33 @@ def _publish_blocks(
     return gaps, sorted(held)
 
 
+def _scoped_issues(
+    client_id: str, products: dict[str, ProductRecord], issues: list[SourceIssue]
+) -> list[SourceIssue]:
+    """Drop findings about GTINs this run will not touch.
+
+    The whole report describes one run, and every other section was already scoped: §0's matrix
+    and §1's holds are computed over :func:`lib.preflight.in_scope`, and §2/§4 come from the
+    generator, which only ever ran for in-scope units. §3 was the exception — its rows came
+    straight from ``source_issues.json``, which ``parse_export`` writes over the entire workbook.
+    Four of its eleven GTINs were outside the run and therefore appeared nowhere else in the
+    document, which is exactly how a reader finds out: by looking for one in §0 and not finding it.
+
+    Applied here rather than in the renderer because scope needs the client config, and the
+    renderer is pure. A finding is not lost — it returns the moment its GTIN joins the process
+    list.
+
+    Findings with no GTIN (an unmapped video file) are kept: they are about the *input*, not
+    about a product.
+    """
+    try:
+        cfg = get_client(client_id)
+    except (ConfigError, ExportParseError):
+        return issues  # doctor reports config problems; do not also blank the report
+    scope = {p.gtin14 for p in in_scope(cfg, list(products.values()))}
+    return [i for i in issues if not i.gtin or canon_gtin(i.gtin) in scope]
+
+
 def _matrix_input(client_id: str, products: dict[str, ProductRecord]) -> MatrixInput | None:
     """Gather the §0 matrix inputs, or ``None`` when there is nothing to tabulate.
 
@@ -222,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
         freshness[key] = _mtime(path)
 
     products = _load_products(data_dir / "products.json")
+    issues = {key: _scoped_issues(client_id, products, found) for key, found in issues.items()}
     mandatory_gaps, video_held = _publish_blocks(client_id, products)
     matrix = _matrix_input(client_id, products)
 
