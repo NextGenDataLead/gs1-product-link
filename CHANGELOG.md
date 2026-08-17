@@ -434,6 +434,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stated nowhere.
 
 ### Fixed
+- **An either-or requirement rendered as two mandatory columns, and neither of them was one.**
+  `description_short` (1083) and `description_long` (1067) are a `required_group`: a SKU is held
+  only when **both** are blank. Shown as two columns, the legend's *"a gap there holds the whole
+  SKU"* was untrue of each — and on the real report **26 of 37 in-scope SKUs publish with 1067
+  empty**, so 26 rows carried a ○ that meant nothing on its own.
+
+  They are one column now, `marketing·copy`, satisfied by either attribute, with the legend naming
+  both so the value is still findable in MyGS1. Two details it has to get right: the mark is a
+  union **per language** rather than the best member's mark, because one member in nl and the other
+  in fr leaves nothing missing (member-wise both read half-filled, and the SKU would show ◐ while
+  being fully publishable); and it scores **once**, where both members used to count, so a SKU
+  carrying 1083 *and* 1067 outranked one carrying 1083 alone by two slots on a requirement they
+  both satisfy. It asks through `lib.mandatory.value_for` — the function E23 itself asks — so the
+  column and the hold cannot disagree about what "present" means.
+
+  Measured: 17 columns → 16, every other cell unchanged, one score changes, 9 rows move. The 8 SKUs
+  showing ○ on the new column are exactly the 8 that E23 holds for copy.
+
 - **The coverage matrix's `score` counted columns that cannot stop a product publishing, and the
   table is sorted by it.** So a SKU carrying both optional values but missing a mandatory one
   outranked a publishable one, putting the wrong product at the top of a worklist whose whole

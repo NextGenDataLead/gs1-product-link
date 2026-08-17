@@ -646,7 +646,68 @@ def test_the_group_scores_once_however_many_members_carry_a_value() -> None:
     )
     one = _grouped("08713195000001", description_short=LocalisedText(values={"nl": "a", "fr": "b"}))
 
-    assert _cell_for(both, "08713195000001", "score") == _cell_for(one, "08713195000001", "score")
+    # The absolute value, not just that the two agree: a multiplier applied to *both* would keep
+    # them equal while still inflating every group in the table. `_GROUP_MAP`'s only mandatory
+    # columns are marketing·copy (satisfied in 2 languages) and video (confirmed in none).
+    assert _cell_for(one, "08713195000001", "score") == "2"
+    assert _cell_for(both, "08713195000001", "score") == "2"
+
+
+def test_a_group_member_declared_as_an_extra_still_satisfies_it() -> None:
+    """`missing_mandatory` groups across both maps, so the matrix has to as well.
+
+    Reading `gdsn_map` alone would drop the extra from the column's members and show ○ for a SKU
+    the plan publishes — the matrix and the hold disagreeing, which is the whole failure this
+    column exists to stop.
+    """
+    md = _render(
+        matrix=_matrix(
+            products=[_p("08713195000001", extras={"fallback_copy": "een korte tekst"})],
+            gdsn_map={
+                "description_short": GdsnSource(
+                    sheet="S", attribute="1083", required_group="marketing_copy"
+                )
+            },
+            gdsn_extras={
+                "fallback_copy": GdsnSource(
+                    sheet="S", attribute="1067", required_group="marketing_copy"
+                )
+            },
+        )
+    )
+
+    assert "marketing·copy" in _headers(md)
+    assert _cell_for(md, "08713195000001", "marketing·copy") == "●"
+
+
+def test_a_group_keeps_its_column_when_only_one_member_asked_for_one() -> None:
+    """`in_matrix: false` says "this value needs no column", not "this value does not exist".
+
+    The requirement still holds SKUs, so it still needs a column — and the hidden member still
+    counts towards satisfying it, or the column would report a gap that E23 does not see.
+    """
+    md = _render(
+        matrix=_matrix(
+            products=[_p("08713195000001", extras={"hidden_copy": "een korte tekst"})],
+            gdsn_map={
+                "description_short": GdsnSource(
+                    sheet="S", attribute="1083", required_group="marketing_copy"
+                )
+            },
+            gdsn_extras={
+                "hidden_copy": GdsnSource(
+                    sheet="S",
+                    attribute="1067",
+                    required_group="marketing_copy",
+                    in_matrix=False,
+                )
+            },
+        )
+    )
+
+    assert "marketing·copy" in _headers(md)
+    assert "hidden·copy" not in _headers(md)  # no column of its own
+    assert _cell_for(md, "08713195000001", "marketing·copy") == "●"  # but it satisfies the group
 
 
 def test_the_legend_says_the_group_is_an_either_or() -> None:
