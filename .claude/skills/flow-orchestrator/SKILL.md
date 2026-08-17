@@ -372,9 +372,27 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
     report: `python -m scripts.report_quality {client}`. They render in the report's
     **Observations** section, so they persist beyond the chat. This is deliberately *not*
     deterministic — the pipeline's own checks already run; this captures what only your review
-    would notice (e.g. "a French title reads Dutch", "a GTIN 404'd once then resolved — GS1
-    propagation lag, not a failure"). Write the observations in addition to your chat summary,
-    not instead of it. Omit the file (or an empty `notes`) when there is genuinely nothing to flag.
+    would notice. Write the observations in addition to your chat summary, not instead of it.
+    Omit the file (or an empty `notes`) when there is genuinely nothing to flag.
+
+    **Write each note for the person who has to act on it, not for the person who debugged it.**
+    This report is read by the operator and forwarded to the client; neither runs the pipeline.
+    Every note gives three things:
+
+    - **what a customer or the business would notice** — a page, a scan, a product, in plain words
+    - **what it means** — including "nothing is wrong" where that is the finding
+    - **what to do about it**, concretely, or **"nothing to do"** when it is a clean record
+
+    Name products the way the operator does — short GTIN plus the product name (`the
+    microvezeldoek (…0527)`). Keep out status codes, redirect chains, attribute numbers, request
+    verbs and internal edge codes: they belong in the run log. A section reference (`§3b`) is fine
+    and is worth **re-checking against the report you just generated** — sections have been
+    renumbered before, and a note pointing at a section that moved is worse than no pointer.
+
+    | Instead of | Write |
+    |---|---|
+    | `…7496 resolved 200 only on a re-check — propagation lag, not failure. Verify with GET, never HEAD.` | **A brand-new product's QR code can take a few seconds to start working.** Right after publishing the onkruidverwijderaar (…7496), scanning it did not reach the page; moments later it did, on its own. **Fix:** if a code fails right after a publish, wait a minute and scan again. |
+    | `8-GTIN batch ran 0-error; all 10 live GTINs resolve GET → 307 → 200 with copy present in the HTML.` | **All 10 published products are live and working end to end** — each QR opens its own product page, in the right language, with its description showing. **Nothing to do.** |
 
 ## How the work is done
 
