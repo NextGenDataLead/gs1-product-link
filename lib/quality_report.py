@@ -695,25 +695,28 @@ def _review_lines(
 
 
 def _source_lines(
-    degrade_blanks: list[SourceIssue],
     inconsistent: list[SourceIssue],
     wrong_lang: list[SourceIssue],
     products: dict[str, ProductRecord],
 ) -> list[str]:
-    blank_rows = [[_label(products, i.gtin), i.field, _cell(i.source)] for i in degrade_blanks]
+    """§3 — source findings that are worth fixing but hold nothing.
+
+    **There is no blank-fields subsection.** It listed every non-blocking blank with its source
+    attribute, which is what §0's matrix already shows: a blank ``net_content`` is the ○ under
+    ``net·3510``, and the header carries the attribute number the subsection was repeating. The
+    Summary keeps the count, exactly as it does for the blank title/image findings whose own
+    subsection (§1d) went for the same reason.
+
+    What is left is the two findings a matrix *cannot* show, because both are about the value
+    rather than its presence: markets disagreeing about a value, and a value that reads as the
+    wrong language.
+    """
     inc_rows = [[_label(products, i.gtin), i.field, _market_cell(i)] for i in inconsistent]
     lang_rows = [[_label(products, i.gtin), i.field, _cell(i.value)] for i in wrong_lang]
     return [
         "## 3. Source-data fixes in MyGS1 (do not block publish)",
         "",
-        "### 3a. Blank non-critical fields",
-        "",
-        "These degrade the page (e.g. a missing spec line in Technische details) but don't break "
-        "it, so they don't hold the GTIN. Worth filling at source.",
-        "",
-        *_table(["GTIN", "Field", "Source attribute"], blank_rows),
-        "",
-        "### 3b. Values inconsistent across markets",
+        "### 3a. Values inconsistent across markets",
         "",
         "The same field carries different text across GS1 target markets (priority "
         "`528 > 056 > 276 > 442`); the tool used the highest-ranked (marked ✓). Both/all market "
@@ -721,7 +724,7 @@ def _source_lines(
         "",
         *_table(["GTIN", "Field", "Value per market (✓ = used)"], inc_rows),
         "",
-        "### 3c. Possible wrong-language values (worth a glance)",
+        "### 3b. Possible wrong-language values (worth a glance)",
         "",
         "Heuristic: a localised value carrying letter patterns that belong to the *other* language "
         "(e.g. a French title still reading `Schoonmaakdoek`). Not a blocker — skim and fix the "
@@ -866,26 +869,12 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     Returns:
         The full markdown document.
     """
-    missing_1083 = [i for i in generated_issues if i.issue == _HELD]
     inferences = [i for i in generated_issues if i.issue == _INFERENCE]
     generated_count = sum(1 for i in generated_issues if i.issue == _GENERATED)
     translated = [i for i in generated_issues if i.issue == _TRANSLATED]
-    blanks = [i for i in source_issues if i.issue == _BLANK]
-    # The blocking half is counted in the Summary and shown in §0's `product·3301` / `image·2485`
-    # columns; §1d used to list it a third time, and its one GTIN beyond the matrix was out of
-    # scope. `_blocks_publish` still splits them, so §3a does not pick the blocking ones up.
-    degrade_blanks = [i for i in blanks if not _blocks_publish(i.field)]
-    # A blank attr 1083 whose either-or partner carries the copy does not hold anything, so it is
-    # a datapool gap like any other rather than a row under a heading reading "Blocks publish".
-    # Derived from the E23 gaps themselves, so §1 and §3 cannot claim the same unit.
-    groups = _group_columns(matrix.gdsn_map, matrix.gdsn_extras) if matrix else {}
-    held_units = {
-        (gtin, gap.language)
-        for gtin, gaps in (mandatory_gaps or {}).items()
-        for gap in gaps
-        if gap.field in groups
-    }
-    degrade_blanks += [i for i in missing_1083 if (i.gtin, _lang(i.field)) not in held_units]
+    # `value_blank` findings are not listed anywhere: §0's matrix is where a missing value is
+    # read, one ○ under the column whose header already carries the attribute number. The Summary
+    # keeps both counts — blocking (title/image) and degrading — as it has since §1d went.
     inconsistent = [i for i in source_issues if i.issue == _INCONSISTENT]
     wrong_lang = [i for i in source_issues if i.issue == _WRONG_LANG]
 
@@ -914,7 +903,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
         ),
         *_blocking_lines(mandatory_gaps or {}, products, matrix),
         *_review_lines(inferences, generated_count, products, client_id),
-        *_source_lines(degrade_blanks, inconsistent, wrong_lang, products),
+        *_source_lines(inconsistent, wrong_lang, products),
         *_translated_lines(translated, products),
         *_video_lines(video_map_issues, client_id),
         *_category_lines(category_issues),

@@ -11,6 +11,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+import openpyxl
 import pytest
 
 from lib.records import LocalisedText, ProductRecord
@@ -20,6 +21,18 @@ from scripts import report_quality
 def _write(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_process_list(tmp_path: Path, gtins: list[str]) -> None:
+    """A process list at the path `clients.yml` names, so `in_scope` really narrows."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.cell(row=1, column=1, value="Barcode")
+    for row, gtin in enumerate(gtins, start=2):
+        sheet.cell(row=row, column=1, value=gtin)
+    path = tmp_path / "input" / "noviplast" / "process-list.xlsx"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(path)
 
 
 def _seed(tmp_path: Path) -> Path:
@@ -48,12 +61,19 @@ def _seed(tmp_path: Path) -> Path:
     _write(data / "source_issues.json", [])
     _write(data / "video_map_issues.json", [])
     _write(data / "category_issues.json", [])
-    prod = ProductRecord(
-        gtin="08713195007915",
-        brand="Noviplast",
-        product_name=LocalisedText(values={"nl": "LED-lamp"}),
+    # Both GTINs the seeded findings name: a finding about a product the file does not carry is
+    # not in scope, because scope is decided over the parsed products.
+    _write(
+        data / "products.json",
+        [
+            ProductRecord(
+                gtin=gtin,
+                brand="Noviplast",
+                product_name=LocalisedText(values={"nl": name}),
+            ).model_dump(mode="json")
+            for gtin, name in (("08713195007915", "LED-lamp"), ("08713195003276", "plasma"))
+        ],
     )
-    _write(data / "products.json", [prod.model_dump(mode="json")])
     return data
 
 
@@ -70,6 +90,55 @@ def test_writes_report_and_exit_0(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert "Data quality report" in text
     assert "08713195003276" in text  # held GTIN
     assert "magnet claim" in text  # inference surfaced
+
+
+def test_findings_for_out_of_scope_gtins_never_reach_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The report describes one run, so every section describes the same set of GTINs.
+
+    §3 was the exception: its rows came straight from `source_issues.json`, which the parser
+    writes over the whole workbook, while §0's matrix and §1's rows were computed over the
+    process list. Four of eleven GTINs in §3 were outside the run — findable nowhere else in the
+    document, which is how it was noticed. `08713195000794` is in the export and not on the
+    process list.
+    """
+    monkeypatch.chdir(tmp_path)
+    data = _seed(tmp_path)
+    in_scope_gtin, out_of_scope_gtin = "08713195007915", "08713195000794"
+    # The real process list lives at a path relative to the repo root, so under `chdir(tmp_path)`
+    # it is absent and `in_scope` narrows nothing — a scope test would pass on no scope at all.
+    _write_process_list(tmp_path, [in_scope_gtin, "08713195003276"])
+    _write(
+        data / "source_issues.json",
+        [
+            {
+                "gtin": gtin,
+                "field": "net_content",
+                "source": "TradeItemMeasurements attr 3510",
+                "issue": "value_inconsistent_across_markets",
+                "value": "x",
+                "detail": "d",
+                "market_values": [["528", "x"], ["056", "y"]],
+            }
+            for gtin in (in_scope_gtin, out_of_scope_gtin)
+        ],
+    )
+    products = json.loads((data / "products.json").read_text())
+    products.append(
+        ProductRecord(
+            gtin=out_of_scope_gtin,
+            brand="Noviplast",
+            product_name=LocalisedText(values={"nl": "Power jet"}),
+        ).model_dump(mode="json")
+    )
+    _write(data / "products.json", products)
+
+    assert report_quality.main(["noviplast"]) == 0
+
+    text = (tmp_path / "output" / "noviplast" / "data-quality-report.md").read_text()
+    assert in_scope_gtin in text
+    assert out_of_scope_gtin not in text
 
 
 def test_missing_data_dir_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -108,7 +108,7 @@ def test_blank_title_is_a_blocker_not_a_source_fix() -> None:
 
     §1d said what §0's `product·3301` column and the Summary row already said, and named one GTIN
     neither did — an out-of-scope one, which is a whole-catalogue finding leaking into a scoped
-    report. Dropping the section must not quietly demote the finding to §3a's "does not block"
+    report. Dropping the section must not quietly demote the finding to §3's "does not block"
     list, which is the one way this change could go wrong.
     """
     src = [
@@ -126,7 +126,14 @@ def test_blank_title_is_a_blocker_not_a_source_fix() -> None:
     assert "08713195007649" not in source_fixes  # never demoted to "do not block publish"
 
 
-def test_blank_net_content_is_degrade_only() -> None:
+def test_a_blank_non_critical_field_is_counted_but_not_listed_again() -> None:
+    """§0's matrix is where a blank field is read; §3a listed the same thing in prose.
+
+    Every field §3a could name has a matrix column — `net·3510` for this one — so the section
+    repeated the ○ already on the row, with the attribute number the header carries too. The
+    Summary keeps the count, exactly as it does for the blank title/image findings whose section
+    (§1d) went for the same reason.
+    """
     src = [
         _issue(
             "08713195000794",
@@ -137,11 +144,24 @@ def test_blank_net_content_is_degrade_only() -> None:
     ]
     md = _render(source_issues=src, products=_products("08713195000794"))
 
-    # net_content degrades but does not block: it belongs under source fixes, not section 1.
-    section_1, _, after = md.partition("## 2.")
-    assert "08713195000794" not in section_1
-    assert "08713195000794" in after
-    assert "Blank non-critical fields" in md
+    assert "Blank non-critical fields" in md  # the Summary row survives
+    assert "Blank non-critical fields" not in md.partition("## 3.")[2]  # the section does not
+    assert "08713195000794" not in md.partition("## 3.")[2]
+
+
+def test_section_three_subsections_are_renumbered_after_the_blanks_go() -> None:
+    """A dangling `3b.` under a `3.` with no `3a.` is the drift this report keeps being read for."""
+    md = _render(
+        source_issues=[
+            _issue("08713195000001", "value_inconsistent_across_markets", field="product_name.nl"),
+            _issue("08713195000002", "value_wrong_language", field="product_name.fr", value="x"),
+        ],
+        products=_products("08713195000001", "08713195000002"),
+    )
+
+    assert "### 3a. Values inconsistent across markets" in md
+    assert "### 3b. Possible wrong-language values" in md
+    assert "### 3c." not in md
 
 
 def test_cross_market_values_shown_side_by_side() -> None:
@@ -172,8 +192,8 @@ def test_wrong_language_values_are_listed() -> None:
     ]
     md = _render(source_issues=src, products=_products("08713195000527"))
 
-    assert "Possible wrong-language values" in md  # summary + §3c heading
-    assert "3c." in md
+    assert "Possible wrong-language values" in md  # summary + §3b heading
+    assert "3b." in md
     assert "Schoonmaakdoek" in md
 
 
@@ -973,6 +993,12 @@ def test_section_one_lists_what_the_requirement_holds_not_every_blank_1083() -> 
     which publish perfectly well. That was accurate only by luck: no in-scope unit is in that
     state today, so the "publishes from 1067" row never appeared. The first one would have sat
     under a heading its own cells disproved.
+
+    Such a unit is now reported nowhere, and that is a deliberate consequence of two decisions
+    taken together: §0 shows the requirement rather than its members, and §3 no longer lists
+    blank fields because the matrix does. It costs a finding no in-scope product has ever had —
+    1083 is the primary copy source and 1067 the fallback, so carrying only the fallback is the
+    unusual direction. Worth revisiting if a product ever turns up in that state.
     """
     products = _products("08713195000001")
     gtin14 = next(iter(products))
@@ -986,10 +1012,7 @@ def test_section_one_lists_what_the_requirement_holds_not_every_blank_1083() -> 
         matrix=_matrix(products=[_p("08713195000001")], gdsn_map=_GROUP_MAP),
     )
 
-    section_1 = md.partition("## 1.")[2].partition("## 2.")[0]
-    assert "08713195000001" not in section_1
-    # Not lost, either: a blank 1083 the feed rescues is still a datapool gap worth filling.
-    assert "08713195000001" in md.partition("## 3.")[2]
+    assert "08713195000001" not in md.partition("## 1.")[2].partition("## 2.")[0]
 
 
 def test_held_gtins_are_named_under_a_heading_that_says_they_block() -> None:
