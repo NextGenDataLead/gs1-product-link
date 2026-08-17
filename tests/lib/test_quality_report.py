@@ -89,19 +89,6 @@ def test_a_missing_freshness_entry_does_not_become_an_ancient_date() -> None:
     assert "**Generated 2026-08-13 22:02 CEST**" in md
 
 
-def test_held_gtins_block_publish() -> None:
-    gen = [
-        _issue("08713195003276", "missing_generation_input", field="description_short.nl"),
-        _issue("08713195003276", "missing_generation_input", field="description_short.fr"),
-    ]
-    md = _render(generated_issues=gen, products=_products("08713195003276"))
-
-    assert "Held" in md
-    assert "08713195003276" in md
-    assert "prod-3276" in md  # product name resolved
-    assert "BLOCKS" in md.upper()
-
-
 def test_inferences_are_listed_for_verification() -> None:
     gen = [
         _issue(
@@ -921,31 +908,114 @@ def test_section_one_says_what_it_actually_lists() -> None:
     assert "already live" in md
 
 
-def test_a_unit_with_no_1067_either_is_named_as_held() -> None:
-    """1083 blank *and* no 1067 is the one that actually blocks: nothing to write copy from."""
-    md = _render(
-        generated_issues=[_blank_1083("08713195000001", "fr")],
-        products=_products("08713195000001"),
+#: A held SKU as E23 reports it: the either-or group unsatisfied, per language.
+def _group_gap(*languages: str) -> list[MandatoryGap]:
+    return [MandatoryGap("marketing_copy", lang, "1083/1067") for lang in languages]
+
+
+def _blocked(gtin: str, gaps: list[MandatoryGap], **over: object) -> str:
+    product = _p(gtin, **over)
+    return _render(
+        products={product.gtin14: product},
+        mandatory_gaps={product.gtin14: gaps},
+        matrix=_matrix(products=[product], gdsn_map=_GROUP_MAP),
     )
 
-    assert "| fr | **Held** — no 1067 either (E21) |" in md
+
+def test_section_one_shows_every_slot_of_the_requirement_on_one_row() -> None:
+    """One row per SKU, one column per (attribute, language) — the cell to fill, named.
+
+    It used to be one row per *language* with an identical consequence in each, and §0 no longer
+    says which member is missing: #103 collapsed 1083 and 1067 into one `marketing·copy` column
+    precisely because neither is individually mandatory. So this is the only place left that can
+    say which of the four slots to fill, and it now says it.
+    """
+    md = _blocked("08713195000001", _group_gap("nl", "fr"))
+    section = md.partition("## 1.")[2].partition("## 2.")[0]
+    header = next(line for line in section.splitlines() if line.startswith("| GTIN |"))
+
+    assert [c.strip() for c in header.split("|")[1:-1]] == [
+        "GTIN",
+        "1083 nl",
+        "1083 fr",
+        "1067 nl",
+        "1067 fr",
+        "Consequence",
+    ]
+    assert len([line for line in section.splitlines() if line.startswith("| `0871")]) == 1
 
 
-def test_a_unit_whose_1067_carries_the_copy_is_not_reported_as_blocking() -> None:
-    """§1's rows are not uniform, and calling them all blockers is how a blocker gets ignored.
+def test_the_grid_shows_which_slot_the_feed_does_carry() -> None:
+    """The case the old layout rendered as two rows to be diffed by eye.
 
-    A product whose 1083 is blank but whose 1067 carries usable copy publishes perfectly well —
-    the datapool is still missing a field, which is worth fixing, but not before this SKU ships.
+    1083 present in nl, nothing else: the SKU is held for fr, and the row says exactly that
+    rather than leaving the reader to compare a `nl` row against a `fr` row.
+    """
+    md = _blocked(
+        "08713195000001",
+        _group_gap("fr"),
+        description_short=LocalisedText(values={"nl": "Kort en krachtig"}),
+    )
+    row = next(
+        line
+        for line in md.partition("## 1.")[2].splitlines()
+        if line.startswith("| `08713195000001`")
+    )
+
+    assert [c.strip() for c in row.split("|")[2:-2]] == ["●", "○", "○", "○"]
+    assert "fr" in row.split("|")[-2]
+
+
+def test_section_one_lists_what_the_requirement_holds_not_every_blank_1083() -> None:
+    """The title says "blocks publish", so the rows have to be the ones that block.
+
+    It listed every unit with a blank attr 1083 — including those whose 1067 carries the copy,
+    which publish perfectly well. That was accurate only by luck: no in-scope unit is in that
+    state today, so the "publishes from 1067" row never appeared. The first one would have sat
+    under a heading its own cells disproved.
     """
     products = _products("08713195000001")
     gtin14 = next(iter(products))
     products[gtin14] = products[gtin14].model_copy(
-        update={"description_long": LocalisedText(values={"nl": "Kort en krachtig"})}
+        update={"description_long": LocalisedText(values={"nl": "a", "fr": "b"})}
+    )
+    md = _render(
+        generated_issues=[_blank_1083("08713195000001")],
+        products=products,
+        mandatory_gaps={},  # 1067 satisfies the group, so E23 holds nothing
+        matrix=_matrix(products=[_p("08713195000001")], gdsn_map=_GROUP_MAP),
     )
 
-    md = _render(generated_issues=[_blank_1083("08713195000001")], products=products)
+    section_1 = md.partition("## 1.")[2].partition("## 2.")[0]
+    assert "08713195000001" not in section_1
+    # Not lost, either: a blank 1083 the feed rescues is still a datapool gap worth filling.
+    assert "08713195000001" in md.partition("## 3.")[2]
 
-    assert "| Publishes from 1067 |" in md
+
+def test_held_gtins_are_named_under_a_heading_that_says_they_block() -> None:
+    """The hold comes from the either-or gap now, not from a `missing_generation_input` finding.
+
+    A blank attr 1083 is half of a requirement and holds nothing on its own — which is why this
+    test used to pass with no E23 gap anywhere in its inputs.
+    """
+    md = _blocked(
+        "08713195003276",
+        _group_gap("nl", "fr"),
+        product_name=LocalisedText(values={"nl": "plasmaaansteker", "fr": "briquet"}),
+    )
+
+    assert "**Held**" in md
+    assert "08713195003276" in md
+    assert "plasmaaansteker" in md  # product name resolved
+    assert "BLOCKS" in md.upper()
+
+
+def test_section_one_names_both_attributes_of_the_requirement() -> None:
+    """Naming only 1083 said the requirement was 1083, which is the misreading this fixes."""
+    md = _blocked("08713195000001", _group_gap("nl", "fr"))
+    heading = next(line for line in md.splitlines() if line.startswith("## 1."))
+
+    assert "1083" in heading and "1067" in heading
 
 
 def test_the_generated_copy_count_says_which_copy_it_counted() -> None:
