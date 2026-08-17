@@ -13,7 +13,9 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+import yaml
 
+from lib.config import get_client
 from lib.records import LocalisedText, ProductRecord
 from scripts import report_quality
 
@@ -21,6 +23,64 @@ from scripts import report_quality
 def _write(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_clients_yml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the script at a config this test owns, instead of the operator's.
+
+    `lib.config.DEFAULT_CLIENTS_PATH` is `<repo root>/clients.yml` — absolute, so `chdir(tmp_path)`
+    does not move it. That file is **gitignored**, so these tests were reading the real client
+    config on a developer machine and getting a `ConfigError` in CI, where it does not exist. The
+    difference was invisible until §1 started rendering from the E23 gaps, which need config: the
+    same test then passed locally and failed on CI for a reason that had nothing to do with the
+    change under test.
+    """
+    config = {
+        "version": 1,
+        "clients": {
+            "noviplast": {
+                "display_name": "Noviplast",
+                "gs1": {
+                    "account_number_test": "8720796420906",
+                    "client_id_env_test": "TEST_GS1_ID",
+                    "client_secret_env_test": "TEST_GS1_SECRET",
+                },
+                "export": {
+                    "format": "gdsn",
+                    "path": "./input/noviplast/products.xlsx",
+                    "gdsn_map": {
+                        "product_name": {
+                            "sheet": "TradeItemDescription",
+                            "attribute": "3301",
+                            "localised": True,
+                            "required": True,
+                        },
+                        "description_short": {
+                            "sheet": "TradeItemDescription",
+                            "attribute": "1083",
+                            "localised": True,
+                            "required_group": "marketing_copy",
+                        },
+                    },
+                },
+                "wordpress": {
+                    "site_url": "https://example.test",
+                    "username": "bot",
+                    "app_password_env": "TEST_WP_PASS",
+                    "languages": ["nl"],
+                },
+                "process_list": {
+                    "path": str(tmp_path / "input" / "noviplast" / "process-list.xlsx"),
+                    "gtin_column": "Barcode",
+                },
+            }
+        },
+    }
+    path = tmp_path / "clients.yml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    monkeypatch.setattr(
+        report_quality, "get_client", lambda client_id: get_client(client_id, path=path)
+    )
 
 
 def _write_process_list(tmp_path: Path, gtins: list[str]) -> None:
@@ -80,6 +140,8 @@ def _seed(tmp_path: Path) -> Path:
 def test_writes_report_and_exit_0(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _seed(tmp_path)
+    _write_process_list(tmp_path, ["08713195007915", "08713195003276"])
+    _write_clients_yml(tmp_path, monkeypatch)
 
     code = report_quality.main(["noviplast"])
 
@@ -109,6 +171,7 @@ def test_findings_for_out_of_scope_gtins_never_reach_the_report(
     # The real process list lives at a path relative to the repo root, so under `chdir(tmp_path)`
     # it is absent and `in_scope` narrows nothing — a scope test would pass on no scope at all.
     _write_process_list(tmp_path, [in_scope_gtin, "08713195003276"])
+    _write_clients_yml(tmp_path, monkeypatch)
     _write(
         data / "source_issues.json",
         [
