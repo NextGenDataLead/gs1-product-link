@@ -45,7 +45,6 @@ def _report() -> str:
             "product_name": GdsnSource(sheet="S", attribute="3301", localised=True, required=True)
         },
         gdsn_extras={"material": GdsnSource(sheet="S", attribute="Material")},
-        languages=["nl", "fr"],
         video_confirmed={"nl": set(), "fr": set()},
     )
     return render_quality_report(
@@ -57,6 +56,7 @@ def _report() -> str:
         products={},
         snapshot="2026-07-27",
         freshness={},
+        languages=["nl", "fr"],
         matrix=matrix,
     )
 
