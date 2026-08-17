@@ -288,7 +288,9 @@ def test_every_filled_value_is_one_row_and_the_summary_says_the_same_number() ->
     # contradiction that is not there.
     assert len(rows) == 1
     assert f"| {filled} |" in summary
-    assert "2 values to paste, across 1 row" in section
+    # "across 1 row" is a prefix of "across 1 rows", so the trailing text is what makes this
+    # assertion able to fail — the substring form let a broken pluraliser through.
+    assert "2 values to paste, across 1 row —" in section
     # `de` is not among the configured languages here, and its column is appended rather than
     # dropped: a stale findings file must not make a MyGS1 paste instruction vanish silently.
     header = next(line for line in section.splitlines() if line.startswith("| GTIN |"))
@@ -1116,6 +1118,9 @@ def test_section_two_puts_each_language_in_its_own_column() -> None:
     assert len(rows) == 1
     assert "afgeleid van het producttype" in rows[0]
     assert "déduit du type de produit" in rows[0]
+    # Both numbers, and the singular: the Summary counts claims while the table counts products,
+    # so the sentence carrying both is the only thing that stops them reading as a contradiction.
+    assert "2 claims across 1 product." in section
 
 
 def test_a_claim_in_one_language_only_leaves_the_other_cell_empty() -> None:

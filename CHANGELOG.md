@@ -433,6 +433,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the SKU count in the line above the table — the one number a worklist has to state, which it
   stated nowhere.
 
+### Changed
+- **§2 and §4 put each language in its own column instead of its own row.** Rows scaled with the
+  language count and columns do not: §2 was a row per (product, language) — 39 rows for two
+  languages, ~59 for three — and is **20 now, whatever the count**. §4 collapses nothing today
+  because every translation is French, which is exactly the point: as rows it would go 21 → ~41
+  when a third language lands, and as columns it stays 21. Its stable key is `(GTIN, field)`
+  (`material` ×20, `product_name` ×1), because the *Source attribute* says where to paste and that
+  differs per field; the language was always the accidental axis.
+
+  §2 gains more than row count. The two claims for one product are **not** translations of each
+  other — each language's copy is written separately, so they can infer different things, and the
+  section now says so. On the real report `…3344`'s Dutch claim derives the placement from the
+  product type while the French one also derives the pain relief from the Dutch 1083.
+
+  `languages` moves out of `MatrixInput` to become one report-level argument: three sections derive
+  their shape from it, and two sources for it could disagree about how many columns a table has.
+  Two consequences handled rather than left to be discovered: the Summary counts *work* (one claim,
+  one paste) while the pivoted tables count subjects, so each section states both — "39 claims
+  across 20 products"; and a finding in an unconfigured language gets an appended column rather
+  than being dropped, so a stale `generated_issues.json` cannot make a MyGS1 paste instruction
+  vanish silently. Measured: every claim and paste value still present, §0/§1/§3/§5/§6
+  byte-identical.
+
 ### Fixed
 - **§3 reported on the whole catalogue while every other section reported on the run.** Its rows
   came straight from `source_issues.json`, which `parse_export` writes over the entire workbook,
