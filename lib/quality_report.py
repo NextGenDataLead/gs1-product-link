@@ -55,6 +55,11 @@ _ABSENT = "○"
 #: Column header for the video pair — not a ``gdsn_map`` field, but the same kind of fact.
 _VIDEO_COLUMN = "video"
 
+#: How many unassigned video files §5 names before falling back to a count. The backlog runs to
+#: ~118 and `mapping.yml` is both the authoritative list and where the work is done, so the report
+#: shows enough to recognise what is outstanding rather than reproducing the file.
+_VIDEO_SAMPLE = 10
+
 #: Suffix marking a column whose gap only thins the page. A word, not a symbol: this report is read
 #: both rendered and as raw markdown, so anything HTML shows as a tag in the second — and a bare
 #: mark (`~`, bold) still sends the reader to the legend to find out what it meant.
@@ -754,6 +759,10 @@ def _review_lines(
         "Confirm each holds for the real product before it goes live — this is the actionable "
         "slice of copy review.",
         "",
+        "Each claim sits in the **product description** on the product page — the body text under "
+        "the title and image, not the title itself and not the specification list below it. That "
+        "is the block to read when checking whether a claim holds.",
+        "",
         f"One row per product, one column per language: {_counted(len(inferences), 'claim')} "
         f"across {_counted(len(inf_rows), 'product')}. The claims are **not** translations of each "
         "other — each language's copy is written separately, so they can infer different things "
@@ -853,6 +862,18 @@ def _translated_lines(
 
 
 def _video_lines(video_map_issues: list[SourceIssue], client_id: str) -> list[str]:
+    """§5 — the video files still waiting for a GTIN.
+
+    **A sample, not the whole backlog.** This used to list all of them inside
+    ``<details><summary>`` to keep the document short, which works on a rendering surface and
+    does nothing on the one this report is read on: as raw markdown the tags are text and all 118
+    filenames sit inline. The same two-surfaces problem as the header labels, pointing the other
+    way — so the section is short by *being* short rather than by folding.
+
+    The remainder is counted rather than dropped, and ``mapping.yml`` holds every one of them: it
+    is the file the work is done in, so it is the authoritative list and this is a status line.
+    """
+    remaining = len(video_map_issues) - _VIDEO_SAMPLE
     lines = [
         "## 5. Video mapping backlog",
         "",
@@ -863,11 +884,12 @@ def _video_lines(video_map_issues: list[SourceIssue], client_id: str) -> list[st
         "",
     ]
     if video_map_issues:
-        lines.append("<details><summary>Unassigned video files</summary>")
-        lines.append("")
-        lines += [f"- `{i.field}` — {_cell(i.value)}" for i in video_map_issues]
-        lines.append("")
-        lines.append("</details>")
+        lines += [f"- `{i.field}` — {_cell(i.value)}" for i in video_map_issues[:_VIDEO_SAMPLE]]
+        if remaining > 0:
+            lines.append(
+                f"- _…and {remaining} more — every unassigned file is in "
+                f"`input/{client_id}/videos/mapping.yml`, which is where they are assigned._"
+            )
         lines.append("")
     return lines
 

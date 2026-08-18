@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from lib.gdsn import GdsnSource
 from lib.mandatory import MandatoryGap
-from lib.quality_report import MatrixInput, render_quality_report
+from lib.quality_report import _VIDEO_SAMPLE, MatrixInput, render_quality_report
 from lib.records import LocalisedText, ProductRecord, SourceIssue
 
 _FRESH = {
@@ -1185,6 +1185,53 @@ def test_both_sections_widen_with_the_configured_languages() -> None:
         assert [c for c in header.split("|") if "(nl)" in c or "(fr)" in c or "(de)" in c] != []
     assert "aus dem Produkttyp abgeleitet" in md
     assert "Metall" in md
+
+
+def test_the_video_backlog_carries_no_html_and_is_bounded() -> None:
+    """The report is read as raw markdown, so `<details>` neither folds nor hides anything.
+
+    §5 wrapped 118 filenames in `<details><summary>` to keep the document short. That works on a
+    rendering surface and does nothing on the one the operator actually reads: the tags show as
+    text and every filename is expanded inline. Same two-surfaces problem as the `<br>` labels,
+    pointing the other way — so the section is short by *being* short.
+    """
+    issues = [
+        _issue("", "video_unconfirmed", field="video.nl", value=f"clip{n}.mpg") for n in range(30)
+    ]
+    md = _render(video_map_issues=issues)
+    section = md.partition("## 5.")[2].partition("## 6.")[0]
+
+    assert "<details>" not in md and "<summary>" not in md
+    assert "**30**" in section  # the count is the headline
+    listed = [line for line in section.splitlines() if line.startswith("- `")]
+    assert len(listed) == _VIDEO_SAMPLE
+    assert f"{30 - _VIDEO_SAMPLE} more" in section  # nothing is hidden silently
+
+
+def test_a_short_video_backlog_is_listed_in_full() -> None:
+    """Below the sample size there is no remainder to announce."""
+    issues = [_issue("", "video_unconfirmed", field="video.nl", value="clip.mpg")]
+    section = _render(video_map_issues=issues).partition("## 5.")[2]
+
+    assert len([line for line in section.splitlines() if line.startswith("- `")]) == 1
+    assert "more" not in section.partition("## 6.")[0]
+
+
+def test_section_two_says_where_on_the_page_the_claim_appears() -> None:
+    """A business user reads §2 without knowing what `generated_description` is.
+
+    The claim is real and the row names the product, but nothing said *where* on the page the
+    text sits — so verifying it meant guessing between the title, the summary line and the spec
+    table. Every claim today is in the description body; the section says so.
+    """
+    md = _render(
+        generated_issues=[_inference("08713195000001", "nl", "afgeleid")],
+        products=_products("08713195000001"),
+    )
+    section = md.partition("## 2.")[2].partition("## 3.")[0]
+
+    assert "description" in section.lower()
+    assert "product page" in section.lower()
 
 
 def test_the_generated_copy_count_says_which_copy_it_counted() -> None:
