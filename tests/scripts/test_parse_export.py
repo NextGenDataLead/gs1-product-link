@@ -62,6 +62,7 @@ def test_flat_happy_path_writes_output(tmp_path: Path, monkeypatch: pytest.Monke
         [["08713195007359", "Noviplast", "Rugsteun"], ["05031694050403", "Noviplast", "Pin"]],
     )
     _patch_client(monkeypatch, tmp_path, {"path": xlsx, "column_map": _FLAT_MAP})
+    monkeypatch.chdir(tmp_path)  # parse_export writes its issues report relative to cwd
     out = tmp_path / "products.json"
 
     code = parse_export.main(["acme", "--output", str(out)])
@@ -84,6 +85,7 @@ def test_duplicate_gtin_first_wins_with_warning(
         ],
     )
     _patch_client(monkeypatch, tmp_path, {"path": xlsx, "column_map": _FLAT_MAP})
+    monkeypatch.chdir(tmp_path)  # parse_export writes its issues report relative to cwd
     out = tmp_path / "products.json"
 
     code = parse_export.main(["acme", "--output", str(out)])
