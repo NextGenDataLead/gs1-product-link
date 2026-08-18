@@ -434,6 +434,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stated nowhere.
 
 ### Changed
+- **The report contains no HTML, because it is read as raw markdown.** §5 wrapped its 118 unassigned
+  video files in `<details><summary>` to keep the document short — which folds on a rendering
+  surface and does nothing on the one the operator reads, where the tags are text and every
+  filename sits inline. It is short by *being* short now: ten files named, the remainder counted,
+  and a pointer to `mapping.yml`, which is both the authoritative list and where the assignment is
+  actually done. **307 lines → 198.** This settles a question two earlier changes had answered
+  differently: `<br>` came out of the §0 headers for the same reason, while `<details>` stayed.
+
+- **§2 says where on the page a claim appears.** It named the claim and the product but not the
+  block, so a business user verifying one had to guess between the title, the summary line and the
+  specification list. All 39 claims are `generated_description`, so it is one sentence: the
+  product description body, under the title and image.
+
 - **§2 and §4 put each language in its own column instead of its own row.** Rows scaled with the
   language count and columns do not: §2 was a row per (product, language) — 39 rows for two
   languages, ~59 for three — and is **20 now, whatever the count**. §4 collapses nothing today
