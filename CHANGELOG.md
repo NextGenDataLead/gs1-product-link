@@ -8,6 +8,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The operator shell can generate copy, so it is finally one access point from dataset to pages
+  and QR.** Its Content screen could import `generation_results.json` and say how much of the run
+  it covered; it could not produce one. Every other step was there, which made the gap easy to
+  miss until it mattered — and it mattered on exactly the run that needs it most, because a
+  brand-new product has no copy and `parse_export` re-fingerprints the old copy on the way in.
+  There is no cache to fall back on any more, so a fresh export left the shell with a correct,
+  loudly-reported shortfall and no way to fix it.
+
+  The producer already existed (`scripts/run_generate.py --backend api`, `lib.llm.AnthropicClient`)
+  and shared the `LLMClient` seam and the results file with the in-session `content-generator`
+  skill. What was missing was an argv builder, a button, and — the part nobody could have known
+  without trying — a payload the configured model would accept. See below.
+
+  **This reverses a decision, and only as far as the key.** The shell was documented as
+  architecturally LLM-free, for good reasons that still hold: no LLM credential on the operator's
+  workstation, no Anthropic egress, no per-token cost, one whole class of IT objection removed.
+  All of that remains true when `ANTHROPIC_API_KEY` is unset, which is the default and is what a
+  fresh install gets — the Content screen then says so and offers the file import, exactly as
+  before. Setting the key is what turns generation on. So the two-machine split became *available*
+  rather than *mandatory*, instead of being retired.
+
+  **The key still never enters the desktop process.** Generating runs the same kind of subprocess
+  as every other step, and the child loads `.env` in its own `__main__` block — the arrangement
+  that already keeps the WordPress and GS1 credentials out of a long-lived application, applied
+  unchanged. `tests/ui/test_llm_free_shell.py` now walks the AST of `ui/` to keep it that way:
+  before this, the `.env` half of that claim was enforced and the LLM half held only because
+  nobody had written the import.
+
+  No gate changed. Copy is still read as text on the Content screen (gate 1 of 2) and again as
+  `plan.json` (gate 2), and nothing about a machine-written tagline is more trustworthy than a
+  session-written one — this pipeline fails silently either way.
+
+### Fixed
+- **The API backend could not report an inference, so a producer swap silently emptied §2 of the
+  data-quality report.** An inference is a claim the copy makes that the feed does not literally
+  state, and `GenerationResult` has carried the field all along — `result_item` writes it, the
+  report renders each one as a `generation_inference` finding, and 54 of the pilot's 74
+  session-written results have one. But `_PRODUCE_COPY_TOOL` declared only `usps` and
+  `translations`, and `_parse_result` never read a third field, so the API backend returned an
+  empty list every time.
+
+  The failure mode is the bad kind: the report would state that nothing had been inferred, rather
+  than showing a gap. It goes to the client. The tool schema is the only place this producer can
+  learn the field exists — it never sees the `content-generator` skill, which is where the
+  in-session producer is told — so the field is declared there, optional, with the definition and
+  an example beside it. Confirmed against the live API: the model now returns one, in the same
+  claim-then-provenance shape a session writes.
+
+  The voice template was deliberately **not** touched, so `prompt_version` stays `v1` and no
+  existing copy reads as stale. This adds a reporting field; it does not change the voice.
+
+- **The headless generator backend had never worked, rather than merely never been run.** It sent
+  `temperature: 0`, which was correct when it was written and became a **400** when the configured
+  model moved to `claude-sonnet-5`: non-default sampling parameters are rejected there and on every
+  Opus 4.7-and-later model. The request never reached the model. Every line of copy this project
+  has published came from the in-session producer, so nothing surfaced it — the unit tests mock the
+  transport, and mocked HTTP accepts any body you like.
+
+  `temperature` is gone, and `thinking` is now set to `{"type": "disabled"}` **explicitly** rather
+  than omitted, because omitting it on these models means *adaptive thinking on* and `max_tokens`
+  caps thinking and response together: a 1024-token budget that comfortably holds a tagline and
+  three bullets could otherwise be spent reasoning, truncating the forced tool call into a
+  malformed result. Determinism now rests on thinking being off, the pinned model and the
+  versioned voice template — the same three things the input fingerprint's model-exclusion already
+  assumed.
+
 - **Every value the feed carries in one language and not another is now filled by translating it,
   and every filled value is reported for the client to put back into MyGS1.** The generator already
   did this for the product name, because a missing name stops a page publishing (E18) — it did it

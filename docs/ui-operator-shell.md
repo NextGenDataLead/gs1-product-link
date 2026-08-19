@@ -24,13 +24,20 @@ webview available.
 
 ## What it is not
 
-**It has no LLM, no `ANTHROPIC_API_KEY`, and no connection to Anthropic.** Content generation
-happens on the maintainer's machine, in a Claude Code session with the `content-generator` skill;
-`generation_results.json` is handed over as a file and uploaded on the Content screen. This machine
-never runs `run_generate`.
+**It has no LLM credential and no connection to Anthropic — unless you give it one.** Leave the
+client's `generator.api_key_env` unset and nothing here reaches Anthropic: content generation
+happens on the maintainer's machine, in a Claude Code session with the `content-generator` skill,
+and `generation_results.json` is handed over as a file and uploaded on the Content screen.
 
-That is a deliberate split, not an omission. It removes an entire class of IT objection and a
-per-token cost from the operator's workstation, at the price of one file changing hands per batch.
+That split removes an entire class of IT objection and a per-token cost from the operator's
+workstation, at the price of one file changing hands per batch. It is the default and it stays
+supported. But it is also the reason the shell was not, on its own, a route from dataset to pages:
+a brand-new product needs copy, and copy could not be written here.
+
+So the key is now an **optional** field on the Setup screen. Set it and the Content screen writes
+this run's copy itself; leave it blank and the screen says so and offers the import instead. The
+credential is read by the `run_generate` subprocess from `.env`, never by this application — the
+same arrangement that keeps every other secret out of the desktop process.
 
 **It does not reimplement the pipeline.** Every action is a subprocess running exactly the command
 a person would run, from the repository root, and every screen shows that command. So the terminal,
