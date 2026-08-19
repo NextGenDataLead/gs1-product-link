@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from nicegui import ui
+from nicegui import events, ui
 
 from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Gate, Mode
 from lib.records import PlanClassification, SkipReason
@@ -59,6 +59,10 @@ class _Flow:
         #: Whether the dry run has been run at all. Its Proceed/Cancel buttons appear only after
         #: there is output to approve — offering them beforehand invites approving nothing.
         self.has_run_dry = False
+        #: Whether the next plan re-admits already-published GTINs. Screen state rather than a
+        #: gate answer: it changes what the plan *contains*, so it is chosen before the plan is
+        #: built and re-chosen for every rebuild, not carried as a decision already made.
+        self.include_published = False
         #: The last `doctor --json --offline` payload, refreshed once per redraw. Two gates read
         #: it; before this it was fetched inside gate 3's renderer, so gate 0 had no scope figure
         #: to show and adding one there would have meant a second ~250 ms blocking subprocess per
@@ -243,7 +247,9 @@ class _Flow:
         summary = context.load_plan_summary(self.cid)
 
         def build_plan() -> None:
-            result = runner.run(runner.run_plan_argv(self.cid))
+            result = runner.run(
+                runner.run_plan_argv(self.cid, include_published=self.include_published)
+            )
             ui.notify(
                 result.stderr.strip().splitlines()[-1] if result.stderr else "run_plan finished",
                 type="positive" if result.ok else "negative",
@@ -263,7 +269,25 @@ class _Flow:
                     timeout=12000,
                 )
 
-        theme.command(runner.run_plan_argv(self.cid))
+        def toggle(event: events.ValueChangeEventArguments) -> None:
+            self.include_published = bool(event.value)
+            # Redraw so the command line above the button shows what will actually run. A
+            # displayed command that does not match the one the button sends is worse than no
+            # command at all.
+            self._redraw()
+
+        ui.label(
+            "By default a product that is already published and resolvable is treated as "
+            "finished and left out of the plan. Tick this when its source data changed after it "
+            "went live — otherwise the plan comes back empty and the run writes nothing while "
+            "reporting success."
+        ).classes("note")
+        ui.checkbox(
+            "Re-plan products that are already published (rewrites live pages)",
+            value=self.include_published,
+            on_change=toggle,
+        )
+        theme.command(runner.run_plan_argv(self.cid, include_published=self.include_published))
         theme.action("Build the plan", build_plan)
 
         if summary is None or plan is None:
@@ -283,6 +307,18 @@ class _Flow:
                 + ". Every row therefore re-plans as NEW. Re-running them is idempotent — pages "
                 "are matched by slug and updated in place, not duplicated — but this will rewrite "
                 "live pages and resolver targets rather than skip them.",
+                "danger",
+            )
+
+        # Beneath E19 and above the counts, for the same reason: it changes what a CHANGED row
+        # means. Read from the summary rather than from ``self.include_published`` so it describes
+        # the plan on screen — the checkbox may have been re-ticked since it was built.
+        if summary.included_published:
+            theme.band(
+                "This plan re-admits products that are already published and resolvable. A "
+                "CHANGED row here rewrites a LIVE page. Pages are matched by slug and meta.gtin "
+                "and updated in place, not duplicated, and an untouched product still classifies "
+                "UNCHANGED and is never executed.",
                 "danger",
             )
 
