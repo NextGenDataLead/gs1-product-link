@@ -34,6 +34,7 @@ from lib.config import (
     WordPressConfig,
 )
 from lib.errors import GS1APIError, MissingCredentialError, WordPressAPIError
+from lib.gdsn import GdsnSource
 from lib.generator import (
     GenerationResult,
     ResultItem,
@@ -413,6 +414,66 @@ def test_units_needing_copy_assigns_categories_before_classifying(
     assert units_needing_copy(cfg, [product]) == set()
 
 
+def test_units_needing_copy_leaves_out_a_product_the_plan_will_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The narrowing this function existed without. It classified, and stopped there.
+
+    A product with no confirmed video is *in scope and held* (E24) — it reaches the plan and is
+    dropped there, so copy written for it is copy nobody will ever read. On the pilot client that
+    was 54 of 74 units. ``in_scope`` deliberately does not filter these out (a held product must
+    stay visible in the report); this is where they stop costing a producer call.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        media=MediaConfig(
+            video_map_path=_write_video_map(tmp_path, [GTIN_A], ["nl"]),
+            restrict_to_mapped_gtins=True,
+        )
+    )
+
+    assert units_needing_copy(cfg, [_product(GTIN_A), _product(GTIN_B)]) == {(GTIN_A, "nl")}
+
+
+def test_units_needing_copy_still_asks_for_a_gap_the_producer_will_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Narrowing too far is the quieter failure: no copy, then E21, then a page that never lands.
+
+    ``product_name`` is mandatory and missing in fr, but it is marked ``translate: true`` and the
+    feed carries nl — so the plan, which checks E23 after generation, will publish this product.
+    Asking for its copy is the whole reason it can.
+    """
+    monkeypatch.chdir(tmp_path)
+    wordpress = _make_config().wordpress.model_copy(update={"languages": ["nl", "fr"]})
+    cfg = _make_config(
+        wordpress=wordpress,
+        generator=GeneratorConfig(enabled=True),
+        export=ExportConfig(
+            path="input/acme.xlsx",
+            gdsn_map={
+                "product_name": GdsnSource(
+                    sheet="S", attribute="3301", localised=True, required=True, translate=True
+                )
+            },
+        ),
+    )
+
+    assert units_needing_copy(cfg, [_product(GTIN_A)]) == {(GTIN_A, "nl"), (GTIN_A, "fr")}
+
+
+def test_units_needing_copy_gives_up_wide_when_the_video_map_will_not_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hold it cannot evaluate must not read as "nothing is held" — check_video_map reports it."""
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "mapping.yml"
+    path.write_text("nl: [", encoding="utf-8")
+    cfg = _make_config(media=MediaConfig(video_map_path=str(path), restrict_to_mapped_gtins=True))
+
+    assert units_needing_copy(cfg, [_product(GTIN_A)]) is None
+
+
 # --- Generated copy for this run ---------------------------------------------
 
 
@@ -441,6 +502,35 @@ def test_generation_results_count_only_the_units_this_run_would_write(
     # Named, not silently dropped: a narrowing nobody can see is the one that turns out wrong.
     assert result.data["unchanged"] == 1
     assert "1 in-scope unit(s) are already live and unchanged" in result.detail
+
+
+def test_generation_results_keep_held_units_apart_from_unchanged_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two reasons a unit needs no copy, and only one of them means "finished".
+
+    Summed into ``unchanged`` — the shape this codebase keeps producing — a held product would be
+    reported as an already-published one, and the check would say a run is complete when a third
+    of it is waiting on a video nobody has been told about.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        media=MediaConfig(
+            video_map_path=_write_video_map(tmp_path, [GTIN_A], ["nl"]),
+            restrict_to_mapped_gtins=True,
+        ),
+    )
+    workable, held = _product(GTIN_A), _product(GTIN_B)
+    save_results(_results_for(cfg, [workable]))
+
+    result = check_generation_results(cfg, [workable, held])
+
+    assert result.status is Status.OK
+    assert result.data["total"] == 1
+    assert result.data["held"] == 1
+    assert result.data["unchanged"] == 0
+    assert "1 in-scope unit(s) are held by the plan" in result.detail
 
 
 def test_generation_results_count_only_the_products_in_scope(

@@ -56,6 +56,7 @@ from lib.errors import (
 )
 from lib.generator import generation_context, load_results, missing_copy
 from lib.gs1_dl_client import GS1DigitalLinkClient
+from lib.holds import held_units
 from lib.media_video import (
     VideoMapSummary,
     check_video_map,
@@ -347,6 +348,14 @@ def units_needing_copy(
     :func:`check_generation_results` counts over it, so the two cannot disagree about what a run
     owes.
 
+    **Two narrowings, not one.** A unit is left out when it classifies UNCHANGED, *and* when the
+    plan will hold its product whatever a producer writes — :func:`lib.holds.held_units`, which is
+    E23/E24/E22 asked with the plan's own predicates. Only the first was applied until now, so on
+    the pilot client this returned 74 units for a run that could publish 20: the other 54 were
+    products with no confirmed video or missing mandatory data, and every one of them was copy
+    written to be skipped. What it deliberately does *not* apply is E18 or E21, which sit
+    downstream of generation and would each hold the unit they were about to be closed by.
+
     **It reads state with :func:`~lib.state.peek_state`, never ``load_state``.** ``load_state``
     quarantines a corrupt file (E19) and returns an empty state; doing that from here would consume
     the reset before ``run_plan`` could report it, and the operator would never see "every row
@@ -358,15 +367,21 @@ def units_needing_copy(
 
     Returns:
         The units to generate for, or ``None`` when the answer cannot be decided — an unparseable
-        state file, or URL patterns the client has not set. ``None`` means "ask for everything",
-        the same direction :func:`in_scope` errs in: a preflight may name a unit that turns out to
-        be finished, but a run that quietly writes no copy for a page it is about to publish shows
-        up as a blank page rather than as an error.
+        state file, a video map that will not load, or URL patterns the client has not set.
+        ``None`` means "ask for everything", the same direction :func:`in_scope` errs in: a
+        preflight may name a unit that turns out to be finished, but a run that quietly writes no
+        copy for a page it is about to publish shows up as a blank page rather than as an error.
+        The holds are not applied on that path either — a caller told "everything" is told it
+        about every in-scope unit, so ``None`` keeps one meaning rather than two.
     """
     try:
         state = peek_state(cfg.client_id)
     except StateError:
         return None  # check_state_file is where a broken state file is reported
+    try:
+        held = held_units(cfg, scoped_products)
+    except VideoMapError:
+        return None  # check_video_map reports this; do not fail twice over it
     # Categories are inside the content hash, so they must be assigned exactly as ``run_plan``
     # assigns them or every live unit classifies CHANGED and the narrowing silently does nothing.
     categorised, _ = assign_categories(cfg.categories, scoped_products)
@@ -374,7 +389,34 @@ def units_needing_copy(
         classified = classify_units(categorised, state, cfg.wordpress.languages, cfg.wordpress)
     except ConfigError:
         return None  # check_config reports the missing patterns
-    return {unit for unit, kind in classified.items() if kind in WILL_BE_WRITTEN}
+    return {
+        unit for unit, kind in classified.items() if kind in WILL_BE_WRITTEN and unit not in held
+    }
+
+
+def _excluded_aside(unchanged: int, held: int) -> str:
+    """Name the in-scope units this run writes no copy for, keeping the two reasons apart.
+
+    Said out loud rather than left as arithmetic, because "20 unit(s) to publish" over a 37-product
+    scope reads as a bug the first time an operator meets it — and a narrowing nobody can see is
+    the one that turns out to be wrong.
+
+    Each clause repeats "in-scope unit(s)" rather than sharing one subject, so a detail carrying
+    only the second still says what the number counts. The reasons are never added together: an
+    unchanged unit is live and finished, a held one has never published and will not until its
+    source data or its video is fixed, and only one of those two is an operator's problem.
+    """
+    parts = []
+    if unchanged:
+        parts.append(f"{unchanged} in-scope unit(s) are already live and unchanged")
+    if held:
+        parts.append(
+            f"{held} in-scope unit(s) are held by the plan "
+            "(no confirmed video, or missing mandatory data)"
+        )
+    if not parts:
+        return ""
+    return f"; {' and '.join(parts)}, so this run writes no copy for them"
 
 
 def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
@@ -418,7 +460,10 @@ def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -
     languages = cfg.wordpress.languages
     wanted = units_needing_copy(cfg, products)
     total = len(products) * len(languages) if wanted is None else len(wanted)
-    unchanged = len(products) * len(languages) - total
+    # Safe to ask again only because ``wanted`` is not ``None``: that is precisely the case where
+    # ``units_needing_copy`` already read the video map without raising.
+    held = 0 if wanted is None else len(held_units(cfg, products))
+    unchanged = len(products) * len(languages) - total - held
     context = generation_context(
         languages,
         cfg.wordpress.default_language,
@@ -447,25 +492,26 @@ def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -
         )
     missing = missing_copy(products, results, context, units=wanted)
     covered = total - len(missing)
-    already_live = (
-        f"; {unchanged} in-scope unit(s) are already live and unchanged, so this run writes "
-        "no copy for them"
-        if unchanged
-        else ""
-    )
     data: dict[str, object] = {
         "total": total,
         "covered": covered,
         "pending": len(missing),
         "pending_units": missing[:20],
         "unchanged": unchanged,
+        # Separate from ``unchanged`` on purpose. Both are in-scope units this run writes no copy
+        # for, and there the resemblance ends: an unchanged unit is already live and finished, a
+        # held one has never published and will not until its source data or its video is fixed.
+        # Adding them together would report the second as the first, which is the reading that
+        # makes a hold look like a success.
+        "held": held,
     }
+    excluded = _excluded_aside(unchanged, held)
     if not missing:
         return CheckResult(
             "generation_results",
             "Generated copy for this run",
             Status.OK,
-            f"{total} unit(s) to publish, all covered{already_live}",
+            f"{total} unit(s) to publish, all covered{excluded}",
             data=data,
         )
     return CheckResult(
@@ -474,7 +520,7 @@ def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -
         Status.FAIL,
         f"{total} unit(s) to publish, {covered} covered, {len(missing)} without copy — those have "
         f"nothing written for this version of the export and will be dropped from the plan "
-        f"(E21){already_live}",
+        f"(E21){excluded}",
         remedy="Run the generate cycle again for the current export: "
         "`python -m scripts.run_generate --emit`, write the copy, then `--validate`. Copy goes "
         "stale on any feed edit or prompt_version bump, not only on new products.",

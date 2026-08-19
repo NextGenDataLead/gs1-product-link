@@ -16,12 +16,14 @@ middle of it. Either way the key stays out of this process: generating runs
 **Coverage is the load-bearing part.** Copy is written fresh for each run and never stored, so the
 question is not how much has piled up but whether *this* file answers every unit the run will
 publish — and whether it still describes this export. Not every in-scope unit: copy is written for
-the rows a run creates or changes, so an already-live, unchanged unit needs none and is excluded
-from the count rather than reported as a shortfall. Its fingerprint covers ``{inputs, language,
-prompt_version}``, so editing one product in the feed, or bumping the prompt version, leaves that
-unit uncovered. An uncovered unit with no producer on this machine is an E21 omission: it leaves
-the plan without a row. Before ``Plan.skipped`` existed it left without a trace at all, and an
-empty plan looked exactly like a plan with nothing to do.
+the rows a run creates or changes, so an already-live unchanged unit needs none, and neither does
+a product the plan will hold for a missing video or missing mandatory data. Both are excluded from
+the count rather than reported as a shortfall, and the check's detail line names each separately —
+one of them is finished and the other is waiting on the client. Its fingerprint covers
+``{inputs, language, prompt_version}``, so editing one product in the feed, or bumping the prompt
+version, leaves that unit uncovered. An uncovered unit with no producer on this machine is an E21
+omission: it leaves the plan without a row. Before ``Plan.skipped`` existed it left without a trace
+at all, and an empty plan looked exactly like a plan with nothing to do.
 
 So the count is shown before the copy is, and a shortfall is stated as a shortfall.
 """

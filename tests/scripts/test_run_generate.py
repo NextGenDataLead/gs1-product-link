@@ -25,6 +25,7 @@ from lib.config import (
     ExportConfig,
     GeneratorConfig,
     GS1Config,
+    MediaConfig,
     ProcessListConfig,
     WordPressConfig,
 )
@@ -65,10 +66,11 @@ def _ctx(*languages: str) -> GenerationContext:
     return GenerationContext(languages=list(languages), default_language="nl", prompt_version="v1")
 
 
-def _make_config(
+def _make_config(  # noqa: PLR0913 — one argument per client fact a test needs to vary
     languages: list[str] | None = None,
     generator: GeneratorConfig | None = None,
     process_list: ProcessListConfig | None = None,
+    media: MediaConfig | None = None,
     **wordpress: Any,
 ) -> ClientConfig:
     """A client config. The URL patterns are set because a publishing client has them.
@@ -100,6 +102,7 @@ def _make_config(
         ),
         generator=generator,
         process_list=process_list,
+        media=media,
     )
 
 
@@ -686,6 +689,59 @@ def test_emit_skips_a_unit_that_is_already_live_and_unchanged(
     assert "emitted 1 request(s)" in err
     # The narrowing is stated, not silent: "1 request" over a two-product scope needs a reason.
     assert "1 already live and unchanged" in err
+
+
+def _write_video_map(tmp_path: Path, confirmed: list[str], languages: list[str]) -> MediaConfig:
+    """A video map confirming ``confirmed`` in every one of ``languages``, wired to restrict."""
+    import yaml  # noqa: PLC0415 — only this helper needs it
+
+    entries = {
+        language: [{"file": f"{g}_{language}.mp4", "gtin": g, "confirmed": True} for g in confirmed]
+        for language in languages
+    }
+    path = tmp_path / "mapping.yml"
+    path.write_text(yaml.safe_dump(entries), encoding="utf-8")
+    return MediaConfig(video_map_path=str(path), restrict_to_mapped_gtins=True)
+
+
+def test_emit_skips_a_unit_whose_product_the_plan_will_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The 74-vs-20 fix: a held product never becomes a row, so its copy is never read.
+
+    ``in_scope`` deliberately keeps a video-less GTIN visible — it is asked-for work that cannot
+    yet be done, which the report has to say. That is a different question from whether a producer
+    should be paid to write copy for it, and this is where the two part company.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(media=_write_video_map(tmp_path, [GTIN_A], ["nl"]))
+    _patch_client(monkeypatch, cfg)
+    _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
+
+    assert run_generate.main(["noviplast", "--emit"]) == 0
+
+    assert [(r.gtin, r.language) for r in _read_requests_file().requests] == [(GTIN_A, "nl")]
+    err = capsys.readouterr().err
+    assert "1 held by the plan" in err
+    # Not folded into the unchanged count: nothing here is live, and saying so would be a lie the
+    # operator acts on — they would look for a published page instead of a missing video.
+    assert "already live and unchanged" not in err
+
+
+def test_validating_a_held_result_says_held_rather_than_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The two send an operator to different places: one needs nothing done, one needs a video."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(media=_write_video_map(tmp_path, [GTIN_A], ["nl"]))
+    _patch_client(monkeypatch, cfg)
+    _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
+    _write_results("noviplast", [{"gtin": GTIN_B, "language": "nl", "usps": ["Tagline", "Bullet"]}])
+
+    with caplog.at_level("WARNING"):
+        assert run_generate.main(["noviplast", "--validate"]) == 0
+
+    assert "held by the plan (no_confirmed_video)" in caplog.text
 
 
 def test_emit_asks_again_for_a_unit_whose_feed_data_moved(

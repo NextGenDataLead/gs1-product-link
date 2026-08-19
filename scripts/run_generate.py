@@ -35,12 +35,15 @@ Before that this command worked from the whole catalogue and disagreed with the 
 orders of magnitude.
 
 Of those, only the ``(gtin, language)`` units a run would **create or change** are asked for
-(``lib.preflight.units_needing_copy``). An UNCHANGED row is never confirmed and never executed, so
-copy for it is text nothing will read. **That is scope, not reuse** — a unit is left out because
+(``lib.preflight.units_needing_copy``), and only where the plan will not hold the product outright
+(``lib.holds.held_units`` — E23 missing mandatory data, E24 no confirmed video, E22 no hero image).
+An UNCHANGED row is never confirmed and never executed, so copy for it is text nothing will read;
+a held product never becomes a row at all. On the pilot client those two together are the
+difference between 74 units and 20. **That is scope, not reuse** — a unit is left out because
 nothing will be published for it, never because copy for it already exists, which is the rule the
-removed cache broke. When the answer cannot be decided (no state, no URL patterns) every unit is
-asked for, because a run that quietly writes no copy for a page it is about to publish surfaces as
-a blank page rather than as an error.
+removed cache broke. When the answer cannot be decided (no state, no URL patterns, no readable
+video map) every unit is asked for, because a run that quietly writes no copy for a page it is
+about to publish surfaces as a blank page rather than as an error.
 
 Emits (--emit):         output/{client_id}/data/generation_requests.json
 Reads (--validate):     output/{client_id}/data/generation_results.json (writes nothing, unless
@@ -82,9 +85,10 @@ from lib.generator import (
     results_path,
     save_results,
 )
+from lib.holds import held_units
 from lib.llm import AnthropicClient, load_voice_template
 from lib.preflight import in_scope, units_needing_copy
-from lib.records import ProductRecord
+from lib.records import ProductRecord, SkipReason
 
 _log = logging.getLogger("scripts.run_generate")
 
@@ -145,6 +149,10 @@ class _Prepared(NamedTuple):
     #: decided and every unit is therefore asked for. Carried so the coverage line and the
     #: validation are asked about exactly the set the producer was.
     units: set[tuple[str, str]] | None
+    #: The in-scope units the plan will hold whatever is written for them, and why. Kept apart
+    #: from the units left out for being already live: both are units this run writes no copy for,
+    #: and only one of them is finished. Empty when ``units`` is ``None`` — nothing was narrowed.
+    held: dict[tuple[str, str], SkipReason]
 
 
 def _prepare(cfg: ClientConfig, context: GenerationContext, products_path: Path) -> _Prepared:
@@ -164,30 +172,48 @@ def _prepare(cfg: ClientConfig, context: GenerationContext, products_path: Path)
     1. :func:`lib.preflight.in_scope` — the process list and the confirmed-video allowlist. The
        same function the doctor's ``scope`` check reports.
     2. :func:`lib.preflight.units_needing_copy` — of those, the ``(gtin, language)`` units that
-       classify NEW or CHANGED. An UNCHANGED row is never confirmed and never executed, so copy
-       for it is text nothing will read. It returns ``None`` when it cannot decide (no state, no
-       URL patterns), and every unit is asked for then — erring wide, because a run that quietly
-       writes no copy for a page it is about to publish shows up as a blank page.
+       classify NEW or CHANGED *and* whose product the plan will not hold. An UNCHANGED row is
+       never confirmed and never executed, so copy for it is text nothing will read; a held
+       product never reaches a row at all. It returns ``None`` when it cannot decide (no state, no
+       URL patterns, no readable video map), and every unit is asked for then — erring wide,
+       because a run that quietly writes no copy for a page it is about to publish shows up as a
+       blank page.
+
+    The hold half of step 2 is what this docstring's own lesson looked like one gate on. Scope
+    fixed 224 requests down to the process list; the holds fix **74 down to 20** on the same pilot
+    client, where 17 GTINs have no confirmed video (E24) and 10 are missing mandatory source data
+    (E23). Neither number is decided here — :func:`lib.holds.held_units` asks the plan's own
+    predicates, so a rule can never mean one thing to the generator and another to the plan.
 
     **This is scope, not reuse.** A unit is left out because nothing will be published for it,
     never because copy for it already exists — see :func:`lib.generator.pending_requests`.
 
-    Pure apart from reading its input file and peeking at ``state.json``.
+    Pure apart from reading its input file, the video map, and peeking at ``state.json``.
     """
     products = in_scope(cfg, _load_products(products_path))
     units = units_needing_copy(cfg, products)
-    return _Prepared(pending_requests(products, context, units=units), products, units)
+    # Only when ``units`` is not ``None``, which is exactly the case where ``units_needing_copy``
+    # has already read the video map without raising — so this cannot fail where it used not to.
+    held = held_units(cfg, products) if units is not None else {}
+    return _Prepared(pending_requests(products, context, units=units), products, units, held)
 
 
 def _unchanged_units(prepared: _Prepared, context: GenerationContext) -> int:
-    """How many in-scope units this run writes no copy for because they are already live.
+    """How many in-scope units this run writes no copy for **because they are already live**.
 
     Reported rather than left implicit: "1 request" over a two-product scope needs a reason beside
     it, or the narrowing reads as a bug the first time an operator notices the number.
+
+    The held units are subtracted rather than folded in. They are also units this run writes no
+    copy for, and that is the whole of the resemblance: an unchanged unit is live and finished, a
+    held one has never published and will not until its source data or its video is fixed. Counting
+    the second as the first is how a hold gets read as a success.
     """
     if prepared.units is None:
         return 0
-    return len(prepared.products) * len(context.languages) - len(prepared.units)
+    return (
+        len(prepared.products) * len(context.languages) - len(prepared.units) - len(prepared.held)
+    )
 
 
 def run_producer(requests: list[GenerationRequest], client: LLMClient) -> list[ResultItem]:
@@ -254,6 +280,7 @@ def _validate(
     results: ResultsFile,
     products: list[ProductRecord],
     units: set[tuple[str, str]] | None,
+    held: dict[tuple[str, str], SkipReason],
 ) -> _Validation:
     """Check a producer's results against this run's units.
 
@@ -263,11 +290,12 @@ def _validate(
     copy that was just written actually answers this run.
 
     Each result is matched to a pending unit by ``(gtin, language)``. A result with no pending unit
-    has **three** possible causes and the warning names which: the unit is not in this run's scope;
-    it is in scope but already live and unchanged, so nothing will be published for it; or the feed
-    already supplies its copy verbatim. (There used to be a fourth — "already cached fresh" — which
-    cannot happen now that nothing is cached.) A result whose fingerprint no longer matches is
-    rejected, the same decision ``run_plan`` will make and for the same reason.
+    has **four** possible causes and the warning names which: the unit is not in this run's scope;
+    its product is held out of the plan (E23/E24/E22) whatever is written for it; it is in scope
+    but already live and unchanged, so nothing will be published for it; or the feed already
+    supplies its copy verbatim. (There used to be another — "already cached fresh" — which cannot
+    happen now that nothing is cached.) A result whose fingerprint no longer matches is rejected,
+    the same decision ``run_plan`` will make and for the same reason.
 
     A unit answered **twice** is named rather than quietly resolved. ``run_plan`` takes the last
     entry, which is deterministic and documented, but two answers for one unit means only one of
@@ -295,7 +323,7 @@ def _validate(
                 "no pending unit for %s/%s (%s); ignoring",
                 item.gtin,
                 item.language,
-                _no_pending_reason(item.gtin, item.language, in_scope_gtins, units),
+                _no_pending_reason(item.gtin, item.language, in_scope_gtins, units, held),
             )
             surplus += 1
             continue
@@ -317,11 +345,23 @@ def _validate(
 
 
 def _no_pending_reason(
-    gtin: str, language: str, in_scope_gtins: set[str], units: set[tuple[str, str]] | None
+    gtin: str,
+    language: str,
+    in_scope_gtins: set[str],
+    units: set[tuple[str, str]] | None,
+    held: dict[tuple[str, str], SkipReason],
 ) -> str:
-    """Why this run never asked for ``(gtin, language)``. Ordered widest cause first."""
+    """Why this run never asked for ``(gtin, language)``. Ordered widest cause first.
+
+    The held case is named separately from the unchanged one because the two send the operator to
+    different places: an unchanged unit needs nothing done, a held one needs its source data or its
+    video fixed before any copy for it can ever be published.
+    """
     if gtin not in in_scope_gtins:
         return "not in scope for this run"
+    reason = held.get((gtin, language))
+    if reason is not None:
+        return f"held by the plan ({reason.value}), so this run publishes nothing for it"
     if units is not None and (gtin, language) not in units:
         return "already live and unchanged, so this run publishes nothing for it"
     return "the feed supplies this unit's copy verbatim"
@@ -385,8 +425,13 @@ def _coverage(
     units = prepared.units
     total = len(products) * len(context.languages) if units is None else len(units)
     missing = len(missing_copy(products, results, context, units=units))
+    left_out = []
     unchanged = _unchanged_units(prepared, context)
-    aside = f" ({unchanged} already live and unchanged)" if unchanged else ""
+    if unchanged:
+        left_out.append(f"{unchanged} already live and unchanged")
+    if prepared.held:
+        left_out.append(f"{len(prepared.held)} held by the plan")
+    aside = f" ({', '.join(left_out)})" if left_out else ""
     return f"{total - missing}/{total} unit(s) to publish have copy; {missing} without{aside}"
 
 
@@ -468,7 +513,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.validate:
             override = Path(args.results) if args.results else None
             results = load_results(cfg.client_id, override)
-            checked = _validate(requests, results, products, prepared.units)
+            checked = _validate(requests, results, products, prepared.units, prepared.held)
             if override is not None and override != results_path(cfg.client_id):
                 # Validate *and place*: a producer may write anywhere, but only one path is the
                 # one run_plan reads, and asking the operator to copy it by hand is a step to
