@@ -66,10 +66,16 @@ def _gap(field: str, source_value: str) -> TranslationGap:
     )
 
 
-def _tool_response(usps: list[str], translations: dict[str, str] | None = None) -> dict[str, Any]:
+def _tool_response(
+    usps: list[str],
+    translations: dict[str, str] | None = None,
+    inferences: list[str] | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {"usps": usps}
     if translations is not None:
         payload["translations"] = translations
+    if inferences is not None:
+        payload["inferences"] = inferences
     return {
         "id": "msg_1",
         "type": "message",
@@ -100,7 +106,6 @@ def test_generate_copy_parses_tool_result_and_sends_expected_request(
     assert request.headers["anthropic-version"] == ANTHROPIC_VERSION
     body = json.loads(request.content)
     assert body["model"] == "claude-sonnet-5"
-    assert body["temperature"] == 0
     assert body["max_tokens"] == 512
     assert body["system"] == _VOICE
     assert body["tool_choice"] == {"type": "tool", "name": "produce_copy"}
@@ -109,6 +114,48 @@ def test_generate_copy_parses_tool_result_and_sends_expected_request(
     user_message = body["messages"][0]["content"]
     assert "Het perfecte gereedschap voor alle elastische voegen" in user_message
     assert "04895069002951" in user_message
+
+
+def test_the_payload_carries_no_sampling_parameters(
+    httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-default ``temperature``/``top_p``/``top_k`` is a 400 on the configured model.
+
+    This sent ``temperature: 0`` from the day it was written, which is why the backend had never
+    produced a line of copy against ``claude-sonnet-5`` — the request was rejected before the
+    model saw it. Pinned as an assertion rather than a comment because the parameter reads like
+    an obvious way to ask for determinism, and re-adding it would break the same way, silently,
+    on a path that only runs when an operator is publishing.
+    """
+    monkeypatch.setenv(_KEY_ENV, "sk-test-123")
+    httpx_mock.add_response(json=_tool_response(["Voor gladde voegen"]))
+
+    with AnthropicClient(_config(), _VOICE, sleep=lambda _: None) as client:
+        client.generate_copy(_request())
+
+    body = json.loads(httpx_mock.get_requests()[-1].content)
+    assert "temperature" not in body
+    assert "top_p" not in body
+    assert "top_k" not in body
+
+
+def test_thinking_is_disabled_explicitly_rather_than_left_out(
+    httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitting ``thinking`` means adaptive thinking *on*, and it shares ``max_tokens``.
+
+    So leaving the field out would let a 1024-token budget go on reasoning nobody reads and
+    truncate the forced tool call — a failure that surfaces as a malformed result rather than as
+    a missing setting.
+    """
+    monkeypatch.setenv(_KEY_ENV, "sk-test-123")
+    httpx_mock.add_response(json=_tool_response(["Voor gladde voegen"]))
+
+    with AnthropicClient(_config(), _VOICE, sleep=lambda _: None) as client:
+        client.generate_copy(_request())
+
+    body = json.loads(httpx_mock.get_requests()[-1].content)
+    assert body["thinking"] == {"type": "disabled"}
 
 
 def test_tighten_request_renders_candidates(
@@ -154,6 +201,60 @@ def test_translations_are_parsed_off_the_tool_result(
     assert result.translations == {"product_name": "Voegstrijker"}
 
 
+def test_the_tool_asks_for_inferences(
+    httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The declared shape must match ``GenerationResult``, or a producer swap loses a field.
+
+    ``inferences`` is how a producer declares the claims it wrote that the feed does not state,
+    and they become the ``generation_inference`` findings in §2 of the data-quality report — the
+    section the operator forwards to the client. The tool schema is the only place this producer
+    can learn the field exists: it never sees the ``content-generator`` skill, which is where the
+    in-session producer is told. Omit it here and §2 goes empty on an API-generated batch, which
+    reads as "nothing was inferred" rather than "nobody was asked".
+    """
+    monkeypatch.setenv(_KEY_ENV, "sk-test-123")
+    httpx_mock.add_response(json=_tool_response(["Slogan"]))
+
+    with AnthropicClient(_config(), _VOICE, sleep=lambda _: None) as client:
+        client.generate_copy(_request())
+
+    tool = json.loads(httpx_mock.get_requests()[-1].content)["tools"][0]
+    assert "inferences" in tool["input_schema"]["properties"]
+    assert "inferences" not in tool["input_schema"]["required"]
+
+
+def test_inferences_are_carried_off_the_tool_result(
+    httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asking is half of it; the parser dropped them on the floor for the field's whole life."""
+    monkeypatch.setenv(_KEY_ENV, "sk-test-123")
+    httpx_mock.add_response(
+        json=_tool_response(
+            ["Microvezeldoekjes voor het hele huis", "Herbruikbaar en uitwasbaar"],
+            inferences=["Herbruikbaar: eigenschap van microvezel, niet in 1083."],
+        )
+    )
+
+    with AnthropicClient(_config(), _VOICE, sleep=lambda _: None) as client:
+        result = client.generate_copy(_request())
+
+    assert result.inferences == ["Herbruikbaar: eigenschap van microvezel, niet in 1083."]
+
+
+def test_a_result_with_no_inferences_is_an_empty_list_not_an_error(
+    httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Copy drawn straight from the feed infers nothing, and that is the ordinary case."""
+    monkeypatch.setenv(_KEY_ENV, "sk-test")
+    httpx_mock.add_response(json=_tool_response(["Slogan"]))
+
+    with AnthropicClient(_config(), _VOICE, sleep=lambda _: None) as client:
+        result = client.generate_copy(_request())
+
+    assert result.inferences == []
+
+
 def test_a_result_with_no_translations_is_an_empty_mapping_not_an_error(
     httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -168,6 +269,23 @@ def test_a_result_with_no_translations_is_an_empty_mapping_not_an_error(
 
 
 # --- failure paths -----------------------------------------------------------
+
+
+def test_a_blank_key_is_missing_not_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`.env` ships `ANTHROPIC_API_KEY=` as a scaffold, so blank is the likeliest way to be unset.
+
+    ``os.environ[name]`` succeeds on an empty value, so without this the client sends an empty
+    ``x-api-key`` and the operator is told Anthropic rejected their key — when in fact nobody set
+    one. No HTTP request may be made: ``pytest-httpx`` fails the test if one is, which is the
+    assertion that matters here.
+    """
+    monkeypatch.setenv(_KEY_ENV, "   ")
+
+    with (
+        AnthropicClient(_config(), _VOICE, sleep=lambda _: None) as client,
+        pytest.raises(MissingCredentialError, match=_KEY_ENV),
+    ):
+        client.generate_copy(_request())
 
 
 def test_missing_key_raises_missing_credential(monkeypatch: pytest.MonkeyPatch) -> None:

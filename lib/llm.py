@@ -2,15 +2,22 @@
 
 :class:`AnthropicClient` implements the :class:`lib.generator.LLMClient` protocol over the Messages
 API using **sync httpx** (IMPLEMENTATION_SPEC §1: sync httpx only — no ``anthropic`` SDK), so
-``scripts/run_generate.py --backend api`` can fill the cache unattended. It shares the cache and
-contract seam with the in-session producer: same :class:`~lib.generator.GenerationRequest` in,
-same :class:`~lib.generator.GenerationResult` out, same versioned voice template
-(``prompts/{client}/generation.{prompt_version}.md``). Determinism comes from ``temperature=0``, a
-pinned model, and the versioned prompt; the cache fingerprint excludes the model, so the two
-producers are interchangeable.
+``scripts/run_generate.py --backend api`` can write this run's copy unattended. It shares the
+results file and the contract seam with the in-session producer: same
+:class:`~lib.generator.GenerationRequest` in, same :class:`~lib.generator.GenerationResult` out,
+same versioned voice template (``prompts/{client}/generation.{prompt_version}.md``). Determinism
+comes from thinking being off, a pinned model, and the versioned prompt; the input fingerprint
+excludes the model, so the two producers are interchangeable.
+
+**Sampling parameters are deliberately absent.** This sent ``temperature: 0`` until the configured
+model became ``claude-sonnet-5``, which — like every Opus 4.7-and-later model — rejects a
+non-default ``temperature``/``top_p``/``top_k`` with a 400. The request never reached the model,
+which is why this backend had never produced a line of copy.
 
 The model answers through one forced tool call (:data:`_PRODUCE_COPY_TOOL`), so the result is a
-strict, parseable ``{"usps": [...], "product_name"?: "..."}`` rather than free text. The API key is
+strict, parseable ``{"usps": [...], "translations"?: {...}, "inferences"?: [...]}`` rather than
+free text — the same three fields :class:`~lib.generator.GenerationResult` carries, because a
+producer that cannot fill one of them is not interchangeable with the other. The API key is
 read lazily from the env var named in the client's :class:`~lib.config.GeneratorConfig`, raising
 :class:`~lib.errors.MissingCredentialError` only when a call is made (as ``lib.wp_client`` does).
 """
@@ -55,7 +62,8 @@ _PRODUCE_COPY_TOOL: Final[dict[str, Any]] = {
     "description": (
         "Return the product's ranked USP list: usps[0] is the tagline, usps[1:] are the "
         "Eigenschappen benefit bullets. Include translations only for the fields the request "
-        "lists as missing in this language."
+        "lists as missing in this language. Declare in `inferences` every claim you made that "
+        "the feed does not literally state."
     ),
     "input_schema": {
         "type": "object",
@@ -73,6 +81,18 @@ _PRODUCE_COPY_TOOL: Final[dict[str, Any]] = {
                     "Field name → that field's value rendered in this request's language. One "
                     "key per field the request lists as missing, and no others. Translate the "
                     "source text given; do not invent a value or elaborate on it."
+                ),
+            },
+            "inferences": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "One entry per claim in `usps` that the inputs do not literally state, each "
+                    'naming the claim and what it was inferred from — e.g. "Herbruikbaar: '
+                    'eigenschap van microvezel, niet in 1083." Product knowledge a buyer would '
+                    "take for granted still counts: the test is whether the words are in the "
+                    "feed, not whether the claim is true. Say nothing here about wording drawn "
+                    "straight from the inputs. Empty list if every claim is literal."
                 ),
             },
         },
@@ -164,11 +184,23 @@ def _render_request(request: GenerationRequest) -> str:
 def _build_payload(
     config: GeneratorConfig, voice: str, request: GenerationRequest
 ) -> dict[str, Any]:
-    """Assemble the Messages API request body for one generation (temperature 0, forced tool)."""
+    """Assemble the Messages API request body for one generation (no sampling, forced tool).
+
+    Two deliberate omissions and one deliberate addition, all of them model-surface facts rather
+    than preferences:
+
+    - **No ``temperature``/``top_p``/``top_k``.** Non-default sampling parameters are rejected with
+      a 400 on ``claude-sonnet-5`` and every Opus 4.7-and-later model.
+    - **``thinking`` is disabled explicitly, not omitted.** Omitting it means *adaptive thinking
+      on* for these models, and ``max_tokens`` caps thinking and response together — so the 1024
+      that comfortably holds a tagline plus three bullets could be spent reasoning instead, and
+      the forced tool call would truncate. Forced ``tool_choice`` alongside disabled thinking is
+      fine on the first-party API; only Bedrock couples the two.
+    """
     return {
         "model": config.model,
         "max_tokens": config.max_tokens,
-        "temperature": 0,
+        "thinking": {"type": "disabled"},
         "system": voice,
         "messages": [{"role": "user", "content": _render_request(request)}],
         "tools": [_PRODUCE_COPY_TOOL],
@@ -192,7 +224,9 @@ def _parse_result(data: dict[str, Any]) -> GenerationResult:
             payload = block.get("input") or {}
             try:
                 return GenerationResult(
-                    usps=payload["usps"], translations=payload.get("translations") or {}
+                    usps=payload["usps"],
+                    translations=payload.get("translations") or {},
+                    inferences=payload.get("inferences") or [],
                 )
             except (KeyError, ValidationError) as exc:
                 raise LLMAPIError(
@@ -218,11 +252,21 @@ def _backoff(attempt: int) -> float:
 
 
 def _require_env(name: str) -> str:
-    """Read an environment variable, raising a typed error if it is unset."""
-    try:
-        return os.environ[name]
-    except KeyError as exc:
-        raise MissingCredentialError(f"Environment variable {name!r} is not set") from exc
+    """Read an environment variable, raising a typed error if it is unset **or blank**.
+
+    Blank counts as unset here, unlike the sibling copies in ``lib.wp_client`` and
+    ``lib.gs1_dl_client``, because this is the one credential ``.env`` ships a scaffold line for:
+    ``ANTHROPIC_API_KEY=`` is written by ``.env.example`` and left in place by an operator who has
+    not filled it in. ``os.environ[name]`` succeeds on that, so without this the client would send
+    an empty ``x-api-key``, spend a round trip, and report **401 from Anthropic** — an error about
+    a rejected key rather than about a key nobody set. ``ui.env_edit.describe`` already treats the
+    two as one failure, for the same reason: they are the same failure to the person who has to
+    fix it.
+    """
+    value = os.environ.get(name, "")
+    if not value.strip():
+        raise MissingCredentialError(f"Environment variable {name!r} is not set")
+    return value
 
 
 # --- The client --------------------------------------------------------------
