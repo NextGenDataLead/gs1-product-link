@@ -292,6 +292,13 @@ class PlanSummary(BaseModel):
     unmapped_categories: int = 0
     generated_issues: int = 0
 
+    #: ``run_plan --include-published`` was used, so GTINs that are already published *and*
+    #: resolvable were re-planned instead of dropped as finished. It rides here rather than
+    #: only on stderr for the reason ``state_reset_from_corrupt`` does: it changes what every
+    #: count below it means — a "changed" row is then a rewrite of a live page, not a first
+    #: publish — and a reader an hour later has no other way to know which kind of plan this is.
+    included_published: bool = False
+
     #: E19. Named in full rather than as ``reset``: a reader who skims must not have to
     #: guess which of several things was reset, or whether ``False`` is the alarming value.
     state_reset_from_corrupt: bool = False

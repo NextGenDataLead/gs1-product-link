@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`run_plan --include-published` re-plans products whose source data changed after they went
+  live.** `_pilot_gate` drops any GTIN that is published *and* resolvable, on the assumption that
+  finished means finished. When the feed moves under a live product that assumption is wrong, and
+  it fails in the worst available way: the GTIN is removed *before* classification, so it appears
+  in no plan, no skip list and no report, the plan comes back empty, and the run reports success
+  having written nothing — indistinguishable from "there was nothing to do". On the pilot that is
+  exactly what happened: 10 live GTINs, a re-parsed export, and a plan with zero rows.
+
+  The flag re-admits those GTINs to `diff_against_state` rather than forcing a rewrite: an
+  untouched product still classifies UNCHANGED and is never executed, so it widens what is
+  *considered*, not what is published. It is deliberately not the default — a CHANGED row in such
+  a plan rewrites a live page, which the operator must choose rather than inherit.
+
+  Because it changes what every count underneath it means, it announces itself the way the E19
+  reset does: a warning above the counts on stderr, and `included_published` on `PlanSummary` so a
+  reader of `plan.summary.json` an hour later can still tell a first publish from a rewrite.
+
+
+### Added
 - **Every value the feed carries in one language and not another is now filled by translating it,
   and every filled value is reported for the client to put back into MyGS1.** The generator already
   did this for the product name, because a missing name stops a page publishing (E18) — it did it
