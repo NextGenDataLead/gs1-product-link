@@ -466,6 +466,11 @@ def _credentials(cfg: ClientConfig) -> None:
         (cfg.gs1.client_secret_env_test, "GS1 client secret (test)", False),
         (cfg.gs1.client_id_env_production or "", "GS1 client id (production)", False),
         (cfg.gs1.client_secret_env_production or "", "GS1 client secret (production)", False),
+        (
+            cfg.generator.api_key_env if cfg.generator else "",
+            "Anthropic API key (optional — enables generating copy here)",
+            False,
+        ),
     ]
     known = env_edit.describe([name for name, _, _ in wanted if name])
 
@@ -477,9 +482,10 @@ def _credentials(cfg: ClientConfig) -> None:
             "empty to leave that credential alone."
         ).classes("note")
         theme.band(
-            "There is no Anthropic key field, and there will not be one. Copy is generated on "
-            "the maintainer's machine; this machine holds no LLM credential and never reaches "
-            "Anthropic.",
+            "The Anthropic key is the one optional field. Left empty, this machine holds no LLM "
+            "credential and reaches Anthropic not at all — copy is written on the maintainer's "
+            "machine and imported on the Content screen. Filled in, the Content screen can write "
+            "it here instead, and the run stops depending on a file hand-off.",
             "quiet",
         )
 

@@ -16,10 +16,17 @@ target-serves refusal unchanged — all of which live in ``scripts/``, not ``lib
 It also means the UI runs exactly the command a human would, so ``docs/verifying-live.md``, the
 skills and the terminal all stay valid as a fallback when something here is wrong.
 
-**No LLM, no ``ANTHROPIC_API_KEY``, no Anthropic egress.** Content generation happens on the
-maintainer's machine, in a Claude Code session with the ``content-generator`` skill;
-``generation_results.json`` is handed over as a file and uploaded here. This machine never runs
-``run_generate``. See ``docs/ui-operator-shell.md``.
+**Whether this machine reaches Anthropic is decided by one variable, and the default is no.**
+With the client's ``generator.api_key_env`` unset, the shell holds no LLM credential and has no
+Anthropic egress at all: copy is written on the maintainer's machine in a Claude Code session with
+the ``content-generator`` skill, and ``generation_results.json`` is uploaded here as a file. Set
+that variable and the Content screen offers generation itself, so the shell becomes one access
+point from dataset to pages instead of a surface with a hole in the middle.
+
+**The key never enters this process either way.** Generating runs the same subprocess as every
+other step, and the child loads ``.env`` in its own ``__main__`` block — which is the first
+decision above, not an exception to it. ``tests/ui/test_llm_free_shell.py`` walks the AST of this
+package to keep the API call out of here. See ``docs/ui-operator-shell.md``.
 
 **The gates come from** :mod:`lib.gates`, **not from this package.** They are the safety
 mechanism, they are also written as prose in ``flow-orchestrator/SKILL.md``, and two

@@ -1,8 +1,17 @@
-"""Screen 3 — the generated copy, which was written somewhere else.
+"""Screen 3 — the generated copy: written here when there is a key, imported when there is not.
 
-This machine has no LLM, no API key and no Anthropic egress. Copy is written on the maintainer's
-machine in a Claude Code session and handed over as ``generation_results.json``; this screen
-imports it, says how much of the current export it covers, and shows the text per language.
+Copy has two producers and one results file. A Claude Code session running the
+``content-generator`` skill writes it on the maintainer's machine and hands over
+``generation_results.json``; the Anthropic Messages API writes the same file headlessly. This
+screen offers whichever is available, then says how much of the current export the file covers and
+shows the text per language.
+
+**Which one is offered is decided by the key, not by a setting.** With the client's
+``generator.api_key_env`` unset, this machine holds no credential and reaches Anthropic not at
+all — the documented arrangement, and still the default. Setting it turns generation on here, so
+the shell becomes one access point from dataset to pages rather than a surface with a hole in the
+middle of it. Either way the key stays out of this process: generating runs
+``scripts.run_generate`` as a subprocess, which loads ``.env`` in its own ``__main__`` block.
 
 **Coverage is the load-bearing part.** Copy is written fresh for each run and never stored, so the
 question is not how much has piled up but whether *this* file answers every unit the run will
@@ -25,7 +34,8 @@ from typing import Any
 
 from nicegui import events, ui
 
-from ui import REPO_ROOT, context, runner, theme
+from lib.config import GeneratorConfig
+from ui import REPO_ROOT, context, env_edit, runner, theme
 
 
 def render() -> None:
@@ -49,17 +59,71 @@ def render() -> None:
             return
 
         results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
-        _coverage_and_review(cid, results_path, list(cfg.wordpress.languages))
+        _coverage_and_review(cid, cfg.generator, results_path, list(cfg.wordpress.languages))
+
+
+def _generate(cid: str, generator: GeneratorConfig, refresh: Callable[[], None]) -> None:
+    """Write this run's copy through the API backend — when a key makes that possible.
+
+    The producer is chosen by whether the configured variable has a value, checked with
+    :func:`ui.env_edit.describe`, which reads ``.env`` as text and returns presence and length
+    without ever holding the value. No key means no button: an action that can only fail is worse
+    than an absence, because the operator has to run it to find out.
+
+    Generating is offered above importing rather than beside it. Both write the same file, and the
+    one that needs no hand-off is the one to reach for first.
+
+    This does not lower the bar on what publishes. Copy written here is read below as text, which
+    is gate 1 of 2; ``plan.json`` is gate 2. Nothing about a machine-written tagline is more
+    trustworthy than a session-written one — the pipeline fails just as silently either way.
+    """
+    with theme.section("Generate the copy"):
+        secret = env_edit.describe([generator.api_key_env])[generator.api_key_env]
+        ui.label(
+            f"Writes the tagline and Eigenschappen for every unit this run will publish, through "
+            f"the Anthropic API — model {generator.model}, voice {generator.prompt_version}. Copy "
+            f"is written fresh for each run and never reused, so generating again replaces this "
+            f"run's copy rather than adding to it."
+        ).classes("note")
+
+        if not secret.present:
+            theme.band(
+                f"{generator.api_key_env} is not set, so this machine reaches Anthropic not at "
+                f"all. Set it on the Setup screen to generate here, or import a file written "
+                f"elsewhere below.",
+            )
+            return
+
+        async def go() -> None:
+            argv = runner.run_generate_argv(cid)
+            log.style("display:block")
+            log.clear()
+            log.push(" ".join(["python", *argv]))
+            result = await runner.stream(argv, log.push)
+            # Refresh for the same reason the upload handler does: the coverage figures and the
+            # copy below now describe the file that was just written, and a screen still showing
+            # the previous copy after a successful run is the silent staleness this project keeps
+            # designing against.
+            refresh()
+            ui.notify(
+                "Copy written — read it below before planning."
+                if result.ok
+                else f"Generation exited {result.returncode} — read the output.",
+                type="positive" if result.ok else "warning",
+                timeout=10000,
+            )
+
+        theme.action("Generate copy for this run", go)
+        log = ui.log().classes("console mt-4").style("display:none")
 
 
 def _import(results_path: Path, refresh: Callable[[], None]) -> None:
     with theme.section("Import"):
         ui.label(
-            "Generation runs on the maintainer's machine, in a Claude Code session with the "
-            "content-generator skill. That keeps this machine free of an API key and of any "
-            "connection to Anthropic — and it is why the file arrives by hand. It is written "
-            "fresh for each run: importing a newer one replaces this run's copy rather than "
-            "adding to it."
+            "The other producer: a Claude Code session running the content-generator skill, on a "
+            "machine that has a Claude subscription rather than an API key. It writes the same "
+            "file, which arrives by hand. Written fresh for each run either way, so importing a "
+            "newer one replaces this run's copy rather than adding to it."
         ).classes("note")
 
         # Async for the same reason as the export upload — see ui/pages/data.py.
@@ -86,7 +150,9 @@ def _import(results_path: Path, refresh: Callable[[], None]) -> None:
         ).classes("mono mt-2")
 
 
-def _coverage_and_review(cid: str, results_path: Path, languages: list[str]) -> None:
+def _coverage_and_review(
+    cid: str, generator: GeneratorConfig, results_path: Path, languages: list[str]
+) -> None:
     """Import, coverage and the copy itself — all fed by one preflight run.
 
     They used to be three independent sections, and the middle one was the only one that knew
@@ -111,6 +177,7 @@ def _coverage_and_review(cid: str, results_path: Path, languages: list[str]) -> 
         with review_body:
             _review(context.scope_from(payload), results_path, languages)
 
+    _generate(cid, generator, refresh)
     _import(results_path, refresh)
     with theme.section("Coverage against the current export"):
         theme.quiet_action("Re-check against the current export", refresh)

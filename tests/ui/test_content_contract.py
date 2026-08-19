@@ -124,3 +124,53 @@ def test_importing_a_cache_redraws_what_it_invalidated() -> None:
         "the upload handler does not refresh, so coverage and the copy below still describe the "
         "cache that was just overwritten"
     )
+
+
+# --- the producer offered here ------------------------------------------------
+
+
+def test_generate_is_offered_before_import() -> None:
+    """Both write the same file; the one needing no hand-off is the one to reach for first."""
+    body = _own_calls(_function("_coverage_and_review"))
+    assert {"_generate", "_import"} <= body
+
+    order = [
+        node.func.id
+        for node in ast.walk(_function("_coverage_and_review"))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"_generate", "_import"}
+    ]
+    assert order == ["_generate", "_import"]
+
+
+def test_generate_renders_nothing_clickable_without_a_key() -> None:
+    """An action that can only fail is worse than an absence — you must run it to find out.
+
+    The presence check comes from ``env_edit.describe``, which reads ``.env`` as text and returns
+    presence and length only. Asserting the early ``return`` is what stops a later edit from
+    turning the guard into a band that merely sits above a live button.
+    """
+    generate = _function("_generate")
+    assert "describe" in _own_calls(generate)
+
+    guards = [
+        node
+        for node in ast.walk(generate)
+        if isinstance(node, ast.If) and any(isinstance(stmt, ast.Return) for stmt in ast.walk(node))
+    ]
+    assert guards, "no early return guarding the key-absent branch"
+
+
+def test_generate_refreshes_the_coverage_it_just_invalidated() -> None:
+    """The figures and the copy below describe the previous file until something says otherwise.
+
+    The upload handler is held to the same rule; a screen that keeps showing the old copy after a
+    successful run is the silent staleness this project keeps designing against.
+    """
+    handlers = [
+        node for node in ast.walk(_function("_generate")) if isinstance(node, ast.AsyncFunctionDef)
+    ]
+    assert len(handlers) == 1, "expected exactly one async click handler"
+    assert "refresh" in _calls(handlers[0])
+    assert "stream" in _calls(handlers[0]), "must stream, not block: the run takes minutes"
