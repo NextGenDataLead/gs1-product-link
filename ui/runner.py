@@ -217,6 +217,22 @@ def run_plan_argv(client_id: str | None) -> list[str]:
     return ["-m", "scripts.run_plan", *([client_id] if client_id else [])]
 
 
+def run_generate_argv(client_id: str | None) -> list[str]:
+    """Write this run's copy through the Anthropic Messages API.
+
+    The only command here that reaches a third party, and the only one that needs an API key. It
+    is a subprocess like every other, so the key is read from ``.env`` by the child's ``__main__``
+    block and never enters this process — the arrangement ``tests/lib/test_env.py`` enforces, and
+    the reason the shell can offer generation without holding a credential.
+
+    Only ``--backend api`` is offered. ``--emit``/``--validate`` are the in-session producer's
+    half of the seam, answered by a Claude Code session rather than by this screen, and the API
+    backend writes and re-reads the results file itself — so there is no separate validate step to
+    forget.
+    """
+    return ["-m", "scripts.run_generate", *([client_id] if client_id else []), "--backend", "api"]
+
+
 def report_quality_argv(client_id: str | None) -> list[str]:
     """Render every issue file into one worklist."""
     return ["-m", "scripts.report_quality", *([client_id] if client_id else [])]

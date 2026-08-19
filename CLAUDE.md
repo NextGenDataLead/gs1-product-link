@@ -48,7 +48,9 @@ Digital Link, QR) and have their own trigger phrases.
 `pip install -e ".[dev,ui]"` then `python -m ui` — a desktop window over the same commands, for an
 operator repeating a known loop. It **subprocesses the scripts and must never import their
 `main()`** (see the `.env` rule below), and `ui/session.py` **raises** rather than building a run
-command while a required gate is unanswered. It holds no LLM credential and never reaches Anthropic.
+command while a required gate is unanswered. It holds no LLM credential and never reaches
+Anthropic **unless `ANTHROPIC_API_KEY` is set** — that is what turns on the Content screen's
+Generate button, and even then the key is read by the `run_generate` subprocess, never by `ui/`.
 
 On the operator's machine it installs by double-click instead — `install.command` / `install.bat`,
 then `start.command` / `start.bat` — from the **committed `uv.lock`**. Do not run those in a

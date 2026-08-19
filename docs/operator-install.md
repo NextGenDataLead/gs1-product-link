@@ -150,8 +150,9 @@ prepared on a machine that can reach them and copied over whole — `.venv` incl
 ## For IT
 
 The security posture of the running application is in
-[`ui-operator-shell.md`](ui-operator-shell.md#for-it) — loopback-only socket, no Anthropic egress,
-no LLM credential, no telemetry, no auto-update. What the *install* adds to that:
+[`ui-operator-shell.md`](ui-operator-shell.md#for-it) — loopback-only socket, no telemetry, no
+auto-update, and no Anthropic egress or LLM credential unless `ANTHROPIC_API_KEY` is deliberately
+set (a fresh install does not set it). What the *install* adds to that:
 
 - **Everything downloaded is version-pinned and reviewable.** `uv` is pinned to an exact version
   in both installers; the Python build is 3.11, the same one CI runs the test suite on; every

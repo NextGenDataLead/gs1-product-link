@@ -74,7 +74,8 @@ pip install -e ".[ui]" && python -m ui
 ```
 
 It subprocesses the same scripts, renders the same gates, and refuses to build a run command
-while any required one is unanswered. It holds no LLM credential and never talks to Anthropic.
+while any required one is unanswered. It holds no LLM credential and never talks to Anthropic —
+unless `ANTHROPIC_API_KEY` is set, which turns on generating copy from the Content screen.
 See [`docs/ui-operator-shell.md`](docs/ui-operator-shell.md).
 
 On a machine with no Python it installs by double-click instead — `install.command` /

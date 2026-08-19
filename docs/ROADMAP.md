@@ -119,10 +119,14 @@ plan behind it is not in the repo (it is a working document); what matters here 
 
 Two decisions inside it are settled and should not be reopened:
 
-- **The operator's machine is LLM-free.** No `ANTHROPIC_API_KEY`, no Anthropic egress, never runs
-  `run_generate`. Content generation stays on the maintainer's machine and `generated_cache.json`
-  is handed over as a file. This removes a class of IT objection and a per-token cost, at the price
-  of one file changing hands per batch.
+- **The operator's machine is LLM-free by default, and only by default.** With no
+  `ANTHROPIC_API_KEY` there is no Anthropic egress and `run_generate` never runs; copy is written
+  on the maintainer's machine and `generation_results.json` is handed over as a file. That removes
+  a class of IT objection and a per-token cost, at the price of one file changing hands per batch,
+  and it remains the shipped default. What was reopened — deliberately, because the shell could
+  not otherwise take a new product from dataset to page — is that the split is now *optional*:
+  setting the key turns generation on in the Content screen. The key still lives only in the
+  `run_generate` subprocess.
 - **`claude -p` is ruled out on the publish path, permanently.** It cannot hold a gate — there is no
   streaming *input* mode and no permission callback to a parent, so it hangs or aborts. And skills
   load headless, so `claude -p "/gs1-publish {client}"` would run the entire gated sequence with
