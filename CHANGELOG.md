@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The operator shell can re-plan already-published products.** `run_plan --include-published`
+  landed without a control in the shell, so its Publish screen built the plan bare — which meant a
+  0-row plan and a correct refusal to run, and no way from `python -m ui` to publish a product
+  whose source data changed after it went live. That is the operator's recurring case, not an edge
+  one, so the shell could not drive its own loop end to end.
+
+  The control is a checkbox beside *Build the plan*, defaulting off and re-chosen for every
+  rebuild: it changes what the plan *contains*, so it is not carried as a decision already made.
+  The displayed command carries the flag too — a shown command that does not match the one the
+  button sends is worse than showing none, and a test pins both call sites to passing it
+  explicitly. When the resulting plan re-admits published GTINs, a band sits above the counts
+  saying a CHANGED row rewrites a live page, mirroring the E19 reset band and read from
+  `PlanSummary.included_published` rather than from the checkbox — so it describes the plan on
+  screen, not the state of a control that may have been re-ticked since.
+
 - **`run_plan --include-published` re-plans products whose source data changed after they went
   live.** `_pilot_gate` drops any GTIN that is published *and* resolvable, on the assumption that
   finished means finished. When the feed moves under a live product that assumption is wrong, and

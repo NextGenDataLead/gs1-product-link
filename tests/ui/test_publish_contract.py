@@ -233,3 +233,44 @@ def test_a_chat_only_option_is_never_rendered_as_a_button() -> None:
     assert chat_only, "nothing is marked chat_only — this check would pass vacuously"
     for option in chat_only:
         assert option not in [o for gate in BY_ID.values() for o in gate.shell_options]
+
+
+# --- re-planning published products ------------------------------------------
+
+
+def test_the_plan_gate_offers_include_published_and_defaults_it_off() -> None:
+    """It rewrites live pages, so it must be chosen — never inherited from a bare redraw."""
+    source = _PUBLISH.read_text("utf-8")
+    assert "include_published" in source
+    assert "self.include_published = False" in source, "must default off"
+
+
+def test_the_displayed_command_carries_the_flag() -> None:
+    """A shown command that does not match the one the button sends is worse than none.
+
+    Both the ``theme.command`` line and the click handler must build their argv with the same
+    ``include_published`` value, or the screen tells the operator it is running one thing while
+    running another.
+    """
+    tree = ast.parse(_PUBLISH.read_text("utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and (getattr(node.func, "attr", None) == "run_plan_argv")
+    ]
+    assert len(calls) == 2, "expected exactly the displayed command and the executed one"
+    for call in calls:
+        assert any(kw.arg == "include_published" for kw in call.keywords), (
+            "every run_plan_argv call on this screen must pass include_published explicitly"
+        )
+
+
+def test_the_plan_gate_warns_when_the_plan_re_admits_published_products() -> None:
+    """Mirrors the E19 band: it changes what a CHANGED row means, so it sits above the counts.
+
+    Read from the summary rather than the checkbox, so the warning describes the plan on screen
+    rather than the state of a control that may have been re-ticked since it was built.
+    """
+    source = _PUBLISH.read_text("utf-8")
+    assert "summary.included_published" in source
+    assert "rewrites a LIVE page" in source

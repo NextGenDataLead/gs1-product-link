@@ -212,9 +212,17 @@ def parse_export_argv(client_id: str | None, *, dry_run: bool = False) -> list[s
     return argv
 
 
-def run_plan_argv(client_id: str | None) -> list[str]:
-    """Classify every unit against prior state."""
-    return ["-m", "scripts.run_plan", *([client_id] if client_id else [])]
+def run_plan_argv(client_id: str | None, *, include_published: bool = False) -> list[str]:
+    """Classify every unit against prior state.
+
+    ``include_published`` re-admits GTINs that are already published *and* resolvable, which
+    ``run_plan`` otherwise drops as finished. It defaults to off here for the same reason it does
+    on the CLI: with it on, a CHANGED row rewrites a live page, and that has to be chosen.
+    """
+    argv = ["-m", "scripts.run_plan", *([client_id] if client_id else [])]
+    if include_published:
+        argv.append("--include-published")
+    return argv
 
 
 def run_generate_argv(client_id: str | None) -> list[str]:

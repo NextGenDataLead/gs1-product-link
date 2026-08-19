@@ -106,6 +106,10 @@ def test_the_dot_env_rule_is_enforced_elsewhere() -> None:
         (lambda: runner.doctor_argv(None), ["-m", "scripts.doctor", "--json"]),
         (lambda: runner.run_plan_argv("acme"), ["-m", "scripts.run_plan", "acme"]),
         (
+            lambda: runner.run_plan_argv("acme", include_published=True),
+            ["-m", "scripts.run_plan", "acme", "--include-published"],
+        ),
+        (
             lambda: runner.run_generate_argv("acme"),
             ["-m", "scripts.run_generate", "acme", "--backend", "api"],
         ),
