@@ -319,6 +319,94 @@ def test_a_value_blank_in_every_language_is_never_filled() -> None:
     assert fields == {"product_name"}  # the only value this product carries at all
 
 
+def test_a_slot_holding_the_other_language_is_a_gap_not_a_value() -> None:
+    """The real case: `product_name.fr` reads `Schoonmaakdoek`, which is Dutch.
+
+    A full slot in the wrong language leaves the page permanently untranslated if it counts as
+    carried — no gap, no request, nothing reported as filled, and the French page keeps showing a
+    Dutch word for as long as the feed says so. Treating it as a language the feed does not carry
+    turns it into an ordinary gap the authoritative language fills.
+    """
+    product = _product(
+        product_name=LocalisedText(values={"nl": "microvezeldoek", "fr": "Schoonmaakdoek"})
+    )
+
+    gaps = {gap.field: gap for gap in translation_gaps(product, "fr", _ctx("nl", "fr"))}
+
+    assert "product_name" in gaps
+    # Filled from the authoritative language, not by translating the wrong-language text: nl and
+    # fr then name the same product. Where the two slots disagreed about more than language, that
+    # is a source defect and stays in the report rather than being laundered into French.
+    assert gaps["product_name"].source_language == "nl"
+    assert gaps["product_name"].source_value == "microvezeldoek"
+
+
+def test_a_filled_wrong_language_value_is_not_overwritten_by_the_feed() -> None:
+    """The half that makes the fix real, and the one that fails silently when it is missing.
+
+    "The feed always wins" is enforced on read as well as write, and a wrong-language value is the
+    single case where the feed is what we are correcting. Left in `_stored_values`, `Schoonmaakdoek`
+    beats the translation written to replace it: the run reports the value as filled, the report
+    tells the operator to paste it into MyGS1, and the page still says `Schoonmaakdoek`.
+    """
+    product = _product(
+        product_name=LocalisedText(values={"nl": "microvezeldoek", "fr": "Schoonmaakdoek"})
+    )
+    written = _copy_for(
+        product, _ctx("fr"), "Slogan", "Puce", translations={"product_name": "chiffon microfibre"}
+    )
+
+    merged, issues = merge_generated([product], written, _ctx("fr"))
+
+    assert merged[0].product_name.get("fr") == "chiffon microfibre"
+    assert merged[0].product_name.get("nl") == "microvezeldoek"  # the correct sibling is untouched
+    # And it is reported, so the operator can put it back into MyGS1 rather than re-deriving it.
+    assert {i.field for i in issues if i.issue == "value_translated"} >= {"product_name.fr"}
+
+
+def test_a_correct_value_still_beats_a_written_translation() -> None:
+    """The wrong-language rule must not widen into "the producer may overwrite the feed".
+
+    Same shape as the test above with a genuine French value in the slot; the producer's answer is
+    dropped. Only a slot the detector reads as another language is open to being replaced.
+    """
+    product = _product(product_name=LocalisedText(values={"nl": "microvezeldoek", "fr": "Chiffon"}))
+    written = _copy_for(
+        product, _ctx("fr"), "Slogan", "Puce", translations={"product_name": "Autre chose"}
+    )
+
+    merged, _ = merge_generated([product], written, _ctx("fr"))
+
+    assert merged[0].product_name.get("fr") == "Chiffon"
+
+
+def test_a_wrong_language_value_is_left_alone_when_the_field_is_not_translatable() -> None:
+    """`translate` stays the client's decision about its own page — this rule does not override it.
+
+    Without the flag there is no gap, so the value publishes as it stands and the report's §3b
+    flag is the only thing that happens. That is the pre-existing behaviour and must not change.
+    """
+    product = _product(
+        product_name=LocalisedText(values={"nl": "microvezeldoek", "fr": "Schoonmaakdoek"})
+    )
+    context = GenerationContext(languages=["nl", "fr"], default_language="nl", prompt_version="v1")
+
+    assert translation_gaps(product, "fr", context) == []
+
+
+def test_a_wrong_language_value_with_nothing_to_fill_from_is_not_invented() -> None:
+    """The guard rail holds here too: dropping the only value the field has leaves nothing.
+
+    A slot in the wrong language and no other language carrying the field is a source finding for
+    MyGS1, not a licence to write one — the same line `translation_gaps` draws for a blank.
+    """
+    product = _product(product_name=LocalisedText(values={"fr": "Schoonmaakdoek"}))
+
+    fields = {gap.field for gap in translation_gaps(product, "fr", _ctx("nl", "fr"))}
+
+    assert "product_name" not in fields
+
+
 def test_a_datapool_placeholder_is_not_something_to_translate() -> None:
     """`zzzanders` is the feed's way of saying "no value", and the generator already knows it.
 

@@ -8,6 +8,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **A slot holding the wrong language is now a gap the generator fills, not a value it respects.**
+  `product_name.fr` reading `Schoonmaakdoek` is a full slot and a missing translation at the same
+  time. The generator only ever saw the first of those, so the French page showed a Dutch word for
+  as long as the feed said so: no gap, no request, nothing reported as filled, and the only thing
+  that happened was a §3b flag nobody could act on without editing MyGS1 by hand.
+
+  `_carried` now drops such a value the same way it already drops a blank and a `zzz…` placeholder
+  — three ways a slot can hold no usable value for its language — so it becomes an ordinary gap
+  and the authoritative language fills it. The wrong-language text is **discarded, not
+  translated**: `microvezeldoek` is rendered into French rather than `Schoonmaakdoek`, so the two
+  languages end up naming the same product. Where the slots disagreed about more than language,
+  that is a source defect and stays in the report rather than being laundered into French.
+
+  **Both read paths had to change, and the second one fails silently.** "The feed always wins" is
+  enforced on read as well as write, and `_stored_values` feeds the merge where it is enforced.
+  Fixing `_carried` alone produces a run that creates the gap, writes the translation, reports it
+  to the operator for MyGS1 — and then lets `Schoonmaakdoek` overwrite it on the page. A test pins
+  exactly that: with only the first half in place it is the one assertion that fails. Both now read
+  one predicate, `_is_foreign`, over one detector, `gdsn.suspect_language` — the same function
+  behind the report's §3b flag, so the value the operator is told about is the value that gets
+  filled.
+
+  Scope is unchanged on both sides of the rule. `translate: false` still means the value publishes
+  as it stands, and a wrong-language value with no other language to fill from is still a source
+  finding rather than a licence to invent one. A correct value still beats a producer that
+  volunteers over it.
+
+  Making a detector load-bearing raises the cost of a false positive from a glance to a replaced
+  value, which is why `suspect_language` stays deliberately few patterns. On the pilot catalogue it
+  fires 3 times in 127 products, all three genuine, all on `translate: true` fields. The
+  replacement is never silent: it lands in the report's §4 "paste these into MyGS1" beside the §3b
+  flag naming the original.
+
+  One consequence worth expecting: an affected unit's request changes, so its fingerprint moves and
+  its existing copy is dropped as stale. The doctor reports it as pending rather than dropping it
+  quietly — on the pilot that is one unit, `08713195000527/fr`.
+
 - **Generation no longer asks for copy the plan will throw away.** `units_needing_copy` narrowed to
   the NEW/CHANGED units and stopped there — it never applied the three holds `diff_against_state`
   applies immediately afterwards: E23 (missing mandatory source data), E24 (no client-confirmed
