@@ -1,7 +1,7 @@
 """Build a run plan by classifying products against prior state (IMPLEMENTATION_SPEC §8.2).
 
 Usage:
-    python -m scripts.run_plan CLIENT_ID [--products PATH]
+    python -m scripts.run_plan CLIENT_ID [--include-published] [--products PATH]
 
 Loads the client config, its persisted state, and the parsed products, then classifies
 each ``(GTIN, language)`` as NEW / UNCHANGED / CHANGED (``lib.state.diff_against_state``)
@@ -78,6 +78,17 @@ _STATE_RESET_WARNING = (
     "All rows re-plan as NEW — executing them will rewrite live pages and resolver targets."
 )
 
+#: Printed above the counts when ``--include-published`` re-admitted finished GTINs. It leads for
+#: the same reason the E19 reset warning does: it changes what the counts underneath *mean*. A
+#: CHANGED row in an ordinary plan is a product on its way to its first page; in this plan it is a
+#: live page about to be rewritten, and the two read identically once the flag has scrolled away.
+_INCLUDE_PUBLISHED_WARNING = (
+    "NOTE: --include-published — GTINs that are already published and resolvable were re-planned "
+    "instead of being treated as finished. A CHANGED row here rewrites a LIVE page. Pages are "
+    "matched by slug/meta.gtin and updated in place, not duplicated, and an untouched product "
+    "still classifies UNCHANGED and is never executed."
+)
+
 
 def _default_products_path(client_id: str) -> Path:
     """The default parsed-products location written by ``scripts/parse_export.py``."""
@@ -112,8 +123,22 @@ def _pilot_gate(
     products: list[ProductRecord],
     state: State,
     excluded: dict[str, int],
+    *,
+    include_published: bool = False,
 ) -> tuple[list[ProductRecord], dict[str, int]]:
-    """Drop GTINs that are already finished (§9.5).
+    """Drop GTINs that are already finished (§9.5), unless ``include_published``.
+
+    **``include_published`` exists because "finished" is an assumption, not a fact.** A product
+    whose source data changes after it goes live is not finished, and this gate removed it before
+    classification — so the plan came back empty and a run reported success having written
+    nothing. That is indistinguishable from "there was nothing to do". The flag re-admits those
+    GTINs and lets :func:`lib.state.diff_against_state` decide: an untouched product still
+    classifies UNCHANGED and is never executed, so the flag widens what is *considered*, not what
+    is published.
+
+    It is deliberately not the default. Re-planning finished products makes a routine run capable
+    of rewriting live pages, which the operator must choose rather than inherit — and every
+    surface that reports a plan says the flag was used (see :class:`~lib.records.PlanSummary`).
 
     A no-op unless ``media.restrict_to_mapped_gtins``. Extends the tally with ``already_present``
     (published *and* resolvable). ``run_execute`` hard-enforces the mapped-only rule independently,
@@ -138,6 +163,8 @@ def _pilot_gate(
     Entries written before ``--only`` existed all carry a real hash, so no prior state reclassifies.
     """
     excluded = {**excluded, "already_present": 0}
+    if include_published:
+        return products, excluded
     media = cfg.media
     if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
         return products, excluded
@@ -259,9 +286,15 @@ class _PlanResult(NamedTuple):
     state: State
     category_issues: list[SourceIssue]
     generated_issues: list[SourceIssue]
+    #: Whether ``--include-published`` re-admitted already-finished GTINs. Carried rather than
+    #: inferred from ``excluded["already_present"] == 0``, which is also what a first run looks
+    #: like — the two must never be confused by anything reporting this plan.
+    included_published: bool = False
 
 
-def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> _PlanResult:
+def _build_plan(
+    cfg: ClientConfig, products: list[ProductRecord], *, include_published: bool = False
+) -> _PlanResult:
     """Gate, assign categories, merge generated copy, classify, and assemble the :class:`Plan`.
 
     Returns the plan, the gate-exclusion tally, the loaded state (whose ``reset_from_corrupt``
@@ -275,7 +308,9 @@ def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> _PlanResult
         candidates, excluded = products, {"not_listed": 0}
 
     state = load_state(cfg.client_id)
-    candidates, excluded = _pilot_gate(cfg, candidates, state, excluded)
+    candidates, excluded = _pilot_gate(
+        cfg, candidates, state, excluded, include_published=include_published
+    )
 
     candidates, category_issues = _assign_categories(cfg, candidates)
     # The record as the feed defines it, categories included and the generator's output not. This
@@ -304,7 +339,7 @@ def _build_plan(cfg: ClientConfig, products: list[ProductRecord]) -> _PlanResult
         rows=rows,
         skipped=skipped,
     )
-    return _PlanResult(plan, excluded, state, category_issues, generated_issues)
+    return _PlanResult(plan, excluded, state, category_issues, generated_issues, include_published)
 
 
 def _write_plan(client_id: str, plan: Plan) -> Path:
@@ -335,12 +370,14 @@ def _summarise(result: _PlanResult) -> PlanSummary:
         generated_issues=len(result.generated_issues),
         state_reset_from_corrupt=result.state.reset_from_corrupt,
         state_corrupt_backup=result.state.corrupt_backup,
+        included_published=result.included_published,
         text=_summary(
             plan,
             result.excluded,
             result.state.reset_from_corrupt,
             len(result.category_issues),
             len(result.generated_issues),
+            result.included_published,
         ),
     )
 
@@ -359,12 +396,13 @@ def _write_summary(client_id: str, summary: PlanSummary) -> Path:
     return path
 
 
-def _summary(
+def _summary(  # noqa: PLR0913 — one parameter per thing the operator must be told about
     plan: Plan,
     excluded: dict[str, int],
     state_was_reset: bool,
     unmapped_categories: int = 0,
     generated_issues: int = 0,
+    included_published: bool = False,
 ) -> str:
     """Render the stderr summary (§8.2): gate exclusions when non-zero, E19 reset when it fired.
 
@@ -392,7 +430,11 @@ def _summary(
         line += f"; {unmapped_categories} product(s) with unmapped category (left unset)"
     if generated_issues:
         line += f"; {generated_issues} generated-content note(s) — see generated_issues.json"
+    if included_published:
+        line = f"{_INCLUDE_PUBLISHED_WARNING}\n{line}"
     if state_was_reset:
+        # Above the include-published note as well: a corrupt-state reset re-plans *everything*
+        # as NEW, which subsumes whatever the flag re-admitted.
         line = f"{_STATE_RESET_WARNING}\n{line}"
     return line
 
@@ -418,6 +460,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--products",
         help="Path to the parsed products JSON (default: output/{id}/data/products.json)",
     )
+    parser.add_argument(
+        "--include-published",
+        action="store_true",
+        help=(
+            "Re-plan GTINs that are already published and resolvable, instead of dropping them "
+            "as finished. Use when source data changed after a product went live; a CHANGED row "
+            "then rewrites a LIVE page"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -431,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
         products = _load_products(products_path)
-        result = _build_plan(cfg, products)
+        result = _build_plan(cfg, products, include_published=args.include_published)
     except (
         ConfigError,
         GeneratorError,

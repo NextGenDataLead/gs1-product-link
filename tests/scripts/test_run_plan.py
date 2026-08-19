@@ -207,12 +207,12 @@ def _write_video_map(tmp_path: Path, both: list[str], nl_only: list[str] | None 
     return str(path)
 
 
-def _present_state(*gtins: str) -> None:
+def _present_state(*gtins: str, content_hash: str = "h") -> None:
     entry = StateEntry(
         wp_page_id=1,
         wp_url="https://wp.test/x",
         wp_featured_media_id=None,
-        content_hash="h",
+        content_hash=content_hash,
         gs1_link_set_hash="h",
         last_run=datetime(2026, 1, 1, tzinfo=UTC),
     )
@@ -311,6 +311,102 @@ def test_pilot_gate_drops_gtin_once_resolver_link_exists(
 
     assert run_plan.main(["acme", "--products", str(products)]) == 0
     assert _read_plan().rows == []
+
+
+def test_include_published_replans_a_finished_gtin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The counterpart to the drop: source data can change after a product goes live.
+
+    Without the flag the gate removes the GTIN before classification, so the plan is empty and a
+    run reports success having written nothing — indistinguishable from "nothing to do". With it,
+    the GTIN reaches ``diff_against_state`` and its moved content hash classifies it CHANGED.
+    """
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    _present_state(GTIN_A)  # published and resolvable — "finished"
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products), "--include-published"]) == 0
+
+    rows = _read_plan().rows
+    assert {r.gtin for r in rows} == {GTIN_A}
+    assert {r.classification for r in rows} == {PlanClassification.CHANGED}
+
+
+def test_include_published_is_not_the_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-planning live pages must be chosen, never inherited from a bare invocation."""
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    _present_state(GTIN_A)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    assert _read_plan().rows == []
+    assert _read_summary().included_published is False
+
+
+def test_include_published_says_so_on_stderr_and_in_the_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A CHANGED row means something different here, so the flag may not scroll away silently.
+
+    It rides in ``PlanSummary`` as well as on stderr for the reason the E19 reset does: an
+    operator reading ``plan.summary.json`` an hour later has no other way to tell a first publish
+    from a rewrite of a live page.
+    """
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    _present_state(GTIN_A)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products), "--include-published"]) == 0
+
+    err = capsys.readouterr().err
+    assert "--include-published" in err
+    assert "rewrites a LIVE page" in err
+    summary = _read_summary()
+    assert summary.included_published is True
+    # The stderr line is carried verbatim, so a second reader shows the same words.
+    assert "rewrites a LIVE page" in summary.text
+
+
+def test_include_published_widens_what_is_considered_not_what_is_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An untouched live product still classifies UNCHANGED, and UNCHANGED is never executed.
+
+    This is what makes the flag safe to reach for: it re-admits finished GTINs to *classification*
+    and lets the content hash decide, rather than forcing a rewrite of everything already live.
+    """
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    product = _product(GTIN_A)
+    _write_products(products, [product])
+
+    # Seed state whose content hash matches what this product hashes to right now.
+    assert run_plan.main(["acme", "--products", str(products), "--include-published"]) == 0
+    unchanged_hash = _read_plan().rows[0].content_hash
+    _present_state(GTIN_A, content_hash=unchanged_hash)
+
+    assert run_plan.main(["acme", "--products", str(products), "--include-published"]) == 0
+    rows = _read_plan().rows
+    assert rows, "the GTIN must be considered, not dropped"
+    assert {r.classification for r in rows} == {PlanClassification.UNCHANGED}
 
 
 def test_pilot_gate_returns_a_retracted_gtin_to_the_queue_as_held(

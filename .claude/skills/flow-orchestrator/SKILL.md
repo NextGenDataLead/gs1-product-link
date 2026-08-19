@@ -54,12 +54,23 @@ results file, then `plan.json`); execute then writes at `wordpress.post_status`,
 so a page is **live the moment it is written**. Tone is **concise and business-like, not
 conversational** (§10.6): verbose text creates fatigue during batch runs.
 
-For the pilot the flow is **create-only**: `run_plan.py` gates products through the
+The flow is **create-only by default**: `run_plan.py` gates products through the
 **process list**, so only the GTINs the operator listed are candidates. Every GTIN in
 that file is processed — the tool reads no status columns, and the operator prepares the
-file by deleting the rows that should not run. Every candidate is therefore NEW, and the
-CHANGED/diff path below stays dormant — it is implemented and ready for future product
-updates.
+file by deleting the rows that should not run. A GTIN that is already published *and*
+resolvable is then dropped as finished, so ordinarily every candidate is NEW.
+
+**When source data changes after a product goes live, that default is wrong**, and it fails
+quietly: the finished GTIN is removed before classification, the plan comes back empty, and a run
+reports success having written nothing — which reads exactly like "there was nothing to do".
+`python -m scripts.run_plan {client} --include-published` re-admits those GTINs and lets the
+content hash decide; an untouched product still classifies UNCHANGED and is never executed, so the
+flag widens what is *considered*, not what is published.
+
+Do not reach for it by default. A CHANGED row in such a plan **rewrites a live page**, so it is
+the operator's choice, and `run_plan` prints a warning above the counts and records
+`included_published` in `plan.summary.json`. Surface that warning at step 5 exactly as you would
+the E19 reset: above the counts, before the menu.
 
 ## Inputs
 
@@ -406,9 +417,10 @@ There are MCP servers in `mcps/`, but they are **not** how anything here works a
 
 ## Failure modes
 
-- **Create-only, so no diffs in the pilot.** Every candidate row is NEW, so the
-  `changed-review` / per-row diff path (§10.6.2) does not fire. It is implemented for
-  future product updates.
+- **Create-only by default, so no diffs in an ordinary run.** Every candidate row is NEW, so the
+  `changed-review` / per-row diff path (§10.6.2) does not fire. It fires under
+  `run_plan --include-published`, where a CHANGED row rewrites a live page — and a row whose
+  `diff` is empty means the change is in the product body, not the title or URL.
 - **No fabricated "old" values.** `StateEntry` records the prior `title` and `wp_url`, so a
   CHANGED row's `diff` can show a real before/after for those two — and only those two.
   `content_hash` proves the rest of the product changed but, being a digest, cannot say how.

@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`run_plan --include-published` re-plans products whose source data changed after they went
+  live.** `_pilot_gate` drops any GTIN that is published *and* resolvable, on the assumption that
+  finished means finished. When the feed moves under a live product that assumption is wrong, and
+  it fails in the worst available way: the GTIN is removed *before* classification, so it appears
+  in no plan, no skip list and no report, the plan comes back empty, and the run reports success
+  having written nothing — indistinguishable from "there was nothing to do". On the pilot that is
+  exactly what happened: 10 live GTINs, a re-parsed export, and a plan with zero rows.
+
+  The flag re-admits those GTINs to `diff_against_state` rather than forcing a rewrite: an
+  untouched product still classifies UNCHANGED and is never executed, so it widens what is
+  *considered*, not what is published. It is deliberately not the default — a CHANGED row in such
+  a plan rewrites a live page, which the operator must choose rather than inherit.
+
+  Because it changes what every count underneath it means, it announces itself the way the E19
+  reset does: a warning above the counts on stderr, and `included_published` on `PlanSummary` so a
+  reader of `plan.summary.json` an hour later can still tell a first publish from a rewrite.
+
 - **The operator shell can generate copy, so it is finally one access point from dataset to pages
   and QR.** Its Content screen could import `generation_results.json` and say how much of the run
   it covered; it could not produce one. Every other step was there, which made the gap easy to
@@ -39,40 +56,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   No gate changed. Copy is still read as text on the Content screen (gate 1 of 2) and again as
   `plan.json` (gate 2), and nothing about a machine-written tagline is more trustworthy than a
   session-written one — this pipeline fails silently either way.
-
-### Fixed
-- **The API backend could not report an inference, so a producer swap silently emptied §2 of the
-  data-quality report.** An inference is a claim the copy makes that the feed does not literally
-  state, and `GenerationResult` has carried the field all along — `result_item` writes it, the
-  report renders each one as a `generation_inference` finding, and 54 of the pilot's 74
-  session-written results have one. But `_PRODUCE_COPY_TOOL` declared only `usps` and
-  `translations`, and `_parse_result` never read a third field, so the API backend returned an
-  empty list every time.
-
-  The failure mode is the bad kind: the report would state that nothing had been inferred, rather
-  than showing a gap. It goes to the client. The tool schema is the only place this producer can
-  learn the field exists — it never sees the `content-generator` skill, which is where the
-  in-session producer is told — so the field is declared there, optional, with the definition and
-  an example beside it. Confirmed against the live API: the model now returns one, in the same
-  claim-then-provenance shape a session writes.
-
-  The voice template was deliberately **not** touched, so `prompt_version` stays `v1` and no
-  existing copy reads as stale. This adds a reporting field; it does not change the voice.
-
-- **The headless generator backend had never worked, rather than merely never been run.** It sent
-  `temperature: 0`, which was correct when it was written and became a **400** when the configured
-  model moved to `claude-sonnet-5`: non-default sampling parameters are rejected there and on every
-  Opus 4.7-and-later model. The request never reached the model. Every line of copy this project
-  has published came from the in-session producer, so nothing surfaced it — the unit tests mock the
-  transport, and mocked HTTP accepts any body you like.
-
-  `temperature` is gone, and `thinking` is now set to `{"type": "disabled"}` **explicitly** rather
-  than omitted, because omitting it on these models means *adaptive thinking on* and `max_tokens`
-  caps thinking and response together: a 1024-token budget that comfortably holds a tagline and
-  three bullets could otherwise be spent reasoning, truncating the forced tool call into a
-  malformed result. Determinism now rests on thinking being off, the pinned model and the
-  versioned voice template — the same three things the input fingerprint's model-exclusion already
-  assumed.
 
 - **Every value the feed carries in one language and not another is now filled by translating it,
   and every filled value is reported for the client to put back into MyGS1.** The generator already
@@ -293,6 +276,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lib.state.diff_against_state` returns a `PlanDiff(rows, skipped)` pair rather than a
   bare row list, so a caller cannot take the rows and leave the drops behind — which is
   what every caller did for as long as the drops were only a log line.
+
+### Fixed
+- **The API backend could not report an inference, so a producer swap silently emptied §2 of the
+  data-quality report.** An inference is a claim the copy makes that the feed does not literally
+  state, and `GenerationResult` has carried the field all along — `result_item` writes it, the
+  report renders each one as a `generation_inference` finding, and 54 of the pilot's 74
+  session-written results have one. But `_PRODUCE_COPY_TOOL` declared only `usps` and
+  `translations`, and `_parse_result` never read a third field, so the API backend returned an
+  empty list every time.
+
+  The failure mode is the bad kind: the report would state that nothing had been inferred, rather
+  than showing a gap. It goes to the client. The tool schema is the only place this producer can
+  learn the field exists — it never sees the `content-generator` skill, which is where the
+  in-session producer is told — so the field is declared there, optional, with the definition and
+  an example beside it. Confirmed against the live API: the model now returns one, in the same
+  claim-then-provenance shape a session writes.
+
+  The voice template was deliberately **not** touched, so `prompt_version` stays `v1` and no
+  existing copy reads as stale. This adds a reporting field; it does not change the voice.
+
+- **The headless generator backend had never worked, rather than merely never been run.** It sent
+  `temperature: 0`, which was correct when it was written and became a **400** when the configured
+  model moved to `claude-sonnet-5`: non-default sampling parameters are rejected there and on every
+  Opus 4.7-and-later model. The request never reached the model. Every line of copy this project
+  has published came from the in-session producer, so nothing surfaced it — the unit tests mock the
+  transport, and mocked HTTP accepts any body you like.
+
+  `temperature` is gone, and `thinking` is now set to `{"type": "disabled"}` **explicitly** rather
+  than omitted, because omitting it on these models means *adaptive thinking on* and `max_tokens`
+  caps thinking and response together: a 1024-token budget that comfortably holds a tagline and
+  three bullets could otherwise be spent reasoning, truncating the forced tool call into a
+  malformed result. Determinism now rests on thinking being off, the pinned model and the
+  versioned voice template — the same three things the input fingerprint's model-exclusion already
+  assumed.
 
 ### Changed
 - **Copy is now written only for the rows a run will actually publish.** `run_generate` asks a
