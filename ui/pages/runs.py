@@ -20,14 +20,23 @@ def render() -> None:
     cid = context.client_id()
     cfg = context.client_config(cid)
 
-    with theme.page("Runs", client_id=cid, environment=cfg.gs1.environment if cfg else None):
+    with theme.page(
+        "Runs",
+        client_id=cid,
+        environment=cfg.gs1.environment if cfg else None,
+        facts=context.rail_facts(cid, cfg),
+    ):
         theme.heading(
-            theme.step("Runs"),
+            theme.eyebrow("Runs"),
             "Runs",
             "Every row of every run, as it was recorded at the time.",
         )
         if cid is None:
-            theme.band("clients.yml did not load. Fix that on the Setup screen first.", "danger")
+            theme.blocked(
+                "clients.yml did not load, so this screen has nothing to work from.",
+                link_label="Open Setup →",
+                route="/",
+            )
             return
 
         _reconcile(cid)
@@ -106,7 +115,7 @@ def _report(payload: dict[str, object]) -> None:
 
 
 def _run(run: context.RunLog) -> None:
-    with ui.element("div").classes("gate mb-4"):
+    with ui.element("div").classes("card mb-4"):
         try:
             name = str(run.path.relative_to(REPO_ROOT))
         except ValueError:

@@ -17,8 +17,9 @@ Two rules the palette exists to serve:
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Final
 
 from nicegui import ui
@@ -80,8 +81,16 @@ TOKENS: Final = """
 body { background: var(--paper) !important; color: var(--ink) !important;
        font-family: var(--font-sans) !important; font-size: var(--text-base) !important; }
 
-.shell        { display: grid; grid-template-columns: 15rem 1fr; min-height: 100vh; }
-@media (max-width: 55rem) { .shell { grid-template-columns: 1fr; } }
+.shell        { display: grid; grid-template-columns: 15rem 1fr; min-height: 100vh;
+                position: relative; }
+
+/* Reachable by keyboard, invisible until it has focus. The rail is seven links deep, so without
+   this every screen costs seven tab stops before the content it is about. */
+.skip         { position: absolute; left: var(--space-4); top: -4rem; z-index: 20;
+                background: var(--surface); color: var(--ink); border: 1px solid var(--rule);
+                padding: var(--space-2) var(--space-4); text-decoration: none;
+                font-size: var(--text-small); transition: top var(--duration) var(--ease); }
+.skip:focus   { top: var(--space-4); }
 
 .rail         { border-right: 1px solid var(--rule); padding: var(--space-6) 0;
                 background: var(--surface); }
@@ -98,6 +107,31 @@ body { background: var(--paper) !important; color: var(--ink) !important;
                     box-shadow: inset 3px 0 0 var(--accent); }
 .rail-num     { font-family: var(--font-mono); font-size: var(--text-micro);
                 color: var(--ink-faint); min-width: 1.1rem; }
+.rail-text    { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+/* One stat-cheap fact per step, so "have I done Data yet?" is answerable from any screen. A
+   fact and not a tick: see `ui.context.rail_facts`. */
+.rail-fact    { font-size: var(--text-micro); color: var(--ink-faint);
+                font-family: var(--font-mono); }
+/* The tools are not steps. The heading and the rule above it are the whole distinction between
+   "the batch you are running" and "this machine", so they carry more weight than they look. */
+.rail-group   { margin-top: var(--space-6); padding: var(--space-4) var(--space-6) var(--space-1);
+                border-top: 1px solid var(--rule); font-size: var(--text-micro);
+                letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); }
+.rail-toggle  { display: none; background: none; border: 1px solid var(--rule);
+                color: var(--ink-soft); font-size: var(--text-base); line-height: 1;
+                padding: var(--space-1) var(--space-3); cursor: pointer; }
+
+/* Narrow only. Above this the rail is always open and nothing costs a click; below it the rail
+   used to stack as a full-width block with no way to get past it to the screen. */
+@media (max-width: 55rem) {
+  .shell      { grid-template-columns: 1fr; }
+  .rail       { border-right: none; border-bottom: 1px solid var(--rule);
+                padding: var(--space-4) 0 var(--space-2); }
+  .rail-brand { padding-bottom: var(--space-2); }
+  .rail-toggle{ display: inline-flex; }
+  .rail-links { display: none; }
+  .rail.rail-open .rail-links { display: block; }
+}
 
 /* align-items: stretch overrides NiceGUI's items-start on the content wrapper, so a card is as
    wide as the column rather than as wide as its longest line. */
@@ -154,14 +188,32 @@ body { background: var(--paper) !important; color: var(--ink) !important;
                 background: color-mix(in oklab, var(--warn) 10%, transparent); }
 .band-quiet   { border-color: var(--rule); color: var(--ink-soft);
                 background: color-mix(in oklab, var(--ink) 3%, transparent); }
+.band-link    { display: inline-block; margin-top: var(--space-2); color: inherit;
+                font-weight: 600; text-underline-offset: 0.2em; }
 
-.gate         { border: 1px solid var(--rule); background: var(--surface);
+/* A row of jumps to the sections below it. Only the Setup screen has enough of them to need it. */
+.jumps        { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4);
+                margin-top: var(--space-6); font-size: var(--text-small); }
+.jumps a      { color: var(--ink-soft); text-underline-offset: 0.2em; }
+.jumps a:hover{ color: var(--ink); }
+
+/* A bordered panel. A publish gate is one, and inherits its box from here — three screens were
+   reaching for `.gate` when all they wanted was a card, which made the class name a lie about
+   what the thing on screen was. */
+.card, .gate  { border: 1px solid var(--rule); background: var(--surface);
                 padding: var(--space-6); width: 100%; }
 .gate-step    { font-family: var(--font-mono); font-size: var(--text-micro);
                 color: var(--ink-faint); letter-spacing: 0.08em; }
 .gate-title   { font-size: var(--text-lead); font-weight: 620; margin: var(--space-1) 0; }
 .gate-why     { font-size: var(--text-small); color: var(--ink-soft); line-height: 1.55;
                 max-width: 46rem; margin-bottom: var(--space-4); }
+/* Rendered from markdown, so it arrives wrapped in paragraphs that would otherwise inherit the
+   browser's own spacing and pull away from the title above them. */
+.gate-why p       { margin: 0 0 var(--space-2); }
+.gate-why p:last-child { margin-bottom: 0; }
+.gate-why code    { font-family: var(--font-mono); font-size: 0.92em;
+                    background: color-mix(in oklab, var(--ink) 6%, transparent);
+                    padding: 0.05em 0.3em; }
 .gate-done    { opacity: 0.55; }
 
 .console      { font-family: var(--font-mono); font-size: var(--text-micro); line-height: 1.6;
@@ -176,46 +228,73 @@ body { background: var(--paper) !important; color: var(--ink) !important;
 .scroll-x     { overflow-x: auto; max-width: 100%; }
 """
 
-#: Left rail: label, route, and the pipeline step it belongs to. Numbered because the order is
-#: the workflow, and an operator who has lost their place needs to see where they are in it.
+
+@dataclass(frozen=True)
+class Screen:
+    """One rail entry: what it is called, where it goes, and how its own heading opens."""
+
+    label: str
+    route: str
+    #: The heading eyebrow. ``"Step 3"`` for a wave screen; the screen's own standing for a tool.
+    eyebrow: str
+
+
+#: **The batch.** These four are the loop an operator repeats, in the order they repeat it, and
+#: the numbers say so.
 #:
-#: **The order is an assertion, so it has to be true.** Preflight used to sit at 2, ahead of Data
-#: and Content — yet four of its checks answer "Run `parse_export` first", which was step 3. Step 2
-#: told you to go and do step 3 and come back, and on a machine being set up from scratch most of
-#: the list could not answer its own questions yet. The doctor's headline is "N of M in scope",
-#: a statement *about the export just loaded*, so it belongs after the loading rather than before.
-#: The credential half is not lost by moving it: the Setup screen's Test buttons run those same
-#: checks, at the moment the field is edited.
+#: **The order is an assertion, so it has to be true.** Preflight used to sit ahead of Data and
+#: Content — yet four of its checks answer "Run `parse_export` first", which is the Data screen.
+#: It told you to go and do a later step and come back, and on a machine being set up from
+#: scratch most of the list could not answer its own questions yet. The doctor's headline is
+#: "N of M in scope", a statement *about the export just loaded*, so it belongs after the
+#: loading rather than before. The credential half is not lost by moving it: the Setup screen's
+#: Test buttons run those same checks, at the moment the field is edited.
 #:
-#: Configure the machine · load this wave's inputs · check *this wave* · publish it · read what ran.
-NAV: Final = (
-    ("Setup", "/", "1"),
-    ("Data", "/data", "2"),
-    ("Content", "/content", "3"),
-    ("Preflight", "/preflight", "4"),
-    ("Publish", "/publish", "5"),
-    ("Runs", "/runs", "6"),
+#: Load this batch's inputs · review its copy · check *this batch* · publish it.
+WAVE: Final = (
+    Screen("Data", "/data", "Step 1"),
+    Screen("Content", "/content", "Step 2"),
+    Screen("Preflight", "/preflight", "Step 3"),
+    Screen("Publish", "/publish", "Step 4"),
 )
 
+#: **Not the batch.** Setup is configured once and then left alone, Runs is read afterwards, and
+#: the video mapping is one input file's editor. Numbering these 1-6 alongside the four above
+#: said they were one sequence, which buried the work an operator actually repeats between
+#: machine configuration at one end and history at the other. They keep a permanent place in the
+#: rail — a click away, never behind one — because a tool nobody can find is a tool nobody uses.
+TOOLS: Final = (
+    Screen("Setup", "/", "This machine"),
+    Screen("Runs", "/runs", "History"),
+    Screen("Video mapping", "/videos", "Video mapping"),
+)
 
-def step(label: str) -> str:
-    """The eyebrow for a screen — ``"Step 4"`` — read from :data:`NAV`.
+#: Every screen the rail reaches. The contract test checks this against the registered routes in
+#: both directions, so a screen added to one and not the other fails the build.
+NAV: Final = WAVE + TOOLS
+
+
+def eyebrow(label: str) -> str:
+    """A screen's heading eyebrow — ``"Step 3"``, or ``"History"`` — read from :data:`NAV`.
 
     Every screen used to spell its own number into ``theme.heading``, which meant the rail and
     the headings were two lists that had to be renumbered together. They are one list now: a
-    reorder is an edit to ``NAV`` and nothing else, and a screen that is not in the rail (the
-    video mapping) borrows the step of the screen that links to it rather than inventing one.
+    reorder is an edit to :data:`WAVE` and nothing else.
+
+    This was called ``step`` while all six screens were numbered. It stopped being a step the
+    moment Setup and Runs left the numbering, and a function that returns ``"This machine"`` from
+    something called ``step`` is the kind of small lie that later gets believed.
 
     Args:
-        label: The rail label of the screen, or of the screen this one belongs to.
+        label: The rail label of the screen.
 
     Returns:
-        ``"Step N"``, or an empty eyebrow if the label is not in the rail — a missing number is
-        a cosmetic loss, and raising here would take a screen down over one.
+        The eyebrow, or an empty one if the label is not in the rail — a missing eyebrow is a
+        cosmetic loss, and raising here would take a screen down over one.
     """
-    for entry_label, _route, number in NAV:
-        if entry_label == label:
-            return f"Step {number}"
+    for screen in NAV:
+        if screen.label == label:
+            return screen.eyebrow
     return ""
 
 
@@ -231,27 +310,86 @@ def install() -> None:
 
 
 @contextmanager
-def page(active: str, *, client_id: str | None, environment: str | None) -> Iterator[None]:
+def page(
+    active: str,
+    *,
+    client_id: str | None,
+    environment: str | None,
+    facts: Mapping[str, str] | None = None,
+) -> Iterator[None]:
     """The shell every screen is rendered inside: left rail, then a canvas.
 
     The client and environment sit in the rail rather than on each screen, because "which client,
     which environment" is the question whose wrong answer is most expensive and least visible —
     and it must be answerable without navigating anywhere.
+
+    Args:
+        active: The rail label of the screen being rendered.
+        client_id: The configured client, or ``None`` when the config cannot say.
+        environment: ``production`` or the test environment, shown as a tag.
+        facts: One short fact per rail label, from :func:`ui.context.rail_facts`. Passed in
+            rather than read here, so the theme keeps importing nothing but NiceGUI and cannot
+            grow a way to run a subprocess on every page load.
     """
+    facts = facts or {}
+
+    def link(screen: Screen, *, numbered: bool) -> None:
+        current = screen.label == active
+        anchor = ui.link(target=screen.route).classes(
+            "rail-link active" if current else "rail-link"
+        )
+        if current:
+            # `.active` is a class, which tells a sighted operator where they are and a screen
+            # reader nothing at all.
+            anchor.props("aria-current=page")
+        with anchor:
+            if numbered:
+                ui.label(screen.eyebrow.removeprefix("Step ")).classes("rail-num")
+            with ui.element("div").classes("rail-text"):
+                ui.label(screen.label)
+                if fact := facts.get(screen.label):
+                    ui.label(fact).classes("rail-fact")
+
     with ui.element("div").classes("shell"):
-        with ui.element("nav").classes("rail"):
+        ui.link("Skip to content", "#canvas").classes("skip")
+        rail = ui.element("nav").classes("rail")
+        with rail:
             with ui.element("div").classes("rail-brand"):
+                toggle = (
+                    ui.element("button")
+                    .classes("rail-toggle")
+                    .props(
+                        'aria-label="Show navigation" aria-expanded=false aria-controls=rail-links'
+                    )
+                )
+                with toggle:
+                    ui.label("☰")
                 ui.label("GS1 Digital Link").classes("rail-title")
                 ui.label(client_id or "no client configured").classes("rail-sub")
                 if environment:
                     colour = "tag-fail" if environment == "production" else "tag-na"
                     ui.label(environment.upper()).classes(f"rail-sub tag {colour}")
-            for label, route, step in NAV:
-                classes = "rail-link active" if label == active else "rail-link"
-                with ui.link(target=route).classes(classes):
-                    ui.label(step).classes("rail-num")
-                    ui.label(label)
-        with ui.element("main").classes("canvas"):
+
+            opened = False
+
+            def show_or_hide() -> None:
+                # Only reachable below 55rem, where the CSS hides the links. Above it the button
+                # is `display: none`, so this never fires and the rail is never in either state.
+                nonlocal opened
+                opened = not opened
+                rail.classes(add="rail-open") if opened else rail.classes(remove="rail-open")
+                toggle.props(f"aria-expanded={'true' if opened else 'false'}")
+
+            toggle.on("click", show_or_hide)
+
+            with ui.element("div").classes("rail-links").props("id=rail-links"):
+                for screen in WAVE:
+                    link(screen, numbered=True)
+                ui.label("This machine").classes("rail-group")
+                for screen in TOOLS:
+                    link(screen, numbered=False)
+
+        with ui.element("main").classes("canvas").props("id=canvas"):
             yield
 
 
@@ -264,15 +402,85 @@ def heading(eyebrow: str, title: str, lede: str = "") -> None:
 
 
 @contextmanager
-def section(title: str) -> Iterator[None]:
-    with ui.element("section").classes("section"):
+def section(title: str, *, anchor: str | None = None, collapsed: bool = False) -> Iterator[None]:
+    """A titled block of a screen.
+
+    Args:
+        title: The heading, which is also what a doc has to call it for an operator to find it.
+        anchor: An ``id`` to jump to, for a screen long enough to need :func:`jumps`.
+        collapsed: Start folded. For a section nobody can act on — the Setup screen's read-only
+            block is eight of its own sections' worth of scroll between the operator and the Test
+            buttons, and none of it is editable here.
+    """
+    if collapsed:
+        expansion = ui.expansion(title).classes("section w-full").props("dense")
+        if anchor:
+            expansion.props(f"id={anchor}")
+        with expansion:
+            yield
+        return
+    element = ui.element("section").classes("section")
+    if anchor:
+        element.props(f"id={anchor}")
+    with element:
         ui.label(title).classes("section-head")
         yield
+
+
+def jumps(targets: list[tuple[str, str]]) -> None:
+    """Links to the sections of a long screen, as ``(label, anchor)``."""
+    with ui.element("div").classes("jumps"):
+        for label, anchor in targets:
+            ui.link(label, f"#{anchor}")
 
 
 def band(text: str, kind: str = "quiet") -> None:
     """A single-line statement that must not be missed. ``kind``: quiet | warn | danger."""
     ui.label(text).classes(f"band band-{kind}")
+
+
+def blocked(text: str, *, link_label: str, route: str) -> None:
+    """A band that names what is wrong and offers the screen that fixes it.
+
+    Five screens said "Fix that on the Setup screen first" as plain text. An operator who does not
+    already know the rail is a navigation is told to go somewhere and given no way to go there —
+    and this band is shown at exactly the moment the config is too broken for the rail's facts to
+    render, which is the worst moment to be relying on the operator's sense of the layout.
+    """
+    with ui.element("div").classes("band band-danger"):
+        ui.label(text)
+        ui.link(link_label, route).classes("band-link")
+
+
+#: How long a toast stays up, by how much the operator loses if they miss it. A success is
+#: confirming something they just watched happen; a failure is the only account of why nothing
+#: did, and is often long enough to need reading twice.
+_NOTIFY_MS: Final = {"positive": 5000, "warning": 10000, "negative": 15000}
+
+
+def _notify(text: str, kind: str) -> None:
+    ui.notify(text, type=kind, timeout=_NOTIFY_MS[kind], multi_line=True, close_button="Dismiss")
+
+
+def notify_ok(text: str) -> None:
+    """It worked, and here is what it did."""
+    _notify(text, "positive")
+
+
+def notify_warning(text: str) -> None:
+    """It did not run, and the reason is something the operator can change."""
+    _notify(text, "warning")
+
+
+def notify_problem(text: str) -> None:
+    """It failed. Longest on screen, because this is the only place the reason is said.
+
+    The screens reached for ``ui.notify`` directly for a long time, with four different timeouts,
+    two spellings of the type argument and no ``close_button`` — so the message that mattered most
+    was the one most likely to have already vanished. One helper per outcome, and the duration is
+    a property of the outcome rather than of whoever wrote the call.
+    """
+    _notify(text, "negative")
 
 
 def figure(value: str, label: str) -> None:

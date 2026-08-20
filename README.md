@@ -17,17 +17,17 @@ central services**, nothing to host, and nothing of yours leaves your machine.
 
 ## Status
 
-**Pre-release, and proven end-to-end on a live pilot.** Phases 1–9.8 of the build are
-complete: 10 real products are published on the pilot client's live WordPress site in
-Dutch and French, registered on GS1 production, and every one of their QR codes resolves
-(`GET id.gs1.org/01/{gtin14}` → 307 → the product page → 200), including a physical
-phone-scan of a printed sample. The full operator flow has been driven end-to-end from a
-fresh Claude Code session through its confirmation gates.
+**`v0.1.0`, and proven end-to-end on a live pilot.** Twelve real products are published on
+the pilot client's live WordPress site in Dutch and French, registered on GS1 production, and
+every one of their QR codes resolves (`GET id.gs1.org/01/{gtin14}` → 307 → the product page →
+200), including a physical phone-scan of a printed sample. Both surfaces have been driven the
+whole way: the Claude Code flow through its confirmation gates, and the desktop operator shell
+from first screen to finished run.
 
-Not yet released as `v0.1.0` — the version in `pyproject.toml` is still `0.0.1`, and the
-tag, changelog, and MCP registry entry are Phase 11. Expect rough edges outside the paths
-the pilot exercised, and read [`docs/troubleshooting.md`](docs/troubleshooting.md) before
-pointing it at a new client.
+Expect rough edges outside the paths the pilot exercised, and read
+[`docs/troubleshooting.md`](docs/troubleshooting.md) before pointing it at a new client. The
+MCP servers are deliberately unpublished — see
+[`docs/OPEN_DECISIONS.md`](docs/OPEN_DECISIONS.md) OD-2.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what has shipped, and
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for where the build stands.
@@ -75,7 +75,8 @@ pip install -e ".[ui]" && python -m ui
 
 It subprocesses the same scripts, renders the same gates, and refuses to build a run command
 while any required one is unanswered. It holds no LLM credential and never talks to Anthropic —
-unless `ANTHROPIC_API_KEY` is set, which turns on generating copy from the Content screen.
+unless the client's `generator.api_key_env` names a variable that has a value, which turns on
+generating copy from the Content screen.
 See [`docs/ui-operator-shell.md`](docs/ui-operator-shell.md).
 
 On a machine with no Python it installs by double-click instead — `install.command` /
@@ -87,18 +88,23 @@ committed `uv.lock`; `start.command` / `start.bat` opens the window. See
 
 ## Documentation
 
-Start here:
+[**docs/README.md**](docs/README.md) is the index. The two entry points, because they are
+different people:
 
-- **[docs/setup.md](docs/setup.md)** — install, configure, run, and onboard a client.
-- **[docs/troubleshooting.md](docs/troubleshooting.md)** — every error type, and the traps
-  already paid for on a live site.
+- **Publishing products?** → [docs/operator-install.md](docs/operator-install.md) to install,
+  then [**docs/operator-guide.md**](docs/operator-guide.md) to run a batch. No terminal needed
+  for either.
+- **Working on the code?** → [docs/setup.md](docs/setup.md), then
+  [docs/troubleshooting.md](docs/troubleshooting.md).
 
 The operator's machine:
 
-- [docs/operator-install.md](docs/operator-install.md) — the double-click install, and what IT is
-  being asked to allow.
-- [docs/ui-operator-shell.md](docs/ui-operator-shell.md) — the six screens, and where the safety
-  actually lives.
+- [docs/operator-guide.md](docs/operator-guide.md) — the walkthrough of a batch, screen by screen,
+  with screenshots and a glossary.
+- [docs/operator-install.md](docs/operator-install.md) — the double-click install, the five files
+  that arrive by hand, and what IT is being asked to allow.
+- [docs/ui-operator-shell.md](docs/ui-operator-shell.md) — why each screen is built as it is, and where the safety
+  actually lives. For whoever maintains the shell, not for the operator.
 
 The two external systems:
 
@@ -122,7 +128,6 @@ The two authoritative design documents — read them before contributing:
 
 Also: [docs/OPEN_DECISIONS.md](docs/OPEN_DECISIONS.md) — decisions analysed, with their
 evidence and outcome (none currently open) ·
-[docs/PREPARATION.md](docs/PREPARATION.md) — operator preparation checklist ·
 [docs/ROADMAP.md](docs/ROADMAP.md) — phase status · [docs/clients/](docs/clients/) —
 per-client notes, including the pilot's page model and live audit trail ·
 [docs/archive/](docs/archive/) — superseded working notes, kept for provenance only.

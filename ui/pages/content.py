@@ -44,14 +44,23 @@ def render() -> None:
     cid = context.client_id()
     cfg = context.client_config(cid)
 
-    with theme.page("Content", client_id=cid, environment=cfg.gs1.environment if cfg else None):
+    with theme.page(
+        "Content",
+        client_id=cid,
+        environment=cfg.gs1.environment if cfg else None,
+        facts=context.rail_facts(cid, cfg),
+    ):
         theme.heading(
-            theme.step("Content"),
+            theme.eyebrow("Content"),
             "Content",
             "The tagline and Eigenschappen text, generated elsewhere and reviewed here.",
         )
         if cfg is None or cid is None:
-            theme.band("clients.yml did not load. Fix that on the Setup screen first.", "danger")
+            theme.blocked(
+                "clients.yml did not load, so this screen has nothing to work from.",
+                link_label="Open Setup →",
+                route="/",
+            )
             return
         if cfg.generator is None:
             ui.label(
@@ -107,13 +116,10 @@ def _generate(cid: str, generator: GeneratorConfig, recheck: Callable[[], Awaita
             # the previous copy after a successful run is the silent staleness this project keeps
             # designing against.
             await recheck()
-            ui.notify(
-                "Copy written — read it below before planning."
-                if result.ok
-                else f"Generation exited {result.returncode} — read the output.",
-                type="positive" if result.ok else "warning",
-                timeout=10000,
-            )
+            if result.ok:
+                theme.notify_ok("Copy written — read it below before planning.")
+            else:
+                theme.notify_warning(f"Generation exited {result.returncode} — read the output.")
 
         theme.action("Generate copy for this run", go)
         log = ui.log().classes("console mt-4").style("display:none")
@@ -138,7 +144,7 @@ def _import(results_path: Path, recheck: Callable[[], Awaitable[None]]) -> None:
             # was just replaced, and a screen that keeps showing the previous copy after a
             # successful import is the silent-staleness this project keeps designing against.
             await recheck()
-            ui.notify("Copy imported — coverage and text below are for the new file.", "positive")
+            theme.notify_ok("Copy imported — coverage and text below are for the new file.")
 
         ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(
             'accept=".json" flat bordered'
@@ -309,7 +315,7 @@ def _entries(entries: dict[str, Any], languages: list[str], results_path: Path) 
     column of em-dashes that looked like missing data rather than like a bug.
     """
     for gtin, per_language in list(entries.items())[:_MAX_SHOWN]:
-        with ui.element("div").classes("gate mb-3"):
+        with ui.element("div").classes("card mb-3"):
             ui.label(gtin).classes("mono gate-step")
             with ui.row().classes("gap-8 items-start w-full flex-wrap"):
                 for language in languages:

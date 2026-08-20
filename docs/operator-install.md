@@ -106,8 +106,10 @@ of truth. Where the two disagree, `state.json` wins: it is what the pipeline act
 ## 4. Start it
 
 Double-click `start.command` / `start.bat`. A desktop window opens on `127.0.0.1:8477` — no
-browser tab, no URL anyone else can reach. [`ui-operator-shell.md`](ui-operator-shell.md) is the
-guide to the six screens.
+browser tab, no URL anyone else can reach.
+
+**[`operator-guide.md`](operator-guide.md) takes it from here** — the walkthrough of a batch,
+screen by screen, with screenshots. Read that next.
 
 `./start.command --browser` serves the same pages in a browser instead, for a machine where the
 webview will not open.
@@ -151,8 +153,9 @@ prepared on a machine that can reach them and copied over whole — `.venv` incl
 
 The security posture of the running application is in
 [`ui-operator-shell.md`](ui-operator-shell.md#for-it) — loopback-only socket, no telemetry, no
-auto-update, and no Anthropic egress or LLM credential unless `ANTHROPIC_API_KEY` is deliberately
-set (a fresh install does not set it). What the *install* adds to that:
+auto-update, and no Anthropic egress or LLM credential unless the variable named by the client's
+`generator.api_key_env` is deliberately given a value (a fresh install does not). What the
+*install* adds to that:
 
 - **Everything downloaded is version-pinned and reviewable.** `uv` is pinned to an exact version
   in both installers; the Python build is 3.11, the same one CI runs the test suite on; every

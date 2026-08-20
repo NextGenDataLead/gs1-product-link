@@ -4,8 +4,13 @@ Historical working notes, kept for provenance. **Nothing here is current documen
 follow it.** They lived at the repository root until 2026-07-31, where newcomers reasonably mistook
 them for the doc set.
 
-Current documentation starts at [`../setup.md`](../setup.md), then
-[`../troubleshooting.md`](../troubleshooting.md).
+Current documentation starts at [`../README.md`](../README.md), which routes by who you are.
+
+**`PREPARATION.md` joined them on 2026-08-20.** It was the one file in the doc set addressed to
+"You — the operator", and it was a checklist of things to do *before starting Phase 1* — written
+before the build, let alone before the desktop shell existed. An operator following the index
+landed in a pre-build checklist. What it was trying to be is now
+[`../operator-guide.md`](../operator-guide.md).
 
 | File | What it was | Why it is stale |
 |---|---|---|

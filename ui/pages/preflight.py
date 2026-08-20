@@ -29,9 +29,14 @@ def render() -> None:
     cid = context.client_id()
     cfg = context.client_config(cid)
 
-    with theme.page("Preflight", client_id=cid, environment=cfg.gs1.environment if cfg else None):
+    with theme.page(
+        "Preflight",
+        client_id=cid,
+        environment=cfg.gs1.environment if cfg else None,
+        facts=context.rail_facts(cid, cfg),
+    ):
         theme.heading(
-            theme.step("Preflight"),
+            theme.eyebrow("Preflight"),
             "Preflight",
             "Everything that can be checked before anything is written — so a missing secret or "
             "a stale copy cache surfaces now, not after live pages exist.",

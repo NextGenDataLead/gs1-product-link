@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, Final
 
+from nicegui import context as nicegui_context
 from nicegui import events, ui
 
 from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Gate, GateOption, Mode
@@ -24,19 +25,58 @@ from lib.records import PlanClassification, PlanRow, SkipReason
 from ui import REPO_ROOT, context, runner, theme
 from ui.session import GateNotAnsweredError, PublishSession
 
+#: Scroll to an element once the page has stopped moving under it.
+#:
+#: A plain ``scrollIntoView`` here lands in the wrong place, and not by a little: the rebuilt
+#: elements and this script reach the browser at almost the same moment, Vue applies the DOM on
+#: its own tick, and a scroll issued against the layout that exists *right now* aims at where the
+#: gate used to be. Measured on the real plan it landed 562px short — far enough that the gate it
+#: was supposed to bring into view was still below the fold. Waiting a fixed number of frames only
+#: moves the race.
+#:
+#: So this waits for the thing it is aiming at to hold still: poll each frame until the element's
+#: document position is the same two frames running, then scroll. Bounded, and it gives up
+#: silently — a scroll that does not happen costs the operator a scroll, which is what they had
+#: before this existed.
+_SCROLL_WHEN_SETTLED: Final = """
+(() => {
+  let previous = null, frames = 0;
+  const step = () => {
+    const element = document.getElementById('ANCHOR');
+    const top = element ? Math.round(element.getBoundingClientRect().top + window.scrollY) : null;
+    if (element && top === previous) {
+      element.scrollIntoView({behavior: 'smooth', block: 'start'});
+      return;
+    }
+    previous = top;
+    if (++frames < 60) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+})()
+"""
+
 
 def render() -> None:
     cid = context.client_id()
     cfg = context.client_config(cid)
 
-    with theme.page("Publish", client_id=cid, environment=cfg.gs1.environment if cfg else None):
+    with theme.page(
+        "Publish",
+        client_id=cid,
+        environment=cfg.gs1.environment if cfg else None,
+        facts=context.rail_facts(cid, cfg),
+    ):
         theme.heading(
-            theme.step("Publish"),
+            theme.eyebrow("Publish"),
             "Publish",
             "One gate at a time. Nothing is written until every required one is answered.",
         )
         if cfg is None or cid is None:
-            theme.band("clients.yml did not load. Fix that on the Setup screen first.", "danger")
+            theme.blocked(
+                "clients.yml did not load, so this screen has nothing to work from.",
+                link_label="Open Setup →",
+                route="/",
+            )
             return
 
         _Flow(cid, cfg).build()
@@ -68,6 +108,16 @@ class _Flow:
         #: to show and adding one there would have meant a second ~250 ms blocking subprocess per
         #: redraw. One call, one answer, and the gates cannot disagree about the same run.
         self.doctor: Any = None
+        #: Whether the body has been built once. The first build is not a redraw, and scrolling
+        #: on arrival would move a screen the operator has not read yet.
+        self.drawn = False
+        #: Bound once, while the page is still being built. ``ui.run_javascript`` resolves its
+        #: client from whatever slot is open at the time, and by the time a redraw wants to scroll
+        #: it is running under a slot whose element the redraw has just deleted — which raises
+        #: "The parent element this slot belongs to has been deleted" **into a background task**,
+        #: where nothing on screen shows it. The scroll silently did not happen, and the only
+        #: evidence was in the terminal the operator does not read.
+        self.client = nicegui_context.client
         self.body = ui.column().classes("w-full gap-6")
 
     # -- assembly -------------------------------------------------------------
@@ -94,19 +144,53 @@ class _Flow:
                 theme.band(PERMANENCE_WARNING, "danger")
             else:
                 theme.band(REVERSIBLE_NOTE)
+            if self.session.answers:
+                # The session is built fresh on every render of this screen, so opening Data to
+                # check something and coming back silently discards every answer. That was always
+                # true; it is worth saying now that the rail invites moving around. Said only once
+                # there is something to lose, because a warning shown before it applies is a
+                # warning that stops being read by the time it does.
+                theme.band(
+                    "Your answers live on this screen only. Opening another screen and returning "
+                    "starts this walk again from the first gate.",
+                    "warn",
+                )
             for gate in self.session.gates:
                 self._gate(gate)
             self._execute_panel()
+        if self.drawn:
+            self._scroll_to_next()
+        self.drawn = True
+
+    def _scroll_to_next(self) -> None:
+        """Put the decision that is now next back under the operator's eyes.
+
+        Answering a gate rebuilds every element on this screen, and the screen is long — twenty
+        rows of diff at gate 6 alone. The old body scrolled away with the answer, so the reward
+        for answering the gate in front of you was a jump to the top of a page whose next question
+        is somewhere below the fold. On the longest gates that is most of a screen of scrolling
+        per answer, which is exactly the pressure that produces clicking without reading.
+
+        Nothing is scrolled on the first build: on arrival the top *is* the right place.
+        """
+        target = self.session.next_gate
+        anchor = f"gate-{target.id}" if target else "execute"
+        self.client.run_javascript(_SCROLL_WHEN_SETTLED.replace("ANCHOR", anchor))
 
     def _gate(self, gate: Gate) -> None:
         answered = gate.id in self.session.answers
         classes = "gate gate-done" if answered else "gate"
-        with ui.element("div").classes(classes):
+        with ui.element("div").classes(classes).props(f"id=gate-{gate.id}"):
             ui.label(f"STEP {gate.step}{' · REQUIRED' if gate.required else ''}").classes(
                 "gate-step"
             )
             ui.label(gate.title).classes("gate-title")
-            ui.label(gate.purpose).classes("gate-why")
+            # Markdown, not a label. Seven of the nine gate purposes in `lib.gates` are written
+            # with bold and backticks — they are the same strings the skill renders as prose — so
+            # a plain label showed the operator literal `**` and backticks on the one screen where
+            # the text most needs to be read. The emphasis is doing work in those sentences: it is
+            # on "permanent", on "how many products this run could touch".
+            ui.markdown(gate.purpose).classes("gate-why")
             getattr(self, f"_gate_{gate.id}", self._gate_default)(gate)
 
     # -- per-gate bodies ------------------------------------------------------
@@ -257,11 +341,11 @@ class _Flow:
             # across a rebuild is consent to publish a row in a form the operator may never have
             # seen — the same remembered consent the production gate is enforced per run to avoid.
             self.session.clear_row_decisions()
-            ui.notify(
-                result.stderr.strip().splitlines()[-1] if result.stderr else "run_plan finished",
-                type="positive" if result.ok else "negative",
-                timeout=8000,
-            )
+            said = result.stderr.strip().splitlines()[-1] if result.stderr else "run_plan finished"
+            if result.ok:
+                theme.notify_ok(said)
+            else:
+                theme.notify_problem(said)
             self._redraw()
             # A gate that materialises *above* the one your hands are on is fine if it is
             # announced and bad if it is not: everything below it has just shifted down,
@@ -269,11 +353,9 @@ class _Flow:
             # else forces a look at it — which is exactly why it is said out loud.
             dropped = self.session.units_missing_product_name
             if dropped:
-                ui.notify(
+                theme.notify_warning(
                     f"{len(dropped)} unit(s) have no product_name in their language. The "
-                    "missing-field gate (step 4) is now above this one and names them.",
-                    type="warning",
-                    timeout=12000,
+                    "missing-field gate (step 4) is now above this one and names them."
                 )
 
         def toggle(event: events.ValueChangeEventArguments) -> None:
@@ -474,7 +556,7 @@ class _Flow:
 
         def confirm() -> None:
             if typed.value.strip() != self.cid:
-                ui.notify("That is not the client id.", type="negative")
+                theme.notify_problem("That is not the client id.")
                 return
             self.session.answer("production", "confirm")
             self._redraw()
@@ -495,18 +577,16 @@ class _Flow:
             try:
                 argv = self.session.execute_argv(confirmed, dry_run=True)
             except GateNotAnsweredError as exc:
-                ui.notify(str(exc), type="warning", timeout=10000)
+                theme.notify_warning(str(exc))
                 return
             log.style("display:block")
             log.clear()
             log.push(" ".join(["python", *argv]))
             result = await runner.stream(argv, log.push)
-            ui.notify(
-                "Dry run finished — now read it, then Proceed or Cancel"
-                if result.ok
-                else f"Dry run exited {result.returncode}",
-                type="positive" if result.ok else "warning",
-            )
+            if result.ok:
+                theme.notify_ok("Dry run finished — now read it, then Proceed or Cancel")
+            else:
+                theme.notify_warning(f"Dry run exited {result.returncode}")
             # Running it is not answering it. The output is the thing to be approved, so the
             # answer comes from the operator below — this used to set "proceed" here, which made
             # the gate self-answering and left Cancel unreachable at the one gate whose whole
@@ -565,7 +645,7 @@ class _Flow:
         self._redraw()
 
     def _execute_panel(self) -> None:
-        with ui.element("div").classes("gate"):
+        with ui.element("div").classes("card").props("id=execute"):
             ui.label("EXECUTE").classes("gate-step")
             ui.label("Write it").classes("gate-title")
 
@@ -610,19 +690,16 @@ class _Flow:
                 try:
                     argv = self.session.execute_argv(confirmed, dry_run=False)
                 except GateNotAnsweredError as exc:
-                    ui.notify(str(exc), type="negative", timeout=12000)
+                    theme.notify_problem(str(exc))
                     return
                 log.style("display:block")
                 log.clear()
                 log.push(" ".join(["python", *argv]))
                 result = await runner.stream(argv, log.push)
-                ui.notify(
-                    "Run finished with no errors"
-                    if result.ok
-                    else f"Run exited {result.returncode} — read the log",
-                    type="positive" if result.ok else "negative",
-                    timeout=12000,
-                )
+                if result.ok:
+                    theme.notify_ok("Run finished with no errors")
+                else:
+                    theme.notify_problem(f"Run exited {result.returncode} — read the log")
 
             log = ui.log().classes("console mt-4").style("display:none")
             theme.action(
@@ -640,17 +717,15 @@ class _Flow:
         """
         plan = context.load_plan(self.cid)
         if plan is None:
-            ui.notify("No plan to confirm. Build one at the plan review gate.", type="warning")
+            theme.notify_warning("No plan to confirm. Build one at the plan review gate.")
             return None
 
         pairs = self.session.confirmed_pairs(plan)
         if not pairs:
-            ui.notify(
+            theme.notify_warning(
                 "Nothing is confirmed — every row was filtered out by the plan choice, by the "
                 "language selection, or (under Review changed) by being skipped or never "
-                "decided. Not running.",
-                type="warning",
-                timeout=10000,
+                "decided. Not running."
             )
             return None
 
