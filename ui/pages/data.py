@@ -34,14 +34,23 @@ def render() -> None:
     cid = context.client_id()
     cfg = context.client_config(cid)
 
-    with theme.page("Data", client_id=cid, environment=cfg.gs1.environment if cfg else None):
+    with theme.page(
+        "Data",
+        client_id=cid,
+        environment=cfg.gs1.environment if cfg else None,
+        facts=context.rail_facts(cid, cfg),
+    ):
         theme.heading(
-            theme.step("Data"),
+            theme.eyebrow("Data"),
             "Data",
             "The product export and the list of GTINs this run may touch.",
         )
         if cfg is None or cid is None:
-            theme.band("clients.yml did not load. Fix that on the Setup screen first.", "danger")
+            theme.blocked(
+                "clients.yml did not load, so this screen has nothing to work from.",
+                link_label="Open Setup →",
+                route="/",
+            )
             return
 
         _export(cfg, cid)
@@ -80,7 +89,7 @@ def _export(cfg: Any, cid: str) -> None:
             if target.exists():
                 target.with_suffix(f".bak{target.suffix}").write_bytes(target.read_bytes())
             await event.file.save(target)
-            ui.notify(f"Saved to {cfg.export.path} (previous kept as .bak)", type="positive")
+            theme.notify_ok(f"Saved to {cfg.export.path} (previous kept as .bak)")
 
         ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(
             'accept=".xlsx" flat bordered'
@@ -99,10 +108,10 @@ def _export(cfg: Any, cid: str) -> None:
             result = await runner.run_off_the_loop(argv)
             output.push(result.display_command)
             output.push(result.stderr or result.stdout or "(no output)")
-            ui.notify(
-                "Parse finished with errors" if not result.ok else "Parse clean",
-                type="warning" if not result.ok else "positive",
-            )
+            if result.ok:
+                theme.notify_ok("Parse clean")
+            else:
+                theme.notify_warning("Parse finished with errors")
 
         with ui.row().classes("gap-3 mt-4"):
             theme.quiet_action("Check the parse (writes nothing)", lambda: parse(dry_run=True))
@@ -149,7 +158,7 @@ def _process_list(cfg: Any) -> None:
         def remove() -> None:
             selected = {int(row["_row"]) for row in table.selected}
             if not selected:
-                ui.notify("Select the rows to remove first", type="warning")
+                theme.notify_warning("Select the rows to remove first")
                 return
             table.rows = [row for row in table.rows if int(row["_row"]) not in selected]
             table.selected = []
@@ -165,9 +174,9 @@ def _process_list(cfg: Any) -> None:
             try:
                 backup = process_list_edit.save_sheet(state["sheet"])
             except ProcessListError as exc:
-                ui.notify(str(exc), type="negative", timeout=10000)
+                theme.notify_problem(str(exc))
                 return
-            ui.notify(f"Saved. Previous version kept at {backup.name}", type="positive")
+            theme.notify_ok(f"Saved. Previous version kept at {backup.name}")
             count.text = f"{len(table.rows)} GTIN(s) will be processed"
 
         with ui.row().classes("gap-3 mt-3"):

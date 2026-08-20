@@ -332,6 +332,45 @@ def recent_runs(cid: str, limit: int = 20) -> list[RunLog]:
     return [load_run(path) for path in paths[:limit]]
 
 
+def _newest_run(cid: str) -> Path | None:
+    """The most recent run log's path, without reading any of them."""
+    try:
+        paths = sorted((output_dir(cid) / "runs").glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return None
+    return paths[-1] if paths else None
+
+
+def rail_facts(cid: str | None, cfg: ClientConfig | None) -> dict[str, str]:
+    """One short fact per rail entry: "have I done this yet?", answerable from any screen.
+
+    **Facts, never ticks.** A green tick on Data because *an* export exists cannot tell you it is
+    the *right* export, and a tick that lies is worse than no tick — the same reasoning that put
+    scope rather than the catalogue count on gate 0. A date and a row count can be checked against
+    what the operator believes; a checkmark can only be trusted or not.
+
+    **Everything here must stay stat-cheap.** This runs on every render of every screen, so one
+    subprocess would put a quarter-second on all seven — which is why the counts an operator
+    really wants (units with copy, checks passing) are *not* here: they need the doctor, and they
+    are already on the screens that own them. ``plan.summary.json`` is read because it is a small
+    file written for exactly this, not because reading files is free.
+
+    Preflight has no entry. It leaves no artifact, and there is no cheap way to say when it last
+    ran — an empty fact is better than a misleading one.
+    """
+    if cid is None or cfg is None:
+        return {}
+    facts = {
+        "Data": file_fact(cfg.export.path).age,
+        "Content": file_fact(output_dir(cid) / "data" / "generation_results.json").age,
+    }
+    if (summary := load_plan_summary(cid)) is not None:
+        facts["Publish"] = f"{summary.total} row{'' if summary.total == 1 else 's'}"
+    newest = _newest_run(cid)
+    facts["Runs"] = file_fact(newest).age if newest else "none yet"
+    return facts
+
+
 def mode_from(value: str | None) -> Mode:
     """Parse a mode name, defaulting to the least destructive one.
 

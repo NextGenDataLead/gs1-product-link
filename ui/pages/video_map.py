@@ -55,14 +55,23 @@ def render() -> None:
     cid = context.client_id()
     cfg = context.client_config(cid)
 
-    with theme.page("Data", client_id=cid, environment=cfg.gs1.environment if cfg else None):
+    with theme.page(
+        "Video mapping",
+        client_id=cid,
+        environment=cfg.gs1.environment if cfg else None,
+        facts=context.rail_facts(cid, cfg),
+    ):
         theme.heading(
-            theme.step("Data"),
+            theme.eyebrow("Video mapping"),
             "Video mapping",
             "Which video belongs to which product, in each language.",
         )
         if cfg is None or cid is None:
-            theme.band("clients.yml did not load. Fix that on the Setup screen first.", "danger")
+            theme.blocked(
+                "clients.yml did not load, so this screen has nothing to work from.",
+                link_label="Open Setup →",
+                route="/",
+            )
             return
         if cfg.media is None or not cfg.media.video_map_path:
             theme.band(
@@ -114,15 +123,12 @@ def _editor(cfg: ClientConfig, cid: str, map_path: Path) -> None:
 
         def save() -> None:
             if not pending:
-                ui.notify("Nothing to save", type="warning")
+                theme.notify_warning("Nothing to save")
                 return
             backup = _write(path, video_map_edit.apply_edits(text, pending))
             if backup is None:
                 return
-            ui.notify(
-                f"Saved {len(pending)} row(s). Previous version kept at {backup.name}",
-                type="positive",
-            )
+            theme.notify_ok(f"Saved {len(pending)} row(s). Previous version kept at {backup.name}")
             pending.clear()
             refresh_status()
             _coverage(coverage, cfg, path, cid)
@@ -130,7 +136,7 @@ def _editor(cfg: ClientConfig, cid: str, map_path: Path) -> None:
         def add_missing() -> None:
             absent = video_map_edit.files_missing_from_map(text, files)
             if not absent:
-                ui.notify("Every file on disk is already in the mapping", type="positive")
+                theme.notify_ok("Every file on disk is already in the mapping")
                 return
             candidate = text
             for language, names in absent.items():
@@ -139,10 +145,9 @@ def _editor(cfg: ClientConfig, cid: str, map_path: Path) -> None:
             if backup is None:
                 return
             total = sum(len(names) for names in absent.values())
-            ui.notify(
+            theme.notify_ok(
                 f"Added {total} unset row(s). Previous version kept at {backup.name}. "
-                "Reload the screen to fill them in.",
-                type="positive",
+                "Reload the screen to fill them in."
             )
 
         with ui.row().classes("gap-3 mt-4 items-center"):
@@ -203,7 +208,7 @@ def _write(path: Path, candidate: str) -> Path | None:
     try:
         return video_map_edit.write_validated(path, candidate)
     except (OSError, VideoMapError) as exc:
-        ui.notify(str(exc), type="negative", timeout=15000)
+        theme.notify_problem(str(exc))
         return None
 
 

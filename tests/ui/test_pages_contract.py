@@ -47,10 +47,13 @@ PAGE_MODULES: Final = (
 #: Routes that are registered but deliberately absent from the rail, with how they are reached.
 #: A screen added without either an entry here or a rail entry is unreachable, which is the point
 #: of checking both directions.
-UNLISTED_ROUTES: Final[dict[str, str]] = {
-    "/videos": "the video mapping editor, linked from the Data screen — one input file's editor "
-    "rather than a step of the run, and the rail is numbered by step",
-}
+#:
+#: Empty, and kept anyway. ``/videos`` lived here for as long as the rail was a single numbered
+#: list of six — an entry would have numbered a detour as a step of the run. Splitting the rail
+#: into the batch and the tools gave it somewhere honest to sit, so it moved. The next screen that
+#: is genuinely reachable only from another one still needs a home, and it should be this rather
+#: than a quiet exemption.
+UNLISTED_ROUTES: Final[dict[str, str]] = {}
 
 #: NiceGUI's own machinery, not ours.
 _INTERNAL_PREFIXES: Final = ("/_nicegui", "/docs", "/redoc", "/openapi.json")
@@ -92,17 +95,19 @@ def test_the_theme_installs() -> None:
 def test_every_rail_entry_has_a_route() -> None:
     """A rail entry with no route is a dead link on the one navigation the shell has."""
     routes = _our_routes()
-    for label, path, step in theme.NAV:
-        assert path in routes, f"rail entry {step} {label!r} points at {path}, which has no route"
+    for screen in theme.NAV:
+        assert screen.route in routes, (
+            f"rail entry {screen.label!r} points at {screen.route}, which has no route"
+        )
 
 
 def test_every_route_is_reachable() -> None:
     """The other direction: a screen with no way to reach it is a screen nobody will use."""
-    listed = {path for _, path, _ in theme.NAV} | set(UNLISTED_ROUTES)
+    listed = {screen.route for screen in theme.NAV} | set(UNLISTED_ROUTES)
     orphans = _our_routes() - listed
     assert not orphans, (
-        f"registered but unreachable: {sorted(orphans)} — add a rail entry in ui/theme.py NAV, "
-        "or record how it is reached in UNLISTED_ROUTES here"
+        f"registered but unreachable: {sorted(orphans)} — add a rail entry to WAVE or TOOLS in "
+        "ui/theme.py, or record how it is reached in UNLISTED_ROUTES here"
     )
 
 
@@ -111,17 +116,35 @@ def test_every_route_is_reachable() -> None:
 
 def test_the_rail_is_numbered_in_order_from_one() -> None:
     """The numbers are the workflow. A gap or a repeat makes them decoration."""
-    assert [number for _, _, number in theme.NAV] == [str(n) for n in range(1, len(theme.NAV) + 1)]
+    assert [screen.eyebrow for screen in theme.WAVE] == [
+        f"Step {n}" for n in range(1, len(theme.WAVE) + 1)
+    ]
+
+
+def test_the_batch_is_the_four_screens_an_operator_repeats() -> None:
+    """Setup and Runs are not steps of a run, and numbering them alongside four that are said so.
+
+    Setup is configured once and left alone; Runs is read afterwards. While all six were numbered
+    1-6 the rail asserted they were one sequence, which buried the loop an operator actually
+    repeats between machine configuration at one end and history at the other.
+
+    Asserted rather than left to the reviewer, because the failure mode is a later screen being
+    appended to ``WAVE`` because that is where the other entries are — which renumbers the batch
+    silently and puts a "Step 5" eyebrow on something nobody runs per batch.
+    """
+    assert [screen.label for screen in theme.WAVE] == ["Data", "Content", "Preflight", "Publish"]
+    assert [screen.label for screen in theme.TOOLS] == ["Setup", "Runs", "Video mapping"]
+    assert not any(screen.eyebrow.startswith("Step") for screen in theme.TOOLS)
 
 
 def test_preflight_comes_after_the_screens_it_depends_on() -> None:
     """Four of the doctor's checks answer "Run `parse_export` first" — which is the Data screen.
 
-    Preflight sat at step 2 for that whole time, so step 2 told an operator to go and do step 3
+    Preflight sat ahead of them for a long time, so it told an operator to go and do a later step
     and come back, and on a fresh machine most of the list could not answer its own questions
     yet. This is the ordering, asserted rather than remembered.
     """
-    order = [label for label, _, _ in theme.NAV]
+    order = [screen.label for screen in theme.WAVE]
 
     assert order.index("Preflight") > order.index("Data")
     assert order.index("Preflight") > order.index("Content")
@@ -129,7 +152,7 @@ def test_preflight_comes_after_the_screens_it_depends_on() -> None:
 
 
 def test_no_screen_spells_its_own_step_number() -> None:
-    """``theme.step`` reads the rail, so a reorder is one edit rather than seven.
+    """``theme.eyebrow`` reads the rail, so a reorder is one edit rather than seven.
 
     They *were* seven: the rail carried the numbers and every screen also hardcoded its own into
     ``theme.heading``. Two lists that had to be renumbered together, with nothing to notice when
@@ -141,6 +164,7 @@ def test_no_screen_spells_its_own_step_number() -> None:
             if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
                 continue
             assert not _STEP_LITERAL.fullmatch(node.value), (
-                f"{path.name}:{node.lineno} spells {node.value!r} — use theme.step('<rail label>') "
-                "so the rail stays the only place the order is written"
+                f"{path.name}:{node.lineno} spells {node.value!r} — use "
+                "theme.eyebrow('<rail label>') so the rail stays the only place the order "
+                "is written"
             )

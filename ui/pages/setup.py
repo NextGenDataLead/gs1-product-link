@@ -51,9 +51,14 @@ def render() -> None:
     cid = context.client_id()
     cfg = context.client_config(cid)
 
-    with theme.page("Setup", client_id=cid, environment=cfg.gs1.environment if cfg else None):
+    with theme.page(
+        "Setup",
+        client_id=cid,
+        environment=cfg.gs1.environment if cfg else None,
+        facts=context.rail_facts(cid, cfg),
+    ):
         theme.heading(
-            theme.step("Setup"),
+            theme.eyebrow("Setup"),
             "Setup",
             "What this machine is configured to publish, where, and with which credentials.",
         )
@@ -68,6 +73,20 @@ def render() -> None:
                 "never be deleted — retraction only clears their links and disables them.",
                 "danger",
             )
+
+        # Eight sections and about four screens of scroll, on the one screen a new operator
+        # opens first. The jumps are the cheapest way to make its shape visible without
+        # rearranging what is on it.
+        theme.jumps(
+            [
+                ("Client", "client"),
+                ("WordPress", "wordpress"),
+                ("GS1", "gs1"),
+                ("Files", "files"),
+                ("Credentials", "credentials"),
+                ("Test", "tests"),
+            ]
+        )
 
         editor = _Editor(cid)
         _client(editor, cfg)
@@ -169,7 +188,7 @@ class _Editor:
 
 
 def _client(editor: _Editor, cfg: ClientConfig) -> None:
-    with theme.section("Client"):
+    with theme.section("Client", anchor="client"):
         with ui.element("div").classes("field"):
             ui.label("Client id").classes("field-label")
             with ui.column().classes("gap-1"):
@@ -190,7 +209,7 @@ def _client(editor: _Editor, cfg: ClientConfig) -> None:
 
 def _wordpress(editor: _Editor, cfg: ClientConfig) -> None:
     wp = cfg.wordpress
-    with theme.section("WordPress"):
+    with theme.section("WordPress", anchor="wordpress"):
         editor.text(
             ("wordpress", "site_url"),
             "Site",
@@ -246,7 +265,7 @@ def _wordpress(editor: _Editor, cfg: ClientConfig) -> None:
 
 def _gs1(editor: _Editor, cfg: ClientConfig) -> None:
     gs1 = cfg.gs1
-    with theme.section("GS1"):
+    with theme.section("GS1", anchor="gs1"):
         editor.choice(
             ("gs1", "environment"),
             "Environment",
@@ -284,7 +303,7 @@ def _gs1(editor: _Editor, cfg: ClientConfig) -> None:
 
 
 def _files(editor: _Editor, cfg: ClientConfig) -> None:
-    with theme.section("Files"):
+    with theme.section("Files", anchor="files"):
         editor.text(
             ("export", "path"),
             "Product export",
@@ -474,7 +493,7 @@ def _credentials(cfg: ClientConfig) -> None:
     ]
     known = env_edit.describe([name for name, _, _ in wanted if name])
 
-    with theme.section("Credentials"):
+    with theme.section("Credentials", anchor="credentials"):
         ui.label(
             "These set values in .env, and never show one back. A field that displayed a "
             "production credential would put it in the next screenshot and support ticket, and "
@@ -550,7 +569,7 @@ def _credential_row(label: str, secret: env_edit.Secret, is_app_password: bool) 
 
 def _tests(cid: str) -> None:
     """Live checks, run as the doctor rather than reimplemented — see :mod:`lib.preflight`."""
-    with theme.section("Test"):
+    with theme.section("Test", anchor="tests"):
         ui.label(
             "Each button runs `python -m scripts.doctor` and shows the checks that answer for "
             "that part of the form. They are the preflight's own checks, not a second opinion: "
@@ -610,7 +629,9 @@ def _tests(cid: str) -> None:
 
 def _read_only(cfg: ClientConfig) -> None:
     """The blocks a form must not offer to edit, each with the reason it is on this list."""
-    with theme.section("Settled elsewhere — read-only"):
+    # Folded by default. It is the longest section on the screen and the only one with nothing to
+    # do on it, so open it sat between the operator and the Test buttons every single visit.
+    with theme.section("Settled elsewhere — read-only", anchor="read-only", collapsed=True):
         _fixed(
             "Content generation",
             f"prompt version {cfg.generator.prompt_version}, model {cfg.generator.model}"
@@ -619,7 +640,7 @@ def _read_only(cfg: ClientConfig) -> None:
             "run_plan derives require_generated_copy from whether this block is present, so "
             "removing it does not raise — it turns off the check that holds back a unit with no "
             "copy, and that unit publishes a blank tagline instead. It is a switch, not a "
-            "credential, and it stays even on this machine, which never generates anything.",
+            "credential, and it stays whether or not this machine generates anything itself.",
         )
         _fixed(
             "ACF field map",
