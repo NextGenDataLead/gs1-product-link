@@ -255,7 +255,7 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
   REST route for assigning a post's language or linking a translation group, so the site must host a
   small Code Snippet / mu-plugin exposing one endpoint at `wordpress.wpml_helper_path` (default
   `/wp-json/gs1dl/v1/translations`; the pilot uses `/wp-json/democlient/v1/translations`). Source and
-  live verification: [`clients/democlient-page-adapter.md`](clients/democlient-page-adapter.md) §7.
+  live verification: [`clients/democlient-page-adapter.md`](../clients/democlient-page-adapter.md) §7.
 - **Verify:** `curl https://{site}/wp-json/wpml/v1` returns 200, **and** the helper route accepts a
   POST and echoes back the translation group it actually wrote (a group that differs from the one sent
   is rejected by the client as a 409 — that assertion is the whole point of the helper's response).
@@ -268,7 +268,7 @@ Repeat this section (Part 3) for every new client. For the initial build, comple
 `curl https://{site}/wp-json/pll/v1/languages` returns 200 with both languages. No helper needed.
 
 - **Blocks:** Phase 4 completion (multilingual detection test).
-- **See:** [`wordpress-onboarding.md`](wordpress-onboarding.md) for the operator-facing version of this
+- **See:** [`wordpress-onboarding.md`](../wordpress-onboarding.md) for the operator-facing version of this
   step, and `IMPLEMENTATION_SPEC.md` §4.5 for the adapter contract.
 
 ### 3.19 Media library upload limits raised

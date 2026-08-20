@@ -49,7 +49,9 @@ Digital Link, QR) and have their own trigger phrases.
 operator repeating a known loop. It **subprocesses the scripts and must never import their
 `main()`** (see the `.env` rule below), and `ui/session.py` **raises** rather than building a run
 command while a required gate is unanswered. It holds no LLM credential and never reaches
-Anthropic **unless `ANTHROPIC_API_KEY` is set** — that is what turns on the Content screen's
+Anthropic **unless the client's `generator.api_key_env` names a variable with a value** (the
+example config points it at `ANTHROPIC_API_KEY`, but the name is per-client) — that is what turns
+on the Content screen's
 Generate button, and even then the key is read by the `run_generate` subprocess, never by `ui/`.
 
 On the operator's machine it installs by double-click instead — `install.command` / `install.bat`,
@@ -57,7 +59,10 @@ then `start.command` / `start.bat` — from the **committed `uv.lock`**. Do not 
 development clone: they replace `.venv` with a 3.11 environment that has `ui` but not `dev`. After
 touching `pyproject.toml`, run **`uv lock`** and commit it, or the operator's `uv sync --locked`
 refuses to install; `tests/test_packaging.py` and CI's `uv lock --check` both catch that.
-`docs/operator-install.md` is the operator-facing doc.
+The operator-facing docs are `docs/operator-install.md` (getting it onto their machine) and
+`docs/operator-guide.md` (running a batch — screenshots, glossary, no terminal). Keep them free of
+module names and test files; `docs/ui-operator-shell.md` is where the rationale goes, and it says
+so at the top. `docs/README.md` routes by reader.
 
 It is also the only thing that **writes `clients.yml` and `.env`**, on the Setup screen.
 `ui/config_edit.py` edits the YAML **as text** — that file is a document whose comments are often

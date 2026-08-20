@@ -21,7 +21,7 @@ The tool turns a GS1 Data Source export into (a) WordPress product pages, one pe
 >
 > **From Claude Code** — normally with a slash command, **`/gs1-publish`** (or `/gs1-pages` / `/gs1-links` for one leg) — which loads the `flow-orchestrator` skill, walks you through the operator gates, and invokes the Python scripts for you. Plain language works too (*"publish {client_id} to GS1"*), but the slash command is preferred: it pins the mode instead of leaving it to be inferred. See [Which flow do you need?](#which-flow-do-you-need).
 >
-> **From the local operator shell** — `python -m ui`, a desktop window over the same commands, for the recurring loop when a terminal is not the right surface. It subprocesses the same scripts, renders the same gates from the same source, and **refuses to build a run command while any required gate is unanswered**. It holds no LLM credential and never talks to Anthropic unless `ANTHROPIC_API_KEY` is set, which enables generating copy from its Content screen. See [`ui-operator-shell.md`](ui-operator-shell.md), and [`operator-install.md`](operator-install.md) for the double-click install that puts it on a machine with no Python.
+> **From the local operator shell** — `python -m ui`, a desktop window over the same commands, for the recurring loop when a terminal is not the right surface. It subprocesses the same scripts, renders the same gates from the same source, and **refuses to build a run command while any required gate is unanswered**. It holds no LLM credential and never talks to Anthropic unless the client's `generator.api_key_env` names a variable that has a value, which enables generating copy from its Content screen. See [`ui-operator-shell.md`](ui-operator-shell.md), and [`operator-install.md`](operator-install.md) for the double-click install that puts it on a machine with no Python.
 >
 > Pick by who is doing the work, not by capability. The shell is for an operator repeating a known loop; Claude Code is for onboarding a client, diagnosing something odd, or any step where the answer is not already known.
 >
@@ -287,7 +287,8 @@ Read-only until the final step. This is the one workflow where working hands-on 
 ## Next
 
 - [`operator-install.md`](operator-install.md) — the two-double-click install for the operator's machine.
-- [`ui-operator-shell.md`](ui-operator-shell.md) — the six screens of that shell, and where its safety lives.
+- [`operator-guide.md`](operator-guide.md) — the operator's walkthrough of a batch, with screenshots.
+- [`ui-operator-shell.md`](ui-operator-shell.md) — why each of that shell's screens is built as it is, and where its safety lives.
 - [`troubleshooting.md`](troubleshooting.md) — every error type, and the traps already paid for.
 - [`verifying-live.md`](verifying-live.md) — how to prove the flows still write to production, without degrading a live product.
 - [`gs1-nl-onboarding.md`](gs1-nl-onboarding.md) · [`wordpress-onboarding.md`](wordpress-onboarding.md) — the two external systems.

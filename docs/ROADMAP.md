@@ -120,7 +120,8 @@ plan behind it is not in the repo (it is a working document); what matters here 
 Two decisions inside it are settled and should not be reopened:
 
 - **The operator's machine is LLM-free by default, and only by default.** With no
-  `ANTHROPIC_API_KEY` there is no Anthropic egress and `run_generate` never runs; copy is written
+  a value for the variable named by `generator.api_key_env` there is no Anthropic egress and
+  `run_generate` never runs; copy is written
   on the maintainer's machine and `generation_results.json` is handed over as a file. That removes
   a class of IT objection and a per-token cost, at the price of one file changing hands per batch,
   and it remains the shipped default. What was reopened — deliberately, because the shell could

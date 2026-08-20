@@ -207,6 +207,13 @@ body { background: var(--paper) !important; color: var(--ink) !important;
 .gate-title   { font-size: var(--text-lead); font-weight: 620; margin: var(--space-1) 0; }
 .gate-why     { font-size: var(--text-small); color: var(--ink-soft); line-height: 1.55;
                 max-width: 46rem; margin-bottom: var(--space-4); }
+/* Rendered from markdown, so it arrives wrapped in paragraphs that would otherwise inherit the
+   browser's own spacing and pull away from the title above them. */
+.gate-why p       { margin: 0 0 var(--space-2); }
+.gate-why p:last-child { margin-bottom: 0; }
+.gate-why code    { font-family: var(--font-mono); font-size: 0.92em;
+                    background: color-mix(in oklab, var(--ink) 6%, transparent);
+                    padding: 0.05em 0.3em; }
 .gate-done    { opacity: 0.55; }
 
 .console      { font-family: var(--font-mono); font-size: var(--text-micro); line-height: 1.6;

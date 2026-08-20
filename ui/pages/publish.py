@@ -185,7 +185,12 @@ class _Flow:
                 "gate-step"
             )
             ui.label(gate.title).classes("gate-title")
-            ui.label(gate.purpose).classes("gate-why")
+            # Markdown, not a label. Seven of the nine gate purposes in `lib.gates` are written
+            # with bold and backticks — they are the same strings the skill renders as prose — so
+            # a plain label showed the operator literal `**` and backticks on the one screen where
+            # the text most needs to be read. The emphasis is doing work in those sentences: it is
+            # on "permanent", on "how many products this run could touch".
+            ui.markdown(gate.purpose).classes("gate-why")
             getattr(self, f"_gate_{gate.id}", self._gate_default)(gate)
 
     # -- per-gate bodies ------------------------------------------------------

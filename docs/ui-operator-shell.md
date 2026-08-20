@@ -1,5 +1,11 @@
 # The operator shell
 
+> **Looking for how to publish a batch?** That is
+> [`operator-guide.md`](operator-guide.md) — a walkthrough of the four screens with screenshots,
+> written for the person running the tool. **This page is not that.** It explains *why each screen
+> is built the way it is*, usually by naming the defect that produced the current design, and it
+> names Python modules and test files throughout. It is for whoever maintains the shell.
+
 A local desktop window over the same commands you would otherwise type. It exists so that the
 recurring loop — drop a new export, prune the process list, import the copy, run the flow, read
 the result — does not require a terminal, a virtualenv, or knowing which of eleven scripts to call.
@@ -51,24 +57,44 @@ through `flow-orchestrator`. The shell is a second surface over the same gates, 
 
 ## The screens
 
+Seven screens, in two groups. **The rail is the argument**: the numbered four are the loop an
+operator repeats per batch, and everything else is deliberately not numbered.
+
 | # | Screen | What it is for |
 |---|---|---|
-| 1 | **Setup** | The operator-facing half of `clients.yml` and `.env`, as a form, with live Test buttons. |
-| 2 | **Data** | Upload the export, prune the process list, edit the video mapping, read the data-quality report. |
-| 3 | **Content** | Import `generation_results.json`, check its coverage, read the copy. |
-| 4 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
-| 5 | **Publish** | The nine gates, one at a time. |
-| 6 | **Runs** | Every row of every run, as it was recorded at the time, and whether the site agrees. |
+| 1 | **Data** | Upload the export, prune the process list, read the data-quality report. |
+| 2 | **Content** | Generate or import `generation_results.json`, check its coverage, read the copy. |
+| 3 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
+| 4 | **Publish** | The nine gates, one at a time. |
+| — | **Setup** | The operator-facing half of `clients.yml` and `.env`, as a form, with live Test buttons. |
+| — | **Runs** | Every row of every run, as it was recorded at the time, and whether the site agrees. |
+| — | **Video mapping** | Which video file belongs to which product, per language. |
 
-Configure the machine · load this wave's inputs · check *this wave* · publish it · read what ran.
+Load this batch's inputs · review its copy · check *this batch* · publish it.
 
-**Preflight used to sit at 2, and that was wrong.** Four of the doctor's checks have the remedy
-"Run `parse_export` first" — which is the Data screen — so step 2 told an operator to go and do
-step 3 and come back, and on a machine being set up from scratch most of the list could not answer
-its own questions yet. Its headline is "N of M in scope", a statement *about the export just
-loaded*, so it belongs after the loading. Nothing is lost by moving it: the credential checks it
-also carries are on the Setup screen's Test buttons, at the moment the field is edited. The order
-lives in `ui/theme.py`'s `NAV` and nowhere else — each screen reads its own number from it.
+**All six used to be numbered 1-6, and that was wrong in the same way twice.** Setup is configured
+once and then left alone; Runs is read afterwards. Numbering them alongside the four said they were
+one sequence, so the work an operator actually repeats was buried between machine configuration at
+one end and history at the other. They keep a permanent place in the rail — below a rule, under
+*This machine* — because a tool nobody can find is a tool nobody uses; only below 55rem, where the
+rail used to stack as a full-width block with no way past it, does anything fold behind a `☰`.
+
+**And Preflight used to sit at 2.** Four of the doctor's checks have the remedy "Run `parse_export`
+first" — which is the Data screen — so it told an operator to go and do a later step and come back,
+and on a machine being set up from scratch most of the list could not answer its own questions yet.
+Its headline is "N of M in scope", a statement *about the export just loaded*, so it belongs after
+the loading. Nothing is lost by moving it: the credential checks it also carries are on the Setup
+screen's Test buttons, at the moment the field is edited.
+
+The order lives in `ui/theme.py`'s `WAVE` and nowhere else — each screen reads its own eyebrow from
+it via `theme.eyebrow`, and `tests/ui/test_pages_contract.py` holds both the numbering and the
+membership of the two groups, in both directions against the registered routes.
+
+Each rail entry also carries one **fact** from `ui.context.rail_facts` — the export's age, the
+plan's row count — so "have I done Data yet?" is answerable from any screen. Facts and not ticks:
+a tick on Data because *an* export exists cannot say it is the *right* export, and a tick that lies
+is worse than no tick. Everything in there must stay stat-cheap, because it runs on every render of
+every screen; `tests/ui/test_shell_chrome_contract.py` fails if it grows a subprocess.
 
 ### Every button says that it is working
 
@@ -96,66 +122,6 @@ have animated. Both halves are checked by `tests/ui/test_run_feedback_contract.p
 the handler list from the code rather than keeping one: a list of known offenders goes stale in
 both directions, and the button added next month is the case it would miss.
 
-### Setup
-
-The client, the site, the environment, the credentials, and every configured file with **how long
-ago it was modified**. The export path is authoritative and has no command-line override, so a
-workbook saved somewhere new is invisible to the tool — the date beside it is the fastest way to
-notice.
-
-The two most expensive mistakes in this pipeline are both *config* mistakes that nothing downstream
-notices: pointing at the wrong export, and pointing at production. Both were previously made in a
-text editor, in a file whose rules are not visible from inside it. Hence the form, and five things
-about it:
-
-- **Only changed fields are written.** The screen shows the *resolved* config, with the `defaults`
-  block merged in. Saving all of it would freeze every inherited default into this client's own
-  block, so an untouched form writes nothing at all.
-- **Everything else in `clients.yml` survives byte for byte** — comments, alignment, quoting style,
-  and every block the form does not show. The file is a document, and several of its comments are
-  the only record of why a value is what it is.
-- **The result is validated before it replaces the file**, by the same `check_config` the doctor
-  runs, which reports every offending field rather than the first. A candidate that would not load
-  is refused and the file is left alone. The previous version is kept as `clients.yml.bak`.
-- **Switching to production asks for the client id, typed in full** — the same decision the
-  production gate asks about, made once here instead of once per run. Two further inconsistencies
-  the schema cannot express are refused too: a default language that is not in the language list,
-  and `production` with no production account or credential names.
-- **The client id is not editable.** It is the path to `output/{client}/state.json`, which records
-  every GTIN already published. Renaming it orphans that file rather than moving it, and every
-  published GTIN would classify as new on the next run.
-
-**Credentials are write-only.** The fields set values in `.env` and never show one back; an empty
-box means *leave this one alone*. Values are always quoted, because the commonest credential
-failure here is an application password that lost its quotes and was truncated at the first space —
-which the screen also reports, as a group count, without disclosing anything. There is **no
-Anthropic key field**, and there will not be one.
-
-`gdsn_map`, `acf_map`, `brick_category_map` and `generator` stay read-only, each with the reason
-beside it. The first three were settled by a field walk against the live site; `generator` is the
-E21 switch, not a preference.
-
-The Test buttons run `python -m scripts.doctor` and show the checks that answer for that part of
-the form. They are the preflight's own checks rather than a second opinion — and when the run as a
-whole fails on a check the button did not ask about, it says so instead of showing green.
-
-### Preflight
-
-Runs the doctor in a subprocess and renders each check with its remedy. Two buttons: offline (no
-credentials, no sockets) and everything. The full run authenticates against WordPress and mints a
-GS1 token; both are read-only.
-
-It runs the offline checks on arrival, so the screen is never blank — which is also why the
-buttons need to *look* like they did something. The subprocess runs off the event loop and the
-buttons disable while it does; without that, a blocking `subprocess.run` in a click handler held
-the loop until it had already finished, so "running…" never reached the browser and the screen
-looked identical from click to result. Each result carries the time it finished, because on a
-healthy machine an identical list is exactly what a working re-run produces.
-
-The first line to read is **"What a run would touch"** — how many products survive the process list
-and the video allowlist. Every check below it reports on that scope rather than the whole
-catalogue.
-
 ### Data
 
 Uploading the export **replaces the configured path in place**, keeping the previous file as
@@ -165,26 +131,6 @@ The process-list grid is for the one thing the operator does with that file: **d
 Every other column is preserved verbatim — they are your working notes. Saving keeps the previous
 version, and refuses to write a list with no GTINs at all, because that would produce an empty plan
 and a run that reports success having published nothing.
-
-### Video mapping
-
-Linked from Data rather than sitting in the rail: it is one input file's editor, and the rail is
-numbered by step. It exists because that file decides whether a product can be published at all —
-with `media.restrict_to_mapped_gtins` on, a product without a confirmed video in **every** language
-never reaches the plan, so an operator could complete every screen and still produce an empty plan
-with the fix available only in a text editor.
-
-It lists every file per language with its state (unset · confirmed · `skip` · not on disk), offers
-`build_video_map`'s ranked fuzzy hints as *suggestions that fill the box*, and stages edits until
-one Save. Three things it will not do:
-
-- **Re-draft the file.** Confirmed rows are client sign-off. Drafting stays a terminal job, where
-  redirecting the output over the mapping is a deliberate act rather than a click.
-- **Round-trip the YAML.** Each row's trailing comment records which fuzzy hint its GTIN came from
-  — the evidence behind the sign-off — so `ui/video_map_edit.py` rewrites one line at a time, in the
-  spirit of `ui/config_edit.py` on `clients.yml`.
-- **Write a file that lost a row.** Nothing here deletes one, so a row that has disappeared is a
-  fault in the tool, and the file is left alone.
 
 ### Content
 
@@ -213,13 +159,41 @@ stops an operator looking.
 Coverage and the review come from **one** preflight run, and the import button refreshes both: they
 describe the file it just replaced.
 
-**Asking for that copy is a conversation, not a button, and deliberately so.** This machine never
-runs `run_generate` — no API key, no Anthropic egress — so it cannot produce
-`generation_requests.json` either; that command runs on the maintainer's machine, in a Claude Code
-session with the `content-generator` skill, which reads the pending units itself from the same
-export. What the operator sends is the list this screen already shows. A file written here for
-someone else to run `--emit` against would add a hand-off without removing one, which is why there
-is no export button.
+**There are two producers, and which one this screen offers depends on one config field.** With
+the client's `generator.api_key_env` naming a variable that has a value, the screen leads with
+**Generate the copy** and a button that runs `python -m scripts.run_generate {client} --backend
+api` as a subprocess — the key is read by the child from `.env`, never by this process. With it
+unset there is no button and no Anthropic egress at all: the copy is written on the maintainer's
+machine, in a Claude Code session with the `content-generator` skill, and arrives here as a file
+to import. Both write the same `generation_results.json` against the same contract.
+
+There is still no **export** button for `generation_requests.json`, and that is deliberate: the
+skill reads the pending units itself from the same export, so what the operator sends is the list
+this screen already shows, and a file written here for someone else to run `--emit` against would
+add a hand-off without removing one.
+
+> This paragraph said the opposite for a while — "asking for that copy is a conversation, not a
+> button… this machine never runs `run_generate`" — which stopped being true when the key became
+> optional, and stayed on the page for a release. The intro of this document was updated in the
+> same change and this section was not, so the doc contradicted itself in two places about the
+> most consequential thing on the screen.
+
+### Preflight
+
+Runs the doctor in a subprocess and renders each check with its remedy. Two buttons: offline (no
+credentials, no sockets) and everything. The full run authenticates against WordPress and mints a
+GS1 token; both are read-only.
+
+It runs the offline checks on arrival, so the screen is never blank — which is also why the
+buttons need to *look* like they did something. The subprocess runs off the event loop and the
+buttons disable while it does; without that, a blocking `subprocess.run` in a click handler held
+the loop until it had already finished, so "running…" never reached the browser and the screen
+looked identical from click to result. Each result carries the time it finished, because on a
+healthy machine an identical list is exactly what a working re-run produces.
+
+The first line to read is **"What a run would touch"** — how many products survive the process list
+and the video allowlist. Every check below it reports on that scope rather than the whole
+catalogue.
 
 ### Publish
 
@@ -315,6 +289,49 @@ The Gate index's **Modes column is checked against the code** in both directions
 ids and step numbers. It is prose, it said `all` for a gate that was never meant to fire
 unconditionally, and nothing compared the two — which is how that defect shipped.
 
+### Setup
+
+The client, the site, the environment, the credentials, and every configured file with **how long
+ago it was modified**. The export path is authoritative and has no command-line override, so a
+workbook saved somewhere new is invisible to the tool — the date beside it is the fastest way to
+notice.
+
+The two most expensive mistakes in this pipeline are both *config* mistakes that nothing downstream
+notices: pointing at the wrong export, and pointing at production. Both were previously made in a
+text editor, in a file whose rules are not visible from inside it. Hence the form, and five things
+about it:
+
+- **Only changed fields are written.** The screen shows the *resolved* config, with the `defaults`
+  block merged in. Saving all of it would freeze every inherited default into this client's own
+  block, so an untouched form writes nothing at all.
+- **Everything else in `clients.yml` survives byte for byte** — comments, alignment, quoting style,
+  and every block the form does not show. The file is a document, and several of its comments are
+  the only record of why a value is what it is.
+- **The result is validated before it replaces the file**, by the same `check_config` the doctor
+  runs, which reports every offending field rather than the first. A candidate that would not load
+  is refused and the file is left alone. The previous version is kept as `clients.yml.bak`.
+- **Switching to production asks for the client id, typed in full** — the same decision the
+  production gate asks about, made once here instead of once per run. Two further inconsistencies
+  the schema cannot express are refused too: a default language that is not in the language list,
+  and `production` with no production account or credential names.
+- **The client id is not editable.** It is the path to `output/{client}/state.json`, which records
+  every GTIN already published. Renaming it orphans that file rather than moving it, and every
+  published GTIN would classify as new on the next run.
+
+**Credentials are write-only.** The fields set values in `.env` and never show one back; an empty
+box means *leave this one alone*. Values are always quoted, because the commonest credential
+failure here is an application password that lost its quotes and was truncated at the first space —
+which the screen also reports, as a group count, without disclosing anything. There is **no
+Anthropic key field**, and there will not be one.
+
+`gdsn_map`, `acf_map`, `brick_category_map` and `generator` stay read-only, each with the reason
+beside it. The first three were settled by a field walk against the live site; `generator` is the
+E21 switch, not a preference.
+
+The Test buttons run `python -m scripts.doctor` and show the checks that answer for that part of
+the form. They are the preflight's own checks rather than a second opinion — and when the run as a
+whole fails on a check the button did not ask about, it says so instead of showing green.
+
 ### Runs
 
 Reads `output/{client}/runs/*.jsonl`, newest first, and distinguishes a **partial** log — a run
@@ -341,6 +358,28 @@ last. `python -m scripts.reconcile` is the same check in a terminal.
 
 ---
 
+### Video mapping
+
+Under *This machine* rather than in the numbered four: it is one input file's editor, not a step
+of a batch. It sat outside the rail entirely while the rail was a single numbered list, reachable
+only from a link on Data; splitting the rail gave it somewhere honest to sit. It exists because
+that file decides whether a product can be published at all —
+with `media.restrict_to_mapped_gtins` on, a product without a confirmed video in **every** language
+never reaches the plan, so an operator could complete every screen and still produce an empty plan
+with the fix available only in a text editor.
+
+It lists every file per language with its state (unset · confirmed · `skip` · not on disk), offers
+`build_video_map`'s ranked fuzzy hints as *suggestions that fill the box*, and stages edits until
+one Save. Three things it will not do:
+
+- **Re-draft the file.** Confirmed rows are client sign-off. Drafting stays a terminal job, where
+  redirecting the output over the mapping is a deliberate act rather than a click.
+- **Round-trip the YAML.** Each row's trailing comment records which fuzzy hint its GTIN came from
+  — the evidence behind the sign-off — so `ui/video_map_edit.py` rewrites one line at a time, in the
+  spirit of `ui/config_edit.py` on `clients.yml`.
+- **Write a file that lost a row.** Nothing here deletes one, so a row that has disappeared is a
+  fault in the tool, and the file is left alone.
+
 ## Where the safety actually lives
 
 | Guard | Where |
@@ -359,6 +398,33 @@ importing them. That is also why it cannot import `main()`: `load_env()` lives i
 the staging-guard variables inside it. A test asserts no module under `ui/` does either.
 
 ---
+
+## Regenerating the screenshots
+
+[`operator-guide.md`](operator-guide.md) embeds one PNG per screen from `docs/images/`. They go
+stale whenever the chrome changes, and they are **captured against a throwaway client, never
+against a real one** — `clients.yml` is gitignored because it is client configuration, and a
+screenshot bakes the client name, real GTINs, product names and the site URL into a committed
+binary that no `.gitignore` protects.
+
+The recipe, all of it outside the repository:
+
+1. Copy the repo to a scratch directory. Use `clients.example.yml` as its `clients.yml` —
+   `democlient` is already defined in it.
+2. Write synthetic `output/{client}/data/products.json`, `generation_results.json`, `plan.json`,
+   `plan.summary.json` and one `runs/*.jsonl` through the models in `lib.records` and
+   `lib.generator`, so the shapes are right by construction rather than by hand. Products need
+   `image_url` and the `dim_*` extras or the plan holds all of them (E22/E23) and every figure
+   reads zero. Leave `input_fingerprint` **null** on each result item — it is optional, and any
+   other value fails the doctor's staleness check.
+3. Give it `input/{client}/process-list.xlsx` (a `Barcode` column), a stand-in `products.xlsx`,
+   and `videos/mapping.yml` in `{language: [{file, gtin}]}` shape with matching files on disk.
+4. Run `python -m scripts.run_plan {client}` there so the plan and the rail facts agree, then
+   serve it with `ui.run(..., native=False, show=False)` on a spare port and drive Playwright
+   at 1280x860.
+
+The scratch directory's absolute path shows up in the Preflight screenshot's first check, so put
+it somewhere that is not a private path.
 
 ## For IT
 
