@@ -776,8 +776,20 @@ _DUTCH_HALLMARKS: Final = ("aa", "uu", "ij")
 _FRENCH_HALLMARKS: Final = ("ç", "è", "ê", "à", "â", "ù", "û", "œ")
 
 
-def _suspect_language(value: str, lang: str) -> str | None:
-    """Return the language ``value`` looks like when it isn't ``lang`` (else ``None``)."""
+def suspect_language(value: str, lang: str) -> str | None:
+    """Return the language ``value`` looks like when it isn't ``lang`` (else ``None``).
+
+    **Public because two consumers must agree.** The report flags these values (§3b) and
+    :mod:`lib.generator` now *acts* on them — a slot holding another language's text is treated as
+    a language the feed does not carry, so the producer fills it from the one that does. A second
+    reading of "is this the wrong language?" would let the report name a value the generator
+    quietly left alone, or the reverse.
+
+    That raises the cost of a false positive from a glance to a replaced value, which is why the
+    patterns below stay deliberately few. The replacement is not silent: it lands in the report's
+    "translated to fill a language gap" section for the operator to paste into MyGS1, beside the
+    §3b flag that names the original.
+    """
     folded = value.casefold()
     if lang == "fr" and any(h in folded for h in _DUTCH_HALLMARKS):
         return "Dutch"
@@ -798,7 +810,7 @@ def _check_field_language(
     """
     issues: list[SourceIssue] = []
     for lang, value in values.items():
-        suspect = _suspect_language(value, lang)
+        suspect = suspect_language(value, lang)
         if suspect is None:
             continue
         detail = (

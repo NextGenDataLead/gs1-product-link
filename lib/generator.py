@@ -39,7 +39,7 @@ from typing import Final, NamedTuple, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from lib.errors import GeneratorError
-from lib.gdsn import SCALAR_SEPARATOR, GdsnSource, source_label
+from lib.gdsn import SCALAR_SEPARATOR, GdsnSource, source_label, suspect_language
 from lib.records import LocalisedText, ProductRecord, SourceIssue
 from lib.units import decode_net_content, decode_unit
 
@@ -493,20 +493,50 @@ def generation_context(  # noqa: PLR0913 — each argument is a distinct client 
     )
 
 
+def _is_foreign(language: str, value: str) -> bool:
+    """Whether ``value``, sitting in ``language``'s slot, reads as a different language.
+
+    **The one predicate behind both halves of the wrong-language rule**, and it has to be: it is
+    read once to decide the slot needs filling (:func:`_carried`, via :func:`_field_values`) and
+    again to decide the feed does not get to overwrite what was filled
+    (:func:`_stored_values`, via :func:`_apply_translations`). Answer it in one place and not the
+    other and the producer writes a French name that is then replaced by the Dutch one it was
+    written to correct — a fix that runs, reports success, and changes nothing.
+
+    The detection itself is :func:`lib.gdsn.suspect_language`, the same function the report's §3b
+    flag comes from, so the value the operator is told about is exactly the value that gets filled.
+    """
+    return suspect_language(value, language) is not None
+
+
 def _carried(values: dict[str, str]) -> dict[str, str]:
-    """Drop the languages whose "value" is blank, and any placeholder slot within the rest.
+    """The languages this field really has a value in — blank, placeholder and foreign dropped.
 
-    A ``zzz…`` placeholder is the feed saying it has no value — :func:`_material` already reads it
-    that way for the prompt. Reading it as text to translate would ask the producer to render a
-    placeholder into French and then tell the operator to paste that into MyGS1, turning a blank
-    into fabricated master data.
+    Three ways a slot can hold no usable value for its language:
 
-    Cleaned rather than merely filtered, because a repeated attribute can be part real and part
-    placeholder: ``kunststof, zzzanders`` is a language the feed *does* carry, and what it carries
-    is ``kunststof``. See :func:`_without_placeholders`.
+    * **Blank.** Nothing there.
+    * **A ``zzz…`` placeholder** — the feed saying it has no value. :func:`_material` already reads
+      it that way for the prompt. Reading it as text to translate would ask the producer to render
+      a placeholder into French and then tell the operator to paste that into MyGS1, turning a
+      blank into fabricated master data. Cleaned rather than merely filtered, because a repeated
+      attribute can be part real and part placeholder: ``kunststof, zzzanders`` is a language the
+      feed *does* carry, and what it carries is ``kunststof`` (:func:`_without_placeholders`).
+    * **Another language's text**, e.g. a French ``product_name`` reading ``Schoonmaakdoek``. The
+      slot is full and the language is still missing, so treating it as carried leaves the page
+      permanently untranslated: no gap, no request, nothing to report as filled. Dropping it makes
+      it an ordinary gap and the authoritative language fills it (:func:`_is_foreign`).
+
+    Note what the third one is *not*: it is not "translate the wrong-language text". The value is
+    discarded and the other language is rendered instead, so nl and fr end up naming the same
+    product. Where the two slots disagreed about more than language, that disagreement is a source
+    defect and stays visible in the report rather than being laundered into French.
     """
     cleaned = {lang: _without_placeholders(text) for lang, text in values.items()}
-    return {lang: text for lang, text in cleaned.items() if text and text.strip()}
+    return {
+        lang: text
+        for lang, text in cleaned.items()
+        if text and text.strip() and not _is_foreign(lang, text)
+    }
 
 
 def _field_values(product: ProductRecord, field: str, default_language: str) -> dict[str, str]:
@@ -1134,14 +1164,27 @@ def _apply_translations(
 
 
 def _stored_values(product: ProductRecord, field: str, default_language: str) -> dict[str, str]:
-    """The record's own per-language values for ``field``, in the shape they are stored in.
+    """The record's own per-language values for ``field`` — the ones allowed to beat a fill.
 
     A flat extra counts as carrying its one value in the default language — the same reading
     :func:`_field_values` uses to decide it is missing elsewhere. Returning nothing for it instead
     dropped the authored value the moment another language was filled: translating `material` into
     French took `Materiaal: kunststof` off the *Dutch* page, because the per-language mapping that
     replaced the flat value held only French.
+
+    **A slot holding another language's text is left out**, and only that slot. "The feed always
+    wins" is the rule this function serves, and a wrong-language value is the one case where the
+    feed is what we are correcting — keep it here and it overwrites the very translation
+    :func:`_carried` asked for, so the fix runs, is reported as filled, and never reaches the page.
+    Dropping *whole* fields here is what caused the bug in the paragraph above, so this drops one
+    language and leaves every correct sibling exactly where it was.
     """
+    stored = _raw_stored(product, field, default_language)
+    return {lang: text for lang, text in stored.items() if not _is_foreign(lang, text)}
+
+
+def _raw_stored(product: ProductRecord, field: str, default_language: str) -> dict[str, str]:
+    """``field``'s values exactly as the record holds them, before any usability rule."""
     localised = product.extras_localised.get(field)
     if localised is not None:
         return dict(localised.values)
