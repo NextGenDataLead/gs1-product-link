@@ -48,9 +48,9 @@ The strip down the left is how you move around. It has two halves, and the diffe
   touched. *Runs* is the record of what happened. *Video mapping* is one file's editor. None of
   them is a step; you go there when you need them.
 
-At the top it always says which client you are working on and, underneath, either **TEST** or
-**PRODUCTION** in red. That is the single most important thing on the screen: PRODUCTION means the
-GS1 records this run writes are real and permanent.
+At the top it always says which client you are working on and, underneath, the environment:
+**TEST** in grey, or **PRODUCTION** in red. That tag is the single most important thing in the
+window — PRODUCTION means the GS1 records this run writes are real and permanent.
 
 If the window is narrow, the strip folds up behind a **☰** button:
 
@@ -181,7 +181,8 @@ means reversible; **red means this run writes permanent records.**
    *new* pages, *changed* pages, or unchanged. Choose **All**, **New only**, or **Review changed**
    to walk the changed ones and decide each individually.
 5. **Production environment confirmation** — only when the client is on production. You type the
-   client's name in full to confirm. This is deliberate friction, in the one place it is worth it.
+   client id in full into a box before the Confirm button will accept it. Deliberate friction, in
+   the one place it is worth it.
 6. **Dry run** — runs the whole thing while writing nothing, and shows you the output. **Read it**,
    then Proceed or Cancel.
 
