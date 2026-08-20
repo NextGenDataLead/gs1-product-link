@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from lib.gates import BY_ID, Gate, GateOption, Mode, gates_for, run_execute_argv
-from lib.records import SkippedUnit
+from lib.records import Plan, PlanClassification, PlanRow, SkippedUnit
 
 
 def _named(gates: list[Gate]) -> str:
@@ -69,6 +69,17 @@ class PublishSession:
     #: plan. That costs nothing here: the screen refreshes it on every redraw, and the drift
     #: protection lives one call down, at the contract boundary.
     units_missing_product_name: tuple[SkippedUnit, ...] = ()
+    #: ``(gtin, language)`` → whether the operator applied that CHANGED row at gate 6.
+    #:
+    #: A pair that is **absent is undecided, and undecided is not confirmed**. That default is the
+    #: whole point: the alternative — treating an untouched row as applied — is exactly the defect
+    #: this replaces, where answering *Review changed* confirmed every CHANGED row without the
+    #: operator having seen one of them.
+    #:
+    #: In the session rather than in a file, for the reason the class docstring gives about every
+    #: other answer here: a decision to rewrite a live page is about *this* plan, shown at *this*
+    #: moment. :meth:`clear_row_decisions` is what a rebuilt plan calls.
+    applied_rows: dict[tuple[str, str], bool] = field(default_factory=dict)
 
     @property
     def gates(self) -> tuple[Gate, ...]:
@@ -97,6 +108,24 @@ class PublishSession:
         if gate.options and value not in {option.value for option in gate.options}:
             raise KeyError(f"{value!r} is not an option at gate {gate_id!r}")
         self.answers[gate_id] = value
+
+    def apply_row(self, gtin: str, language: str, *, applied: bool) -> None:
+        """Record the operator's decision about one CHANGED row at gate 6."""
+        self.applied_rows[gtin, language] = applied
+
+    def row_applied(self, gtin: str, language: str) -> bool | None:
+        """``True`` applied, ``False`` skipped, ``None`` not decided — and the third is not the
+        second. A screen has to be able to say "you have not looked at this one yet"."""
+        return self.applied_rows.get((gtin, language))
+
+    def clear_row_decisions(self) -> None:
+        """Forget every per-row decision. Called when the plan is rebuilt.
+
+        A decision carried across a rebuild is consent to publish a row the operator reviewed in
+        a form it may no longer have — the same "remembered consent" the production gate is
+        enforced per run to avoid, one zoom level down.
+        """
+        self.applied_rows.clear()
 
     def chosen(self, gate_id: str) -> GateOption | None:
         """The option picked at ``gate_id``, or ``None`` when it has not been answered."""
@@ -169,6 +198,56 @@ class PublishSession:
         pick a different mode, reported the run as cancelled with no way back.
         """
         return any(self.refused(gate.id) for gate in self.gates)
+
+    def confirms(self, row: PlanRow) -> bool:
+        """Whether this session confirms one plan row.
+
+        UNCHANGED is never executed and HELD is dropped by ``run_execute`` regardless, so neither
+        is ever confirmed here — offering them would be offering a choice the script overrules.
+
+        Every NEW row is confirmed under all three plan-review answers; what differs is CHANGED:
+
+        * ``new-only`` — never.
+        * ``changed-review`` — only when the operator applied it at gate 6. **Not merely when it
+          was not skipped**: a row nobody has looked at is not a row anybody approved.
+        * anything else, which is ``all`` — always.
+
+        The middle case is the fix. It used to switch on classification alone, so *Review changed*
+        confirmed precisely what *All* confirmed, and the answer that reads as the careful one was
+        the same click as the sweeping one.
+        """
+        if row.classification is PlanClassification.NEW:
+            return True
+        if row.classification is not PlanClassification.CHANGED:
+            return False
+        answer = self.answers.get("plan_review")
+        if answer == "new-only":
+            return False
+        if answer == "changed-review":
+            return self.applied_rows.get((row.gtin, row.language), False)
+        return True
+
+    def confirmed_pairs(self, plan: Plan) -> list[list[str]]:
+        """The ``confirmed_gtins_by_lang`` this session authorises, in plan order.
+
+        The whole selection rule — classification, the per-row decisions, and the language subset
+        from gate 2 — lives here rather than on the screen, so there is one answer to "what will
+        this run write" and a test can ask it without a browser.
+
+        Pairs must match :attr:`~lib.records.PlanRow.gtin` **byte for byte** — not zero-padded, not
+        normalised. ``run_execute`` silently ignores a pair with no matching row, so a well-meant
+        reformat here would drop rows from the run without saying anything.
+
+        An empty :attr:`languages` means "every language in the plan" rather than "none". A run
+        scoped to no language would confirm nothing, publish nothing and report success, and that
+        is the one outcome indistinguishable from working.
+        """
+        languages = set(self.languages)
+        return [
+            [row.gtin, row.language]
+            for row in plan.rows
+            if (not languages or row.language in languages) and self.confirms(row)
+        ]
 
     def execute_argv(
         self, confirmed_path: str, *, dry_run: bool, revive: bool = False

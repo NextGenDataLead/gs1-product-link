@@ -70,6 +70,32 @@ loaded*, so it belongs after the loading. Nothing is lost by moving it: the cred
 also carries are on the Setup screen's Test buttons, at the moment the field is edited. The order
 lives in `ui/theme.py`'s `NAV` and nowhere else — each screen reads its own number from it.
 
+### Every button says that it is working
+
+A button that runs something disables itself for the duration and shows a spinner and the seconds
+elapsed. That is not decoration. `run_execute` prints one line when it starts and one when it
+finishes, so a twenty-row publish leaves the console silent for about ninety seconds — and with
+nothing disabled and nothing moving, the operator reasonably concluded it had not worked and
+clicked again. Twenty live pages were rewritten twice. No damage that time, because pages are
+matched by slug and `meta.gtin` and updated in place; the same second click in `links` or `both`
+mode is aimed at records that can never be deleted.
+
+The guard is in `ui/theme.py`, on `action` and `quiet_action`, rather than at the two dozen call
+sites — a guard on the execute button alone would have left the defect on the other twenty-three,
+and a screen written next month inherits this one without an edit. It is not a progress bar:
+`run_execute` reports every ten rows by design, so a bar would be fake precision on a twenty-row
+run. It disables the button that was clicked and not the screen, because that is what actually
+happened.
+
+**The other half is that the command runs off the event loop.** A blocking `subprocess.run` inside
+a click handler holds the loop until the command has already finished, so every UI change queued
+before it — including the one saying the command is running — reaches the browser with nothing
+left to report. `runner.run_json_off_the_loop` was written for exactly this and had been adopted
+on one screen; six buttons across five others still blocked, so on those the spinner would never
+have animated. Both halves are checked by `tests/ui/test_run_feedback_contract.py`, which derives
+the handler list from the code rather than keeping one: a list of known offenders goes stale in
+both directions, and the button added next month is the case it would miss.
+
 ### Setup
 
 The client, the site, the environment, the credentials, and every configured file with **how long
@@ -203,20 +229,22 @@ without saying why teaches you to answer without reading, and this flow's whole 
 concentrated in one unreviewed click.
 
 **Some options exist only in the chat flow, and the data says which.** `post_run`'s *Explain each
-error* needs a model to read the run log; `row_diff`'s per-row *apply*/*skip* need the
-row-by-row walk the chat flow does and this screen does not — it shows every changed row at once
-and confirms the subset at step 5. Those are marked `chat_only` in `lib/gates.py` rather than
-deleted: the shell not being able to do something is no reason for the surface that can to lose
-it. The screen renders `shell_options`, so such an option cannot become a button that does not do
-what it says, and the contract test derives what must be rendered from the gates instead of from a
-hand-maintained list of exceptions.
+error* needs a model to read the run log, so it is marked `chat_only` in `lib/gates.py` rather
+than deleted: the shell not being able to do something is no reason for the surface that can to
+lose it. The screen renders `shell_options`, so such an option cannot become a button that does
+not do what it says, and the contract test derives what must be rendered from the gates instead of
+from a hand-maintained list of exceptions.
+
+`row_diff`'s per-row *apply*/*skip* used to be on that list and are not any more — the screen
+walks the rows now, so the flag would have been describing the surface rather than the option. The
+flag moves when the surface does; that is what keeps it meaningful.
 
 **And the data says what each answer *does*, in three states rather than two.** `GateOutcome` is
 `ADVANCES`, `STOPS`, or `REDISPLAYS`, because one boolean was answering two questions — *does this
 carry the flow on* and *does this stop the run* — which coincide everywhere except on a detour.
 Gate 6's *Show full diff* is the detour: in the chat flow it prints the rest and re-prompts, so it
-does not advance; on a form it is the terminal answer to its gate, and it is the **only** option
-that gate can render here. Read as a refusal, that one button ended the run with nothing on the
+does not advance; on a form it is the terminal answer to its gate. It was once the only option that
+gate could render here, and read as a refusal that one button ended the run with nothing on the
 screen to undo it — reached by answering *Review changed*, the most careful answer on offer. It now
 lifts the row cap and means nothing else. *Change mode* and *Regenerate* are detours too, at gates
 that are required, so the run is still held — but held as **unanswered**, which is what the screen
@@ -234,6 +262,25 @@ compressed, or skipped.
   on a dry run.
 - An empty plan is refused rather than run. Publishing nothing successfully is the one outcome
   indistinguishable from success.
+- **Gate 6 walks every CHANGED row, and confirms only the ones you applied.** It used to do
+  neither. It listed `[row for row in plan.rows if row.diff]` — and `state.json` records the prior
+  `title` and `wp_url` and nothing else, so a row changed in the product body carries no diff at
+  all. On the live 24-row plan that displayed **one** row of the twenty it was confirming.
+  Meanwhile *Review changed* returned exactly what *All* returned, because the selection switched
+  on classification alone. So the most careful answer on the menu was the same click as the most
+  sweeping one, and fixing one product's French title meant rewriting twenty live rows.
+
+  Each row now carries *Apply* and *Skip*, and a row left undecided is **not** published — the
+  safe default, and the one that makes narrowing possible at all. NEW rows are confirmed
+  regardless; the rows are narrowed to the languages chosen at gate 2, since a decision about a
+  row the language subset drops is a decision with no effect. Rebuilding the plan forgets every
+  decision: these are not the rows those answers were about.
+
+  The 50-row display cap stays, and now says what it costs. With a control on every row a capped
+  list drops rows out of the *decision*, not merely out of the display, so the rows past it are
+  named as undecided and therefore unpublished, with *Show full diff* offered to bring them on
+  screen. Which rows a run confirms is `PublishSession.confirmed_pairs` — in the module that is
+  tested without a browser, rather than half on the screen as it was.
 - **Gate 0 leads with what this run could touch, not the size of the catalogue.** It used to
   render the length of `products.json` under the label "products in the catalogue" — honest, and
   the wrong number: **127** on a run scoped to one product, at the gate where the operator forms

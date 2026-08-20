@@ -11,6 +11,7 @@ Mocking ``subprocess`` here would test that the code calls the function it obvio
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,55 @@ def test_a_timeout_still_returns_what_the_run_managed_to_say() -> None:
     assert "started" in seen[0]
     assert any("timed out" in line for line in seen)
     assert not result.ok
+
+
+def test_run_off_the_loop_returns_exactly_what_run_returns() -> None:
+    """A thread wrapper, not a second implementation. Same result object, same fields."""
+    argv = _inline("import sys; print('out'); sys.stderr.write('err'); raise SystemExit(1)")
+    threaded = asyncio.run(runner.run_off_the_loop(argv))
+
+    assert (threaded.stdout, threaded.stderr, threaded.returncode) == (
+        runner.run(argv).stdout,
+        runner.run(argv).stderr,
+        runner.EXIT_HAD_ERRORS,
+    )
+
+
+def test_run_off_the_loop_leaves_the_event_loop_free_and_run_does_not() -> None:
+    """The whole reason it exists, asserted against the thing it replaces.
+
+    ``runner.run`` is a blocking ``subprocess.run``. Called straight from a click handler it holds
+    the event loop for the whole command, so every UI change queued before it — including the one
+    saying the command is running — reaches the browser only once there is nothing left to report.
+    A screen that looks identical from click to result is a screen an operator clicks again, and
+    that is how a twenty-row publish went out twice.
+
+    The blocking half is asserted too. Without it this test would pass on a wrapper that had
+    quietly stopped using a thread, since "the loop ran" proves nothing on its own.
+    """
+
+    async def ticks_during(work: Callable[[], Awaitable[object]]) -> int:
+        counted = 0
+
+        async def tick() -> None:
+            nonlocal counted
+            while True:
+                await asyncio.sleep(0.02)
+                counted += 1
+
+        ticker = asyncio.create_task(tick())
+        await asyncio.sleep(0)  # let the ticker reach its first await
+        await work()
+        ticker.cancel()
+        return counted
+
+    argv = _inline("import time; time.sleep(0.4)")
+
+    async def blocking() -> object:
+        return runner.run(argv)
+
+    assert asyncio.run(ticks_during(lambda: runner.run_off_the_loop(argv))) > 3
+    assert asyncio.run(ticks_during(blocking)) == 0
 
 
 def test_the_dot_env_rule_is_enforced_elsewhere() -> None:

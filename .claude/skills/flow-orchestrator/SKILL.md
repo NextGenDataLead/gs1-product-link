@@ -307,6 +307,13 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
      A `gs1_link` key means something different from a content change: the page is published
      but its resolver link was never written (a previous `pages` run). Present it as
      `Changes: resolver link not written yet` — nothing about the page is changing.
+     **Walk every CHANGED row, not only the ones whose `diff` has fields in it.** State keeps
+     the prior `title` and `wp_url` and nothing else, so a row changed in the product body
+     has an empty `diff` — on the pilot plan that is 19 of 20 CHANGED rows. A walk keyed on
+     the diff presents one row and confirms twenty, which is the defect the operator shell
+     shipped with. **Both surfaces do this walk now**: the shell renders every CHANGED row
+     with its own `apply`/`skip`, holds the answers for the run, and confirms the applied
+     subset at step 7. A row left undecided is not confirmed, on either surface.
 
 7. **Write the ConfirmedPlan.** Serialise `ConfirmedPlan{plan, confirmed_gtins_by_lang}`
    to `output/{client}/plan.confirmed.json`, with `confirmed_gtins_by_lang` as a list of

@@ -183,7 +183,7 @@ export const GATES: readonly Gate[] = [
     "id": "row_diff",
     "step": "6",
     "title": "Per-row diff",
-    "purpose": "Only on `changed-review`. Shows the fields actually present in the row's diff and never invents an old value: state records the prior `title` and `wp_url` and nothing else, so those are the only two that can show a real before/after. A `gs1_link` key means the page is published but its resolver link was never written — nothing about the page is changing. `apply`/`skip` are per-row and belong to the conversational walk; the shell shows every row's diff at once and confirms the subset at step 5.",
+    "purpose": "Only on `changed-review`. **Every CHANGED row is walked, not only the ones carrying a diff.** State records the prior `title` and `wp_url` and nothing else, so a row whose change is in the product body has no diff at all — on the pilot plan that was 19 of 20 CHANGED rows, and keying the walk on the diff showed one row while confirming twenty. Show the fields the diff actually has and never invent an old value; an empty diff reads `Changes: product content (no title or URL change)`, and a `gs1_link` key reads `Changes: resolver link not written yet` — the page is published, its resolver link was never written, and nothing about the page is changing. `apply`/`skip` are per-row on **both** surfaces: the chat flow prompts row by row, the shell puts the pair on every row and holds the answers for the run. A row left undecided is not confirmed.",
     "required": false,
     "modes": [
       "both",
@@ -192,6 +192,18 @@ export const GATES: readonly Gate[] = [
     ],
     "needsProduction": false,
     "options": [
+      {
+        "value": "apply",
+        "label": "Apply",
+        "consequence": "Include this row in the run",
+        "outcome": "advances"
+      },
+      {
+        "value": "skip",
+        "label": "Skip",
+        "consequence": "Leave this row unchanged",
+        "outcome": "advances"
+      },
       {
         "value": "show-full-diff",
         "label": "Show full diff",

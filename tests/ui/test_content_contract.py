@@ -101,16 +101,26 @@ def test_the_screen_runs_one_preflight_for_both_sections() -> None:
     Fetched separately they would be two subprocesses per render, and — the expensive half — a
     re-check could move the count without moving the list, restoring the very disagreement this
     screen was fixed to remove.
+
+    Two fetchers, one renderer. ``first_draw`` is the blocking form, run once while the page is
+    still being built; ``recheck`` is the one every *click* takes, off the event loop so the
+    button can show that it is working. What must not multiply is the thing that decides what the
+    two sections say, so both are required to hand their payload to the same ``show``.
     """
+    fetches = {"run_json", "run_json_off_the_loop"}
     callers = sorted(
         node.name
         for node in ast.walk(_tree())
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-        and "run_json" in _own_calls(node)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and fetches & _own_calls(node)
     )
-    assert callers == ["refresh"], (
-        f"expected the single shared refresh to be the only preflight caller; found {callers}"
+    assert callers == ["first_draw", "recheck"], (
+        f"expected only the two shared fetchers to run the preflight; found {callers}"
     )
+    for name in callers:
+        assert "show" in _own_calls(_function(name)), (
+            f"{name} does not hand its payload to `show`, so the coverage figures and the copy "
+            "below can be redrawn from two different reads of the same run"
+        )
 
 
 def test_importing_a_cache_redraws_what_it_invalidated() -> None:
@@ -120,8 +130,8 @@ def test_importing_a_cache_redraws_what_it_invalidated() -> None:
     staleness this project keeps designing against — and the upload handler is the one place that
     knows the file changed.
     """
-    assert "refresh" in _calls(_function("upload")), (
-        "the upload handler does not refresh, so coverage and the copy below still describe the "
+    assert "recheck" in _calls(_function("upload")), (
+        "the upload handler does not re-check, so coverage and the copy below still describe the "
         "cache that was just overwritten"
     )
 
@@ -172,5 +182,5 @@ def test_generate_refreshes_the_coverage_it_just_invalidated() -> None:
         node for node in ast.walk(_function("_generate")) if isinstance(node, ast.AsyncFunctionDef)
     ]
     assert len(handlers) == 1, "expected exactly one async click handler"
-    assert "refresh" in _calls(handlers[0])
+    assert "recheck" in _calls(handlers[0])
     assert "stream" in _calls(handlers[0]), "must stream, not block: the run takes minutes"

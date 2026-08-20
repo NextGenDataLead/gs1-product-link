@@ -63,8 +63,12 @@ def _reconcile(cid: str) -> None:
         theme.command(argv)
         body = ui.column().classes("w-full mt-3")
 
-        def run() -> None:
-            payload, result = runner.run_json(argv)
+        # Async, and the subprocess runs off the event loop. Both halves are needed, for the
+        # reason `runner.run_off_the_loop` gives: a blocking call in a sync handler holds the
+        # loop until the command has already finished, so the running-state the button paints
+        # arrives at the browser only once there is nothing left to report.
+        async def run() -> None:
+            payload, result = await runner.run_json_off_the_loop(argv)
             body.clear()
             with body:
                 if payload is None or not isinstance(payload, dict):
