@@ -185,6 +185,24 @@ async def run_json_off_the_loop(argv: Sequence[str]) -> tuple[Any, CommandResult
     return await asyncio.to_thread(run_json, argv)
 
 
+async def run_off_the_loop(
+    argv: Sequence[str], *, timeout: float = DEFAULT_TIMEOUT_SECONDS
+) -> CommandResult:
+    """:func:`run`, in a worker thread, for the same reason :func:`run_json_off_the_loop` exists.
+
+    That one was written for the Preflight screen and adopted nowhere else, so six buttons across
+    five screens went on calling :func:`run` straight from a click handler — which holds the event
+    loop for the whole command. The screen then looks identical from click to result, and a button
+    that shows nothing is a button an operator clicks again. This is the other half of the fix in
+    :func:`ui.theme._while_running`: without it the spinner that guard adds is queued behind the
+    very command it is meant to be reporting on, and never paints.
+
+    :func:`stream` is still the right choice where the output is worth watching line by line. This
+    is for the commands that only have an answer.
+    """
+    return await asyncio.to_thread(run, argv, timeout=timeout)
+
+
 # --- The commands, named ------------------------------------------------------
 #
 # One function per pipeline step, so no screen builds an argv inline. The publish argv is the

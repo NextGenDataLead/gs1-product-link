@@ -279,8 +279,12 @@ def _check(cid: str) -> None:
     theme.command(argv)
     output = ui.log().classes("console mt-2").style("display:none")
 
-    def run() -> None:
-        result = runner.run(argv)
+    # Async, and the subprocess runs off the event loop. Both halves are needed, for the
+    # reason `runner.run_off_the_loop` gives: a blocking call in a sync handler holds the
+    # loop until the command has already finished, so the running-state the button paints
+    # arrives at the browser only once there is nothing left to report.
+    async def run() -> None:
+        result = await runner.run_off_the_loop(argv)
         output.style("display:block")
         output.clear()
         output.push(result.stderr or result.stdout or "(no output)")

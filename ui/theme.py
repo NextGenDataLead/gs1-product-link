@@ -16,11 +16,16 @@ Two rules the palette exists to serve:
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Final
 
 from nicegui import ui
+
+#: How often a running button repaints its elapsed count. One second: fast enough to read as
+#: alive, slow enough that nobody watches the digits instead of the log.
+_TICK_SECONDS: Final = 1.0
 
 #: Design tokens. Defined once, referenced by name — no hardcoded hexes in the screens.
 TOKENS: Final = """
@@ -309,17 +314,91 @@ def command(argv: list[str]) -> None:
 
 
 def action(label: str, on_click: Callable[[], object], *, danger: bool = False) -> ui.button:
-    """A button.
+    """A button, which shows for as long as its work lasts that the work is happening.
 
     ``danger`` — filled red — is reserved for the actions that actually **write**: the real run,
     the production confirmation, saving the pruned process list. Nothing else, ever. Red on a
     merely-negative choice like *Cancel* would put four red buttons on this screen and the one
     that matters would stop standing out, which is the only job red has here.
     """
-    button = ui.button(label, on_click=on_click).props("no-caps unelevated")
-    return button.props("color=negative" if danger else "color=primary")
+    button = ui.button(label).props("no-caps unelevated")
+    button.props("color=negative" if danger else "color=primary")
+    return _while_running(button, on_click)
 
 
 def quiet_action(label: str, on_click: Callable[[], object]) -> ui.button:
     """A secondary choice — declining, going back, asking for more. Outlined, not filled."""
-    return ui.button(label, on_click=on_click).props("no-caps outline color=grey-8")
+    button = ui.button(label).props("no-caps outline color=grey-8")
+    return _while_running(button, on_click)
+
+
+def _while_running(button: ui.button, handler: Callable[[], object]) -> ui.button:
+    """Disable the button while its handler runs, and say how many seconds that has been.
+
+    **This is the fix for a publish that ran twice.** ``run_execute`` prints one line when it starts
+    and one when it finishes, so a twenty-row run leaves the console silent for about ninety
+    seconds. Nothing disabled the button and nothing said the work had begun, so the operator
+    reasonably concluded it had not worked and clicked again — two complete runs over twenty live
+    pages. No damage that time: pages are matched by slug and ``meta.gtin`` and updated in place.
+    The same second click in ``links`` or ``both`` mode is aimed at records that can never be
+    deleted.
+
+    It lives here rather than at the call sites because there are two dozen of them, and a guard on
+    the execute button alone would leave the defect on the other twenty-three. Every screen inherits
+    it without an edit, including the buttons added after this was written.
+
+    Two things it deliberately is not. Not a **progress bar** — ``run_execute`` reports every ten
+    rows by design, so a bar would be fake precision on a twenty-row run; the seconds are the honest
+    version of the same reassurance. And not a **page-wide lock**: it disables the button that was
+    clicked, which is what actually happened, and locking a whole screen raises a question about
+    what a redraw does mid-run that no incident has asked yet.
+
+    On its own it cannot make a *blocking* handler feel any different. :func:`ui.runner.run` holds
+    the event loop, so every UI change queued before it — including this one — reaches the browser
+    only once the command has already finished. That half is fixed in the screens, with
+    :func:`ui.runner.run_off_the_loop`; without it the spinner below would never animate.
+    """
+    # Quasar hides the label while `loading` is set and renders this slot centred over the button
+    # instead, so the seconds have to be short enough to fit a width the label chose. No colour on
+    # either: they inherit the button's, which is white on a filled one and grey on an outlined one.
+    with button.add_slot("loading"):
+        ui.spinner(size="1.1em", color=None)
+        counter = ui.label("0s").classes("ml-2 mono")
+
+    seconds = 0
+
+    def tick() -> None:
+        # The same deleted-element guard as the restore below, for the same reason: a redraw
+        # during a run takes the counter with it, and the timer is cancelled a moment later.
+        nonlocal seconds
+        seconds += 1
+        if not counter.is_deleted:
+            counter.text = f"{seconds}s"
+
+    timer = ui.timer(_TICK_SECONDS, tick, active=False)
+
+    async def guarded() -> None:
+        # Handlers here are a mix of sync and async — `on_click` takes `Callable[[], object]` — so
+        # the result is awaited when it is awaitable and taken as done when it is not.
+        nonlocal seconds
+        seconds = 0
+        counter.text = "0s"
+        button.disable()
+        button.props("loading")
+        timer.activate()
+        try:
+            result = handler()
+            if inspect.isawaitable(result):
+                await result
+        finally:
+            timer.deactivate()
+            # Restored in a `finally`, so a handler that raises does not leave the button dead —
+            # but only if the button still exists. Several handlers end in a redraw, which deletes
+            # and rebuilds every element on the screen; touching a deleted one warns loudly in
+            # NiceGUI, and there is nothing to restore, since its replacement is already up.
+            if not button.is_deleted:
+                button.props(remove="loading")
+                button.enable()
+
+    button.on_click(guarded)
+    return button

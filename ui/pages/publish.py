@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from nicegui import events, ui
 
-from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Gate, Mode
-from lib.records import PlanClassification, SkipReason
+from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Gate, GateOption, Mode
+from lib.records import PlanClassification, PlanRow, SkipReason
 from ui import REPO_ROOT, context, runner, theme
 from ui.session import GateNotAnsweredError, PublishSession
 
@@ -246,10 +246,17 @@ class _Flow:
         plan = context.load_plan(self.cid)
         summary = context.load_plan_summary(self.cid)
 
-        def build_plan() -> None:
-            result = runner.run(
+        # Async, and the subprocess runs off the event loop, for the reason
+        # `runner.run_off_the_loop` gives: a blocking call in a sync handler holds the loop until
+        # the command has already finished, so the button never gets to show it is working.
+        async def build_plan() -> None:
+            result = await runner.run_off_the_loop(
                 runner.run_plan_argv(self.cid, include_published=self.include_published)
             )
+            # These rows are not the rows those decisions were made about. Carrying an *apply*
+            # across a rebuild is consent to publish a row in a form the operator may never have
+            # seen — the same remembered consent the production gate is enforced per run to avoid.
+            self.session.clear_row_decisions()
             ui.notify(
                 result.stderr.strip().splitlines()[-1] if result.stderr else "run_plan finished",
                 type="positive" if result.ok else "negative",
@@ -368,29 +375,90 @@ class _Flow:
         self._options(gate)
 
     def _gate_row_diff(self, gate: Gate) -> None:
-        plan = context.load_plan(self.cid)
-        changed = [row for row in plan.rows if row.diff] if plan else []
+        """Every CHANGED row, each with its own Apply and Skip.
+
+        **Keyed on the classification, never on ``row.diff``.** State records the prior ``title``
+        and ``wp_url`` and nothing else, so a row whose change is in the product body carries no
+        diff at all — and this gate used to select ``[row for row in plan.rows if row.diff]``. On
+        the real 24-row pilot plan that displayed **one** row while confirming twenty. A per-row
+        walk keyed the same way would have reproduced the blindness one control at a time, which
+        is the trap worth naming: the fix is not the buttons, it is what they are asked about.
+
+        Narrowed to the languages chosen at gate 2 as well, because a decision about a row the
+        language subset will drop is a decision with no effect.
+        """
         if self.session.answers.get("plan_review") != "changed-review":
             ui.label("Only shown when the plan review asks to walk the changed rows.").classes(
                 "note"
             )
             return
+        plan = context.load_plan(self.cid)
+        languages = set(self.session.languages)
+        changed = [
+            row
+            for row in (plan.rows if plan else ())
+            if row.classification is PlanClassification.CHANGED
+            and (not languages or row.language in languages)
+        ]
         if not changed:
-            ui.label("No changed rows carry a diff.").classes("note")
+            ui.label("This plan has no changed rows in the chosen languages.").classes("note")
             return
+
+        decisions = [self.session.row_applied(row.gtin, row.language) for row in changed]
+        applied = decisions.count(True)
+        skipped = decisions.count(False)
+        theme.band(
+            f"{len(changed)} changed row(s) · {applied} applied · {skipped} skipped · "
+            f"{decisions.count(None)} not decided. Only the applied ones are published — a row "
+            "left undecided is not. Every NEW row is confirmed either way."
+        )
+
         # `show-full-diff` is the gate's own option, and here it lifts the row cap. The cap is not
         # a summary — every field of every row shown is already printed — so the only thing left
         # for "show me everything" to mean is the rows past it.
         full = self.session.answers.get(gate.id) == "show-full-diff"
         shown = changed if full else changed[:_MAX_DIFFS]
+        options = {option.value: option for option in gate.shell_options}
         for row in shown:
-            with ui.element("div").classes("mb-3"):
-                ui.label(f"{row.gtin} ({row.language}) — {row.title}").classes("mono")
-                for field, (before, after) in (row.diff or {}).items():
-                    ui.label(f"  {field}: {before} → {after}").classes("note mono scroll-x")
+            self._row_decision(row, options)
         if len(changed) > len(shown):
-            ui.label(f"…and {len(changed) - len(shown)} more changed row(s).").classes("note mb-3")
-        self._options(gate)
+            # Said plainly rather than counted quietly. With a control on every row, a capped list
+            # drops rows out of the *decision* and not merely out of the display — which is the
+            # same class of defect as the one this gate is being rebuilt to fix.
+            theme.band(
+                f"{len(changed) - len(shown)} further changed row(s) are not shown here, so they "
+                "are not decided, so they will NOT be published. Choose “Show full diff” to bring "
+                "them onto the screen.",
+                "warn",
+            )
+        self._options(gate, exclude=_PER_ROW_OPTIONS)
+
+    def _row_decision(self, row: PlanRow, options: dict[str, GateOption]) -> None:
+        """One CHANGED row: what changed, what was decided, and the two buttons that decide it.
+
+        The labels and the tooltips come from the gate's own options, so the words an operator
+        reads here are the words ``SKILL.md`` offers on the other surface. Apply is filled and
+        Skip outlined by position rather than by ``proceeds``: both answers advance the walk, so
+        the flag cannot tell them apart, and the one that puts a row into the run is the one that
+        should look like it does.
+        """
+        decision = self.session.row_applied(row.gtin, row.language)
+        with ui.element("div").classes("mb-4"):
+            ui.label(f"{row.gtin} ({row.language}) — {row.title}").classes("mono")
+            for line in _changes(row):
+                ui.label(line).classes("note mono scroll-x")
+            with ui.row().classes("gap-3 items-center mt-2"):
+                theme.action(
+                    options["apply"].label, lambda: self._decide(row, applied=True)
+                ).tooltip(options["apply"].consequence)
+                theme.quiet_action(
+                    options["skip"].label, lambda: self._decide(row, applied=False)
+                ).tooltip(options["skip"].consequence)
+                ui.label(_DECISION_WORD[decision]).classes("note")
+
+    def _decide(self, row: PlanRow, *, applied: bool) -> None:
+        self.session.apply_row(row.gtin, row.language, applied=applied)
+        self._redraw()
 
     def _gate_production(self, gate: Gate) -> None:
         theme.band(
@@ -468,14 +536,19 @@ class _Flow:
 
     # -- shared ---------------------------------------------------------------
 
-    def _options(self, gate: Gate) -> None:
+    def _options(self, gate: Gate, *, exclude: frozenset[str] = frozenset()) -> None:
         # `shell_options`, not `options`: an option only the conversational surface can honour —
-        # one that needs a model to read the run log, or a per-row walk this screen does not do —
-        # would otherwise become a button that does not do what it says.
-        if not gate.shell_options:
+        # one that needs a model to read the run log — would otherwise become a button that does
+        # not do what it says.
+        #
+        # `exclude` is for the options this screen renders *elsewhere* rather than not at all.
+        # Gate 6's apply/skip are per-row, so putting them here too would offer one gate-wide
+        # answer to a question asked twenty times.
+        offered = [option for option in gate.shell_options if option.value not in exclude]
+        if not offered:
             return
         with ui.row().classes("gap-3 flex-wrap"):
-            for option in gate.shell_options:
+            for option in offered:
                 # Filled for the answer that carries the flow on, outlined for the ones that do
                 # not. Red is never used here: it belongs to the buttons that write.
                 place = theme.action if option.proceeds else theme.quiet_action
@@ -561,26 +634,21 @@ class _Flow:
     def _write_confirmed(self) -> str | None:
         """Serialise the plan and the confirmed subset, and return the path.
 
-        ``confirmed_gtins_by_lang`` pairs must match ``PlanRow.gtin`` **byte for byte** — not
-        zero-padded, not normalised. A pair with no matching row is silently ignored, so a
-        well-meant reformat here would drop rows from the run without saying anything.
+        Which rows those are is :meth:`PublishSession.confirmed_pairs`, not a rule re-derived
+        here: the screen used to hold half of it — the language intersection — and a module-level
+        helper the other half, and the half on the screen was the half no test could reach.
         """
         plan = context.load_plan(self.cid)
         if plan is None:
             ui.notify("No plan to confirm. Build one at the plan review gate.", type="warning")
             return None
 
-        languages = set(self.session.languages or self.cfg.wordpress.languages)
-        wanted = _confirmed_classifications(self.session.answers.get("plan_review"))
-        pairs = [
-            [row.gtin, row.language]
-            for row in plan.rows
-            if row.classification in wanted and row.language in languages
-        ]
+        pairs = self.session.confirmed_pairs(plan)
         if not pairs:
             ui.notify(
-                "Nothing is confirmed — every row was filtered out by the plan choice or the "
-                "language selection. Not running.",
+                "Nothing is confirmed — every row was filtered out by the plan choice, by the "
+                "language selection, or (under Review changed) by being skipped or never "
+                "decided. Not running.",
                 type="warning",
                 timeout=10000,
             )
@@ -605,13 +673,31 @@ _MAX_DIFFS = 50
 #: symmetry that does not exist.
 _MAX_MISSING_LISTED = 50
 
+#: Gate 6's options that belong on a row rather than on the gate.
+_PER_ROW_OPTIONS: Final = frozenset({"apply", "skip"})
 
-def _confirmed_classifications(choice: str | None) -> set[PlanClassification]:
-    """Which classifications the plan-review answer confirms.
+#: A row's decision, in a word. `None` is its own state and not a quieter "skipped": the operator
+#: has to be able to see which rows they have not looked at yet.
+_DECISION_WORD: Final = {True: "Applied", False: "Skipped", None: "Not decided"}
 
-    UNCHANGED is never executed and HELD is dropped by ``run_execute`` regardless, so neither is
-    ever confirmed here — offering them would be offering a choice the script overrules.
+
+def _changes(row: PlanRow) -> list[str]:
+    """What changed on one row, worded as `SKILL.md` §10.6.2 words it.
+
+    Verbatim from the skill so both surfaces say the same thing about the same row, and because
+    each of the three cases means something different that a bare `Changes:` header would flatten:
+
+    * fields present — the only two state records, so the only two with a real before and after;
+    * **no diff at all** — the change is in the product body, which state does not retain. This is
+      the common case, not the exotic one: 19 of 20 CHANGED rows on the pilot plan;
+    * a `gs1_link` key — the page is published and its resolver link was never written. Nothing
+      about the page is changing, which is why it does not read as a content change.
     """
-    if choice == "new-only":
-        return {PlanClassification.NEW}
-    return {PlanClassification.NEW, PlanClassification.CHANGED}
+    diff = row.diff or {}
+    if not diff:
+        return ["Changes: product content (no title or URL change)"]
+    if "gs1_link" in diff:
+        return ["Changes: resolver link not written yet"]
+    return ["Changes:"] + [
+        f"  {field}: {before} → {after}" for field, (before, after) in diff.items()
+    ]

@@ -8,10 +8,20 @@ of configuration.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from lib.gates import Mode
-from lib.records import SkippedUnit, SkipReason
+from lib.records import (
+    LocalisedText,
+    Plan,
+    PlanClassification,
+    PlanRow,
+    ProductRecord,
+    SkippedUnit,
+    SkipReason,
+)
 from ui.session import GateNotAnsweredError, PublishSession
 
 _CONFIRMED = "output/acme/plan.confirmed.json"
@@ -346,3 +356,182 @@ def test_outstanding_lists_only_the_required_ones() -> None:
     outstanding = {gate.id for gate in session.outstanding}
     assert outstanding == {"content_review", "plan_review", "production", "dry_run"}
     assert "languages" not in outstanding  # answered or not, it never blocks a run
+
+
+# --- Which rows a session confirms ---------------------------------------------
+#
+# The rule used to live half on the Publish screen and half in a module-level helper beside it,
+# and the half on the screen — the language intersection — was the half no test could reach. It is
+# one method now, so these are the claims a reviewer would want to check about what gets written.
+
+
+def _product(gtin: str) -> ProductRecord:
+    return ProductRecord(
+        gtin=gtin, brand="Acme", product_name=LocalisedText(values={"nl": "Doek", "fr": "Chiffon"})
+    )
+
+
+def _row(gtin: str, language: str, classification: PlanClassification, **kwargs: object) -> PlanRow:
+    return PlanRow(
+        gtin=gtin,
+        language=language,
+        classification=classification,
+        title="Doek",
+        slug=f"p-{gtin}",
+        content_hash="hash-" + gtin,
+        target_url=f"https://wp.test/product/p-{gtin}/",
+        product=_product(gtin),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+#: A plan shaped like the real pilot one: a NEW row, and CHANGED rows of which only the first
+#: carries a diff. That asymmetry is the whole reason this exists — see
+#: ``test_a_changed_row_with_no_diff_is_still_confirmable``.
+_NEW = _row("08713195000001", "nl", PlanClassification.NEW)
+_CHANGED_WITH_DIFF = _row(
+    "08713195000527",
+    "fr",
+    PlanClassification.CHANGED,
+    diff={"title": ("Schoonmaakdoek", "Chiffon")},
+)
+_CHANGED_NO_DIFF = _row("08713195000002", "nl", PlanClassification.CHANGED)
+_UNCHANGED = _row("08713195000003", "nl", PlanClassification.UNCHANGED)
+_HELD = _row("08713195000004", "nl", PlanClassification.HELD)
+
+
+def _plan(*rows: PlanRow) -> Plan:
+    return Plan(
+        client_id="acme",
+        generated_at=datetime(2026, 8, 20, tzinfo=UTC),
+        total=len(rows),
+        counts={},
+        rows=list(rows),
+    )
+
+
+_FULL_PLAN = _plan(_NEW, _CHANGED_WITH_DIFF, _CHANGED_NO_DIFF, _UNCHANGED, _HELD)
+
+
+def _reviewing(**overrides: object) -> PublishSession:
+    """A session that has answered the plan review with *Review changed*."""
+    session = _session(**overrides)
+    session.answer("plan_review", "changed-review")
+    return session
+
+
+def test_all_confirms_every_new_and_changed_row() -> None:
+    session = _session()
+    session.answer("plan_review", "all")
+    assert session.confirmed_pairs(_FULL_PLAN) == [
+        [_NEW.gtin, "nl"],
+        [_CHANGED_WITH_DIFF.gtin, "fr"],
+        [_CHANGED_NO_DIFF.gtin, "nl"],
+    ]
+
+
+def test_new_only_leaves_the_changed_rows_alone() -> None:
+    session = _session()
+    session.answer("plan_review", "new-only")
+    assert session.confirmed_pairs(_FULL_PLAN) == [[_NEW.gtin, "nl"]]
+
+
+def test_unchanged_and_held_are_never_confirmed_whatever_was_answered() -> None:
+    """``run_execute`` overrules both, so confirming them would offer a choice it ignores."""
+    for answer in ("all", "new-only", "changed-review"):
+        session = _session()
+        session.answer("plan_review", answer)
+        for row in (_UNCHANGED, _HELD):
+            session.apply_row(row.gtin, row.language, applied=True)
+        confirmed = {pair[0] for pair in session.confirmed_pairs(_FULL_PLAN)}
+        assert _UNCHANGED.gtin not in confirmed, answer
+        assert _HELD.gtin not in confirmed, answer
+
+
+def test_review_changed_confirms_the_new_rows_and_nothing_else_until_a_row_is_applied() -> None:
+    """**The defect.** This used to return exactly what ``all`` returns.
+
+    Answering *Review changed* — the most careful answer on the menu — confirmed every CHANGED row
+    without the operator having seen one of them. On the live plan that meant reviewing one row and
+    publishing twenty.
+    """
+    assert _reviewing().confirmed_pairs(_FULL_PLAN) == [[_NEW.gtin, "nl"]]
+
+
+def test_review_changed_confirms_the_rows_that_were_applied() -> None:
+    session = _reviewing()
+    session.apply_row(_CHANGED_NO_DIFF.gtin, "nl", applied=True)
+    assert session.confirmed_pairs(_FULL_PLAN) == [
+        [_NEW.gtin, "nl"],
+        [_CHANGED_NO_DIFF.gtin, "nl"],
+    ]
+
+
+def test_a_skipped_row_is_not_confirmed() -> None:
+    session = _reviewing()
+    session.apply_row(_CHANGED_WITH_DIFF.gtin, "fr", applied=False)
+    session.apply_row(_CHANGED_NO_DIFF.gtin, "nl", applied=True)
+    assert [pair[0] for pair in session.confirmed_pairs(_FULL_PLAN)] == [
+        _NEW.gtin,
+        _CHANGED_NO_DIFF.gtin,
+    ]
+
+
+def test_an_undecided_row_is_not_confirmed_and_is_not_the_same_as_a_skipped_one() -> None:
+    """Three states, not two. A row nobody has looked at is not a row anybody approved — and the
+    screen still has to be able to tell the operator which ones they have not reached."""
+    session = _reviewing()
+    session.apply_row(_CHANGED_WITH_DIFF.gtin, "fr", applied=False)
+
+    assert session.row_applied(_CHANGED_WITH_DIFF.gtin, "fr") is False
+    assert session.row_applied(_CHANGED_NO_DIFF.gtin, "nl") is None
+    assert not session.confirms(_CHANGED_NO_DIFF)
+
+
+def test_a_changed_row_with_no_diff_is_still_confirmable() -> None:
+    """The row the old gate could not even show.
+
+    State records the prior ``title`` and ``wp_url`` and nothing else, so a change in the product
+    body leaves ``diff`` empty. 19 of the pilot plan's 20 CHANGED rows look like this, and a walk
+    keyed on the diff would offer a decision on one of them.
+    """
+    assert _CHANGED_NO_DIFF.diff is None
+
+    session = _reviewing()
+    session.apply_row(_CHANGED_NO_DIFF.gtin, "nl", applied=True)
+    assert session.confirms(_CHANGED_NO_DIFF)
+
+
+def test_the_language_subset_narrows_the_confirmed_rows() -> None:
+    session = _session(languages=["nl"])
+    session.answer("plan_review", "all")
+    assert session.confirmed_pairs(_FULL_PLAN) == [
+        [_NEW.gtin, "nl"],
+        [_CHANGED_NO_DIFF.gtin, "nl"],
+    ]
+
+
+def test_no_language_chosen_means_every_language_rather_than_none() -> None:
+    """A run scoped to no language would confirm nothing, publish nothing and report success."""
+    session = _session(languages=[])
+    session.answer("plan_review", "all")
+    assert len(session.confirmed_pairs(_FULL_PLAN)) == 3
+
+
+def test_rebuilding_the_plan_forgets_the_row_decisions() -> None:
+    """Consent carried across a rebuild is consent to publish a row in a form nobody reviewed."""
+    session = _reviewing()
+    session.apply_row(_CHANGED_NO_DIFF.gtin, "nl", applied=True)
+    session.clear_row_decisions()
+
+    assert session.row_applied(_CHANGED_NO_DIFF.gtin, "nl") is None
+    assert session.confirmed_pairs(_FULL_PLAN) == [[_NEW.gtin, "nl"]]
+
+
+def test_the_gtins_are_passed_through_byte_for_byte() -> None:
+    """``run_execute`` silently ignores a pair with no matching row, so a well-meant reformat here
+    would drop rows from the run without saying anything."""
+    odd = _row("8713195000527", "nl", PlanClassification.NEW)  # 13 digits, not zero-padded
+    session = _session()
+    session.answer("plan_review", "all")
+    assert session.confirmed_pairs(_plan(odd)) == [["8713195000527", "nl"]]

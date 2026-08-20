@@ -88,11 +88,15 @@ def _export(cfg: Any, cid: str) -> None:
 
         output = ui.log().classes("console mt-4").style("display:none")
 
-        def parse(*, dry_run: bool) -> None:
+        # Async, and the subprocess runs off the event loop. Both halves are needed, for the
+        # reason `runner.run_off_the_loop` gives: a blocking call in a sync handler holds the
+        # loop until the command has already finished, so the running-state the button paints
+        # arrives at the browser only once there is nothing left to report.
+        async def parse(*, dry_run: bool) -> None:
             argv = runner.parse_export_argv(cid, dry_run=dry_run)
             output.style("display:block")
             output.clear()
-            result = runner.run(argv)
+            result = await runner.run_off_the_loop(argv)
             output.push(result.display_command)
             output.push(result.stderr or result.stdout or "(no output)")
             ui.notify(
@@ -220,8 +224,12 @@ def _quality(cid: str) -> None:
 
         body = ui.column().classes("w-full mt-4")
 
-        def show() -> None:
-            result = runner.run(runner.report_quality_argv(cid))
+        # Async, and the subprocess runs off the event loop. Both halves are needed, for the
+        # reason `runner.run_off_the_loop` gives: a blocking call in a sync handler holds the
+        # loop until the command has already finished, so the running-state the button paints
+        # arrives at the browser only once there is nothing left to report.
+        async def show() -> None:
+            result = await runner.run_off_the_loop(runner.report_quality_argv(cid))
             body.clear()
             report = REPO_ROOT / "output" / cid / "data-quality-report.md"
             with body:

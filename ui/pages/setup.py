@@ -557,9 +557,15 @@ def _tests(cid: str) -> None:
             "a credential test that disagreed with the preflight would be worse than none."
         ).classes("note")
 
-        def go(names: Sequence[str], *, offline: bool) -> None:
+        # Async, and the subprocess runs off the event loop. Both halves are needed, for the
+        # reason `runner.run_off_the_loop` gives: a blocking call in a sync handler holds the
+        # loop until the command has already finished, so the running-state the button paints
+        # arrives at the browser only once there is nothing left to report.
+        async def go(names: Sequence[str], *, offline: bool) -> None:
             status.text = "running…"
-            payload, result = runner.run_json(runner.doctor_argv(cid, offline=offline))
+            payload, result = await runner.run_json_off_the_loop(
+                runner.doctor_argv(cid, offline=offline)
+            )
             body.clear()
             status.text = result.display_command
             with body:

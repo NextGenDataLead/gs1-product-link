@@ -274,3 +274,92 @@ def test_the_plan_gate_warns_when_the_plan_re_admits_published_products() -> Non
     source = _PUBLISH.read_text("utf-8")
     assert "summary.included_published" in source
     assert "rewrites a LIVE page" in source
+
+
+# --- the per-row walk ----------------------------------------------------------
+
+
+def _diff_truthiness_filters(node: ast.AST) -> list[int]:
+    """Lines where a comprehension filters rows on a bare ``….diff``."""
+    return [
+        test.lineno
+        for inner in ast.walk(node)
+        if isinstance(inner, ast.comprehension)
+        for test in inner.ifs
+        if isinstance(test, ast.Attribute) and test.attr == "diff"
+    ]
+
+
+def test_the_row_gate_walks_every_changed_row_not_only_the_ones_carrying_a_diff() -> None:
+    """The defect, asserted where it lived.
+
+    ``state`` records the prior ``title`` and ``wp_url`` and nothing else, so a CHANGED row whose
+    change is in the product body has no diff at all. This gate selected
+    ``[row for row in plan.rows if row.diff]``, which on the real 24-row pilot plan displayed
+    **one** row of the twenty it was confirming.
+
+    Both halves are asserted, because the trap is that the obvious fix keeps the bug: adding
+    per-row controls while still keying them on the diff reproduces the same blindness, one
+    control at a time.
+    """
+    renderer = _renderers()["row_diff"]
+    assert not _diff_truthiness_filters(renderer), (
+        "_gate_row_diff still filters rows on `row.diff` being truthy — that is the selection "
+        "which showed 1 row of 20"
+    )
+    names = {node.id for node in ast.walk(renderer) if isinstance(node, ast.Name)}
+    assert "PlanClassification" in names, (
+        "_gate_row_diff does not read the classification, so whatever it lists is not 'every "
+        "CHANGED row'"
+    )
+
+
+def test_the_row_gate_offers_a_decision_per_row_and_not_one_for_the_gate() -> None:
+    """``apply``/``skip`` are per-row on both surfaces now.
+
+    Rendered through the shared ``_options`` they would become one gate-wide answer to a question
+    asked once per row, which is the shape of the bug rather than the fix — so the gate excludes
+    them there and the row renderer places them itself.
+    """
+    assert "_decide" in _calls(_named_function("_row_decision"))
+    assert "apply_row" in _calls(_named_function("_decide"))
+
+    options = _named_function("_options")
+    assert any(arg.arg == "exclude" for arg in options.args.kwonlyargs), (
+        "_options takes no `exclude`, so gate 6 cannot render apply/skip on the rows instead of "
+        "on the gate"
+    )
+    assert "exclude" in {
+        keyword.arg
+        for node in ast.walk(_renderers()["row_diff"])
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+    }
+
+
+def test_rebuilding_the_plan_forgets_the_per_row_decisions() -> None:
+    """These rows are not the rows those decisions were made about.
+
+    Carrying an *apply* across a rebuild is consent to publish a row in a form the operator may
+    never have seen — the remembered-consent failure the production gate is enforced per run to
+    avoid, one zoom level down.
+    """
+    assert "clear_row_decisions" in _calls(_named_function("build_plan"))
+
+
+def test_the_screen_does_not_re_derive_which_rows_are_confirmed() -> None:
+    """One rule, in the module that is tested without a browser.
+
+    It used to be split: a module-level helper decided the classifications and ``_write_confirmed``
+    decided the languages, and the half on the screen was the half no test could reach.
+    """
+    source = _PUBLISH.read_text("utf-8")
+    assert "_confirmed_classifications" not in source, (
+        "the classification rule is back on the screen; it belongs to PublishSession, which the "
+        "session tests can exercise without NiceGUI"
+    )
+    confirmed = _named_function("_write_confirmed")
+    assert "confirmed_pairs" in _calls(confirmed)
+    assert not [node for node in ast.walk(confirmed) if isinstance(node, ast.ListComp)], (
+        "_write_confirmed builds its own row list again — ask the session instead"
+    )

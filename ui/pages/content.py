@@ -30,7 +30,7 @@ So the count is shown before the copy is, and a shortfall is stated as a shortfa
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -64,7 +64,7 @@ def render() -> None:
         _coverage_and_review(cid, cfg.generator, results_path, list(cfg.wordpress.languages))
 
 
-def _generate(cid: str, generator: GeneratorConfig, refresh: Callable[[], None]) -> None:
+def _generate(cid: str, generator: GeneratorConfig, recheck: Callable[[], Awaitable[None]]) -> None:
     """Write this run's copy through the API backend — when a key makes that possible.
 
     The producer is chosen by whether the configured variable has a value, checked with
@@ -102,11 +102,11 @@ def _generate(cid: str, generator: GeneratorConfig, refresh: Callable[[], None])
             log.clear()
             log.push(" ".join(["python", *argv]))
             result = await runner.stream(argv, log.push)
-            # Refresh for the same reason the upload handler does: the coverage figures and the
+            # Re-check for the same reason the upload handler does: the coverage figures and the
             # copy below now describe the file that was just written, and a screen still showing
             # the previous copy after a successful run is the silent staleness this project keeps
             # designing against.
-            refresh()
+            await recheck()
             ui.notify(
                 "Copy written — read it below before planning."
                 if result.ok
@@ -119,7 +119,7 @@ def _generate(cid: str, generator: GeneratorConfig, refresh: Callable[[], None])
         log = ui.log().classes("console mt-4").style("display:none")
 
 
-def _import(results_path: Path, refresh: Callable[[], None]) -> None:
+def _import(results_path: Path, recheck: Callable[[], Awaitable[None]]) -> None:
     with theme.section("Import"):
         ui.label(
             "The other producer: a Claude Code session running the content-generator skill, on a "
@@ -134,10 +134,10 @@ def _import(results_path: Path, refresh: Callable[[], None]) -> None:
             if results_path.exists():
                 results_path.with_suffix(".bak.json").write_bytes(results_path.read_bytes())
             await event.file.save(results_path)
-            # Refresh rather than ask them to: both sections below now describe the file that was
-            # just replaced, and a screen that keeps showing the previous copy after a successful
-            # import is the silent-staleness this project keeps designing against.
-            refresh()
+            # Re-check rather than ask them to: both sections below now describe the file that
+            # was just replaced, and a screen that keeps showing the previous copy after a
+            # successful import is the silent-staleness this project keeps designing against.
+            await recheck()
             ui.notify("Copy imported — coverage and text below are for the new file.", "positive")
 
         ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(
@@ -169,9 +169,9 @@ def _coverage_and_review(
     payload: Any = None
     result: Any = None
 
-    def refresh() -> None:
+    def show(fetched: tuple[Any, runner.CommandResult]) -> None:
         nonlocal payload, result
-        payload, result = runner.run_json(runner.doctor_argv(cid, offline=True))
+        payload, result = fetched
         coverage_body.clear()
         review_body.clear()
         with coverage_body:
@@ -179,10 +179,22 @@ def _coverage_and_review(
         with review_body:
             _review(context.scope_from(payload), results_path, languages)
 
-    _generate(cid, generator, refresh)
-    _import(results_path, refresh)
+    def first_draw() -> None:
+        """The blocking form, called once while the page is still being built.
+
+        A page build is synchronous anyway — there is no rendered button waiting to show that it
+        is working — so the quarter-second here costs nothing an operator can see. Every *click*
+        goes through ``recheck`` instead, which is the one that must not freeze the screen.
+        """
+        show(runner.run_json(runner.doctor_argv(cid, offline=True)))
+
+    async def recheck() -> None:
+        show(await runner.run_json_off_the_loop(runner.doctor_argv(cid, offline=True)))
+
+    _generate(cid, generator, recheck)
+    _import(results_path, recheck)
     with theme.section("Coverage against the current export"):
-        theme.quiet_action("Re-check against the current export", refresh)
+        theme.quiet_action("Re-check against the current export", recheck)
         coverage_body = ui.column().classes("w-full mt-4")
     with theme.section("Review the copy"):
         ui.label(
@@ -192,7 +204,7 @@ def _coverage_and_review(
             "N things were shaped correctly."
         ).classes("note")
         review_body = ui.column().classes("w-full")
-    refresh()
+    first_draw()
 
 
 def _coverage_figures(payload: Any, result: Any) -> None:

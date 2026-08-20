@@ -7,7 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The shell gave no sign that a run was in progress, so a twenty-row publish went out twice.**
+  `run_execute` prints one line when it starts and one when it finishes, so the console sat silent
+  for about ninety seconds. Nothing disabled the button, nothing moved, and the operator reasonably
+  concluded it had not worked and clicked again — two identical complete runs over twenty live
+  pages. No damage that time, because `upsert_page` matches on slug and `meta.gtin` and updates in
+  place; the same second click in `links` or `both` mode is aimed at records that can never be
+  deleted.
+
+  A button that runs something now disables itself for the duration and shows a spinner and the
+  seconds elapsed. The guard is in `theme.action` / `theme.quiet_action` rather than at the two
+  dozen call sites: patching the execute button alone would have left the defect on the other
+  twenty-three, and a screen written later inherits this one without an edit. It restores in a
+  `finally` — a handler that raises must not leave a dead button — and skips the restore when the
+  handler ended in a redraw that deleted the button, which is the ordinary case on the Publish
+  screen. Deliberately not a progress bar: `run_execute` reports every ten rows by design, so a bar
+  would be fake precision on a twenty-row run.
+
+  **Half a fix on its own.** A blocking `subprocess.run` inside a click handler holds the event
+  loop until the command has already finished, so every UI change queued before it — including the
+  one saying the command is running — reaches the browser with nothing left to report.
+  `run_json_off_the_loop` existed for exactly this and had been adopted on one screen; seven
+  handlers across six others still blocked, and on those the new spinner would never have animated.
+  They are `async` now, over a new `runner.run_off_the_loop` beside its JSON twin. The two calls
+  that stay blocking run during a page build rather than from a click, and say so where they are.
+
+  `tests/ui/test_run_feedback_contract.py` derives the handler list from the code instead of
+  keeping one: a list of known offenders goes stale in both directions, and the button added next
+  month is the case it would miss. Run against the previous commit it names all seven.
+
+- **`Review changed` reviewed one row and published twenty.** Two independent halves, both wrong.
+
+  The gate listed `[row for row in plan.rows if row.diff]`. `StateEntry` records the prior `title`
+  and `wp_url` and nothing else, so a CHANGED row whose change is in the product body carries no
+  diff at all — on the live 24-row pilot plan that was **19 of the 20 CHANGED rows**, and the gate
+  displayed one. Meanwhile the confirmed subset switched on classification alone, so
+  `changed-review` returned precisely what `all` returned. The most careful answer on the menu was
+  the same click as the most sweeping one, and correcting one product's French title meant
+  rewriting twenty live rows.
+
+  Every CHANGED row is now walked — keyed on the classification, never on the diff, because a
+  per-row control keyed on the diff reproduces the same blindness one row at a time. Each row
+  carries *Apply* and *Skip*, and **a row left undecided is not published**: the safe default, and
+  the one that makes narrowing possible at all. NEW rows are confirmed regardless. Rows are
+  narrowed to the languages chosen at gate 2, since a decision about a row that selection drops is
+  a decision with no effect, and rebuilding the plan forgets every decision — those answers were
+  about other rows. An empty diff reads `Changes: product content (no title or URL change)` and a
+  `gs1_link` key reads `Changes: resolver link not written yet`, both verbatim from `SKILL.md §10.6.2`
+  so the two surfaces describe the same row the same way.
+
+  The 50-row display cap stays and now states its cost: with a control on every row, a capped list
+  drops rows out of the *decision* rather than merely out of the display, so the rows past it are
+  named as undecided and unpublished, with *Show full diff* offered to bring them on screen.
+
+  The whole selection rule moved to `PublishSession.confirmed_pairs` — classification, the per-row
+  decisions and the language intersection together. It had been split between a module-level helper
+  and the screen, and the half on the screen was the half no test could reach.
+
 ### Changed
+- **Gate 6's `apply`/`skip` are no longer `chat_only`.** The flag records which surfaces can honour
+  an option, and the shell can honour these now, so leaving it set would have made the contract
+  describe the surface as it used to be. `post_run`'s *Explain each error* still needs a model to
+  read the run log and stays marked. The gate's `purpose` and `SKILL.md §10.6.2` say what changed;
+  the generated TypeScript gate modules were re-exported with `python -m scripts.export_gates`.
+
 - **A slot holding the wrong language is now a gap the generator fills, not a value it respects.**
   `product_name.fr` reading `Schoonmaakdoek` is a full slot and a missing translation at the same
   time. The generator only ever saw the first of those, so the French page showed a Dutch word for
