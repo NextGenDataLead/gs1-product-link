@@ -711,7 +711,18 @@ ownership key beyond the hash, finding one would mean inferring it.
 | E21 | Generator configured but a **NEW or CHANGED** `(GTIN, language)` has no generated tagline (held, blank-1083 product) | Row SKIPPED from the plan so it can never publish a blank page, and dropped again at execute time (`run_execute._drop_without_copy`) because `--plan` confirms every row in a file. Asked **after** the classification: copy is written per run for the rows a run executes, so an UNCHANGED or HELD unit has none by design and reporting it as a skip turns a correct no-op into a work item. The gap is still reported via `missing_generation_input`, which fires only when 1083 is blank in **every** configured language — one the feed carries in another language is a pending translation, not a missing input | `state.diff_against_state` + `run_plan.py` + `run_execute.py` |
 | E22 | `media.require_hero_image` set but a GTIN's source `image_url` is blank | GTIN held out of the plan so a hero-less page can never publish; still reported via `value_blank`. A runtime image fetch failure is unaffected (degrades per E7) | `state.diff_against_state` + `run_plan.py` |
 | E23 | A declared source marked `required` — in `gdsn_map` **or** `gdsn_extras` — (or every member of a `required_group`) has no value for a product | **Whole GTIN held**, in every language, so a SKU is never half-published; each unit lands in `PlanDiff.skipped` with the missing attributes named, and the data-quality report's §0 coverage matrix and Summary row show them for the client to fill in MyGS1 | `lib.mandatory.missing_mandatory` + `state.diff_against_state` |
-| E24 | `media.restrict_to_mapped_gtins` is set and a GTIN has no client-confirmed video in every language | **Whole GTIN held** and reported (§1b). Previously this narrowed *scope* instead, which made the gap invisible on every surface at once — the product simply vanished rather than appearing as work | `state.diff_against_state`, set supplied by `run_plan._confirmed_video_gtins` |
+| E24 | `media.restrict_to_mapped_gtins` is set and a GTIN has no client-confirmed video in every language | **Whole GTIN held** and reported (§1b). Previously this narrowed *scope* instead, which made the gap invisible on every surface at once — the product simply vanished rather than appearing as work | `state.diff_against_state`, set supplied by `holds.confirmed_video_gtins` |
+
+**E22/E23/E24 — enforced at plan time, but known before it.** All three drop a whole product and
+none of them depends on state or on generated copy, so `lib.holds.held_units` can answer them from
+config, the products and the video map alone. `run_generate` asks it and writes no copy for a held
+product: on the pilot client that is the difference between 74 producer calls and 20. It calls the
+same predicates `diff_against_state` calls — `mandatory.missing_mandatory`,
+`media_video.fully_mapped_gtins`, the blank-`image_url` test — never its own reading of them, since
+E23 decides whether a SKU may publish at all. E23 is asked of the *pre*-generation record, so it
+ignores a gap `generator.translation_gaps` will close: holding one of those would leave a
+publishable product with no copy, and E21 would then drop it silently. E18 and E21 themselves stay
+out, being per unit and downstream of generation.
 
 **E19 — why recovery is safe, and why it must still be loud.** State is a *cache* of what the
 tool believes it already did, derivable from the live systems, so rebuilding it is safe: every
@@ -864,9 +875,10 @@ Emits:  output/{client_id}/data/generation_requests.json  (--emit)
 `generation_results.json`, written fresh each run and read by `run_plan`. There is no cache, so
 nothing is ever reused. What *is* narrowed is scope: of the in-scope products, only the
 `(GTIN, language)` units a run would create or change are generated for (`preflight.units_needing_copy`
-→ `state.classify_units`), because an UNCHANGED row is never confirmed and never executed. A unit
-is left out because nothing will be published for it, never because copy for it exists. The
-in-session path needs no API key.
+→ `state.classify_units`), because an UNCHANGED row is never confirmed and never executed — and of
+those, only the ones whose product the plan will not hold outright (`holds.held_units` → E23/E24/E22,
+the plan's own predicates). A unit is left out because nothing will be published for it, never
+because copy for it exists. The in-session path needs no API key.
 
 ```
 Usage: python -m scripts.run_unpublish CLIENT_ID --gtin GTIN [--gtin GTIN ...] [--dry-run]

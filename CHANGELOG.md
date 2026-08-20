@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Generation no longer asks for copy the plan will throw away.** `units_needing_copy` narrowed to
+  the NEW/CHANGED units and stopped there — it never applied the three holds `diff_against_state`
+  applies immediately afterwards: E23 (missing mandatory source data), E24 (no client-confirmed
+  video in every language), E22 (blank hero image). Each of those drops a whole product, so copy
+  written for one is text that never reaches a page. On the pilot client `run_generate --backend
+  api` would have made **74 calls across 37 GTINs for a run that can publish 20 units across 10** —
+  27 GTINs held, 73% of the batch spent on products nobody is publishing. It is the same failure
+  `_prepare` already records one gate earlier ("224 requests emitted where 10 were in scope"), and
+  it lands twice: on the bill, and on a content-review gate carrying three times the units it
+  should, which is the surest way to make a review gate go unread.
+
+  The holds now live in `lib/holds.py`, which asks the plan's own predicates —
+  `mandatory.missing_mandatory` over `ExportConfig.all_sources`, `media_video.fully_mapped_gtins`,
+  the same blank-`image_url` test. Nothing is reimplemented: a hand-rolled second opinion about
+  what `required` means is how "E23 means blank dimensions" came to be believed, and E23 decides
+  whether a SKU may publish at all. Measured against the real export, the units generated for and
+  the plan's rows are now the same 20, with no unit on either side that is not on the other.
+
+  **E23 is asked of what generation cannot fix.** The plan checks mandatory data on the
+  *post-generation* records, so a value the feed carries in one language and the client marked
+  `translate: true` is no longer a gap by the time it looks. Holding on the pre-generation record
+  alone would drop exactly the units whose gap the generation was about to close — no copy, then
+  E21, then a publishable product that silently does not publish. A gap counts only when
+  `generator.translation_gaps` offers nothing to derive it from. E18 and E21 stay out entirely, for
+  the reason `classify_units` gives: both are downstream of generation and would each hold the unit
+  they were about to be closed by.
+
+  `units_needing_copy` still returns `None` — "ask for everything" — when it cannot decide, now
+  including a video map that will not load, because a hold that cannot be evaluated must not read
+  as "nothing is held".
+
+- **The doctor and `run_generate` count a held unit as held, not as already live.** Both used to
+  derive one figure by subtraction, so with the narrowing in place 54 products waiting on a video
+  would have been reported as 54 finished pages — a check saying a run is complete while a third of
+  it waits on the client. `generation_results` now carries `held` beside `unchanged` and names both
+  in its detail; the `--emit` summary and the "no pending unit" warning say which of the two
+  applies, because one needs nothing done and the other needs MyGS1 or a video.
+
 ### Added
 - **The operator shell can re-plan already-published products.** `run_plan --include-published`
   landed without a control in the shell, so its Publish screen built the plan bare — which meant a

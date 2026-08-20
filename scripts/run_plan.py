@@ -52,7 +52,8 @@ from lib.config import ClientConfig, get_client
 from lib.env import load_env
 from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError, VideoMapError
 from lib.generator import generation_context, load_results, merge_generated
-from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
+from lib.holds import confirmed_video_gtins
+from lib.media_video import canon_gtin
 from lib.process_list import load_process_list
 from lib.records import (
     Plan,
@@ -181,18 +182,6 @@ def _pilot_gate(
         else:
             kept.append(product)
     return kept, excluded
-
-
-def _confirmed_video_gtins(cfg: ClientConfig) -> frozenset[str] | None:
-    """GTINs with a client-confirmed video in every language, or ``None`` when unrestricted.
-
-    ``None`` disables the E24 hold entirely, which is what a client without
-    ``media.restrict_to_mapped_gtins`` wants — not an empty set, which would hold everything.
-    """
-    media = cfg.media
-    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
-        return None
-    return fully_mapped_gtins(load_video_map(Path(media.video_map_path)), cfg.wordpress.languages)
 
 
 def _assign_categories(
@@ -327,7 +316,7 @@ def _build_plan(
         require_generated_copy=cfg.generator is not None,
         require_hero_image=cfg.media is not None and cfg.media.require_hero_image,
         mandatory_sources=cfg.export.all_sources,
-        video_gtins=_confirmed_video_gtins(cfg),
+        video_gtins=confirmed_video_gtins(cfg),
         hash_source=feed_view,
     )
     counts = {c: sum(1 for row in rows if row.classification is c) for c in PlanClassification}
