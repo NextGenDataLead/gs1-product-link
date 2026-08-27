@@ -14,6 +14,14 @@ registered. You do not need a terminal.
 
 Those two are the whole set. Everything else here is written for someone else.
 
+## If you are taking this project over from someone else
+
+1. **[`consultant-onboarding.md`](consultant-onboarding.md)** — clone, install, and the two inputs
+   you produce yourself: the GS1 Data Source export and the video mapping, with the exact format,
+   filename and location each has to have. Then the two guides above.
+2. **[`handover-briefing.md`](handover-briefing.md)** — for the person doing the handing over:
+   what to decide first, what to send, a session plan, and the eight things a newcomer gets wrong.
+
 ## If you are setting the tool up for a new client
 
 1. [`setup.md`](setup.md) — install, verify, configure, run, onboard a client.
