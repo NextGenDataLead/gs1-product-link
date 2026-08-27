@@ -37,6 +37,7 @@ quarantines it (E19), and a diagnostic must not change what the next run does.
 | What the tool believes is already published | `output/{client_id}/state.json` |
 | Whether that belief is **true** | `python -m scripts.reconcile` — lists every page on the site carrying a `meta.gtin`, per language, and diffs it against `state.json` both ways. Read-only. A run that fails part-way creates this divergence itself: the page is written, the row is logged as an error, and nothing is recorded |
 | Source-data problems | `output/{client_id}/data-quality-report.md` (`python -m scripts.report_quality`) |
+| Which video belongs to which product | `output/{client_id}/video-map-candidates.xlsx` (`python -m scripts.report_video_candidates`) — every file on disk and every mapping row, with ranked candidates and the field each score came from. The gap *count* is `build_video_map --check`; this is the sheet the client fills in |
 | What was actually published, per wave | `docs/clients/{client_id}-live-log.md`, where a client keeps one |
 
 **Every exception** derives from `OrchestratorError` (`lib/errors.py`), so `except OrchestratorError`

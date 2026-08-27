@@ -907,6 +907,18 @@ The mapping requires client sign-off — see §12 Phase 9.5.
 ```
 
 ```
+Usage: python -m scripts.report_video_candidates CLIENT_ID [--top-n N] [--format csv|xlsx]
+                                                 [--out PATH] [--products PATH]
+
+Emits: output/{client_id}/video-map-candidates.{csv,xlsx}   (pure rows: lib/video_candidates.py)
+
+One row per (language, video file) over the **union** of the folders and the mapping, with each
+row's state, its current GTIN, that product's names, and the top N ranked candidates — each with
+the value that scored and the field it came from. A report to send to the client, not a gate:
+it never exits non-zero over an unmapped file. `build_video_map --check` is the gate.
+```
+
+```
 Usage: python -m scripts.report_quality CLIENT_ID [--out PATH]
 
 Emits: output/{client_id}/data-quality-report.md   (pure renderer: lib/quality_report.py)

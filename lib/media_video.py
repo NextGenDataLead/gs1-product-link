@@ -26,7 +26,7 @@ from collections import Counter
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import NamedTuple
+from typing import Final, NamedTuple
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -49,7 +49,13 @@ _VERSION_RE = re.compile(r"^v\d+$")
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 #: Sentinel gtin value meaning "this video intentionally maps to no product" (not a gap).
-_SKIP = "skip"
+#: Public because three surfaces classify a gtin cell — the pipeline here, the shell's editor and
+#: the candidate report — and a flag that means one thing on one path and something else on
+#: another is the bug this repo has now shipped three times. One definition, read by all of them.
+SKIP: Final = "skip"
+#: The other two answers :func:`state_of` gives.
+CONFIRMED: Final = "confirmed"
+UNSET: Final = "unset"
 #: Canonical GTIN width — GTIN-14, the zero-padded form (matches ``ProductRecord.gtin14``).
 _GTIN_WIDTH = 14
 
@@ -63,6 +69,22 @@ def canon_gtin(gtin: str) -> str:
     uses via :attr:`lib.records.ProductRecord.gtin14`.
     """
     return re.sub(r"\D", "", gtin).zfill(_GTIN_WIDTH)
+
+
+def state_of(gtin: str) -> str:
+    """Classify a mapping row's gtin cell: :data:`UNSET`, :data:`SKIP`, or :data:`CONFIRMED`.
+
+    Whitespace is not a value: a cell holding only spaces is unset, not a GTIN. That distinction
+    is not cosmetic — :func:`canon_gtin` turns ``" "`` into ``00000000000000``, which would then
+    join the confirmed set as a product that does not exist, and hold nothing while looking like
+    a mapping.
+    """
+    value = gtin.strip()
+    if not value:
+        return UNSET
+    if value.lower() == SKIP:
+        return SKIP
+    return CONFIRMED
 
 
 def normalize_video_name(filename: str) -> str:
@@ -206,7 +228,7 @@ class VideoMap(BaseModel):
         matches = [
             e.file
             for e in self.by_language.get(language, [])
-            if e.gtin and e.gtin.lower() != _SKIP and canon_gtin(e.gtin) == target
+            if state_of(e.gtin) == CONFIRMED and canon_gtin(e.gtin) == target
         ]
         if len(matches) == 1:
             return matches[0]
@@ -215,7 +237,7 @@ class VideoMap(BaseModel):
 
 def _confirmed_gtins(entries: list[VideoMapEntry]) -> set[str]:
     """Canonical GTIN-14 set of the confirmed (non-blank, non-``skip``) entries in one language."""
-    return {canon_gtin(e.gtin) for e in entries if e.gtin and e.gtin.lower() != _SKIP}
+    return {canon_gtin(e.gtin) for e in entries if state_of(e.gtin) == CONFIRMED}
 
 
 def fully_mapped_gtins(vmap: VideoMap, languages: list[str]) -> frozenset[str]:
@@ -379,13 +401,12 @@ def check_video_map(vmap: VideoMap, files_by_language: dict[str, list[str]]) -> 
         disk_files = set(disk_names)
 
         for entry in entries:
-            gtin = entry.gtin.strip()
-            if not gtin:
+            if state_of(entry.gtin) == UNSET:
                 issues.append(
                     _issue(language, entry.file, "video_unconfirmed", "no GTIN filled in yet")
                 )
 
-        real = [e for e in entries if e.gtin and e.gtin.lower() != _SKIP]
+        real = [e for e in entries if state_of(e.gtin) == CONFIRMED]
         for gtin, count in Counter(e.gtin for e in real).items():
             if count > 1:
                 issues.append(

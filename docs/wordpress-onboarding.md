@@ -221,6 +221,22 @@ python -m scripts.build_video_map            # emit a hint skeleton
 python -m scripts.build_video_map --check     # exit 1 if any file is unmapped
 ```
 
+**Working through the backlog is a spreadsheet job**, and confirming a row is the client's call,
+so there is a report to send them:
+
+```bash
+python -m scripts.report_video_candidates              # output/{client}/video-map-candidates.xlsx
+python -m scripts.report_video_candidates --top-n 5 --format csv
+```
+
+One row per (language, file) over the union of the folders and the mapping — so a file nobody has
+mapped and a mapping row whose file never arrived are both visible — carrying each row's state, the
+GTIN it holds today, that product's names, and the ranked candidates. Read the **value that scored**
+and the **field it came from** next to the score: the filenames are English, and this feed's English
+sits in the *French* slots, so a 0.83 will often land beside a name that is not the Dutch one. The
+`marketing_name` / `logistics_name` columns are what identify a product — `product_name` is the
+short generic one (`siliconenbak`, `bezem`).
+
 **Filling it in has a screen** — the operator shell's **Video mapping**, linked from Data. It lists
 every file per language with its state, offers the same fuzzy hints as suggestions, and writes the
 file a row at a time so the comments and the confirmed rows survive. Drafting stays here, in the
