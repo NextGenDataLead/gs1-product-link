@@ -37,8 +37,9 @@ from typing import Final
 
 import yaml
 
+from lib import media_video
 from lib.errors import VideoMapError
-from lib.media_video import load_video_map
+from lib.media_video import load_video_map, state_of
 from ui.text_edit import split_comment, with_comment
 
 #: A top-level ``nl:`` / ``fr:`` key — the start of a language's rows.
@@ -50,8 +51,11 @@ _ITEM_RE: Final = re.compile(r"^(\s*-\s*)(.*)$")
 #: The ``gtin`` value inside a flow-style row, quoted or bare.
 _GTIN_RE: Final = re.compile(r"(gtin\s*:\s*)('[^']*'|\"[^\"]*\"|[^,}\s]*)")
 
-#: The sentinel meaning "this video maps to no product" — a decision, not a gap.
-SKIP: Final = "skip"
+#: The sentinel meaning "this video maps to no product" — a decision, not a gap. Taken from
+#: :mod:`lib.media_video` rather than spelled again, so the screen and the pipeline cannot come to
+#: disagree about what ``skip`` means; :func:`lib.media_video.state_of` is re-exported here for
+#: the same reason, and this module's callers keep reaching it as ``video_map_edit.state_of``.
+SKIP: Final = media_video.SKIP
 
 #: Indent for a row appended to a language that has none yet, matching the drafted style.
 _ROW_INDENT: Final = "  "
@@ -79,21 +83,6 @@ class VideoRow:
     def state(self) -> str:
         """``unset``, ``skip`` or ``confirmed`` — what the screen groups the row by."""
         return state_of(self.gtin)
-
-
-def state_of(gtin: str) -> str:
-    """Classify a GTIN cell: ``unset``, ``skip``, or ``confirmed``.
-
-    Matches :func:`lib.media_video._confirmed_gtins`, including its case-insensitive ``skip`` —
-    a screen that disagreed with the pipeline about what counts as confirmed would be worse than
-    no screen.
-    """
-    value = gtin.strip()
-    if not value:
-        return "unset"
-    if value.lower() == SKIP:
-        return SKIP
-    return "confirmed"
 
 
 def parse(text: str) -> list[VideoRow]:

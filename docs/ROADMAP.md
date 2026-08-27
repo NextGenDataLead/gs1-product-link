@@ -262,7 +262,10 @@ in a console nobody would have on a scheduled run. [#71](https://github.com/Next
 closes that: the message now names the failing call and quotes what the server said, scrubbed and
 bounded, and the row records `failed_call`.
 
-**Still open and not ours:** the client's sign-off on the video mapping (~140 unmapped rows). The
+**Still open and not ours:** the client's sign-off on the video mapping. That backlog now has an
+artefact to move it — `python -m scripts.report_video_candidates` writes every file and every
+mapping row into one spreadsheet with ranked candidates, which is a thing the client can work in;
+`build_video_map --check` only ever counted the gaps. The
 exposed WordPress application password was **rotated on 2026-07-30** and the old one revoked.
 
 Two standing invariants, both learned the hard way and neither closed by a phase:
