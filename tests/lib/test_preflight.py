@@ -298,6 +298,89 @@ def test_the_gtin_list_is_never_truncated(tmp_path: Path) -> None:
     assert result.data["in_scope_gtins"] == gtins
 
 
+def test_the_scope_sentence_only_names_filters_that_were_applied(tmp_path: Path) -> None:
+    """It named ``restrict_to_mapped_gtins`` while :func:`in_scope` has never applied it (#117).
+
+    The figure was right and the sentence was wrong, which is the harder way round to notice. On
+    the pilot it read "37 in scope, after the process list **and** media.restrict_to_mapped_gtins"
+    when 20 of those 37 were held for want of a video and only 17 could publish — and a held unit
+    produces no error, no row and no count, so the sentence was the operator's only clue and it
+    pointed away from the work.
+
+    Gate 0 renders this string verbatim, which is where the picture of a run gets formed.
+    """
+    cfg = _make_config(
+        process_list=_write_process_list(tmp_path, [GTIN_A, GTIN_B]),
+        media=MediaConfig(
+            restrict_to_mapped_gtins=True,
+            video_map_path=_write_video_map(tmp_path, [GTIN_A], ["nl"]),
+        ),
+    )
+    products = [_product(GTIN_A), _product(GTIN_B)]
+
+    detail = check_scope(cfg, products).detail
+
+    assert "after process list" in detail
+    # The rule may be *mentioned* — it holds a product — but never as something already applied.
+    before_the_hold = detail.split("held for want")[0]
+    assert "restrict_to_mapped_gtins" not in before_the_hold, (
+        f"the sentence still claims the video rule narrowed the figure: {detail!r}"
+    )
+
+
+def test_the_scope_sentence_reports_what_a_run_would_actually_publish(tmp_path: Path) -> None:
+    """Both numbers, because the difference between them is the operator's next job."""
+    cfg = _make_config(
+        process_list=_write_process_list(tmp_path, [GTIN_A, GTIN_B]),
+        media=MediaConfig(
+            restrict_to_mapped_gtins=True,
+            video_map_path=_write_video_map(tmp_path, [GTIN_A], ["nl"]),
+        ),
+    )
+    products = [_product(GTIN_A), _product(GTIN_B)]
+
+    result = check_scope(cfg, products)
+
+    assert "2 of 2 product(s) in the export are in scope" in result.detail
+    assert "1 of those are held for want of a confirmed video" in result.detail
+    assert "so a run would publish 1" in result.detail
+    assert result.data["in_scope"] == 2, "the figure stays the superset in_scope promises"
+
+
+def test_the_hold_count_is_silent_when_there_is_nothing_to_report(tmp_path: Path) -> None:
+    """No rule, or every product mapped, means no second sentence to skim past."""
+    mapped_both = _make_config(
+        process_list=_write_process_list(tmp_path, [GTIN_A]),
+        media=MediaConfig(
+            restrict_to_mapped_gtins=True,
+            video_map_path=_write_video_map(tmp_path, [GTIN_A], ["nl"]),
+        ),
+    )
+    no_rule = _make_config(process_list=_write_process_list(tmp_path, [GTIN_A]))
+
+    for cfg in (mapped_both, no_rule):
+        assert "held for want" not in check_scope(cfg, [_product(GTIN_A)]).detail
+
+
+def test_an_unreadable_video_map_does_not_become_a_hold_count_of_zero(tmp_path: Path) -> None:
+    """`check_video_coverage` reports that properly; this one must not guess, or fail twice.
+
+    Reporting zero held would be worse than saying nothing: it is the reassuring answer, and it
+    would be produced by exactly the situation where nothing is known.
+    """
+    broken = tmp_path / "broken.yml"
+    broken.write_text("nl: [this is not\n  a mapping", encoding="utf-8")
+    cfg = _make_config(
+        process_list=_write_process_list(tmp_path, [GTIN_A]),
+        media=MediaConfig(restrict_to_mapped_gtins=True, video_map_path=str(broken)),
+    )
+
+    detail = check_scope(cfg, [_product(GTIN_A)]).detail
+
+    assert "held for want" not in detail
+    assert "so a run would publish" not in detail
+
+
 def test_scope_of_nothing_is_a_failure_not_a_quiet_pass(tmp_path: Path) -> None:
     """An empty scope means a run that publishes nothing and reports success."""
     cfg = _make_config(process_list=_write_process_list(tmp_path, [GTIN_B]))

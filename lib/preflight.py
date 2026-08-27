@@ -59,7 +59,9 @@ from lib.gs1_dl_client import GS1DigitalLinkClient
 from lib.holds import held_units
 from lib.media_video import (
     VideoMapSummary,
+    canon_gtin,
     check_video_map,
+    fully_mapped_gtins,
     list_video_files,
     load_video_map,
     summarize_video_map,
@@ -272,6 +274,29 @@ def in_scope(cfg: ClientConfig, products: list[ProductRecord]) -> list[ProductRe
     return scoped
 
 
+def held_for_video(cfg: ClientConfig, scoped: list[ProductRecord]) -> list[ProductRecord]:
+    """Which of ``scoped`` E24 will hold: no client-confirmed video in every language.
+
+    Composed from :func:`lib.media_video.fully_mapped_gtins` — the same primitive ``run_plan``
+    holds on — rather than re-deciding what "confirmed" means. A second opinion about that is the
+    mistake :func:`in_scope` exists to prevent.
+
+    Empty when the rule is off, when there is no mapping, or when the mapping will not load. The
+    last is deliberate: :func:`check_video_coverage` reports an unreadable mapping properly, this
+    check must not fail a second time over it, and a hold count that could not be computed must
+    not be presented as zero.
+    """
+    media = cfg.media
+    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
+        return []
+    try:
+        vmap = load_video_map(Path(media.video_map_path))
+    except VideoMapError:
+        return []
+    allowed = fully_mapped_gtins(vmap, list(cfg.wordpress.languages))
+    return [product for product in scoped if canon_gtin(product.gtin) not in allowed]
+
+
 def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
     """State plainly how many products a run would touch, and what removed the rest.
 
@@ -288,15 +313,26 @@ def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult
             remedy="Run `python -m scripts.parse_export` first.",
         )
     scoped = in_scope(cfg, products)
+    # Only the narrowings `in_scope` actually performs. It named `media.restrict_to_mapped_gtins`
+    # here too, which `in_scope` has never applied and must not — see its comment for why. So the
+    # sentence promised a filter the figure had not been through: on the pilot it read "37 in
+    # scope, after the process list and the video rule" while 20 of those 37 were held and only 17
+    # could publish. Gate 0 renders this string verbatim, which is where an operator forms their
+    # picture of the run, and the missing 20 produce no error, no row and no count.
     reasons = []
     if cfg.process_list is not None:
         reasons.append(f"process list ({cfg.process_list.path})")
-    media = cfg.media
-    if media is not None and media.restrict_to_mapped_gtins:
-        reasons.append("media.restrict_to_mapped_gtins (confirmed video in every language)")
     detail = f"{len(scoped)} of {len(products)} product(s) in the export are in scope"
     if reasons:
         detail += ", after " + " and ".join(reasons)
+    # The video rule is reported as what it is — a hold on products that are in scope — rather
+    # than as a narrowing that already happened.
+    held = held_for_video(cfg, scoped)
+    if held:
+        detail += (
+            f". {len(held)} of those are held for want of a confirmed video in every language "
+            f"(media.restrict_to_mapped_gtins), so a run would publish {len(scoped) - len(held)}"
+        )
     data: dict[str, object] = {
         "in_scope": len(scoped),
         "total": len(products),
