@@ -14,7 +14,7 @@ deliberate act, one button away.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 
 from nicegui import ui
 
@@ -23,6 +23,12 @@ from ui import context, runner, theme
 #: The four statuses, only for tallying here — the rendering of a check lives in the theme, so
 #: this screen and the Setup screen's Test buttons cannot start showing the same check differently.
 _STATUSES = ("ok", "warn", "fail", "n/a")
+
+#: The checks that only an ``--offline``-less run performs — see ``lib.preflight.run_checks``,
+#: which returns before appending these three. They are the whole reason the credentials button
+#: exists, and they exist nowhere else in the batch: ``run_execute`` sets ``resolved_gs1 = None``
+#: for a dry run, so a dry run never mints a token either.
+_CREDENTIAL_CHECKS: Final = frozenset({"site_serves", "wordpress", "gs1"})
 
 
 def render() -> None:
@@ -105,6 +111,36 @@ def _finished_at() -> str:
     return datetime.now(UTC).strftime("%H:%M:%S UTC")
 
 
+def _verdict(payload: list[dict[str, Any]]) -> tuple[str, str]:
+    """The sentence at the top of the screen, and the band kind to render it as.
+
+    **"Ready." used to be said having tested no credential.** The screen runs the offline checks
+    on arrival, and offline stops before WordPress, GS1 and the target URL — so the one state the
+    operator most needs qualified was the one that read as an unqualified all-clear. A wrong
+    password then survives every gate, because the dry run does not authenticate either, and
+    surfaces at the first real write with some rows already live.
+
+    The caveat rides on the verdict rather than in a band beneath it: the verdict is the line that
+    gets read, and a second band is the one that gets skimmed.
+
+    A *failure* is not qualified. When something offline is already broken the credential question
+    is not yet the operator's problem, and diluting "Not ready" would cost more than it buys.
+    """
+    tally = {key: sum(1 for c in payload if c["status"] == key) for key in _STATUSES}
+    if tally["fail"]:
+        return "Not ready. Fix the failures below before publishing.", "danger"
+
+    verdict, kind = (
+        ("Ready, but read the warnings below first.", "warn")
+        if tally["warn"]
+        else ("Ready.", "quiet")
+    )
+    tested = _CREDENTIAL_CHECKS & {str(check.get("name", "")) for check in payload}
+    if not tested:
+        verdict += " Offline checks only — no credential was tested."
+    return verdict, kind
+
+
 def _summary(payload: list[dict[str, Any]]) -> None:
     """The verdict first, so the list below is read as detail rather than as news."""
     tally = {key: sum(1 for c in payload if c["status"] == key) for key in _STATUSES}
@@ -117,9 +153,4 @@ def _summary(payload: list[dict[str, Any]]) -> None:
         if tally["n/a"]:
             theme.figure(str(tally["n/a"]), "not applicable")
 
-    if tally["fail"]:
-        theme.band("Not ready. Fix the failures below before publishing.", "danger")
-    elif tally["warn"]:
-        theme.band("Ready, but read the warnings below first.", "warn")
-    else:
-        theme.band("Ready.", "quiet")
+    theme.band(*_verdict(payload))
