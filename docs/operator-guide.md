@@ -66,54 +66,48 @@ and whoever helps you knows exactly what happened.
 
 <img src="images/data.png" alt="The Data screen: the GS1 Data Source export with a count, a modified date and an upload area, then the product scope list with its own upload, the barcodes missing from the export above, and the rest as a searchable table of tick boxes." width="900">
 
-**What this screen is for:** the two spreadsheets a batch is made of. They are different documents
-from different places, so the screen is two numbered steps — do 1, then 2.
+**What this screen is for:** the two spreadsheets a batch is made of, in four numbered steps. Do
+1, then 2, then 3, then 4.
 
 Every heading has a small **ⓘ** beside it. Hover it to read what that file is and where it goes;
-press it to keep the text on screen. Nothing is hidden behind one that you need to act on — a
-warning always sits on the page in a coloured band.
+press it to keep the text on screen. Nothing you need to act on is hidden behind one — a warning
+always sits on the page in a coloured band.
 
 **What you do, in order:**
 
-1. **Upload the GS1 export** — the product *data*. If the maintainer sent you a new spreadsheet,
-   drop it on the upload area. It replaces the one already there and keeps the old one beside it.
-   Then press **Read the export**.
-   - *Check it first (changes nothing)* does the same read without saving, if you only want to
-     know whether the file opens.
-   - The line under the upload says whether this step is done — *"127 products read from this
-     export"*, or *"Uploaded, not read yet"*. If a band appears saying the export has not been read
-     yet, press **Read the export** before going on.
-2. **Upload the products you want to process** — which barcodes this batch may touch. Drop the new
-   one on its upload area; it is checked before it replaces anything, so a file that will not open
-   is refused and the list you were using stays put.
+1. **Upload the GS1 export** — the product *data*. Press the picker and choose the spreadsheet.
+   It is read as soon as it arrives: a spinner runs while that happens, then a line says how many
+   products it found. **If it is not a GS1 export, or something the tool needs is missing, it is
+   put back and nothing changes** — the file you had is still there, and the reason appears on
+   screen. There is no separate "check" or "read" button; uploading is both.
+2. **Upload the product list** — which barcodes this batch may touch. Same again: it is read
+   before it replaces anything, so a file that will not open is refused and the list you were
+   using stays put.
+3. **Select the products.** Two tables. The top one, *Not in the GS1 export*, lists barcodes you
+   asked for that the export has no row for — nothing else in the tool will mention them again.
+   It has no tick boxes on purpose: there is nothing to choose, because nothing can process them.
+   They stay in your list; to drop one, remove it in the spreadsheet and upload again.
 
-   > ⚠️ **A tick means keep.** Every row arrives ticked, and a run processes the ticked ones.
-   > Untick a row to leave that product out, then press **Save the list**. If you used an earlier
-   > version of this app, the box under the table used to say *Remove selected rows* and meant the
-   > opposite — that button is gone.
+   The bottom table is the batch. Every row arrives ticked.
 
-   Two tables, and the top one is the one to read first: **On the scope list, not in the GS1
-   export** lists barcodes you asked for that the export has no row for. Nothing else in the tool
-   will mention them again. Either the product is missing from the export — which is fixed in
-   MyGS1 and re-exported — or the barcode is wrong. It has no tick boxes on purpose: there is
-   nothing to choose, because nothing can process them. They stay in your list; to drop one,
-   remove it in the spreadsheet and upload the list again.
+   > ⚠️ **A tick means keep.** Untick a product to leave it out. If you used an earlier version of
+   > this app, the button under the table said *Remove selected rows* and meant the opposite — it
+   > is gone.
 
-   The line under the tables always says how many rows will be processed out of how many there
-   are. Use the filter box to find a product; filtering changes only what you can see, never what
-   is ticked, and the line says how many are showing while a filter is on.
+   Use the filter box to find a product. Filtering changes only what you can see, never what is
+   ticked.
+4. **Save the list to process.** The line above the button says how many rows will be processed
+   out of how many could be. Press **Save the list**. Got it wrong? **Restore the uploaded list**
+   puts back the file you uploaded, in one click.
 
-   Got it wrong? **Restore the uploaded list** puts back the file you uploaded, in one click.
-3. **Data quality** at the bottom builds a report of what is missing or wrong in the spreadsheet
-   itself. Blank values get fixed in MyGS1, not here. The date beside it says when it was last
-   built, so you can tell this week's worklist from last week's.
+**Data quality** at the bottom builds a report of what is missing or wrong in the spreadsheet
+itself. Blank values get fixed in MyGS1, not here. The date beside it says when it was last built.
 
-**Done looks like:** *"N products read from this export"* under step 1, nothing unexpected in the
-*Not in the GS1 export* table, and a line under the bottom table naming exactly the number of
-products you mean.
+**Done looks like:** four steps worked through, nothing unexpected in the *Not in the GS1 export*
+table, and a line under step 4 naming exactly the number of products you mean.
 
-**Stop if:** the scope list shows a red band saying the file cannot be read. Upload it again, or
-ask the maintainer for a fresh copy — do not go looking for the file in a folder to replace by
+**Stop if:** either upload is refused, or a red band says a file cannot be read. Upload it again,
+or ask the maintainer for a fresh copy — do not go looking for the file in a folder to replace by
 hand.
 
 ---

@@ -47,32 +47,6 @@ def _resolve(path: str) -> Path:
     return resolved if resolved.is_absolute() else REPO_ROOT / resolved
 
 
-def _export_status(count: int | None, export: context.FileFact) -> str:
-    """Whether step 1 is done, in one sentence rather than in two numerals.
-
-    The screen used to answer this with ``theme.figure`` twice — "products parsed" beside "export
-    modified" — at hero size, which is the size reserved for a number somebody acts on. Neither is:
-    they are the *state of a step*, and side by side they read as one fact about one file while
-    being two facts about two, with two modification times, either of which can be the stale one.
-    """
-    if not export.exists:
-        return "No export here yet. Upload one to begin."
-    if not count:
-        return "Uploaded, not read yet — press Read the export."
-    return f"{count} products read from this export."
-
-
-def _export_is_newer(export: context.FileFact, parsed: context.FileFact) -> bool:
-    """Whether the export has changed since it was parsed — so the product count is stale.
-
-    False when either file is missing: an unparsed export is already reported as "0 products
-    parsed", and a second warning about the same absence would only add noise.
-    """
-    if export.modified is None or parsed.modified is None:
-        return False
-    return export.modified > parsed.modified
-
-
 def render() -> None:
     cid = context.client_id()
     cfg = context.client_config(cid)
@@ -101,16 +75,11 @@ def render() -> None:
         _quality(cid)
 
 
-# --- Export -------------------------------------------------------------------
+# --- Step 1: the export -------------------------------------------------------
 
 
 def _export(cfg: Any, cid: str) -> None:
-    target = Path(cfg.export.path)
-    if not target.is_absolute():
-        target = REPO_ROOT / target
-
-    fact = context.file_fact(cfg.export.path)
-    parsed = context.file_fact(context.output_dir(cid) / "data" / "products.json")
+    target = _resolve(cfg.export.path)
 
     with theme.section(
         "Upload the GS1 export",
@@ -120,62 +89,51 @@ def _export(cfg: Any, cid: str) -> None:
             f"{cfg.export.path} in place and keeps the previous file beside it. That path is fixed "
             "in clients.yml and has no command-line override, so a workbook saved anywhere else is "
             "invisible to the tool — the single most common way a run quietly uses last quarter's "
-            "data."
+            "data. The file is read as soon as it arrives: if it is not a GS1 Data Source export, "
+            "or an attribute the pipeline needs is absent, it is put back and nothing changes."
         ),
     ):
-        # Two files with two modification times. Uploading without reading the export leaves last
-        # quarter's product count standing, and nothing else on the screen would say so. A band,
-        # not an ⓘ: something an operator must not miss cannot live behind an affordance they have
-        # to discover.
-        if _export_is_newer(fact, parsed):
-            theme.band(
-                f"This export was uploaded {fact.age} and has not been read yet — it was last read "
-                f"{parsed.age}. Press *Read the export* below before going on.",
-                "warn",
-            )
+        problems = ui.log().classes("console mt-3").style("display:none")
 
-        # Async because NiceGUI 3 reads an upload through awaitable methods on ``event.file``.
-        # The 2.x form — a synchronous ``event.content.read()`` — raises AttributeError *inside*
-        # the handler, where NiceGUI logs it and the browser still shows a completed upload. That
-        # failure wrote nothing while looking exactly like success, which is the one outcome this
-        # project refuses everywhere else.
-        async def upload(event: events.UploadEventArguments) -> None:
+        # Async because NiceGUI 3 reads an upload through awaitable methods on ``event.file``. The
+        # 2.x form — a synchronous ``event.content.read()`` — raised AttributeError *inside* the
+        # handler, where NiceGUI logs it and the browser still shows a completed upload: it wrote
+        # nothing while looking exactly like success.
+        async def receive(event: events.UploadEventArguments) -> str:
+            problems.style("display:none")
             target.parent.mkdir(parents=True, exist_ok=True)
+            backup = target.with_suffix(f".bak{target.suffix}")
             if target.exists():
-                target.with_suffix(f".bak{target.suffix}").write_bytes(target.read_bytes())
+                backup.write_bytes(target.read_bytes())
             await event.file.save(target)
-            theme.notify_ok(f"Saved to {cfg.export.path} (previous kept as .bak)")
 
-        ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(
-            'accept=".xlsx" flat bordered'
-        ).classes("w-full max-w-xl")
-
-        # One sentence saying whether this step is done. It replaced two figures — a product count
-        # and a file date — set side by side at hero size, which read as one fact about one file
-        # and were about two.
-        ui.label(_export_status(context.product_count(cid), fact)).classes("note mt-3")
-
-        output = ui.log().classes("console mt-4").style("display:none")
-
-        # Async, and the subprocess runs off the event loop. Both halves are needed, for the
-        # reason `runner.run_off_the_loop` gives: a blocking call in a sync handler holds the
-        # loop until the command has already finished, so the running-state the button paints
-        # arrives at the browser only once there is nothing left to report.
-        async def parse(*, dry_run: bool) -> None:
-            argv = runner.parse_export_argv(cid, dry_run=dry_run)
-            output.style("display:block")
-            output.clear()
-            result = await runner.run_off_the_loop(argv)
-            output.push(result.display_command)
-            output.push(result.stderr or result.stdout or "(no output)")
+            # Reading it *is* the check. There was a "check it" button and a "read it" button, and
+            # the second was the one that mattered, so the first was a step an operator could skip
+            # into a run built on a file nobody had opened.
+            result = await runner.run_off_the_loop(runner.parse_export_argv(cid))
             if result.ok:
-                theme.notify_ok("Parse clean")
-            else:
-                theme.notify_warning("Parse finished with errors")
+                theme.notify_ok("Export read.")
+                return f"{context.product_count(cid) or 0} products read from this export."
 
-        with ui.row().classes("gap-3 mt-4"):
-            theme.quiet_action("Check it first (changes nothing)", lambda: parse(dry_run=True))
-            theme.action("Read the export", lambda: parse(dry_run=False))
+            # Put the old one back. A failed read that leaves the bad file in place would mean the
+            # next screen describes a workbook nobody can use, with no way back but a re-upload of
+            # a file the operator may no longer have.
+            if backup.exists():
+                target.write_bytes(backup.read_bytes())
+            problems.style("display:block")
+            problems.clear()
+            problems.push(result.stderr or result.stdout or "(no output)")
+            theme.notify_problem(
+                "That file could not be read as a GS1 Data Source export, so it was put back. "
+                "The reason is on screen."
+            )
+            return "Not read — the previous export is still in place."
+
+        theme.upload(
+            "GS1 Data Source export (.xlsx)",
+            receive,
+            busy="Reading the export — this can take a moment…",
+        )
 
 
 # --- Product scope list ---------------------------------------------------------
@@ -207,7 +165,7 @@ def _scope_list(cfg: Any, cid: str) -> None:
     control = _resolve(cfg.process_list.path)
 
     with theme.section(
-        "Upload the products you want to process",
+        "Upload the product list",
         step=2,
         explain=(
             "A spreadsheet of the barcodes this batch may touch. Being on the list is the whole "
@@ -221,35 +179,31 @@ def _scope_list(cfg: Any, cid: str) -> None:
     ):
         # Async because NiceGUI 3 reads an upload through awaitable methods on ``event.file`` —
         # see the export upload above for what the 2.x form did instead.
-        async def upload(event: events.UploadEventArguments) -> None:
-            try:
-                kept = process_list_edit.archive(cfg.process_list, await event.file.read())
-            except (OSError, ProcessListError) as exc:
-                # Refused before anything was written, so the list they were working from is
-                # still there. Saying so is the difference between a rejected file and a lost one.
-                theme.notify_problem(str(exc))
-                return
+        async def receive(event: events.UploadEventArguments) -> str:
+            # Read before it is installed, with the run's own reader, so a file that would fail on
+            # Preflight is refused while the operator is still looking at the picker and the list
+            # they were working from is untouched.
+            kept = process_list_edit.archive(cfg.process_list, await event.file.read())
             # Redrawn rather than left for the operator to reload: every count and both tables
             # below now describe the file that was just replaced, and a screen that keeps showing
             # the previous list after a successful upload is the silent staleness this project
             # keeps designing against.
             redraw()
-            theme.notify_ok(f"Scope list installed. Your upload is kept at {kept.name}.")
+            theme.notify_ok("Product list installed.")
+            return f"Installed. Your upload is kept as {kept.name}."
 
-        ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(
-            'accept=".xlsx" flat bordered'
-        ).classes("w-full max-w-xl mt-2")
+        theme.upload("Product list (.xlsx)", receive, busy="Checking the list…")
 
-        # Declared after the upload so the grid renders below it, as on the export section above:
-        # the file arrives, then what is in it.
-        body = ui.column().classes("w-full gap-0")
+    # Steps 3 and 4 describe whatever the file above currently is, so they are rebuilt whole
+    # whenever it changes.
+    body = ui.column().classes("w-full gap-0")
 
-        def redraw() -> None:
-            body.clear()
-            with body:
-                _scope_grid(cfg, cid, redraw)
+    def redraw() -> None:
+        body.clear()
+        with body:
+            _scope_grid(cfg, cid, redraw)
 
-        redraw()
+    redraw()
 
 
 def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
@@ -274,7 +228,7 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
         # which they have always been able to do.
         theme.band(
             "The GS1 Data Source export has not been parsed yet, so no row can be matched against "
-            "it. Parse it above; until then this is simply the whole list.",
+            "it. Upload it in step 1; until then this is simply the whole list.",
             "warn",
         )
         matched, unmatched = list(range(len(sheet.rows))), []
@@ -292,68 +246,89 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
         gtin = sheet.gtin14_at(index)
         return {_ROW: index, **cells, _HELD: "no video yet" if gtin in held else ""}
 
-    _missing_table(columns, [row_of(n) for n in unmatched])
-    below, search = _scope_table(columns, [row_of(n) for n in matched])
+    with theme.section(
+        "Select the products",
+        step=3,
+        explain=(
+            "Every row arrives ticked, and a run processes the ticked ones. Untick a product to "
+            "leave it out of this batch. The filter changes only what you can see, never what is "
+            "ticked, so you can search, untick, clear the filter, and nothing you did is lost."
+        ),
+    ):
+        _missing_table(columns, [row_of(n) for n in unmatched])
+        below, search = _scope_table(columns, [row_of(n) for n in matched])
 
-    # Written out here and not only in the handler, because the handler is async — it may have to
-    # ask the browser what the filter is showing — and the first value has to be on the page before
-    # there is a browser to ask.
-    count = ui.label(_scope_count(len(below.selected), len(matched), None)).classes("note mt-2")
+    with theme.section(
+        "Save the list to process",
+        step=4,
+        explain=(
+            "Writes your choice to the file a run reads. The previous version is kept beside it, "
+            "and Restore puts back the list you uploaded — which is what makes unticking safe to "
+            "get wrong. Nothing is published here; this only settles which products are in the "
+            "batch."
+        ),
+    ):
+        # Written out here and not only in the handler, because the handler is async — it may have
+        # to ask the browser what the filter is showing — and the first value has to be on the page
+        # before there is a browser to ask.
+        count = ui.label(_scope_count(len(below.selected), len(matched), None)).classes("note")
 
-    async def recount() -> None:
-        # Asked of the table rather than re-implemented: Quasar's filter matches every visible
-        # column, and a second version of that rule here would drift from the one on screen. Only
-        # reached once the operator has typed, so the client is connected by then.
-        shown = (
-            len(await below.get_filtered_sorted_rows()) if (search.value or "").strip() else None
-        )
-        count.text = _scope_count(len(below.selected), len(matched), shown)
+        async def recount() -> None:
+            # Asked of the table rather than re-implemented: Quasar's filter matches every visible
+            # column, and a second version of that rule here would drift from the one on screen.
+            # Only reached once the operator has typed, so the client is connected by then.
+            shown = (
+                len(await below.get_filtered_sorted_rows())
+                if (search.value or "").strip()
+                else None
+            )
+            count.text = _scope_count(len(below.selected), len(matched), shown)
 
-    below.on_select(recount)
-    search.on_value_change(recount)
-    # After the count, so that "these" refers to the number just given rather than to the table.
-    _held_note(cfg, sum(1 for n in matched if sheet.gtin14_at(n) in held))
+        below.on_select(recount)
+        search.on_value_change(recount)
+        # After the count, so "them" refers to the number just given rather than to the table.
+        _held_note(cfg, sum(1 for n in matched if sheet.gtin14_at(n) in held))
 
-    def save() -> None:
-        # The rows the export has nothing for are kept, always, and are not counted as chosen.
-        # They carry no checkbox because the only question this screen asks is "does this run?",
-        # and for them the answer is no whatever anyone ticks.
-        keep = {int(row[_ROW]) for row in below.selected} | set(unmatched)
-        dropped = len(sheet.rows) - len(keep)
-        try:
-            backup = process_list_edit.save_sheet(sheet.keeping(keep))
-        except ProcessListError as exc:
-            theme.notify_problem(str(exc))
-            return
-        # The delta, not the end state. A tick used to mean "remove this row" on this screen, and
-        # an operator with that habit deselects the rows they want *gone*; "5 dropped" is the
-        # sentence that contradicts them while the previous list is still one click away.
-        theme.notify_ok(
-            f"Saved {len(keep)} row(s). {dropped} dropped; previous list at {backup.name}"
-        )
-        redraw()
+        def save() -> None:
+            # The rows the export has nothing for are kept, always, and are not counted as chosen.
+            # They carry no checkbox because the only question this screen asks is "does this
+            # run?", and for them the answer is no whatever anyone ticks.
+            keep = {int(row[_ROW]) for row in below.selected} | set(unmatched)
+            dropped = len(sheet.rows) - len(keep)
+            try:
+                backup = process_list_edit.save_sheet(sheet.keeping(keep))
+            except ProcessListError as exc:
+                theme.notify_problem(str(exc))
+                return
+            # The delta, not the end state. A tick used to mean "remove this row" on this screen,
+            # and an operator with that habit unticks the rows they want *gone*; "5 dropped" is the
+            # sentence that contradicts them while the previous list is still one click away.
+            theme.notify_ok(
+                f"Saved {len(keep)} row(s). {dropped} dropped; previous list at {backup.name}"
+            )
+            redraw()
 
-    def restore() -> None:
-        try:
-            backup = process_list_edit.restore(cfg.process_list)
-        except (OSError, ProcessListError) as exc:
-            theme.notify_problem(str(exc))
-            return
-        theme.notify_ok(f"The uploaded list is back. The list you had is at {backup.name}")
-        redraw()
+        def restore() -> None:
+            try:
+                backup = process_list_edit.restore(cfg.process_list)
+            except (OSError, ProcessListError) as exc:
+                theme.notify_problem(str(exc))
+                return
+            theme.notify_ok(f"The uploaded list is back. The list you had is at {backup.name}")
+            redraw()
 
-    with ui.row().classes("gap-3 mt-3"):
-        theme.action("Save the list", save, danger=True)
-        theme.quiet_action("Restore the uploaded list", restore)
+        with ui.row().classes("gap-3 mt-3"):
+            theme.action("Save the list", save, danger=True)
+            theme.quiet_action("Restore the uploaded list", restore)
 
-    # Named here because this is where the operator is looking at the list, and said as a
-    # location rather than offered as a button: the sheet is about one particular run, and a
-    # screen that shows no run would have to guess which.
-    with ui.row().classes("items-baseline gap-1 mt-3"):
-        ui.label("After a run, this list comes back with what happened to each row —").classes(
-            "note"
-        )
-        ui.link("build it on Runs", "/runs").classes("note")
+        # Named here because this is where the operator is looking at the list, and said as a
+        # location rather than offered as a button: the sheet is about one particular run, and a
+        # screen that shows no run would have to guess which.
+        with ui.row().classes("items-baseline gap-1 mt-3"):
+            ui.label("After a run, this list comes back with what happened to each row —").classes(
+                "note"
+            )
+            ui.link("build it on Runs", "/runs").classes("note")
 
 
 def _scope_count(chosen: int, matched: int, shown: int | None) -> str:

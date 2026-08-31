@@ -17,12 +17,12 @@ Two rules the palette exists to serve:
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Final
 
-from nicegui import ui
+from nicegui import events, ui
 
 #: How often a running button repaints its elapsed count. One second: fast enough to read as
 #: alive, slow enough that nobody watches the digits instead of the log.
@@ -175,6 +175,28 @@ body { background: var(--paper) !important; color: var(--ink) !important;
                             border-color var(--duration) var(--ease); }
 .info-dot:hover, .info-dot:focus-visible { color: var(--accent); border-color: var(--accent); }
 .info-dot[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+/* Quasar's uploader arrives as a blue slab reporting "0.0B / 0.00%" — a transfer statistic, on a
+   screen where the file travels a few centimetres to the same machine. Slimmed to a labelled
+   button; what happens *after* the file lands is the part worth watching, and that is the busy
+   line below it. */
+/* NiceGUI puts the class on the uploader's own root, so this is `.q-uploader` itself — a
+   descendant selector matches nothing, which is how it first shipped as a full-width white slab. */
+.upload           { display: inline-flex; width: auto; min-width: 0; max-height: none;
+                    border: 1px solid var(--rule); border-radius: 3px; background: none;
+                    box-shadow: none; }
+.upload .q-uploader__header { background: none; color: var(--ink); padding: 0; }
+.upload .q-uploader__header-content { padding: var(--space-1) var(--space-2); gap: var(--space-2);
+                                      align-items: center; flex-wrap: nowrap; }
+/* Quasar wraps the label in a growing column; ungrown, the label and its button sit together as
+   one control instead of drifting to opposite ends of whatever width is going. */
+.upload .q-uploader__header-content > div { flex: 0 0 auto; }
+.upload .q-uploader__title { font-size: var(--text-small); font-weight: 600; line-height: 1.4;
+                             white-space: nowrap; overflow: visible; text-align: left; }
+.upload .q-uploader__subtitle, .upload .q-uploader__list { display: none; }
+.upload .q-uploader__header .q-btn { color: var(--ink-soft); }
+.upload:hover     { border-color: var(--ink-faint); }
+.upload-busy      { min-height: 1.4rem; }
+
 .explain      { font-size: var(--text-small); color: var(--ink-soft); line-height: 1.55;
                 max-width: 48rem; margin: calc(-1 * var(--space-2)) 0 var(--space-4);
                 padding-left: var(--space-3); border-left: 2px solid var(--rule); }
@@ -601,6 +623,52 @@ def notify_problem(text: str) -> None:
     a property of the outcome rather than of whoever wrote the call.
     """
     _notify(text, "negative")
+
+
+def upload(
+    label: str,
+    handler: Callable[[events.UploadEventArguments], Awaitable[str]],
+    *,
+    accept: str = ".xlsx",
+    busy: str = "Checking the file…",
+) -> None:
+    """A file picker that says what it is doing while the file is being checked.
+
+    The point of the spinner is not the transfer — the file moves a few centimetres to the same
+    machine — it is everything the handler does **after** it lands: reading the workbook, deciding
+    whether it is the right shape, refusing it if not. On a real export that is several seconds of
+    a screen that would otherwise look like nothing had happened, which is how an operator comes
+    to press a thing twice.
+
+    Args:
+        label: What this picker is for, shown beside it. Names the file, not the act.
+        handler: Awaited with the upload event; returns the sentence to leave on screen. Raising
+            is fine — the message is shown and the line goes quiet.
+        accept: File-type filter passed to the picker.
+        busy: What to say while the handler runs.
+    """
+    picker = ui.upload(auto_upload=True, max_files=1).classes("upload")
+    picker.props(f'accept="{accept}" flat label="{label}"')
+    with ui.row().classes("upload-busy items-center gap-2 mt-2"):
+        spinner = ui.spinner(size="1.1em")
+        spinner.set_visibility(False)
+        said = ui.label("").classes("note")
+
+    async def _guarded(event: events.UploadEventArguments) -> None:
+        spinner.set_visibility(True)
+        said.text = busy
+        try:
+            said.text = await handler(event)
+        except Exception as exc:  # noqa: BLE001 — the screen reports it; nothing here can fix it
+            said.text = str(exc)
+            raise
+        finally:
+            spinner.set_visibility(False)
+            # Quasar keeps the accepted file in its list, and re-picking the same name is then a
+            # no-op — which reads as a broken button when an operator corrects a file and retries.
+            picker.reset()
+
+    picker.on_upload(_guarded)
 
 
 def figure(value: str, label: str) -> None:

@@ -33,12 +33,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries the old wording, Save reports the delta ("Saved 36 row(s). 2 dropped") rather than the end
   state, Save stays red, and Restore makes the worst case one click.
 
-  **The screen is a procedure, so it reads as one:** two numbered steps — *Upload the GS1 export*,
-  *Upload the products you want to process* — with the paragraph explaining each file moved behind
-  an ⓘ on its heading. The two hero-sized figures, `products parsed` beside `export modified`, are
-  gone: that is the size reserved for a number somebody acts on, and these were the state of a step
-  — two facts about two files with two modification times, read as one fact about one file. A
-  single sentence says it instead.
+  **The screen is a procedure, so it reads as one:** four numbered steps — upload the export,
+  upload the list, select the products, save the list — with the paragraph explaining each file
+  moved behind an ⓘ on its heading, and a compact picker with a spinner in place of Quasar's blue
+  slab reporting "0.0B / 0.00%".
+
+  **Uploading is the check.** There were two buttons, *check the parse* and *parse and save*, and
+  the second was the one that mattered — so the first was a step an operator could skip into a run
+  built on a workbook nobody had opened. Both files are now read as they arrive. The scope list is
+  read before it is installed; the export cannot be, since `parse_export` has no input-path
+  override, so it is backed up, written, parsed, and **rolled back if the parse fails**. Either way
+  the file the operator was working from survives a bad upload.
+
+  **The two hero-sized figures are gone and nothing replaced them.** `products parsed` beside
+  `export modified` was the size reserved for a number somebody acts on, and these were the state
+  of a step — two facts about two files with two modification times, read as one fact about one
+  file. There is no standing tally of what was loaded last time; the upload says what it read.
 
   Plus a filter box over every column, `pagination=0` so the header checkbox cannot mean "this page
   only", a count label that names the file's numbers rather than the filter's, a per-row "no video

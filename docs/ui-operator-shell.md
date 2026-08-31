@@ -125,9 +125,9 @@ both directions, and the button added next month is the case it would miss.
 
 ### Data
 
-**The screen is a procedure, so it is numbered.** Two filled numerals, an upload under each, and
-the explanation of what a file *is* behind an **ⓘ** on the heading rather than in a paragraph
-under it. `theme.section(step=…, explain=…)` and `theme.subhead` own that shape, so a screen
+**The screen is a procedure, so it is numbered.** Four filled numerals — upload the export, upload
+the list, select the products, save the list — with the explanation of what a file *is* behind an
+**ⓘ** on the heading rather than in a paragraph under it. `theme.section(step=…, explain=…)` and `theme.subhead` own that shape, so a screen
 cannot invent a second one.
 
 `theme.explanation` is both a tooltip and a toggle: hover answers it for an operator already
@@ -137,12 +137,12 @@ is true every time and needed once. Never a warning, never a count, never anythi
 today; those stay on the page in a band, because an ⓘ is discovered at the operator's leisure and
 a stale export is not. `tests/ui/test_shell_chrome_contract.py` pins that rule in the docstring.
 
-**The two figures are gone.** `products parsed` and `export modified` sat side by side at
+**The two figures are gone, and nothing replaced them.** `products parsed` and `export modified` sat side by side at
 `--text-hero`, the size reserved for a number somebody acts on. Neither was: they are the *state
 of a step*, and side by side they read as one fact about one file while being two facts about two
 files with two modification times, either of which can be the stale one — which is the defect the
-staleness band exists to catch. One sentence replaces them: "127 products read from this export",
-"Uploaded, not read yet", or "No export here yet."
+staleness band exists to catch. There is no standing tally of what was loaded last time: the upload says what it read, on
+the line beneath it, and that line is about the upload that just happened.
 
 **Two files, two sections, two uploads.** The export is product *data*; the scope list is *which
 products*. They come from different places and confusing them is the most expensive mistake this
@@ -155,11 +155,23 @@ Both uploads **replace the configured path in place**. Writing anywhere else wou
 the tool cannot see, and neither `parse_export` nor the scope-list reader takes an input-path
 override.
 
-The two uploads differ in order of operations, and the difference matters. The export is backed up
-and overwritten. The scope list is **validated first** — written to a temporary directory, read
-with `lib.process_list.read_process_list`, and only then archived and installed — because it is a
-file the shell now also archives, and a blind overwrite would leave a window where the control file
-and its archive disagree. It is `ui.video_map_edit.write_validated`'s pattern.
+**Both uploads validate, and there is no separate button to make them.** There were two — *check
+the parse* and *parse and save* — and the second was the one that mattered, so the first was a step
+an operator could skip into a run built on a workbook nobody had opened. Uploading is now both.
+
+They reach the same guarantee by different routes, because `parse_export` has no input-path
+override. The scope list is read **before** it is installed, from a temporary directory, through
+`lib.process_list.read_process_list` — `ui.video_map_edit.write_validated`'s pattern. The export
+cannot be, so it is backed up, written, parsed, and **rolled back from the backup if the parse
+fails**. Either way the file the operator was working from survives a bad upload, which is the
+property that matters: a failed read that left the bad file in place would mean every screen after
+it describes a workbook nobody can use, with no way back but a re-upload of a file they may no
+longer have.
+
+`theme.upload` carries the spinner. The point of it is not the transfer — the file moves a few
+centimetres to the same machine — it is the seconds the handler spends reading a 500 kB workbook,
+which would otherwise look like nothing had happened. That is how an operator comes to press a
+thing twice.
 
 **`process-list.source.xlsx` is the upload, kept byte for byte.** `.bak.xlsx` holds only *the
 previous save*, so after two saves the operator's original is gone; the archive is what lets
