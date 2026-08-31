@@ -7,7 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The product scope list has an upload, and the Data screen shows it joined against the export.**
+  A batch is made of two operator files — the GS1 Data Source export and the list of barcodes it
+  may touch — and only the first could be uploaded. The second had to be found on disk and replaced
+  by hand, which is what the docs told operators to do and what one of them was still doing.
+
+  Both are named plainly now ("GS1 Data Source export", "Product scope list") and both have their
+  own section and their own upload. The scope-list upload is **validated before it promotes**: the
+  bytes go to a temporary directory and are read with the run's own reader, so a file that would
+  fail on Preflight is refused while the operator is still looking at the upload button, and the
+  list they were working from is untouched. The upload is then archived beside the control file as
+  `process-list.source.xlsx`, byte for byte, which is what **Restore the uploaded list** puts back.
+  `.bak.xlsx` only ever holds the previous *save*, so after two saves the original was gone.
+
+  The grid below is the scope list **joined against the export**, which nothing in this codebase
+  computed before. A barcode that is on the list and carried by no export row produces no error, no
+  plan row and no count anywhere in the tool — on the pilot, `08713195006161` "Contour King Small"
+  is exactly that, and the operator's only evidence was a total one smaller than they expected. It
+  gets its own table, above the rest, with its own checkboxes. The join is
+  `lib.process_list.rows_in_export`, on `lib.preflight.in_scope`'s exact pair.
+
+  ⚠️ **The checkbox meaning inverted.** A tick used to mean *remove this row*; it means *keep this
+  row*. The mitigations are the point: *Remove selected rows* is deleted outright so no control
+  carries the old wording, Save reports the delta ("Saved 36 row(s). 2 dropped") rather than the end
+  state, Save stays red, and Restore makes the worst case one click.
+
+  Plus a filter box over every column, `pagination=0` so the header checkbox cannot mean "this page
+  only", a count label that names the file's numbers rather than the filter's, a per-row "no video
+  yet" mark from `lib.preflight.held_for_video` (19 of the pilot's 37 are held and the screen showed
+  none of it), a warning when the export is newer than the last parse — two files and two mtimes
+  presented as one fact — and a date on the data-quality report.
+
+- **A per-run result sheet: the operator's scope list handed back with what the run did.**
+  `python -m scripts.report_scope_result`, and a **Build the result sheet** button on each run's
+  card. One row per SKU with their columns verbatim, then `in_scope`, `result`, and
+  status/page/detail per language; a `units` tab holding one row per `(gtin, language)`
+  uninterpreted, where "nl published, fr failed" survives; and a `legend` tab so the file can be
+  forwarded without a covering email.
+
+  Two status columns rather than one, and a report rather than a control file — both the same
+  lesson `lib/process_list.py` records. Nothing reads this back: a scope list that carried its own
+  run status is the design that silently meant its opposite for a client whose file said `no`.
+  `held` is never rendered as `error`, and a `plan.json` generated after the run it is being read
+  beside is refused rather than contributing holds to a run that never saw them.
+
+- **`theme.hint()`** — a fold with a tooltip, for text that is true every time and needed once.
+
+### Changed
+- **`lib/process_list.py` is the only reader of the control file.** `read_process_list` returns the
+  whole table as a `ProcessListSheet`; `load_process_list` is that call plus `listed_gtins()`.
+  `ProcessListSheet` moved here from `ui/`, unchanged.
+
 ### Fixed
+- **The Data screen could not open a scope list that a run reads fine.** The shell read it with
+  openpyxl and took row 1 as the header; the pipeline uses a namespace-agnostic ElementTree reader
+  that scans every row of every sheet, because the real operator files are **Strict Open XML** —
+  openpyxl reads zero sheets from those — with a report title above the table. A file of that
+  shape loaded in a run and failed on screen. One reader now, and a hand-built Strict-OOXML
+  workbook in the suite, because nothing in CI covered the failure that actually bit.
+
+  The grid needed two things the GTIN-only read did not. Column letters are ordered by their
+  numeric value, not as strings: sorting `["A", "Z", "AA"]` lexicographically puts `AA` second, so
+  past column Z the grid came back reordered and `gtin_index` pointed at somebody else's column —
+  which a save would then write barcodes into. And columns are the **union** of the header row's
+  letters and every data row's, so a column with a blank header cell is not silently deleted from
+  the operator's file by a save that promised to keep it.
+
 - **The shell gave no sign that a run was in progress, so a twenty-row publish went out twice.**
   `run_execute` prints one line when it starts and one when it finishes, so the console sat silent
   for about ninety seconds. Nothing disabled the button, nothing moved, and the operator reasonably

@@ -28,7 +28,7 @@ for you.
 |---|---|
 | Producing the GS1 Data Source export, in the right shape, at the right path | **You**, outside the app — §5 |
 | Producing the video mapping file and the video folders | **You**, outside the app — §6 |
-| Deciding which products this batch covers (the process list) | **You**, in the app |
+| Deciding which products this batch covers (the product scope list) | **You**, in the app |
 | Fixing wrong or blank product data | **You**, in **MyGS1** — never in the export file, never in the tool |
 | Reading the spreadsheet, planning, publishing, registering barcodes | The tool |
 | Deciding what has already been published | The tool's ledger — §4, and it is the file to get right |
@@ -49,7 +49,7 @@ downloaded.
 - [ ] **`.env`** — the credentials.
 - [ ] **`output/noviplast/state.json`** — the ledger of what is already published. **The expensive
       one.** See §4.
-- [ ] **`input/noviplast/process-list.xlsx`** — which barcodes a batch may touch.
+- [ ] **`input/noviplast/process-list.xlsx`** — which barcodes a batch may touch. Uploadable on Data, so this one can also arrive later.
 - [ ] **The video files** — several gigabytes, so they arrive on a disk, not by mail.
 
 You will also need, from Noviplast rather than from the maintainer: a fresh **GS1 Data Source
@@ -123,9 +123,9 @@ Create the folders if they do not exist. Paths are relative to the project folde
 | `clients.yml` | `clients.yml` — top level, beside `install.bat` |
 | `.env` | `.env` — top level. On macOS, `chmod 600 .env` |
 | The ledger | `output/noviplast/state.json` — **exactly there; this path is not configurable** |
-| Process list | `input/noviplast/process-list.xlsx` |
+| Product scope list | `input/noviplast/process-list.xlsx` |
 
-The process list is a spreadsheet whose only meaningful column is headed **`Barcode`**. Every other
+The scope list is a spreadsheet whose only meaningful column is headed **`Barcode`**. Every other
 column is yours to use however you like — the tool reads none of them, and there is no status
 column to tick. **Being on the list is the whole meaning**, so you prepare a batch by *deleting the
 rows that should not run*.
@@ -144,9 +144,10 @@ rows that should not run*.
 put it in a shared drive, do not mail the file on, and tell the maintainer immediately if the
 machine is lost.
 
-**Two things have no upload button and are copied by hand: the process list and the ledger.** The
-Data screen only *edits* a process list that is already on disk. Looking for an upload for either
-is time wasted.
+**One thing has no upload button and is copied by hand: the ledger.** Everything else that
+changes hands each batch — the export, the product scope list, the generated copy — has an upload
+on the screen that owns it. The scope list gained one recently; if you read an older copy of these
+notes, that is the sentence to unlearn.
 
 ---
 
@@ -343,7 +344,7 @@ Everything so far is reversible. This is the point to prove it is right.
    here — it means every GS1 record this tool writes is real.
 3. **Go to Preflight and press "Run everything, including credentials".** It reads only, and
    writes nothing. It checks the config, how many products are actually in scope and what is
-   removing the rest, whether the copy covers them, the process list, the category and video
+   removing the rest, whether the copy covers them, the scope list, the category and video
    mapping, and that the website and GS1 both accept the credentials.
 4. **Read the scope sentence** and satisfy yourself the numbers are what you expect. It reads like
    *"37 of 127 product(s) in the export are in scope. 20 of those are held for want of a confirmed
@@ -364,8 +365,10 @@ is the page to have open while you do it.
 
 For your *first* batch, do it in this order regardless of what the guide says is possible:
 
-1. **Cut the process list down to two or three products.** Not the whole batch. Data → select rows
-   → Remove selected rows → Save the list. Keep the full list somewhere first.
+1. **Cut the scope list down to two or three products.** Not the whole batch. Data → untick the
+   rows you do not want → **Save the list**. **A tick means keep**, and every row arrives ticked.
+   You do not need to keep a copy first: **Restore the uploaded list** puts back what you
+   uploaded, which is how you undo this at step 6.
 2. **Run in `pages` mode.** Pages are reversible; GS1 records are not. Take the dry run seriously —
    read the output before pressing Proceed.
 3. **Look at the actual pages on the live site.** Not the run log: the pages. Open each one in a
@@ -374,7 +377,7 @@ For your *first* batch, do it in this order regardless of what the guide says is
 4. **Only then run `links`** for the same products, which registers the barcodes permanently.
 5. **Check a barcode resolves**: open `https://id.gs1.org/01/{the 14-digit barcode}` in a browser
    and confirm it lands on the right page.
-6. **Restore the full process list**, and repeat at full size.
+6. **Restore the uploaded list** on Data, and repeat at full size.
 
 > **If you publish pages now and register the links later, do them close together.** A `pages`-only
 > run updates the website but leaves the GS1 record holding whatever title it had before, and
