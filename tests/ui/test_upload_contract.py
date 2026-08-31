@@ -65,11 +65,17 @@ def _handlers() -> list[tuple[Path, ast.FunctionDef | ast.AsyncFunctionDef, str]
 
 
 def test_the_upload_handlers_are_where_we_think() -> None:
-    """A guard on the guard: these checks are worthless if they match nothing."""
+    """A guard on the guard: these checks are worthless if they match nothing.
+
+    Three now. The scope list used to be the one file that changed hands with no upload control —
+    the operator had to find ``input/{client}/process-list.xlsx`` and replace it by hand, which is
+    the same instruction the docs give for the two files that genuinely have no screen. It is the
+    handler most worth guarding, because it is the only one that validates before it writes.
+    """
     handlers = _handlers()
-    assert len(handlers) >= 2, (
-        "expected at least the export upload (ui/pages/data.py) and the copy import "
-        f"(ui/pages/content.py); found {len(handlers)}"
+    assert len(handlers) >= 3, (
+        "expected at least the export upload and the scope-list upload (ui/pages/data.py) and "
+        f"the copy import (ui/pages/content.py); found {len(handlers)}"
     )
 
 

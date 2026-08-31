@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import zipfile
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -106,6 +107,34 @@ class ProcessListSheet:
         return frozenset(
             gtin for n in range(len(self.rows)) if (gtin := self.gtin14_at(n)) is not None
         )
+
+
+def rows_in_export(
+    sheet: ProcessListSheet, exported: Collection[str]
+) -> tuple[list[int], list[int]]:
+    """Split the sheet's row positions by whether the export carries that GTIN.
+
+    Returns ``(matched, unmatched)``, both in sheet order. A row with a blank barcode is
+    unmatched — it is on the list and the export has nothing for it, which is the same fact.
+
+    ``exported`` must be GTIN-14s: ``{product.gtin14 for product in products}``, which is exactly
+    the pair :func:`lib.preflight.in_scope` joins on. That is the whole reason this is a function
+    rather than two lines on a screen. :func:`lib.preflight.check_scope` deliberately emits
+    ``ProductRecord.gtin`` and *not* ``gtin14``, because a normalised variant there would silently
+    fail to match for any client whose feed carries 13-digit codes; a third normalisation invented
+    at a call site would report every good product as missing, and look like bad data rather than
+    like a bug.
+
+    Nothing else in the codebase computes this set. A barcode that is on the list and absent from
+    the export is invisible today: it produces no error, no plan row and no count, and the
+    operator's only evidence is a number that is one smaller than they expected.
+    """
+    matched: list[int] = []
+    unmatched: list[int] = []
+    for index in range(len(sheet.rows)):
+        gtin = sheet.gtin14_at(index)
+        (matched if gtin is not None and gtin in exported else unmatched).append(index)
+    return matched, unmatched
 
 
 def _is_filled(value: object) -> bool:
