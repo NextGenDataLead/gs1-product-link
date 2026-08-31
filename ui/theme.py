@@ -191,6 +191,17 @@ body { background: var(--paper) !important; color: var(--ink) !important;
 .band-link    { display: inline-block; margin-top: var(--space-2); color: inherit;
                 font-weight: 600; text-underline-offset: 0.2em; }
 
+/* An aside the operator can open when they want it and ignore when they do not. A sentence that
+   only matters the first time still costs a line of reading on every visit afterwards; behind
+   this it costs a glance. Sized down deliberately — it must not compete with the control it is
+   explaining, which is the thing on the screen that actually does something. */
+.hint             { font-size: var(--text-small); color: var(--ink-soft); }
+.hint .q-item     { min-height: 0; padding: var(--space-1) 0; }
+.hint .q-item__section--avatar { min-width: 0; padding-right: var(--space-2);
+                                 color: var(--ink-faint); }
+.hint-text        { font-size: var(--text-small); color: var(--ink-soft); line-height: 1.55;
+                    max-width: 48rem; padding: 0 0 var(--space-2) var(--space-6); }
+
 /* A row of jumps to the sections below it. Only the Setup screen has enough of them to need it. */
 .jumps        { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4);
                 margin-top: var(--space-6); font-size: var(--text-small); }
@@ -481,6 +492,28 @@ def notify_problem(text: str) -> None:
     a property of the outcome rather than of whoever wrote the call.
     """
     _notify(text, "negative")
+
+
+def hint(text: str, *, label: str = "Why this matters") -> None:
+    """An explanation the operator can open, and that shows on hover without opening.
+
+    Kept as a helper rather than inlined at each call site because it carries a decision, and an
+    inlined ``ui.expansion`` would lose it: this is for text that is **true every time and needed
+    once** — what a file has to be called, which of two uploads is which. Left as a paragraph it
+    costs a line of reading on every visit forever; deleted, the operator who needs it has nowhere
+    to look. Folded, it costs a glance and is one press away.
+
+    Both a tooltip and an expansion, deliberately. Hover answers it without a click for the
+    operator who is already reaching past it; the expansion is what makes it reachable on a touch
+    screen and by keyboard, where there is no hover at all.
+
+    Args:
+        text: The explanation. One or two sentences — anything longer belongs in a doc.
+        label: What the fold says when it is closed. Should name the question it answers.
+    """
+    with ui.expansion(label, icon="info_outline").classes("hint").props("dense") as fold:
+        ui.label(text).classes("hint-text")
+    fold.tooltip(text)
 
 
 def figure(value: str, label: str) -> None:

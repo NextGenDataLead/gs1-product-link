@@ -133,3 +133,28 @@ def test_the_theme_imports_nothing_but_nicegui() -> None:
         f"ui/theme.py imports {sorted(imported & {'lib', 'ui'})} — the chrome renders what it is "
         "given, so that it cannot acquire a way to read files or run commands on every page load"
     )
+
+
+def test_the_theme_offers_a_fold_for_text_that_is_needed_once() -> None:
+    """``theme.hint`` is a decision, not a wrapper, and the docstring is where the decision lives.
+
+    An inlined ``ui.expansion`` at each call site would render the same and lose the reason: this
+    is for text that is true every time and needed once. Left as a paragraph it costs a line of
+    reading on every visit forever; deleted, the operator who needs it has nowhere to look. A
+    later cleanup that inlines it is the edit this test is here to fail.
+    """
+    fold = next(
+        (
+            node
+            for node in ast.walk(_tree(_THEME))
+            if isinstance(node, ast.FunctionDef) and node.name == "hint"
+        ),
+        None,
+    )
+    assert fold is not None, "ui/theme.py no longer defines hint()"
+
+    doc = ast.get_docstring(fold) or ""
+    assert "tooltip" in doc and "expansion" in doc, (
+        "hint()'s docstring must keep saying why it is both — hover answers it for the operator "
+        "reaching past it, and the fold is what makes it reachable on touch and by keyboard"
+    )
