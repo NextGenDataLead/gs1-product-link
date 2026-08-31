@@ -222,13 +222,16 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
     held = {product.gtin14 for product in held_for_video(cfg, in_scope(cfg, products))}
 
     if not products:
-        # Nothing has been parsed, so the join is not a finding — it is the absence of one. Every
+        # Nothing has been read, so the join is not a finding — it is the absence of one. Every
         # row would land in "not in the export", which is both useless and would leave the screen
-        # with no checkboxes at all: the operator could no longer choose a batch before parsing,
-        # which they have always been able to do.
+        # with no checkboxes at all: the operator could no longer choose a batch before the export
+        # arrives, which they have always been able to do.
+        #
+        # "read", not "parsed". The word left the screen with the two buttons; a band is the worst
+        # place for the one survivor, since it is read by somebody who has just hit a problem.
         theme.band(
-            "The GS1 Data Source export has not been parsed yet, so no row can be matched against "
-            "it. Upload it in step 1; until then this is simply the whole list.",
+            "No GS1 export has been read yet, so no row can be matched against one. Upload it in "
+            "step 1; until then this is simply the whole list.",
             "warn",
         )
         matched, unmatched = list(range(len(sheet.rows))), []
