@@ -181,6 +181,18 @@ body { background: var(--paper) !important; color: var(--ink) !important;
    line below it. */
 /* NiceGUI puts the class on the uploader's own root, so this is `.q-uploader` itself — a
    descendant selector matches nothing, which is how it first shipped as a full-width white slab. */
+/* Two steps that are one act — bring both files — read as one act when they sit together. They
+   stack below 60rem, where two columns would each be too narrow for a picker and its label. */
+.steps-2up        { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-8);
+                    align-items: start; }
+.steps-2up > .section { margin-top: var(--space-8); }
+@media (max-width: 60rem) { .steps-2up { grid-template-columns: 1fr; gap: 0; } }
+
+/* The way on. The rail is navigation for somebody who knows the shape of the tool; this is for
+   somebody following a procedure, who wants to be told where the next thing is. */
+.onward           { margin-top: var(--space-12); padding-top: var(--space-6);
+                    border-top: 1px solid var(--rule); }
+
 .upload           { display: inline-flex; width: auto; min-width: 0; max-height: none;
                     border: 1px solid var(--rule); border-radius: 3px; background: none;
                     box-shadow: none; }
@@ -488,6 +500,10 @@ def section(
         if anchor:
             expansion.props(f"id={anchor}")
         with expansion:
+            # The fold is already the affordance here, so the explanation goes inside it rather
+            # than behind a second one.
+            if explain:
+                ui.label(explain).classes("explain")
             yield
         return
     element = ui.element("section").classes("section")
@@ -567,6 +583,18 @@ def _reveals(dot: ui.element, text: str) -> None:
         dot.props(f"aria-expanded={'true' if shown else 'false'}")
 
     dot.on("click", toggle)
+
+
+def onward(label: str, route: str) -> None:
+    """The way to the next screen, at the foot of a screen that is a step in a procedure.
+
+    The rail is navigation for somebody who already knows the shape of the tool. This is for
+    somebody following the procedure for the first time, who has finished a screen and wants to be
+    told where the next thing is rather than to go looking for it.
+    """
+    with ui.element("div").classes("onward"):
+        button = ui.button(label, on_click=lambda: ui.navigate.to(route))
+        button.props("no-caps unelevated color=primary icon-right=arrow_forward")
 
 
 def jumps(targets: list[tuple[str, str]]) -> None:

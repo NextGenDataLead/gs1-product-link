@@ -125,9 +125,22 @@ both directions, and the button added next month is the case it would miss.
 
 ### Data
 
-**The screen is a procedure, so it is numbered.** Four filled numerals — upload the export, upload
-the list, select the products, save the list — with the explanation of what a file *is* behind an
-**ⓘ** on the heading rather than in a paragraph under it. `theme.section(step=…, explain=…)` and `theme.subhead` own that shape, so a screen
+**The screen is a procedure, so it is numbered.** Three filled numerals — the two uploads **side by
+side**, because bringing both files is one act and their order does not matter, then choosing and
+saving below them. The explanation of what a file *is* sits behind an **ⓘ** on the heading rather
+than in a paragraph under it. Below 60rem the two stack, where a column would be narrower than a
+picker and its label.
+
+**The data-quality report builds itself, folded.** It was a button, which made a fresh worklist
+something the operator had to think of asking for — and therefore the thing most likely to be
+skipped on the visit where it mattered. It now rebuilds on every load, from the files a run has
+just written, and stays collapsed. The command takes about half a second, so it runs on a
+`ui.timer(once=True)` just after the first paint rather than during the render: half a second of
+blank screen is a poor trade on a screen nobody opened to read a report.
+
+**A `Next` button at the foot.** The rail is navigation for somebody who knows the shape of the
+tool; `theme.onward` is for somebody following the procedure for the first time, who has finished a
+screen and wants to be told where the next thing is. `theme.section(step=…, explain=…)` and `theme.subhead` own that shape, so a screen
 cannot invent a second one.
 
 `theme.explanation` is both a tooltip and a toggle: hover answers it for an operator already

@@ -66,14 +66,13 @@ and whoever helps you knows exactly what happened.
 
 <img src="images/data.png" alt="The Data screen: the GS1 Data Source export with a count, a modified date and an upload area, then the product scope list with its own upload, the barcodes missing from the export above, and the rest as a searchable table of tick boxes." width="900">
 
-**What this screen is for:** the two spreadsheets a batch is made of, in four numbered steps. Do
-1, then 2, then 3, then 4.
+**What this screen is for:** the two spreadsheets a batch is made of, and choosing what goes in it.
 
 Every heading has a small **ⓘ** beside it. Hover it to read what that file is and where it goes;
 press it to keep the text on screen. Nothing you need to act on is hidden behind one — a warning
 always sits on the page in a coloured band.
 
-**What you do, in order:**
+**What you do:**
 
 1. **Upload the GS1 export** — the product *data*. Press the picker and choose the spreadsheet.
    It is read as soon as it arrives: a spinner runs while that happens, then a line says how many
@@ -83,10 +82,14 @@ always sits on the page in a coloured band.
 2. **Upload the product list** — which barcodes this batch may touch. Same again: it is read
    before it replaces anything, so a file that will not open is refused and the list you were
    using stays put.
-3. **Select the products.** Two tables. The top one, *Not in the GS1 export*, lists barcodes you
-   asked for that the export has no row for — nothing else in the tool will mention them again.
-   It has no tick boxes on purpose: there is nothing to choose, because nothing can process them.
-   They stay in your list; to drop one, remove it in the spreadsheet and upload again.
+
+   Steps 1 and 2 sit side by side because they are one act: bring both files. Do them in either
+   order.
+3. **Choose the products and save.** Two tables. The top one, *Not in the GS1 export*, lists
+   barcodes you asked for that the export has no row for — nothing else in the tool will mention
+   them again. It has no tick boxes on purpose: there is nothing to choose, because nothing can
+   process them. They stay in your list; to drop one, remove it in the spreadsheet and upload
+   again.
 
    The bottom table is the batch. Every row arrives ticked.
 
@@ -94,17 +97,19 @@ always sits on the page in a coloured band.
    > this app, the button under the table said *Remove selected rows* and meant the opposite — it
    > is gone.
 
-   Use the filter box to find a product. Filtering changes only what you can see, never what is
-   ticked.
-4. **Save the list to process.** The line above the button says how many rows will be processed
-   out of how many could be. Press **Save the list**. Got it wrong? **Restore the uploaded list**
-   puts back the file you uploaded, in one click.
+   Use the filter box to find a product; filtering changes only what you can see, never what is
+   ticked. The line above the buttons says how many rows will be processed out of how many could
+   be. Then press **Save the list**. Got it wrong? **Restore the uploaded list** puts back the file
+   you uploaded, in one click.
 
-**Data quality** at the bottom builds a report of what is missing or wrong in the spreadsheet
-itself. Blank values get fixed in MyGS1, not here. The date beside it says when it was last built.
+**Data quality** at the bottom is folded away. It rebuilds every time you open this screen, so
+opening the fold always shows a current report — what is missing or wrong in the spreadsheet
+itself. Those values get fixed in MyGS1, not here.
 
-**Done looks like:** four steps worked through, nothing unexpected in the *Not in the GS1 export*
-table, and a line under step 4 naming exactly the number of products you mean.
+When you are done, **Next: write the product copy** at the foot of the screen takes you to step 2.
+
+**Done looks like:** both files uploaded without a refusal, nothing unexpected in the *Not in the
+GS1 export* table, and a line above the Save button naming exactly the number of products you mean.
 
 **Stop if:** either upload is refused, or a red band says a file cannot be read. Upload it again,
 or ask the maintainer for a fresh copy — do not go looking for the file in a folder to replace by

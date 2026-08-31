@@ -33,10 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries the old wording, Save reports the delta ("Saved 36 row(s). 2 dropped") rather than the end
   state, Save stays red, and Restore makes the worst case one click.
 
-  **The screen is a procedure, so it reads as one:** four numbered steps — upload the export,
-  upload the list, select the products, save the list — with the paragraph explaining each file
-  moved behind an ⓘ on its heading, and a compact picker with a spinner in place of Quasar's blue
-  slab reporting "0.0B / 0.00%".
+  **The screen is a procedure, so it reads as one:** three numbered steps — the two uploads side by
+  side, because bringing both files is one act and their order does not matter, then choosing and
+  saving below them. The paragraph explaining each file moved behind an ⓘ on its heading, and a
+  compact picker with a spinner replaced Quasar's blue slab reporting "0.0B / 0.00%". A `Next`
+  button at the foot leads on to Content.
+
+  **The data-quality report builds itself, folded away.** It was a button, which made a fresh
+  worklist something the operator had to think of asking for — and so the thing most likely to be
+  skipped on the visit where it mattered.
 
   **Uploading is the check.** There were two buttons, *check the parse* and *parse and save*, and
   the second was the one that mattered — so the first was a step an operator could skip into a run

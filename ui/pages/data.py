@@ -60,7 +60,7 @@ def render() -> None:
         theme.heading(
             theme.eyebrow("Data"),
             "Data",
-            "Two files, in order: the product data, then the products you want in this batch.",
+            "The two files a batch is made of, and which products you want in it.",
         )
         if cfg is None or cid is None:
             theme.blocked(
@@ -70,15 +70,29 @@ def render() -> None:
             )
             return
 
-        _export(cfg, cid)
-        _scope_list(cfg, cid)
+        # Steps 3 and 4 describe whatever the two files above currently are, so they are rebuilt
+        # whole whenever either changes — a new export moves the join as surely as a new list does.
+        def redraw() -> None:
+            body.clear()
+            with body:
+                _scope_grid(cfg, cid, redraw)
+
+        with ui.element("div").classes("steps-2up"):
+            _export(cfg, cid, redraw)
+            _scope_list(cfg, redraw)
+
+        # Bound after the row so it renders below it, and before `redraw` is ever called.
+        body = ui.column().classes("w-full gap-0")
+        redraw()
+
         _quality(cid)
+        theme.onward("Next: write the product copy", "/content")
 
 
 # --- Step 1: the export -------------------------------------------------------
 
 
-def _export(cfg: Any, cid: str) -> None:
+def _export(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
     target = _resolve(cfg.export.path)
 
     with theme.section(
@@ -112,6 +126,9 @@ def _export(cfg: Any, cid: str) -> None:
             # into a run built on a file nobody had opened.
             result = await runner.run_off_the_loop(runner.parse_export_argv(cid))
             if result.ok:
+                # The selection below is a join against this export, so it now describes a
+                # different one.
+                redraw()
                 theme.notify_ok("Export read.")
                 return f"{context.product_count(cid) or 0} products read from this export."
 
@@ -154,7 +171,7 @@ _HELD = "_held"
 _TABLE_HEIGHT = "55vh"
 
 
-def _scope_list(cfg: Any, cid: str) -> None:
+def _scope_list(cfg: Any, redraw: Callable[[], None]) -> None:
     if cfg.process_list is None:
         with theme.section("Choose the products for this batch", step=2):
             ui.label(
@@ -193,17 +210,6 @@ def _scope_list(cfg: Any, cid: str) -> None:
             return f"Installed. Your upload is kept as {kept.name}."
 
         theme.upload("Product list (.xlsx)", receive, busy="Checking the list…")
-
-    # Steps 3 and 4 describe whatever the file above currently is, so they are rebuilt whole
-    # whenever it changes.
-    body = ui.column().classes("w-full gap-0")
-
-    def redraw() -> None:
-        body.clear()
-        with body:
-            _scope_grid(cfg, cid, redraw)
-
-    redraw()
 
 
 def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
@@ -250,27 +256,20 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
         return {_ROW: index, **cells, _HELD: "no video yet" if gtin in held else ""}
 
     with theme.section(
-        "Select the products",
+        "Choose the products and save",
         step=3,
         explain=(
             "Every row arrives ticked, and a run processes the ticked ones. Untick a product to "
-            "leave it out of this batch. The filter changes only what you can see, never what is "
-            "ticked, so you can search, untick, clear the filter, and nothing you did is lost."
+            "leave it out of this batch, then save. The filter changes only what you can see, "
+            "never what is ticked, so you can search, untick, clear the filter, and nothing you "
+            "did is lost. Saving keeps the previous version beside the file, and Restore puts back "
+            "the list you uploaded — which is what makes unticking safe to get wrong. Nothing is "
+            "published here; this only settles which products are in the batch."
         ),
     ):
         _missing_table(columns, [row_of(n) for n in unmatched])
         below, search = _scope_table(columns, [row_of(n) for n in matched])
 
-    with theme.section(
-        "Save the list to process",
-        step=4,
-        explain=(
-            "Writes your choice to the file a run reads. The previous version is kept beside it, "
-            "and Restore puts back the list you uploaded — which is what makes unticking safe to "
-            "get wrong. Nothing is published here; this only settles which products are in the "
-            "batch."
-        ),
-    ):
         # Written out here and not only in the handler, because the handler is async — it may have
         # to ask the browser what the filter is showing — and the first value has to be on the page
         # before there is a browser to ask.
@@ -448,37 +447,47 @@ def _scope_table(
 
 
 def _quality(cid: str) -> None:
+    """The worklist, built every visit and folded away until it is wanted.
+
+    It used to be a button. That made a fresh report something the operator had to think of asking
+    for, and the thing they were most likely to skip on the visit where it mattered — so it now
+    rebuilds on every load, from the files a run has just written.
+
+    **Collapsed, and built after the page paints.** The command takes about half a second, which is
+    half a second of blank screen if it runs during the render, on a screen nobody opened to read a
+    report. `ui.timer(once=True)` puts it just after the first paint instead, so the cost lands
+    somewhere nobody is waiting.
+    """
+    report = REPO_ROOT / "output" / cid / "data-quality-report.md"
+
     with theme.section(
         "Data quality",
+        collapsed=True,
         explain=(
             "What is blank or wrong in the export itself. Those values get fixed in MyGS1, at the "
-            "source — never invented here — so this report is the work list to send upstream."
+            "source — never invented here — so this report is the work list to send upstream. It "
+            "is rebuilt every time this screen opens."
         ),
     ):
-        report = REPO_ROOT / "output" / cid / "data-quality-report.md"
-        fact = context.file_fact(report)
-        # Which run's worklist this is. `show()` rebuilds the file and renders it, so a command
-        # that succeeded without writing anything new leaves last week's report on screen looking
-        # exactly like this week's.
-        ui.label(
-            f"{report.relative_to(REPO_ROOT)} — built {fact.age}"
-            if fact.exists
-            else "No report built yet."
-        ).classes("mono mt-2")
-
+        stamp = ui.label("Building…").classes("mono")
         body = ui.column().classes("w-full mt-4")
 
-        # Async, and the subprocess runs off the event loop. Both halves are needed, for the
-        # reason `runner.run_off_the_loop` gives: a blocking call in a sync handler holds the
-        # loop until the command has already finished, so the running-state the button paints
-        # arrives at the browser only once there is nothing left to report.
-        async def show() -> None:
+        # Async, and the subprocess runs off the event loop, for the reason
+        # `runner.run_off_the_loop` gives: a blocking call holds the loop until the command has
+        # already finished, so anything queued before it reaches the browser too late to matter.
+        async def build() -> None:
             result = await runner.run_off_the_loop(runner.report_quality_argv(cid))
             body.clear()
             with body:
                 if not result.ok or not report.is_file():
+                    stamp.text = "The report could not be built."
                     theme.band(result.stderr or "The report could not be built.", "warn")
                     return
+                # Dated from the file that was just written, so a command that succeeded without
+                # writing anything new cannot leave last week's worklist looking like this week's.
+                stamp.text = (
+                    f"{report.relative_to(REPO_ROOT)} — built {context.file_fact(report).age}"
+                )
                 ui.markdown(report.read_text(encoding="utf-8")).classes("prose max-w-none")
 
-        theme.action("Rebuild and show the report", show)
+        ui.timer(0.1, build, once=True)
