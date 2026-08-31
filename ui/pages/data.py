@@ -317,6 +317,15 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
         theme.action("Save the list", save, danger=True)
         theme.quiet_action("Restore the uploaded list", restore)
 
+    # Named here because this is where the operator is looking at the list, and said as a
+    # location rather than offered as a button: the sheet is about one particular run, and a
+    # screen that shows no run would have to guess which.
+    with ui.row().classes("items-baseline gap-1 mt-3"):
+        ui.label("After a run, this list comes back with what happened to each row —").classes(
+            "note"
+        )
+        ui.link("build it on Runs", "/runs").classes("note")
+
 
 def _scope_count(chosen: int, total: int, shown: int | None) -> str:
     """The sentence beside the table: how many rows a run will take, out of how many are there.
