@@ -152,8 +152,21 @@ list, silently.
 **The grid is the scope list joined against the export**, and that join is the reason this screen
 was rebuilt. A barcode on the list that the export carries no row for produces no error, no plan
 row and no count anywhere in the tool; the operator's only evidence is a total one smaller than
-they expected. On the pilot that is exactly one SKU. It gets its own table, above the rest, with
-its own checkboxes — not a protected class, because a row there can be dropped on purpose.
+they expected. On the pilot that is exactly one SKU. It gets its own table, above the rest.
+
+That table is **read-only, and the rows in it are always kept**. It had checkboxes for one round
+and they were wrong twice over: a tick there would have meant "keep this row in the file" while
+the identical tick a few pixels below means "keep it *and* run it" — one control answering two
+questions — and it made the count read "38 of 38 row(s) will be processed" when 37 was the most
+any run could touch. Unticking one would not have stopped it being processed, since nothing was
+going to process it; it would only have deleted the evidence that a barcode on the list has no
+product behind it, which is the entire point of the table. Removing one is a spreadsheet edit and
+a re-upload.
+
+**When the export has not been parsed, the tables do not split.** Every row would land in "not in
+the export", which is not a finding but the absence of one — and it would leave the screen with no
+checkboxes at all, taking away the operator's long-standing ability to choose a batch before
+parsing. So the whole list shows as one table under a warning band instead.
 
 The join is `lib.process_list.rows_in_export`, in `lib` rather than on the screen, on
 `product.gtin14` against the sheet's own normalisation — `lib.preflight.in_scope`'s exact pair.
@@ -189,6 +202,12 @@ Every in-scope SKU held for want of a confirmed video carries a per-row mark, fr
 `lib.preflight.held_for_video`. Data is the only per-SKU grid in the shell, so it is the only place
 that fact can live per row; on the pilot, 19 of the 37 are held and the screen used to show none of
 it.
+
+**That mark replaced the whole *Video mapping* section**, which was two figures and a link. The
+Video mapping screen already shows those figures, and a per-row mark says the same thing against
+the product it is about. What a mark cannot carry is the *consequence* — "no video yet" does not
+tell you the run will skip the product and report success — so one line under the table says that,
+and links onward.
 
 ### Content
 

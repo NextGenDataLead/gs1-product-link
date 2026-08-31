@@ -90,7 +90,9 @@ from different places, so they have a section each.
    Two tables, and the top one is the one to read first: **On the scope list, not in the GS1
    export** lists barcodes you asked for that the export has no row for. Nothing else in the tool
    will mention them again. Either the product is missing from the export — which is fixed in
-   MyGS1 and re-exported — or the barcode is wrong.
+   MyGS1 and re-exported — or the barcode is wrong. It has no tick boxes on purpose: there is
+   nothing to choose, because nothing can process them. They stay in your list; to drop one,
+   remove it in the spreadsheet and upload the list again.
 
    The line under the tables always says how many rows will be processed out of how many there
    are. Use the filter box to find a product; filtering changes only what you can see, never what

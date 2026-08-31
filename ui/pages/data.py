@@ -35,8 +35,7 @@ from typing import Any
 
 from nicegui import events, ui
 
-from lib.errors import ProcessListError, VideoMapError
-from lib.media_video import list_video_files, load_video_map, summarize_video_map
+from lib.errors import ProcessListError
 from lib.preflight import held_for_video, in_scope
 from lib.process_list import rows_in_export
 from ui import REPO_ROOT, context, process_list_edit, runner, theme
@@ -84,7 +83,6 @@ def render() -> None:
 
         _export(cfg, cid)
         _scope_list(cfg, cid)
-        _video_map(cfg)
         _quality(cid)
 
 
@@ -248,6 +246,18 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
     matched, unmatched = rows_in_export(sheet, {product.gtin14 for product in products})
     held = {product.gtin14 for product in held_for_video(cfg, in_scope(cfg, products))}
 
+    if not products:
+        # Nothing has been parsed, so the join is not a finding — it is the absence of one. Every
+        # row would land in "not in the export", which is both useless and would leave the screen
+        # with no checkboxes at all: the operator could no longer choose a batch before parsing,
+        # which they have always been able to do.
+        theme.band(
+            "The GS1 Data Source export has not been parsed yet, so no row can be matched against "
+            "it. Parse it above; until then this is simply the whole list.",
+            "warn",
+        )
+        matched, unmatched = list(range(len(sheet.rows))), []
+
     columns = [
         # Positional field names. The operator's headers are their own text: two may be the same
         # word and one may be blank, and either collapses a keyed-by-label row into fewer cells
@@ -261,17 +271,13 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
         gtin = sheet.gtin14_at(index)
         return {_ROW: index, **cells, _HELD: "no video yet" if gtin in held else ""}
 
-    above = _missing_table(columns, [row_of(n) for n in unmatched], products)
+    _missing_table(columns, [row_of(n) for n in unmatched])
     below, search = _scope_table(columns, [row_of(n) for n in matched])
-    total = len(sheet.rows)
-
-    def chosen() -> int:
-        return len(below.selected) + (len(above.selected) if above is not None else 0)
 
     # Written out here and not only in the handler, because the handler is async — it may have to
     # ask the browser what the filter is showing — and the first value has to be on the page before
     # there is a browser to ask.
-    count = ui.label(_scope_count(chosen(), total, None)).classes("note mt-2")
+    count = ui.label(_scope_count(len(below.selected), len(matched), None)).classes("note mt-2")
 
     async def recount() -> None:
         # Asked of the table rather than re-implemented: Quasar's filter matches every visible
@@ -280,16 +286,18 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
         shown = (
             len(await below.get_filtered_sorted_rows()) if (search.value or "").strip() else None
         )
-        count.text = _scope_count(chosen(), total, shown)
+        count.text = _scope_count(len(below.selected), len(matched), shown)
 
-    for table in (t for t in (above, below) if t is not None):
-        table.on_select(recount)
+    below.on_select(recount)
     search.on_value_change(recount)
+    # After the count, so that "these" refers to the number just given rather than to the table.
+    _held_note(cfg, sum(1 for n in matched if sheet.gtin14_at(n) in held))
 
     def save() -> None:
-        keep = {int(row[_ROW]) for row in below.selected}
-        if above is not None:
-            keep |= {int(row[_ROW]) for row in above.selected}
+        # The rows the export has nothing for are kept, always, and are not counted as chosen.
+        # They carry no checkbox because the only question this screen asks is "does this run?",
+        # and for them the answer is no whatever anyone ticks.
+        keep = {int(row[_ROW]) for row in below.selected} | set(unmatched)
         dropped = len(sheet.rows) - len(keep)
         try:
             backup = process_list_edit.save_sheet(sheet.keeping(keep))
@@ -327,47 +335,70 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
         ui.link("build it on Runs", "/runs").classes("note")
 
 
-def _scope_count(chosen: int, total: int, shown: int | None) -> str:
-    """The sentence beside the table: how many rows a run will take, out of how many are there.
+def _scope_count(chosen: int, matched: int, shown: int | None) -> str:
+    """The sentence beside the table: how many rows a run will take, out of how many it could.
 
-    It exists because the header checkbox cannot say this. Quasar's tri-state describes the rows
-    the *filter* is showing, so with a filter typed it reads "all selected" over a file where most
-    rows are not — and the operator is one click from saving a list they never looked at. ``shown``
-    is appended only while a filter is on, and names what it is: a view, not the count that matters.
+    ``matched`` is the rows the export carries, **not** the rows in the file. The barcodes above
+    are in the file and can never be processed, so counting them here would put a number on screen
+    that no run can reach — which is the sort of quiet over-claim this screen exists to remove.
+
+    It exists at all because the header checkbox cannot say this. Quasar's tri-state describes the
+    rows the *filter* is showing, so with a filter typed it reads "all selected" over a file where
+    most rows are not — and the operator is one click from saving a list they never looked at.
+    ``shown`` is appended only while a filter is on, and names what it is: a view, not the count
+    that matters.
     """
-    text = f"{chosen} of {total} row(s) will be processed"
+    text = f"{chosen} of {matched} row(s) will be processed"
     return text if shown is None else f"{text} — {shown} shown"
 
 
-def _missing_table(
-    columns: list[dict[str, Any]], rows: list[dict[str, Any]], products: list[Any]
-) -> ui.table | None:
-    """The rows the export has nothing for. ``None`` when there are none — and nothing to say.
+def _held_note(cfg: Any, held: int) -> None:
+    """One line where a whole section used to be.
+
+    The Data screen carried a *Video mapping* block — two figures and a link — which the Video
+    mapping screen already shows, and which the per-row "no video yet" mark now says better,
+    because it says it against the product it is about. What that block had and a per-row mark
+    does not is the **consequence**, so that is what survives: a mark reading "no video yet" does
+    not tell you the run will skip the product.
+    """
+    if not held or cfg.media is None or not cfg.media.restrict_to_mapped_gtins:
+        return
+    ui.label(
+        f"{held} of them have no client-confirmed video in every language, so a run skips those "
+        f"and reports success (media.restrict_to_mapped_gtins)."
+    ).classes("note")
+    ui.link("Open the video mapping", "/videos").classes("note")
+
+
+def _missing_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
+    """The rows the export has nothing for. Read-only, deliberately — there is no choice to make.
 
     They are shown *above* the rest and not merely counted, because this is the one fact about a
     scope list that nothing else in the tool reports: a barcode that is listed and not exported
-    produces no error, no plan row and no count. Its checkboxes work like the others' — a row here
-    can be dropped on purpose, and making it un-droppable would just move the surprise.
+    produces no error, no plan row and no count.
+
+    **No checkboxes.** They had them, and it was wrong twice over. The tick would have meant "keep
+    this row in the file" while the identical tick below means "keep it *and* run it" — one control
+    answering two questions, in two tables, a few pixels apart. And it made the count beside the
+    table read "38 of 38 row(s) will be processed" when 37 was the most any run could touch.
+
+    So these rows are simply kept, every time. Unticking one would not stop it being processed —
+    nothing was going to process it — it would only delete the evidence that a barcode on the list
+    has no product behind it. That evidence is the whole point of the table.
     """
     if not rows:
-        return None
+        return
 
     ui.label(f"On the scope list, not in the GS1 export ({len(rows)})").classes("section-head mt-4")
     ui.label(
         "The export carries no row for these barcodes, so a run will publish nothing for them and "
         "say nothing about them. Either the product is missing from the export — fix it in MyGS1 "
-        "and export again — or the barcode is wrong. They are kept and ticked; untick to drop."
-        if products
-        else "The export has not been parsed yet, so nothing can be matched against it. Parse it "
-        "above and this table will show only the barcodes that are genuinely missing."
+        "and export again — or the barcode is wrong. They stay in your list either way; to drop "
+        "one, remove it in the spreadsheet and upload the list again."
     ).classes("note")
 
-    table = ui.table(
-        columns=columns, rows=rows, row_key=_ROW, selection="multiple", pagination=0
-    ).classes("w-full mt-2")
+    table = ui.table(columns=columns, rows=rows, row_key=_ROW, pagination=0).classes("w-full mt-2")
     table.props("dense flat bordered")
-    table.selected = list(rows)
-    return table
 
 
 def _scope_table(
@@ -403,43 +434,6 @@ def _scope_table(
     table.selected = list(rows)
     table.bind_filter_from(search, "value")
     return table, search
-
-
-# --- Video mapping --------------------------------------------------------------
-
-
-def _video_map(cfg: Any) -> None:
-    """A summary and a way in. The editor itself is its own screen — the file has 166 rows."""
-    if cfg.media is None or not cfg.media.video_map_path:
-        return
-
-    with theme.section("Video mapping"):
-        try:
-            summary = summarize_video_map(
-                load_video_map(_resolve(cfg.media.video_map_path)),
-                {
-                    language: [p.name for p in list_video_files(Path(folder))]
-                    for language, folder in cfg.media.video_folders.items()
-                },
-                cfg.wordpress.languages,
-            )
-        except VideoMapError as exc:
-            theme.band(str(exc), "danger")
-            ui.link("Open the video mapping", "/videos").classes("note")
-            return
-
-        with ui.row().classes("gap-12 items-end mb-4"):
-            theme.figure(str(summary.confirmed_gtins), "GTIN(s) publishable")
-            theme.figure(str(summary.unconfirmed), "row(s) needing a GTIN")
-
-        if cfg.media.restrict_to_mapped_gtins:
-            ui.label(
-                "media.restrict_to_mapped_gtins is on, so a product without a confirmed video in "
-                "every language is out of scope — it never reaches the plan, and the run reports "
-                "success having skipped it."
-            ).classes("note")
-
-        ui.link("Open the video mapping", "/videos").classes("note")
 
 
 # --- Quality ------------------------------------------------------------------
