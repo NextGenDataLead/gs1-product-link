@@ -146,6 +146,38 @@ body { background: var(--paper) !important; color: var(--ink) !important;
 .lede         { font-size: var(--text-lead); color: var(--ink-soft); max-width: 44rem;
                 line-height: 1.5; }
 .section      { margin-top: var(--space-8); }
+
+/* A section's heading line: an optional step number, the title, and the ⓘ that holds the
+   explanation. A row rather than a bare label so all three sit on one baseline and the ⓘ reads
+   as belonging to the heading rather than to the first control under it. */
+.head-row     { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+                padding-bottom: var(--space-2); border-bottom: 1px solid var(--rule);
+                margin-bottom: var(--space-4); }
+.head-row .section-head { border: 0; padding: 0; margin: 0; }
+/* The opened explanation is a sibling of the heading row, never a child of it. Inside a flex row
+   it shared the line with its own title: `flex-basis: 100%` looks like it would wrap, but
+   `max-width` clamps the hypothetical size the line-breaking uses, so it fitted and did not. */
+
+/* The number is the whole navigational claim: do this one, then that one. Filled, so it reads as
+   a position in a sequence and not as a count of something. */
+.step-num     { flex: 0 0 auto; width: 1.45rem; height: 1.45rem; border-radius: 50%;
+                background: var(--ink); color: var(--paper); font-size: var(--text-micro);
+                font-weight: 700; display: grid; place-items: center;
+                font-variant-numeric: tabular-nums; }
+
+/* Hover shows it, press keeps it. Both, because hover does not exist on a touch screen or a
+   keyboard, and this is where the sentence explaining the step now lives. */
+.info-dot     { flex: 0 0 auto; width: 1.15rem; height: 1.15rem; border-radius: 50%;
+                border: 1px solid var(--ink-faint); color: var(--ink-faint); background: none;
+                font-family: var(--font-serif); font-size: 0.72rem; font-weight: 700;
+                line-height: 1; cursor: help; display: grid; place-items: center;
+                transition: color var(--duration) var(--ease),
+                            border-color var(--duration) var(--ease); }
+.info-dot:hover, .info-dot:focus-visible { color: var(--accent); border-color: var(--accent); }
+.info-dot[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.explain      { font-size: var(--text-small); color: var(--ink-soft); line-height: 1.55;
+                max-width: 48rem; margin: calc(-1 * var(--space-2)) 0 var(--space-4);
+                padding-left: var(--space-3); border-left: 2px solid var(--rule); }
 .section-head { font-size: var(--text-small); font-weight: 640; letter-spacing: 0.01em;
                 padding-bottom: var(--space-2); border-bottom: 1px solid var(--rule);
                 margin-bottom: var(--space-4); }
@@ -195,12 +227,6 @@ body { background: var(--paper) !important; color: var(--ink) !important;
    only matters the first time still costs a line of reading on every visit afterwards; behind
    this it costs a glance. Sized down deliberately — it must not compete with the control it is
    explaining, which is the thing on the screen that actually does something. */
-.hint             { font-size: var(--text-small); color: var(--ink-soft); }
-.hint .q-item     { min-height: 0; padding: var(--space-1) 0; }
-.hint .q-item__section--avatar { min-width: 0; padding-right: var(--space-2);
-                                 color: var(--ink-faint); }
-.hint-text        { font-size: var(--text-small); color: var(--ink-soft); line-height: 1.55;
-                    max-width: 48rem; padding: 0 0 var(--space-2) var(--space-6); }
 
 /* A row of jumps to the sections below it. Only the Setup screen has enough of them to need it. */
 .jumps        { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4);
@@ -413,7 +439,14 @@ def heading(eyebrow: str, title: str, lede: str = "") -> None:
 
 
 @contextmanager
-def section(title: str, *, anchor: str | None = None, collapsed: bool = False) -> Iterator[None]:
+def section(
+    title: str,
+    *,
+    anchor: str | None = None,
+    collapsed: bool = False,
+    step: int | None = None,
+    explain: str = "",
+) -> Iterator[None]:
     """A titled block of a screen.
 
     Args:
@@ -422,6 +455,11 @@ def section(title: str, *, anchor: str | None = None, collapsed: bool = False) -
         collapsed: Start folded. For a section nobody can act on — the Setup screen's read-only
             block is eight of its own sections' worth of scroll between the operator and the Test
             buttons, and none of it is editable here.
+        step: A position in a sequence, shown as a filled numeral before the title. For a screen
+            that is a procedure rather than a set of facts: the number is the instruction to do
+            this one before that one, and it is the cheapest navigation there is.
+        explain: The paragraph that would otherwise sit under the heading, moved behind an ⓘ.
+            See :func:`explanation` for why anything is hidden at all.
     """
     if collapsed:
         expansion = ui.expansion(title).classes("section w-full").props("dense")
@@ -434,8 +472,79 @@ def section(title: str, *, anchor: str | None = None, collapsed: bool = False) -
     if anchor:
         element.props(f"id={anchor}")
     with element:
-        ui.label(title).classes("section-head")
+        subhead(title, step=step, explain=explain)
         yield
+
+
+def subhead(title: str, *, step: int | None = None, explain: str = "") -> None:
+    """A heading line — optional step numeral, title, optional ⓘ — with the ⓘ's text below it.
+
+    The heading is a flex row and the explanation is its **sibling**, not its child. It was a child
+    for one round and shared the line with its own title: ``flex-basis: 100%`` reads as "wrap me",
+    but ``max-width`` clamps the hypothetical size flex uses to break lines, so it fitted beside
+    the title and stayed there.
+
+    Used by :func:`section` and directly by a screen that needs the same heading below a section —
+    the Data screen's two tables are one section with two headed halves.
+    """
+    with ui.element("div").classes("head-row"):
+        if step is not None:
+            ui.label(str(step)).classes("step-num")
+        ui.label(title).classes("section-head")
+        dot = _info_dot(explain, about=title) if explain else None
+    if dot is not None:
+        _reveals(dot, explain)
+
+
+def explanation(text: str, *, about: str) -> None:
+    """An ⓘ that shows its text on hover and keeps it on press.
+
+    **Both, deliberately.** Hover answers it without a click for an operator already reaching past
+    it; the press is what makes it reachable at all on a touch screen and by keyboard, where there
+    is no hover. A tooltip alone would put this screen's only account of what a file is somewhere a
+    keyboard cannot go.
+
+    It is here rather than inlined at each call site because it carries a decision about *what*
+    gets hidden. Only text that is **true every time and needed once** — which of the two uploads
+    this is, what the path has to be, why a barcode is missing. Never a warning, never a count,
+    never anything that is true only today: something an operator must not miss cannot live behind
+    an affordance they have to discover. Those stay on the page, in a band.
+
+    Args:
+        text: The explanation. One or two sentences — anything longer belongs in a doc.
+        about: What it explains, used to label the control for a screen reader, which otherwise
+               announces every one of these identically as "i".
+    """
+    _reveals(_info_dot(text, about=about), text)
+
+
+def _info_dot(text: str, *, about: str) -> ui.element:
+    """The ⓘ itself: a real button, so it is focusable, with the text also on hover."""
+    dot = (
+        ui.element("button")
+        .classes("info-dot")
+        .props(f'type=button aria-expanded=false aria-label="About {about}"')
+    )
+    with dot:
+        ui.label("i")
+    dot.tooltip(text)
+    return dot
+
+
+def _reveals(dot: ui.element, text: str) -> None:
+    """Put ``text`` in the current container, hidden, and let ``dot`` toggle it."""
+    body = ui.label(text).classes("explain")
+    body.set_visibility(False)
+
+    shown = False
+
+    def toggle() -> None:
+        nonlocal shown
+        shown = not shown
+        body.set_visibility(shown)
+        dot.props(f"aria-expanded={'true' if shown else 'false'}")
+
+    dot.on("click", toggle)
 
 
 def jumps(targets: list[tuple[str, str]]) -> None:
@@ -492,28 +601,6 @@ def notify_problem(text: str) -> None:
     a property of the outcome rather than of whoever wrote the call.
     """
     _notify(text, "negative")
-
-
-def hint(text: str, *, label: str = "Why this matters") -> None:
-    """An explanation the operator can open, and that shows on hover without opening.
-
-    Kept as a helper rather than inlined at each call site because it carries a decision, and an
-    inlined ``ui.expansion`` would lose it: this is for text that is **true every time and needed
-    once** — what a file has to be called, which of two uploads is which. Left as a paragraph it
-    costs a line of reading on every visit forever; deleted, the operator who needs it has nowhere
-    to look. Folded, it costs a glance and is one press away.
-
-    Both a tooltip and an expansion, deliberately. Hover answers it without a click for the
-    operator who is already reaching past it; the expansion is what makes it reachable on a touch
-    screen and by keyboard, where there is no hover at all.
-
-    Args:
-        text: The explanation. One or two sentences — anything longer belongs in a doc.
-        label: What the fold says when it is closed. Should name the question it answers.
-    """
-    with ui.expansion(label, icon="info_outline").classes("hint").props("dense") as fold:
-        ui.label(text).classes("hint-text")
-    fold.tooltip(text)
 
 
 def figure(value: str, label: str) -> None:

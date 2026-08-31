@@ -47,6 +47,21 @@ def _resolve(path: str) -> Path:
     return resolved if resolved.is_absolute() else REPO_ROOT / resolved
 
 
+def _export_status(count: int | None, export: context.FileFact) -> str:
+    """Whether step 1 is done, in one sentence rather than in two numerals.
+
+    The screen used to answer this with ``theme.figure`` twice — "products parsed" beside "export
+    modified" — at hero size, which is the size reserved for a number somebody acts on. Neither is:
+    they are the *state of a step*, and side by side they read as one fact about one file while
+    being two facts about two, with two modification times, either of which can be the stale one.
+    """
+    if not export.exists:
+        return "No export here yet. Upload one to begin."
+    if not count:
+        return "Uploaded, not read yet — press Read the export."
+    return f"{count} products read from this export."
+
+
 def _export_is_newer(export: context.FileFact, parsed: context.FileFact) -> bool:
     """Whether the export has changed since it was parsed — so the product count is stale.
 
@@ -71,7 +86,7 @@ def render() -> None:
         theme.heading(
             theme.eyebrow("Data"),
             "Data",
-            "The GS1 Data Source export, and the list of barcodes this run may touch.",
+            "Two files, in order: the product data, then the products you want in this batch.",
         )
         if cfg is None or cid is None:
             theme.blocked(
@@ -94,28 +109,30 @@ def _export(cfg: Any, cid: str) -> None:
     if not target.is_absolute():
         target = REPO_ROOT / target
 
-    with theme.section("GS1 Data Source export"):
-        fact = context.file_fact(cfg.export.path)
-        parsed = context.file_fact(context.output_dir(cid) / "data" / "products.json")
-        with ui.row().classes("gap-12 items-end mb-4"):
-            theme.figure(str(context.product_count(cid) or 0), "products parsed")
-            theme.figure(fact.age, "export modified")
+    fact = context.file_fact(cfg.export.path)
+    parsed = context.file_fact(context.output_dir(cid) / "data" / "products.json")
 
-        # Two files with two modification times, shown side by side as though they were one fact.
-        # Uploading without pressing Parse leaves last quarter's count sitting under a date from
-        # today, and nothing on the screen says which of the two numbers is the stale one.
+    with theme.section(
+        "Upload the GS1 export",
+        step=1,
+        explain=(
+            f"The product data itself, straight from GS1 Data Source. Uploading replaces "
+            f"{cfg.export.path} in place and keeps the previous file beside it. That path is fixed "
+            "in clients.yml and has no command-line override, so a workbook saved anywhere else is "
+            "invisible to the tool — the single most common way a run quietly uses last quarter's "
+            "data."
+        ),
+    ):
+        # Two files with two modification times. Uploading without reading the export leaves last
+        # quarter's product count standing, and nothing else on the screen would say so. A band,
+        # not an ⓘ: something an operator must not miss cannot live behind an affordance they have
+        # to discover.
         if _export_is_newer(fact, parsed):
             theme.band(
-                f"The export was modified {fact.age} and was last parsed {parsed.age}. The count "
-                "on the left is from the older file — parse it again before planning a run.",
+                f"This export was uploaded {fact.age} and has not been read yet — it was last read "
+                f"{parsed.age}. Press *Read the export* below before going on.",
                 "warn",
             )
-
-        ui.label(
-            f"Uploading replaces {cfg.export.path} in place. That path is fixed in clients.yml and "
-            "has no command-line override, so a workbook saved anywhere else is invisible to the "
-            "tool — this is the single most common way a run silently uses last quarter's data."
-        ).classes("note")
 
         # Async because NiceGUI 3 reads an upload through awaitable methods on ``event.file``.
         # The 2.x form — a synchronous ``event.content.read()`` — raises AttributeError *inside*
@@ -132,6 +149,11 @@ def _export(cfg: Any, cid: str) -> None:
         ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(
             'accept=".xlsx" flat bordered'
         ).classes("w-full max-w-xl")
+
+        # One sentence saying whether this step is done. It replaced two figures — a product count
+        # and a file date — set side by side at hero size, which read as one fact about one file
+        # and were about two.
+        ui.label(_export_status(context.product_count(cid), fact)).classes("note mt-3")
 
         output = ui.log().classes("console mt-4").style("display:none")
 
@@ -152,8 +174,8 @@ def _export(cfg: Any, cid: str) -> None:
                 theme.notify_warning("Parse finished with errors")
 
         with ui.row().classes("gap-3 mt-4"):
-            theme.quiet_action("Check the parse (writes nothing)", lambda: parse(dry_run=True))
-            theme.action("Parse and save products.json", lambda: parse(dry_run=False))
+            theme.quiet_action("Check it first (changes nothing)", lambda: parse(dry_run=True))
+            theme.action("Read the export", lambda: parse(dry_run=False))
 
 
 # --- Product scope list ---------------------------------------------------------
@@ -176,7 +198,7 @@ _TABLE_HEIGHT = "55vh"
 
 def _scope_list(cfg: Any, cid: str) -> None:
     if cfg.process_list is None:
-        with theme.section("Product scope list"):
+        with theme.section("Choose the products for this batch", step=2):
             ui.label(
                 "No `process_list` block in clients.yml — every product in the export is planned."
             ).classes("note")
@@ -184,20 +206,19 @@ def _scope_list(cfg: Any, cid: str) -> None:
 
     control = _resolve(cfg.process_list.path)
 
-    with theme.section("Product scope list"):
-        ui.label(
-            "Which barcodes this run may touch. Being on the list is the whole meaning: the tool "
-            "reads no other column and interprets no cell value, so a batch is prepared by "
-            "choosing rows below. Your own columns are kept exactly as they are."
-        ).classes("note")
-        theme.hint(
-            f"It is saved as {cfg.process_list.path}, replacing what is there, and your upload is "
-            f"kept beside it as {process_list_edit.archive_path(control).name} so Restore can put "
-            "it back. That path is fixed in clients.yml and has no command-line override, so a "
-            "list saved anywhere else is invisible to the tool.",
-            label="Where does this file go?",
-        )
-
+    with theme.section(
+        "Upload the products you want to process",
+        step=2,
+        explain=(
+            "A spreadsheet of the barcodes this batch may touch. Being on the list is the whole "
+            "meaning — the tool reads no other column and interprets no cell value — so you "
+            "prepare a batch by ticking rows below, and your own columns are kept exactly as they "
+            f"are. It is saved as {cfg.process_list.path}, and your upload is kept beside it as "
+            f"{process_list_edit.archive_path(control).name}, which is what Restore puts back. "
+            "That path is fixed in clients.yml and has no command-line override, so a list saved "
+            "anywhere else is invisible to the tool."
+        ),
+    ):
         # Async because NiceGUI 3 reads an upload through awaitable methods on ``event.file`` —
         # see the export upload above for what the 2.x form did instead.
         async def upload(event: events.UploadEventArguments) -> None:
@@ -389,13 +410,16 @@ def _missing_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
     if not rows:
         return
 
-    ui.label(f"On the scope list, not in the GS1 export ({len(rows)})").classes("section-head mt-4")
-    ui.label(
-        "The export carries no row for these barcodes, so a run will publish nothing for them and "
-        "say nothing about them. Either the product is missing from the export — fix it in MyGS1 "
-        "and export again — or the barcode is wrong. They stay in your list either way; to drop "
-        "one, remove it in the spreadsheet and upload the list again."
-    ).classes("note")
+    theme.subhead(
+        f"Not in the GS1 export ({len(rows)})",
+        explain=(
+            "The export carries no row for these barcodes, so a run will publish nothing for them "
+            "and say nothing about them. Either the product is missing from the export — fix it in "
+            "MyGS1 and export again — or the barcode is wrong. They stay in your list either way, "
+            "and have no tick box because there is nothing to choose: nothing can process them. To "
+            "drop one, remove it in the spreadsheet and upload the list again."
+        ),
+    )
 
     table = ui.table(columns=columns, rows=rows, row_key=_ROW, pagination=0).classes("w-full mt-2")
     table.props("dense flat bordered")
@@ -405,7 +429,13 @@ def _scope_table(
     columns: list[dict[str, Any]], rows: list[dict[str, Any]]
 ) -> tuple[ui.table, ui.input]:
     """The rows a run will act on, all selected, searchable."""
-    ui.label(f"In the GS1 export ({len(rows)})").classes("section-head mt-6")
+    theme.subhead(
+        f"In the GS1 export ({len(rows)}) — tick the ones to process",
+        explain=(
+            "Every row arrives ticked. Untick a product to leave it out of this batch, then press "
+            "Save the list. Filtering changes only what you can see, never what is ticked."
+        ),
+    )
     search = (
         ui.input(placeholder="Filter — matches every column")
         .props("dense clearable")
@@ -440,12 +470,13 @@ def _scope_table(
 
 
 def _quality(cid: str) -> None:
-    with theme.section("Data quality"):
-        ui.label(
-            "Blank or wrong source values get fixed in MyGS1, at the source — never invented "
-            "here. This report is the work list."
-        ).classes("note")
-
+    with theme.section(
+        "Data quality",
+        explain=(
+            "What is blank or wrong in the export itself. Those values get fixed in MyGS1, at the "
+            "source — never invented here — so this report is the work list to send upstream."
+        ),
+    ):
         report = REPO_ROOT / "output" / cid / "data-quality-report.md"
         fact = context.file_fact(report)
         # Which run's worklist this is. `show()` rebuilds the file and renders it, so a command

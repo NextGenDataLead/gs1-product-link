@@ -67,20 +67,25 @@ and whoever helps you knows exactly what happened.
 <img src="images/data.png" alt="The Data screen: the GS1 Data Source export with a count, a modified date and an upload area, then the product scope list with its own upload, the barcodes missing from the export above, and the rest as a searchable table of tick boxes." width="900">
 
 **What this screen is for:** the two spreadsheets a batch is made of. They are different documents
-from different places, so they have a section each.
+from different places, so the screen is two numbered steps — do 1, then 2.
+
+Every heading has a small **ⓘ** beside it. Hover it to read what that file is and where it goes;
+press it to keep the text on screen. Nothing is hidden behind one that you need to act on — a
+warning always sits on the page in a coloured band.
 
 **What you do, in order:**
 
-1. **GS1 Data Source export** — the product *data*. If the maintainer sent you a new spreadsheet,
+1. **Upload the GS1 export** — the product *data*. If the maintainer sent you a new spreadsheet,
    drop it on the upload area. It replaces the one already there and keeps the old one beside it.
-   Then press **Parse and save products.json** — that is the tool reading the spreadsheet.
-   - *Check the parse (writes nothing)* does the same read without saving, if you just want to see
-     whether the file is readable.
-   - If a band appears saying the export is newer than the last parse, press Parse. The count on
-     the left is from the older file until you do.
-2. **Product scope list** — which barcodes this batch may touch. Drop the new one on its upload
-   area; it is checked before it replaces anything, so a file that will not open is refused and
-   the list you were using stays put.
+   Then press **Read the export**.
+   - *Check it first (changes nothing)* does the same read without saving, if you only want to
+     know whether the file opens.
+   - The line under the upload says whether this step is done — *"127 products read from this
+     export"*, or *"Uploaded, not read yet"*. If a band appears saying the export has not been read
+     yet, press **Read the export** before going on.
+2. **Upload the products you want to process** — which barcodes this batch may touch. Drop the new
+   one on its upload area; it is checked before it replaces anything, so a file that will not open
+   is refused and the list you were using stays put.
 
    > ⚠️ **A tick means keep.** Every row arrives ticked, and a run processes the ticked ones.
    > Untick a row to leave that product out, then press **Save the list**. If you used an earlier
@@ -103,9 +108,9 @@ from different places, so they have a section each.
    itself. Blank values get fixed in MyGS1, not here. The date beside it says when it was last
    built, so you can tell this week's worklist from last week's.
 
-**Done looks like:** a product count and a recent date under *GS1 Data Source export*, nothing
-unexpected in the top table, and a line under the bottom one naming exactly the number of products
-you mean.
+**Done looks like:** *"N products read from this export"* under step 1, nothing unexpected in the
+*Not in the GS1 export* table, and a line under the bottom table naming exactly the number of
+products you mean.
 
 **Stop if:** the scope list shows a red band saying the file cannot be read. Upload it again, or
 ask the maintainer for a fresh copy — do not go looking for the file in a folder to replace by

@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries the old wording, Save reports the delta ("Saved 36 row(s). 2 dropped") rather than the end
   state, Save stays red, and Restore makes the worst case one click.
 
+  **The screen is a procedure, so it reads as one:** two numbered steps — *Upload the GS1 export*,
+  *Upload the products you want to process* — with the paragraph explaining each file moved behind
+  an ⓘ on its heading. The two hero-sized figures, `products parsed` beside `export modified`, are
+  gone: that is the size reserved for a number somebody acts on, and these were the state of a step
+  — two facts about two files with two modification times, read as one fact about one file. A
+  single sentence says it instead.
+
   Plus a filter box over every column, `pagination=0` so the header checkbox cannot mean "this page
   only", a count label that names the file's numbers rather than the filter's, a per-row "no video
   yet" mark from `lib.preflight.held_for_video` (19 of the pilot's 37 are held and the screen showed
@@ -52,7 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `held` is never rendered as `error`, and a `plan.json` generated after the run it is being read
   beside is refused rather than contributing holds to a run that never saw them.
 
-- **`theme.hint()`** — a fold with a tooltip, for text that is true every time and needed once.
+- **`theme.explanation()` / `theme.subhead()` / `theme.section(step=…, explain=…)`** — a numbered
+  heading with an **ⓘ** that shows its text on hover and keeps it on press. Both, because hover
+  does not exist on a touch screen or a keyboard. What may go behind one is the constrained part:
+  text true every time and needed once, never a warning or a count.
 
 ### Changed
 - **`lib/process_list.py` is the only reader of the control file.** `read_process_list` returns the

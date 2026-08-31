@@ -125,6 +125,25 @@ both directions, and the button added next month is the case it would miss.
 
 ### Data
 
+**The screen is a procedure, so it is numbered.** Two filled numerals, an upload under each, and
+the explanation of what a file *is* behind an **ⓘ** on the heading rather than in a paragraph
+under it. `theme.section(step=…, explain=…)` and `theme.subhead` own that shape, so a screen
+cannot invent a second one.
+
+`theme.explanation` is both a tooltip and a toggle: hover answers it for an operator already
+reaching past it, and the press is what makes it reachable at all on a touch screen and by
+keyboard, where there is no hover. **What may go behind it is the constrained part** — text that
+is true every time and needed once. Never a warning, never a count, never anything true only
+today; those stay on the page in a band, because an ⓘ is discovered at the operator's leisure and
+a stale export is not. `tests/ui/test_shell_chrome_contract.py` pins that rule in the docstring.
+
+**The two figures are gone.** `products parsed` and `export modified` sat side by side at
+`--text-hero`, the size reserved for a number somebody acts on. Neither was: they are the *state
+of a step*, and side by side they read as one fact about one file while being two facts about two
+files with two modification times, either of which can be the stale one — which is the defect the
+staleness band exists to catch. One sentence replaces them: "127 products read from this export",
+"Uploaded, not read yet", or "No export here yet."
+
 **Two files, two sections, two uploads.** The export is product *data*; the scope list is *which
 products*. They come from different places and confusing them is the most expensive mistake this
 screen affords, so each has its own name, its own section and its own upload. The config key stays
