@@ -70,29 +70,62 @@ def render() -> None:
             )
             return
 
-        # Steps 3 and 4 describe whatever the two files above currently are, so they are rebuilt
-        # whole whenever either changes — a new export moves the join as surely as a new list does.
-        def redraw() -> None:
-            body.clear()
-            with body:
-                _scope_grid(cfg, cid, redraw)
+        # **A run brings both files.** Until they have both arrived *this visit*, the selection
+        # and the quality report are not shown — not shown empty, not shown stale, not shown at
+        # all. A screen that offered a batch built from whatever was left on disk is a screen that
+        # lets a run inherit the previous one's scope without anybody deciding to.
+        arrived: dict[str, bool] = {"export": False, "list": False}
+        #: The grid's save, hoisted so the Next button can call it. ``None`` until there is a grid.
+        commit: dict[str, Callable[[], bool]] = {}
+
+        def refresh(which: str) -> None:
+            if which:
+                arrived[which] = True
+            ready = all(arrived.values())
+            selection.clear()
+            quality.clear()
+            commit.clear()
+            with selection:
+                if ready:
+                    _scope_grid(cfg, cid, commit)
+                else:
+                    theme.band(
+                        "Upload both files above to choose the products for this run.", "quiet"
+                    )
+            if ready:
+                with quality:
+                    _quality(cid)
+            onward.set_enabled(ready)
 
         with ui.element("div").classes("steps-2up"):
-            _export(cfg, cid, redraw)
-            _scope_list(cfg, redraw)
+            _export(cfg, cid, refresh)
+            _scope_list(cfg, refresh)
 
-        # Bound after the row so it renders below it, and before `redraw` is ever called.
-        body = ui.column().classes("w-full gap-0")
-        redraw()
+        # Bound after the row so they render below it, and before ``refresh`` is ever called.
+        selection = ui.column().classes("w-full gap-0")
+        quality = ui.column().classes("w-full gap-0")
 
-        _quality(cid)
-        theme.onward("Next: write the product copy", "/content")
+        def save_and_go() -> None:
+            # One intention, one button. On a screen with unsaved work, "go on" and "commit what
+            # I chose" are the same act, and two buttons is how the second gets missed.
+            save = commit.get("save")
+            if save is not None and not save():
+                return  # refused, and it said why — stay put rather than carry the refusal away
+            # A beat before leaving, because the save reports the **delta** — "2 dropped" — and
+            # that sentence is the one thing on this screen that contradicts an operator who still
+            # thinks a tick means *remove*. Navigating on the same frame clips the toast, which
+            # would leave the write silent on a screen whose tick box means the opposite of what
+            # it used to. Notifications do not survive a page change, so the beat is the fix.
+            ui.timer(_TOAST_BEAT, lambda: ui.navigate.to("/content"), once=True)
+
+        onward = theme.onward("Save and write the product copy", save_and_go)
+        refresh("")
 
 
 # --- Step 1: the export -------------------------------------------------------
 
 
-def _export(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
+def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
     target = _resolve(cfg.export.path)
 
     with theme.section(
@@ -127,8 +160,8 @@ def _export(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
             result = await runner.run_off_the_loop(runner.parse_export_argv(cid))
             if result.ok:
                 # The selection below is a join against this export, so it now describes a
-                # different one.
-                redraw()
+                # different one — and this is the upload that unlocks it.
+                arrived("export")
                 theme.notify_ok("Export read.")
                 return f"{context.product_count(cid) or 0} products read from this export."
 
@@ -167,11 +200,14 @@ _ROW = "_row"
 #: the namespace the operator's own headers live in.
 _HELD = "_held"
 
+#: Long enough to read "Saved 36 row(s). 2 dropped" before the screen changes under it.
+_TOAST_BEAT = 1.6
+
 #: Height of the matched table. Long enough to work in, short enough that Save stays on screen.
 _TABLE_HEIGHT = "55vh"
 
 
-def _scope_list(cfg: Any, redraw: Callable[[], None]) -> None:
+def _scope_list(cfg: Any, arrived: Callable[[str], None]) -> None:
     if cfg.process_list is None:
         with theme.section("Choose the products for this batch", step=2):
             ui.label(
@@ -201,18 +237,32 @@ def _scope_list(cfg: Any, redraw: Callable[[], None]) -> None:
             # Preflight is refused while the operator is still looking at the picker and the list
             # they were working from is untouched.
             kept = process_list_edit.archive(cfg.process_list, await event.file.read())
-            # Redrawn rather than left for the operator to reload: every count and both tables
-            # below now describe the file that was just replaced, and a screen that keeps showing
-            # the previous list after a successful upload is the silent staleness this project
-            # keeps designing against.
-            redraw()
+            # Redrawn rather than left for the operator to reload: the tables below now describe
+            # the file that was just replaced, and a screen that keeps showing the previous list
+            # after a successful upload is the silent staleness this project designs against.
+            arrived("list")
             theme.notify_ok("Product list installed.")
             return f"Installed. Your upload is kept as {kept.name}."
 
         theme.upload("Product list (.xlsx)", receive, busy="Checking the list…")
 
+        def restore() -> None:
+            try:
+                backup = process_list_edit.restore(cfg.process_list)
+            except (OSError, ProcessListError) as exc:
+                theme.notify_problem(str(exc))
+                return
+            arrived("list")
+            theme.notify_ok(f"The uploaded list is back. The list you had is at {backup.name}")
 
-def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
+        # Beside the upload rather than under the table, which is where it used to be: it restores
+        # *the uploaded file*, so this is where an operator looks for it — and it is the undo for a
+        # save, which now happens on the way out of the screen. Without it the inverted tick box
+        # has no one-click way back.
+        theme.quiet_action("Restore the uploaded list", restore)
+
+
+def _scope_grid(cfg: Any, cid: str, commit: dict[str, Callable[[], bool]]) -> None:
     """The list joined against the export: what is missing above, what will run below."""
     try:
         sheet = process_list_edit.read_sheet(cfg.process_list)
@@ -263,35 +313,17 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
             "leave it out of this batch, then save. The filter changes only what you can see, "
             "never what is ticked, so you can search, untick, clear the filter, and nothing you "
             "did is lost. Saving keeps the previous version beside the file, and Restore puts back "
-            "the list you uploaded — which is what makes unticking safe to get wrong. Nothing is "
-            "published here; this only settles which products are in the batch."
+            "the list you uploaded — the button for that is beside the upload in step 2, which is "
+            "what makes unticking safe to get wrong. Nothing is "
+            "published here; this only settles which products are in the batch. A product with no "
+            "client-confirmed video in every language is marked in the Video column and a run "
+            "skips it, reporting success (media.restrict_to_mapped_gtins)."
         ),
     ):
         _missing_table(columns, [row_of(n) for n in unmatched])
-        below, search = _scope_table(columns, [row_of(n) for n in matched])
+        below = _scope_table(columns, [row_of(n) for n in matched])
 
-        # Written out here and not only in the handler, because the handler is async — it may have
-        # to ask the browser what the filter is showing — and the first value has to be on the page
-        # before there is a browser to ask.
-        count = ui.label(_scope_count(len(below.selected), len(matched), None)).classes("note")
-
-        async def recount() -> None:
-            # Asked of the table rather than re-implemented: Quasar's filter matches every visible
-            # column, and a second version of that rule here would drift from the one on screen.
-            # Only reached once the operator has typed, so the client is connected by then.
-            shown = (
-                len(await below.get_filtered_sorted_rows())
-                if (search.value or "").strip()
-                else None
-            )
-            count.text = _scope_count(len(below.selected), len(matched), shown)
-
-        below.on_select(recount)
-        search.on_value_change(recount)
-        # After the count, so "them" refers to the number just given rather than to the table.
-        _held_note(cfg, sum(1 for n in matched if sheet.gtin14_at(n) in held))
-
-        def save() -> None:
+        def save() -> bool:
             # The rows the export has nothing for are kept, always, and are not counted as chosen.
             # They carry no checkbox because the only question this screen asks is "does this
             # run?", and for them the answer is no whatever anyone ticks.
@@ -301,71 +333,17 @@ def _scope_grid(cfg: Any, cid: str, redraw: Callable[[], None]) -> None:
                 backup = process_list_edit.save_sheet(sheet.keeping(keep))
             except ProcessListError as exc:
                 theme.notify_problem(str(exc))
-                return
+                return False
             # The delta, not the end state. A tick used to mean "remove this row" on this screen,
-            # and an operator with that habit unticks the rows they want *gone*; "5 dropped" is the
-            # sentence that contradicts them while the previous list is still one click away.
+            # and an operator with that habit unticks the rows they want *gone*; "2 dropped" is the
+            # sentence that contradicts them, and it is now the only one — the count that used to
+            # sit under the table went with the Save button.
             theme.notify_ok(
                 f"Saved {len(keep)} row(s). {dropped} dropped; previous list at {backup.name}"
             )
-            redraw()
+            return True
 
-        def restore() -> None:
-            try:
-                backup = process_list_edit.restore(cfg.process_list)
-            except (OSError, ProcessListError) as exc:
-                theme.notify_problem(str(exc))
-                return
-            theme.notify_ok(f"The uploaded list is back. The list you had is at {backup.name}")
-            redraw()
-
-        with ui.row().classes("gap-3 mt-3"):
-            theme.action("Save the list", save, danger=True)
-            theme.quiet_action("Restore the uploaded list", restore)
-
-        # Named here because this is where the operator is looking at the list, and said as a
-        # location rather than offered as a button: the sheet is about one particular run, and a
-        # screen that shows no run would have to guess which.
-        with ui.row().classes("items-baseline gap-1 mt-3"):
-            ui.label("After a run, this list comes back with what happened to each row —").classes(
-                "note"
-            )
-            ui.link("build it on Runs", "/runs").classes("note")
-
-
-def _scope_count(chosen: int, matched: int, shown: int | None) -> str:
-    """The sentence beside the table: how many rows a run will take, out of how many it could.
-
-    ``matched`` is the rows the export carries, **not** the rows in the file. The barcodes above
-    are in the file and can never be processed, so counting them here would put a number on screen
-    that no run can reach — which is the sort of quiet over-claim this screen exists to remove.
-
-    It exists at all because the header checkbox cannot say this. Quasar's tri-state describes the
-    rows the *filter* is showing, so with a filter typed it reads "all selected" over a file where
-    most rows are not — and the operator is one click from saving a list they never looked at.
-    ``shown`` is appended only while a filter is on, and names what it is: a view, not the count
-    that matters.
-    """
-    text = f"{chosen} of {matched} row(s) will be processed"
-    return text if shown is None else f"{text} — {shown} shown"
-
-
-def _held_note(cfg: Any, held: int) -> None:
-    """One line where a whole section used to be.
-
-    The Data screen carried a *Video mapping* block — two figures and a link — which the Video
-    mapping screen already shows, and which the per-row "no video yet" mark now says better,
-    because it says it against the product it is about. What that block had and a per-row mark
-    does not is the **consequence**, so that is what survives: a mark reading "no video yet" does
-    not tell you the run will skip the product.
-    """
-    if not held or cfg.media is None or not cfg.media.restrict_to_mapped_gtins:
-        return
-    ui.label(
-        f"{held} of them have no client-confirmed video in every language, so a run skips those "
-        f"and reports success (media.restrict_to_mapped_gtins)."
-    ).classes("note")
-    ui.link("Open the video mapping", "/videos").classes("note")
+        commit["save"] = save
 
 
 def _missing_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
@@ -402,10 +380,8 @@ def _missing_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
     table.props("dense flat bordered")
 
 
-def _scope_table(
-    columns: list[dict[str, Any]], rows: list[dict[str, Any]]
-) -> tuple[ui.table, ui.input]:
-    """The rows a run will act on, all selected, searchable."""
+def _scope_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> ui.table:
+    """The rows a run will act on, all selected, searchable. Returns the table."""
     theme.subhead(
         f"In the GS1 export ({len(rows)}) — tick the ones to process",
         explain=(
@@ -440,7 +416,7 @@ def _scope_table(
     # filter is showing, not the file — which is what the count label beside the table is for.
     table.selected = list(rows)
     table.bind_filter_from(search, "value")
-    return table, search
+    return table
 
 
 # --- Quality ------------------------------------------------------------------

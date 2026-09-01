@@ -138,9 +138,32 @@ just written, and stays collapsed. The command takes about half a second, so it 
 `ui.timer(once=True)` just after the first paint rather than during the render: half a second of
 blank screen is a poor trade on a screen nobody opened to read a report.
 
-**A `Next` button at the foot.** The rail is navigation for somebody who knows the shape of the
+**A batch requires both files, every visit.** Until an export and a list have each arrived *and
+been accepted* in this render, there is no selection, no quality report and no way onward — the
+Next button is disabled. Not shown empty, not shown stale, not shown at all. A screen that offered
+a batch built from whatever was left on disk is one that lets a run inherit the previous batch's
+scope without anybody deciding to.
+
+The cost is that arrival is per *page render*, which is the only granularity the screen has:
+navigating to Content and back means uploading again. And it is why `docs/images/data.png` now
+shows the landing state — the throwaway `democlient` has no parseable GDSN export, only a
+stand-in, so its screenshot cannot reach the populated screen. A faithful synthetic export would
+fix that.
+
+**A `Next` button at the foot, and it is the save.** The rail is navigation for somebody who knows the shape of the
 tool; `theme.onward` is for somebody following the procedure for the first time, who has finished a
-screen and wants to be told where the next thing is. `theme.section(step=…, explain=…)` and `theme.subhead` own that shape, so a screen
+screen and wants to be told where the next thing is.
+
+It carries the save because on a screen with unsaved work "go on" and "commit what I chose" are one
+intention, and two buttons is how the second gets missed. It navigates on a **1.6 s beat** rather
+than the same frame: the save reports the *delta* — "2 dropped" — and that sentence is the only
+thing left on this screen that contradicts an operator who still thinks a tick means *remove*.
+Notifications do not survive a page change, so navigating immediately would make the write silent.
+
+The count line, the held-video line and the Restore button that used to sit between the table and
+the report are gone. Restore moved **beside the upload in step 2** — it restores the uploaded file,
+so that is where it belongs, and without it the inverted tick box has no one-click way back. The
+video consequence moved into step 3's ⓘ; the per-row mark still carries the fact. `theme.section(step=…, explain=…)` and `theme.subhead` own that shape, so a screen
 cannot invent a second one.
 
 `theme.explanation` is both a tooltip and a toggle: hover answers it for an operator already

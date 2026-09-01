@@ -585,16 +585,21 @@ def _reveals(dot: ui.element, text: str) -> None:
     dot.on("click", toggle)
 
 
-def onward(label: str, route: str) -> None:
-    """The way to the next screen, at the foot of a screen that is a step in a procedure.
+def onward(label: str, on_click: Callable[[], object]) -> ui.button:
+    """The way out of a screen that is a step in a procedure. Returns the button.
 
     The rail is navigation for somebody who already knows the shape of the tool. This is for
     somebody following the procedure for the first time, who has finished a screen and wants to be
     told where the next thing is rather than to go looking for it.
+
+    The handler is the caller's, not a route, because on a screen with unsaved work "go on" and
+    "commit what I chose" are the same intention and splitting them into two buttons is how one of
+    them gets missed. Returned so the caller can disable it while the screen is not finishable.
     """
     with ui.element("div").classes("onward"):
-        button = ui.button(label, on_click=lambda: ui.navigate.to(route))
+        button = ui.button(label, on_click=on_click)
         button.props("no-caps unelevated color=primary icon-right=arrow_forward")
+    return button
 
 
 def jumps(targets: list[tuple[str, str]]) -> None:

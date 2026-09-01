@@ -64,13 +64,21 @@ and whoever helps you knows exactly what happened.
 
 ## Step 1 — Data
 
-<img src="images/data.png" alt="The Data screen: the GS1 Data Source export with a count, a modified date and an upload area, then the product scope list with its own upload, the barcodes missing from the export above, and the rest as a searchable table of tick boxes." width="900">
+<img src="images/data.png" alt="The Data screen as it opens: two numbered upload steps side by side, a line saying to upload both files before choosing products, a folded Data quality section, and a greyed-out Next button." width="900">
+
+*This is the screen as it opens.* The product table and the quality report appear once **both**
+files are uploaded — see below.
 
 **What this screen is for:** the two spreadsheets a batch is made of, and choosing what goes in it.
 
 Every heading has a small **ⓘ** beside it. Hover it to read what that file is and where it goes;
 press it to keep the text on screen. Nothing you need to act on is hidden behind one — a warning
 always sits on the page in a coloured band.
+
+> **Every batch starts with both files.** Until you have uploaded a GS1 export *and* a product
+> list in this visit, there is no table to choose from, no quality report, and the Next button is
+> greyed out. That is deliberate: a screen that offered you a batch built from whatever was left
+> on the machine would let a run inherit the previous batch's scope without anyone deciding to.
 
 **What you do:**
 
@@ -98,18 +106,21 @@ always sits on the page in a coloured band.
    > is gone.
 
    Use the filter box to find a product; filtering changes only what you can see, never what is
-   ticked. The line above the buttons says how many rows will be processed out of how many could
-   be. Then press **Save the list**. Got it wrong? **Restore the uploaded list** puts back the file
-   you uploaded, in one click.
+   ticked. The table's own footer says how many are selected.
+
+   Got it wrong? **Restore the uploaded list**, beside the upload in step 2, puts back the file you
+   uploaded in one click.
 
 **Data quality** at the bottom is folded away. It rebuilds every time you open this screen, so
 opening the fold always shows a current report — what is missing or wrong in the spreadsheet
 itself. Those values get fixed in MyGS1, not here.
 
-When you are done, **Next: write the product copy** at the foot of the screen takes you to step 2.
+When you are done, **Save and write the product copy** at the foot of the screen does both: it
+saves your choice and takes you on to step 2. It tells you what it wrote first — *"Saved 36 row(s).
+2 dropped"* — so read that line before the screen changes.
 
 **Done looks like:** both files uploaded without a refusal, nothing unexpected in the *Not in the
-GS1 export* table, and a line above the Save button naming exactly the number of products you mean.
+GS1 export* table, and the table footer showing exactly the number of products you mean selected.
 
 **Stop if:** either upload is refused, or a red band says a file cannot be read. Upload it again,
 or ask the maintainer for a fresh copy — do not go looking for the file in a folder to replace by

@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compact picker with a spinner replaced Quasar's blue slab reporting "0.0B / 0.00%". A `Next`
   button at the foot leads on to Content.
 
+  **A batch requires both files, every visit.** Until an export and a list have each arrived and
+  been accepted, there is no selection, no quality report and no way onward — not shown empty, not
+  shown stale, not shown at all. A screen that offered a batch built from whatever was left on disk
+  is one that lets a run inherit the previous batch's scope without anybody deciding to.
+
+  **The Next button is the save.** On a screen with unsaved work, "go on" and "commit what I chose"
+  are one intention, and two buttons is how the second gets missed. It navigates on a 1.6 s beat,
+  because the save reports the delta — "2 dropped" — and that is the only sentence left that
+  contradicts an operator who still thinks a tick means *remove*; notifications do not survive a
+  page change. The count line, the held-video line and the after-a-run line are gone; Restore moved
+  beside the upload it restores.
+
   **The data-quality report builds itself, folded away.** It was a button, which made a fresh
   worklist something the operator had to think of asking for — and so the thing most likely to be
   skipped on the visit where it mattered.
