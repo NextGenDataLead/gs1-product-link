@@ -1,8 +1,9 @@
-"""Tests for ui/process_list_edit.py — pruning the control file.
+"""Tests for ui/process_list_edit.py — installing, pruning and restoring the control file.
 
 The operator's recurring job, and the one step where the shell writes to a file they authored.
-The three properties worth asserting are the three that make that safe: other columns survive,
-the previous version survives, and an empty result is refused.
+The properties worth asserting are the ones that make that safe: other columns survive, the
+previous version survives, the file they *uploaded* survives every save after it — the per-run
+result sheet reads it to name the rows they dropped — and an empty result is refused.
 """
 
 from __future__ import annotations
@@ -15,13 +16,14 @@ import pytest
 from lib.config import ProcessListConfig
 from lib.errors import ProcessListError
 from lib.process_list import load_process_list
-from ui.process_list_edit import read_sheet, save_sheet
+from ui.process_list_edit import archive, archive_path, read_sheet, save_sheet
 
 GTIN_A = "8713195007359"
 GTIN_B = "8713195007360"
 
 
 def _write(tmp_path: Path, rows: list[list[object]], header: list[str] | None = None) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.append(header or ["Artikelnr.", "Barcode", "Omschrijving"])
@@ -157,3 +159,134 @@ def test_the_incremental_form_is_the_one_that_drifts(tmp_path: Path) -> None:
         drifting = drifting.without(selection)
 
     assert [row[1] for row in drifting.rows] != [row["gtin"] for row in grid]
+
+
+# --- The reader is the run's reader -------------------------------------------
+
+
+def test_a_header_below_row_one_reads_on_screen_too(tmp_path: Path) -> None:
+    """The bug this screen had: openpyxl, header fixed at row 1, against Strict-OOXML files.
+
+    A real operator list has a report title above the table. It loaded in a run and failed here,
+    which is the worst place for the two to disagree — the operator is looking at the screen.
+    """
+    # Arrange
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.append(["Voorraadlijst Q3"])
+    worksheet.append([])
+    worksheet.append(["Artikelnr.", "Barcode", "Omschrijving"])
+    worksheet.append(["1079", GTIN_A, "Drain saver"])
+    path = tmp_path / "process-list.xlsx"
+    workbook.save(path)
+
+    # Act
+    sheet = read_sheet(_config(path))
+
+    # Assert
+    assert sheet.header == ["Artikelnr.", "Barcode", "Omschrijving"]
+    assert sheet.rows == [["1079", GTIN_A, "Drain saver"]]
+    assert sheet.gtin_index == 1
+
+
+# --- The upload, and putting it back ------------------------------------------
+
+
+def test_the_archive_sits_beside_the_control_file_and_is_not_the_backup(tmp_path: Path) -> None:
+    """A collision would leave the archive holding the last pruned save, not the uploaded list.
+
+    The result sheet reads the archive to name the rows the operator dropped, so a collision would
+    have it name the wrong ones — silently, and in a file that goes to the client.
+    """
+    # Arrange
+    control = tmp_path / "process-list.xlsx"
+
+    # Act
+    kept = archive_path(control)
+
+    # Assert
+    assert kept == tmp_path / "process-list.source.xlsx"
+    assert kept != control.with_suffix(".bak.xlsx")
+
+
+def test_an_upload_is_archived_byte_for_byte_and_becomes_the_control_file(tmp_path: Path) -> None:
+    # Arrange
+    source = _write(tmp_path / "upload", [["1079", GTIN_A, "Drain saver"]])
+    control = tmp_path / "input" / "process-list.xlsx"
+    data = source.read_bytes()
+
+    # Act
+    kept = archive(_config(control), data)
+
+    # Assert
+    assert kept.read_bytes() == data
+    assert control.read_bytes() == data
+    assert load_process_list(_config(control)) == frozenset({f"0{GTIN_A}"})
+
+
+def test_an_upload_that_will_not_read_is_refused_and_writes_nothing(tmp_path: Path) -> None:
+    """Refused while the operator is still looking at the upload button, not on Preflight."""
+    # Arrange
+    control = _write(tmp_path, [["1079", GTIN_A, "Drain saver"]])
+    before = control.read_bytes()
+
+    # Act / Assert
+    with pytest.raises(ProcessListError):
+        archive(_config(control), b"this is not a workbook")
+
+    assert control.read_bytes() == before, "the list they were working from is untouched"
+    assert not archive_path(control).exists()
+
+
+def test_an_upload_with_no_gtins_is_refused(tmp_path: Path) -> None:
+    """An empty list plans nothing and reports success. Caught at the door."""
+    # Arrange
+    empty = _write(tmp_path / "upload", [["1079", None, "Drain saver"]])
+    control = tmp_path / "input" / "process-list.xlsx"
+
+    # Act / Assert
+    with pytest.raises(ProcessListError, match="report success"):
+        archive(_config(control), empty.read_bytes())
+
+    assert not control.exists()
+
+
+def test_the_archive_survives_saves_that_overwrite_the_backup(tmp_path: Path) -> None:
+    """``.bak`` holds the previous save, so after two saves the uploaded list is only here."""
+    # Arrange
+    source = _write(
+        tmp_path / "upload", [["1", GTIN_A, "a"], ["2", GTIN_B, "b"], ["3", "8713195007361", "c"]]
+    )
+    control = tmp_path / "input" / "process-list.xlsx"
+    archive(_config(control), source.read_bytes())
+
+    # Act: two prunes, keys taken from the original grid both times, as the screen does it.
+    original = read_sheet(_config(control))
+    save_sheet(original.keeping({0, 1}))
+    save_sheet(original.keeping({0}))
+
+    # Assert
+    assert read_sheet(_config(control.with_suffix(".bak.xlsx"))).rows == [
+        ["1", GTIN_A, "a"],
+        ["2", GTIN_B, "b"],
+    ], "the backup is one save old"
+    assert len(read_sheet(_config(archive_path(control))).rows) == 3, (
+        "the upload is still all three"
+    )
+
+
+# --- What the saved file is like to open --------------------------------------
+
+
+def test_the_saved_header_is_frozen_and_filterable(tmp_path: Path) -> None:
+    """The file goes back to a spreadsheet; the operator's next act is to sort or filter it."""
+    # Arrange
+    path = _write(tmp_path, [["1079", GTIN_A, "Drain saver"], ["1080", GTIN_B, "Airfryer basket"]])
+
+    # Act
+    save_sheet(read_sheet(_config(path)).keeping({0, 1}))
+
+    # Assert
+    worksheet = openpyxl.load_workbook(path).active
+    assert worksheet.freeze_panes == "A2"
+    assert worksheet.auto_filter.ref == "A1:C3"

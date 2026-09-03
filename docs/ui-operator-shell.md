@@ -7,7 +7,8 @@
 > names Python modules and test files throughout. It is for whoever maintains the shell.
 
 A local desktop window over the same commands you would otherwise type. It exists so that the
-recurring loop — drop a new export, prune the process list, import the copy, run the flow, read
+recurring loop — drop a new export and a new scope list, choose the batch, import the copy, run the
+flow, read
 the result — does not require a terminal, a virtualenv, or knowing which of eleven scripts to call.
 
 On the operator's machine there is nothing to install first and nothing to type: double-click
@@ -62,7 +63,7 @@ operator repeats per batch, and everything else is deliberately not numbered.
 
 | # | Screen | What it is for |
 |---|---|---|
-| 1 | **Data** | Upload the export, prune the process list, read the data-quality report. |
+| 1 | **Data** | Upload the export and the scope list, choose the batch, read the data-quality report. |
 | 2 | **Content** | Generate or import `generation_results.json`, check its coverage, read the copy. |
 | 3 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
 | 4 | **Publish** | The nine gates, one at a time. |
@@ -124,13 +125,163 @@ both directions, and the button added next month is the case it would miss.
 
 ### Data
 
-Uploading the export **replaces the configured path in place**, keeping the previous file as
-`.bak.xlsx`. Writing anywhere else would produce a file the tool cannot see.
+**The screen is a procedure, so it is numbered.** Three filled numerals — the two uploads **side by
+side**, because bringing both files is one act and their order does not matter, then choosing and
+saving below them. The explanation of what a file *is* sits behind an **ⓘ** on the heading rather
+than in a paragraph under it. Below 60rem the two stack, where a column would be narrower than a
+picker and its label.
 
-The process-list grid is for the one thing the operator does with that file: **deleting rows**.
-Every other column is preserved verbatim — they are your working notes. Saving keeps the previous
-version, and refuses to write a list with no GTINs at all, because that would produce an empty plan
-and a run that reports success having published nothing.
+**The data-quality report builds itself, folded.** It was a button, which made a fresh worklist
+something the operator had to think of asking for — and therefore the thing most likely to be
+skipped on the visit where it mattered. It now rebuilds on every load, from the files a run has
+just written, and stays collapsed. The command takes about half a second, so it runs on a
+`ui.timer(once=True)` just after the first paint rather than during the render: half a second of
+blank screen is a poor trade on a screen nobody opened to read a report.
+
+**A batch requires both files, every visit.** Until an export and a list have each arrived *and
+been accepted* in this render, there is no selection, no quality report and no way onward — the
+Next button is disabled. Not shown empty, not shown stale, not shown at all. A screen that offered
+a batch built from whatever was left on disk is one that lets a run inherit the previous batch's
+scope without anybody deciding to.
+
+The cost is that arrival is per *page render*, which is the only granularity the screen has:
+navigating to Content and back means uploading again. And it is why `docs/images/data.png` now
+shows the landing state — the throwaway `democlient` has no parseable GDSN export, only a
+stand-in, so its screenshot cannot reach the populated screen. A faithful synthetic export would
+fix that.
+
+**A `Next` button at the foot, and it is the save.** The rail is navigation for somebody who knows the shape of the
+tool; `theme.onward` is for somebody following the procedure for the first time, who has finished a
+screen and wants to be told where the next thing is.
+
+It carries the save because on a screen with unsaved work "go on" and "commit what I chose" are one
+intention, and two buttons is how the second gets missed. It navigates on a **1.6 s beat** rather
+than the same frame: the save reports the *delta* — "2 dropped" — and that sentence is the only
+thing left on this screen that contradicts an operator who still thinks a tick means *remove*.
+Notifications do not survive a page change, so navigating immediately would make the write silent.
+
+The count line, the held-video line and the Save and Restore buttons that used to sit between the
+table and the report are all gone. **Restore is gone entirely**, and that is a deliberate trade: a
+batch already requires both uploads, so uploading the list again *is* the undo, and a button whose
+job is to avoid a step the screen insists on anyway is a second way to do one thing.
+
+It leaves the inverted tick box with two of its four mitigations rather than four — the old
+wording is deleted and the save still reports the delta; the red Save button and the one-click way
+back both went with the restructure. The remaining protection is that the file the operator
+uploaded is still on their machine, minutes old. The
+video consequence moved into step 3's ⓘ; the per-row mark still carries the fact. `theme.section(step=…, explain=…)` and `theme.subhead` own that shape, so a screen
+cannot invent a second one.
+
+`theme.explanation` is both a tooltip and a toggle: hover answers it for an operator already
+reaching past it, and the press is what makes it reachable at all on a touch screen and by
+keyboard, where there is no hover. **What may go behind it is the constrained part** — text that
+is true every time and needed once. Never a warning, never a count, never anything true only
+today; those stay on the page in a band, because an ⓘ is discovered at the operator's leisure and
+a stale export is not. `tests/ui/test_shell_chrome_contract.py` pins that rule in the docstring.
+
+**The two figures are gone, and nothing replaced them.** `products parsed` and `export modified` sat side by side at
+`--text-hero`, the size reserved for a number somebody acts on. Neither was: they are the *state
+of a step*, and side by side they read as one fact about one file while being two facts about two
+files with two modification times, either of which can be the stale one — which is the defect the
+staleness band exists to catch. There is no standing tally of what was loaded last time: the upload says what it read, on
+the line beneath it, and that line is about the upload that just happened.
+
+**Two files, two sections, two uploads.** The export is product *data*; the scope list is *which
+products*. They come from different places and confusing them is the most expensive mistake this
+screen affords, so each has its own name, its own section and its own upload. The config key stays
+`process_list` — it is in `clients.yml`, `schema/clients.schema.json`, `ProcessListConfig`, the
+doctor payload and five call sites, and renaming it would break every install. Only the words the
+operator reads changed.
+
+Both uploads **replace the configured path in place**. Writing anywhere else would produce a file
+the tool cannot see, and neither `parse_export` nor the scope-list reader takes an input-path
+override.
+
+**Both uploads validate, and there is no separate button to make them.** There were two — *check
+the parse* and *parse and save* — and the second was the one that mattered, so the first was a step
+an operator could skip into a run built on a workbook nobody had opened. Uploading is now both.
+
+They reach the same guarantee by different routes, because `parse_export` has no input-path
+override. The scope list is read **before** it is installed, from a temporary directory, through
+`lib.process_list.read_process_list` — `ui.video_map_edit.write_validated`'s pattern. The export
+cannot be, so it is backed up, written, parsed, and **rolled back from the backup if the parse
+fails**. Either way the file the operator was working from survives a bad upload, which is the
+property that matters: a failed read that left the bad file in place would mean every screen after
+it describes a workbook nobody can use, with no way back but a re-upload of a file they may no
+longer have.
+
+`theme.upload` carries the spinner. The point of it is not the transfer — the file moves a few
+centimetres to the same machine — it is the seconds the handler spends reading a 500 kB workbook,
+which would otherwise look like nothing had happened. That is how an operator comes to press a
+thing twice.
+
+**`process-list.source.xlsx` is the upload, kept byte for byte.** `.bak.xlsx` holds only *the
+previous save*, so after two saves the operator's original is gone; the archive is what lets
+`process-list.source.xlsx` hold "the list I sent" rather than "whatever it looked like last
+time". It is read by the per-run result sheet, to name the rows the operator dropped. **It never decides what gets written** — a design
+that derived the control file from it would put a wrong join between the operator and their own
+list, silently.
+
+**The grid is the scope list joined against the export**, and that join is the reason this screen
+was rebuilt. A barcode on the list that the export carries no row for produces no error, no plan
+row and no count anywhere in the tool; the operator's only evidence is a total one smaller than
+they expected. On the pilot that is exactly one SKU. It gets its own table, above the rest.
+
+That table is **read-only, and the rows in it are always kept**. It had checkboxes for one round
+and they were wrong twice over: a tick there would have meant "keep this row in the file" while
+the identical tick a few pixels below means "keep it *and* run it" — one control answering two
+questions — and it made the count read "38 of 38 row(s) will be processed" when 37 was the most
+any run could touch. Unticking one would not have stopped it being processed, since nothing was
+going to process it; it would only have deleted the evidence that a barcode on the list has no
+product behind it, which is the entire point of the table. Removing one is a spreadsheet edit and
+a re-upload.
+
+**When the export has not been parsed, the tables do not split.** Every row would land in "not in
+the export", which is not a finding but the absence of one — and it would leave the screen with no
+checkboxes at all, taking away the operator's long-standing ability to choose a batch before
+parsing. So the whole list shows as one table under a warning band instead.
+
+The join is `lib.process_list.rows_in_export`, in `lib` rather than on the screen, on
+`product.gtin14` against the sheet's own normalisation — `lib.preflight.in_scope`'s exact pair.
+`check_scope` deliberately emits `ProductRecord.gtin` and not `gtin14` "because a normalised
+variant here would silently fail to match for any client whose feed carries 13-digit codes", and a
+third normalisation invented on a screen would report every good product as missing.
+
+**The checkbox inverted, and that is a hazard, not a detail.** It used to mean *remove this row*;
+it means *keep this row*. An operator with the old habit ticks what they want gone and publishes
+exactly those. Four mitigations, all cheap and all required: the *Remove selected rows* button is
+deleted outright so no control carries the old wording; Save reports the **delta** ("Saved 36
+row(s). 2 dropped") rather than the end state, which is the sentence that contradicts them;
+`theme.action(danger=True)` kept it red until Save became the Next button; and the worst case is
+undone by uploading the list again, which the screen requires in any case.
+
+`pagination=0` on the table is **mandatory, not cosmetic**. With pagination on, Quasar's header
+checkbox selects *this page*, and a save would quietly drop every row the operator never scrolled
+to. Selection is independent of the filter in Quasar 2.18 — verified in a browser: deselect two,
+type in the box, clear it, and the count holds — but the header checkbox's tri-state describes the
+rows the *filter* is showing, not the file. That is what the count label beside the table is for,
+and why it names the file's numbers first and the filtered view second.
+
+Saving keeps the previous version, freezes and filters the header row so the file is still workable
+in Excel, and refuses to write a list with no GTINs at all, because that would produce an empty
+plan and a run that reports success having published nothing.
+
+Two staleness facts the screen was not stating. The product count comes from `products.json` and
+the "export modified" date from the workbook: **two files, two mtimes, shown as one fact**. Upload
+without pressing Parse and last quarter's count sits under today's date, so the screen compares
+them and warns. The data-quality report is dated for the same reason — a rebuild that wrote nothing
+new leaves last week's worklist on screen looking exactly like this week's.
+
+Every in-scope SKU held for want of a confirmed video carries a per-row mark, from
+`lib.preflight.held_for_video`. Data is the only per-SKU grid in the shell, so it is the only place
+that fact can live per row; on the pilot, 19 of the 37 are held and the screen used to show none of
+it.
+
+**That mark replaced the whole *Video mapping* section**, which was two figures and a link. The
+Video mapping screen already shows those figures, and a per-row mark says the same thing against
+the product it is about. What a mark cannot carry is the *consequence* — "no video yet" does not
+tell you the run will skip the product and report success — so one line under the table says that,
+and links onward.
 
 ### Content
 
@@ -147,7 +298,7 @@ machine is dropped from the plan (E21). The screen lists those units by GTIN and
 doctor's `scope` check and splits: this run's entries, then the in-scope GTINs with **no** copy (the
 work still to do), then anything outside this run's scope. That last group used to be ordinary —
 the cache accumulated every unit ever generated on this machine — and it is not any more. A per-run
-file holding GTINs this run will not touch means it was written against a *different process list*,
+file holding GTINs this run will not touch means it was written against a *different scope list*,
 so the screen says so as a warning and keeps the list behind a fold rather than presenting it as
 background.
 
@@ -191,7 +342,7 @@ the loop until it had already finished, so "running…" never reached the browse
 looked identical from click to result. Each result carries the time it finished, because on a
 healthy machine an identical list is exactly what a working re-run produces.
 
-The first line to read is **"What a run would touch"** — how many products survive the process list
+The first line to read is **"What a run would touch"** — how many products survive the scope list
 and the video allowlist. Every check below it reports on that scope rather than the whole
 catalogue.
 
@@ -261,7 +412,7 @@ compressed, or skipped.
   their picture of what they are about to do. It now shows the doctor's `scope` check — *15 in
   scope*, *127 in the catalogue* one size down, and the doctor's own sentence naming what removed
   the rest. The shell does **not** compute scope itself: `lib.preflight.in_scope` already composes
-  the process list and the video allowlist, and a second implementation of "what will this run
+  the scope list and the video allowlist, and a second implementation of "what will this run
   touch" is the same class of mistake as a second implementation of the gates.
 
   Neither figure is the row count. Scope deliberately cannot subtract the units already published
@@ -337,6 +488,29 @@ whole fails on a check the button did not ask about, it says so instead of showi
 Reads `output/{client}/runs/*.jsonl`, newest first, and distinguishes a **partial** log — a run
 that stopped mid-way — from a finished one. That is the case that matters most: live pages and
 permanent GS1 records may already exist for the rows that landed.
+
+**Build the result sheet** sits on each run's card, not on Data. The artefact is per-run and
+lands beside `{ts}.jsonl` as `{ts}-scope.xlsx`; a screen showing no run would have to guess which
+run it was about, and `--run` is passed explicitly for the same reason — two runs a second apart
+are `{ts}.jsonl` and `{ts}-1.jsonl`, and the wrong one of the pair is indistinguishable from the
+right one until somebody opens a page URL that was never visited.
+
+The sheet is the operator's own scope list handed back with what the run did appended: one row per
+SKU, their columns verbatim, then `in_scope`, `result`, and status/page/detail per language. A
+`units` tab carries one row per `(gtin, language)` uninterpreted, which is where "nl published, fr
+failed" survives the worst-of reduction; a `legend` tab gives every value a sentence so the file
+can be forwarded without a covering email.
+
+**It is a report, written after — nothing reads it back.** That is the whole difference from the
+design where the scope list grows a run-status column and a later run filters on it. `lib/
+process_list.py` records what that cost the last time: a status column silently meant its opposite
+for a client whose file said `no`, in both directions, and neither direction raised anything. Two
+status columns rather than one, for the same reason: `in_scope` is the decision and `status_{lang}`
+is what happened, and one cell answering both has a meaning that depends on when you read it.
+
+`plan.json` is overwritten by every `run_plan`, so for anything but the newest run it is somebody
+else's document. A plan generated *after* the run is refused with a line on stderr rather than
+quietly contributing its holds to a run that never saw them.
 
 Above the logs, **"Does the site match the ledger?"** asks the site instead. Everything else on
 this screen is what *this machine* recorded, which cannot show a page created by anything else —
@@ -418,7 +592,12 @@ The recipe, all of it outside the repository:
    reads zero. Leave `input_fingerprint` **null** on each result item — it is optional, and any
    other value fails the doctor's staleness check.
 3. Give it `input/{client}/process-list.xlsx` (a `Barcode` column), a stand-in `products.xlsx`,
-   and `videos/mapping.yml` in `{language: [{file, gtin}]}` shape with matching files on disk.
+   and `videos/mapping.yml` in `{language: [{file, gtin}]}` shape with matching files on disk. For
+   the Data screen specifically: put **one barcode on the scope list that is not in the export**,
+   or the table that exists to show them is not in the picture; leave some GTINs unmapped so the
+   per-row "no video yet" mark appears; and **backdate `products.xlsx` behind `products.json`**, or
+   the staleness band fires on files written seconds apart and the screenshot tells the operator to
+   re-parse for no reason.
 4. Run `python -m scripts.run_plan {client}` there so the plan and the rail facts agree, then
    serve it with `ui.run(..., native=False, show=False)` on a spare port and drive Playwright
    at 1280x860.

@@ -57,7 +57,7 @@ shell dead, the last three fail in three different and much quieter ways.
 |---|---|---|---|
 | `clients.yml` | top level, beside `install.command` | the site settings | Setup says the config did not load; nothing runs |
 | `.env` | top level, `chmod 600` | the credentials | every live check fails; nothing runs |
-| `input/{client}/process-list.xlsx` | the path in `process_list.path` | the GTINs this run may touch | Data shows a red band, and **there is no upload for it** — see below |
+| `input/{client}/process-list.xlsx` | the path in `process_list.path` | the barcodes this run may touch | Data shows a red band. It has an upload — see below |
 | `output/{client}/state.json` | exactly there — the path is not configurable | **the ledger of what is already published** | **see the warning below. This is the expensive one.** |
 | `input/{client}/videos/mapping.yml` | the path in `media.video_map_path` | which video belongs to which product | the preflight **fails** (`cannot read …`); the machine cannot reach a runnable state |
 
@@ -77,16 +77,24 @@ and the run reports success having skipped it.
 
 ### What arrives through the app, and what does not
 
-Three files change hands every batch — the export, the process list, and the generated copy. Two of
-them have an upload control. The third does not, and looking for one is time wasted:
+Three files change hands every batch — the export, the scope list, and the generated copy. **All
+three have an upload control**, so nothing needs copying into a folder by hand:
 
-- **The product export** — uploaded on **Data**. It replaces the configured `export.path` in place,
-  keeping the previous file as `.bak.xlsx`.
+- **The GS1 Data Source export** — uploaded on **Data**. It replaces the configured `export.path`
+  in place, keeping the previous file as `.bak.xlsx`.
+- **The product scope list (`process-list.xlsx`)** — uploaded on **Data**, in its own section
+  below the export. It is read before it is installed, so a file that will not open is refused
+  while the list you were using is still there. Your upload is kept beside it as
+  `process-list.source.xlsx`, which the per-run result sheet reads to name the rows you dropped.
+  Getting the ticks wrong is undone by uploading the list again.
 - **`generation_results.json`** — uploaded on **Content**. Written fresh for each batch, not
   accumulated: a newer one replaces the run's copy rather than adding to it.
-- **`process-list.xlsx` — copied by hand.** There is no upload control for it anywhere in the app.
-  The Data screen only *edits* a list that is already on disk (deleting rows), and renders a red
-  band when the file is absent. Put it at the path `process_list.path` names before starting.
+
+The state file below is the one that still travels by hand, and it is the one to be careful with.
+
+> Until recently the scope list had no upload and the docs said so. If you learned this tool from
+> an older copy of this page, that is the sentence to unlearn — along with the button that used to
+> say *Remove selected rows*. **A tick now means keep.**
 
 ### Returning the ledger
 

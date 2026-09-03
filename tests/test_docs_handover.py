@@ -87,14 +87,30 @@ def test_the_install_doc_says_the_ledger_has_to_come_back() -> None:
     )
 
 
-def test_the_install_doc_does_not_claim_the_process_list_is_uploaded() -> None:
-    """There is no upload control for it — the Data screen only edits a list already on disk."""
+def test_the_install_doc_says_the_scope_list_is_uploaded_like_the_other_two() -> None:
+    """It has an upload now, and this test used to assert the opposite.
+
+    It was right when it was written: the Data screen only *edited* a list already on disk, and
+    the doc had once claimed otherwise, which sent an operator looking for a button that did not
+    exist. The button exists now, and the same failure runs the other way — an operator told to
+    copy the file into a folder by hand will do exactly that, on a machine where the app would
+    have validated it first and kept their original. So the assertion is inverted rather than
+    deleted: this page is the one an operator learns the file handover from, and it must not be
+    a release behind the screen.
+
+    The filename stays in the doc either way — the sibling test below needs to find it there.
+    """
     doc = _doc()
     process_list = _configured_basename("process_list", "path")
-    assert "no upload control for it" in doc, (
-        f"docs/operator-install.md must say plainly that {process_list} is copied by hand; it "
-        "once claimed the Data screen accepts it, which sends an operator looking for a button "
-        "that does not exist"
+    assert "no upload control for it" not in doc, (
+        f"docs/operator-install.md still says {process_list} has no upload. It has one, on Data, "
+        "beneath the export."
+    )
+    assert (
+        "All\n**three have an upload control**" in doc or "three have an upload control" in doc
+    ), (
+        "docs/operator-install.md must say that all three files that change hands are uploaded, "
+        "so nobody goes looking for a folder to copy one into"
     )
 
 

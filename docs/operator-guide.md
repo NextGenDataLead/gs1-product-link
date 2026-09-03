@@ -64,30 +64,67 @@ and whoever helps you knows exactly what happened.
 
 ## Step 1 — Data
 
-<img src="images/data.png" alt="The Data screen, showing the product export with a count and a modified date, an upload area, and the process list as an editable table." width="900">
+<img src="images/data.png" alt="The Data screen as it opens: two numbered upload steps side by side, a line saying to upload both files before choosing products, a folded Data quality section, and a greyed-out Next button." width="900">
 
-**What this screen is for:** loading the spreadsheet, and cutting it down to the products this
-batch should touch.
+*This is the screen as it opens.* The product table and the quality report appear once **both**
+files are uploaded — see below.
 
-**What you do, in order:**
+**What this screen is for:** the two spreadsheets a batch is made of, and choosing what goes in it.
 
-1. **Product export.** If the maintainer sent you a new spreadsheet, drop it on the upload area.
-   It replaces the one already there and keeps the old one beside it. Then press **Parse and save
-   products.json** — that is the tool reading the spreadsheet.
-   - *Check the parse (writes nothing)* does the same read without saving, if you just want to see
-     whether the file is readable.
-2. **Process list.** This table is the list of products this batch may touch. **Every row in it
-   will be processed.** There is no status column, nothing to tick — being on the list is the whole
-   meaning. To leave a product out, select its row, press **Remove selected rows**, then **Save the
-   list**.
-3. **Data quality** at the bottom builds a report of what is missing or wrong in the spreadsheet
-   itself. Blank values get fixed in MyGS1, not here.
+Every heading has a small **ⓘ** beside it. Hover it to read what that file is and where it goes;
+press it to keep the text on screen. Nothing you need to act on is hidden behind one — a warning
+always sits on the page in a coloured band.
 
-**Done looks like:** a product count and a recent date under *Product export*, and a process list
-containing exactly the products you mean.
+> **Every batch starts with both files.** Until you have uploaded a GS1 export *and* a product
+> list in this visit, there is no table to choose from, no quality report, and the Next button is
+> greyed out. That is deliberate: a screen that offered you a batch built from whatever was left
+> on the machine would let a run inherit the previous batch's scope without anyone deciding to.
 
-**Stop if:** the process list shows a red band saying the file is absent. That file does not have
-an upload — it is copied into place by hand. Ask the maintainer for it.
+**What you do:**
+
+1. **Upload the GS1 export** — the product *data*. Press the picker and choose the spreadsheet.
+   It is read as soon as it arrives: a spinner runs while that happens, then a line says how many
+   products it found. **If it is not a GS1 export, or something the tool needs is missing, it is
+   put back and nothing changes** — the file you had is still there, and the reason appears on
+   screen. There is no separate "check" or "read" button; uploading is both.
+2. **Upload the product list** — which barcodes this batch may touch. Same again: it is read
+   before it replaces anything, so a file that will not open is refused and the list you were
+   using stays put.
+
+   Steps 1 and 2 sit side by side because they are one act: bring both files. Do them in either
+   order.
+3. **Choose the products and save.** Two tables. The top one, *Not in the GS1 export*, lists
+   barcodes you asked for that the export has no row for — nothing else in the tool will mention
+   them again. It has no tick boxes on purpose: there is nothing to choose, because nothing can
+   process them. They stay in your list; to drop one, remove it in the spreadsheet and upload
+   again.
+
+   The bottom table is the batch. Every row arrives ticked.
+
+   > ⚠️ **A tick means keep.** Untick a product to leave it out. If you used an earlier version of
+   > this app, the button under the table said *Remove selected rows* and meant the opposite — it
+   > is gone.
+
+   Use the filter box to find a product; filtering changes only what you can see, never what is
+   ticked. The table's own footer says how many are selected.
+
+   Got the ticks wrong? Upload the list again in step 2 — that resets every tick. There is no
+   undo button, because every batch starts with both uploads anyway.
+
+**Data quality** at the bottom is folded away. It rebuilds every time you open this screen, so
+opening the fold always shows a current report — what is missing or wrong in the spreadsheet
+itself. Those values get fixed in MyGS1, not here.
+
+When you are done, **Save and write the product copy** at the foot of the screen does both: it
+saves your choice and takes you on to step 2. It tells you what it wrote first — *"Saved 36 row(s).
+2 dropped"* — so read that line before the screen changes.
+
+**Done looks like:** both files uploaded without a refusal, nothing unexpected in the *Not in the
+GS1 export* table, and the table footer showing exactly the number of products you mean selected.
+
+**Stop if:** either upload is refused, or a red band says a file cannot be read. Upload it again,
+or ask the maintainer for a fresh copy — do not go looking for the file in a folder to replace by
+hand.
 
 ---
 
@@ -214,6 +251,17 @@ some pages may be live and some records may already exist for the rows that land
 it against this machine's record, in both directions. It only reads; nothing is written. Use it if
 you are ever unsure whether a page exists.
 
+**To send the result back to whoever asked for the batch:** press **Build the result sheet** on
+the run's card. It writes your scope list again, beside the run log, with what happened to each
+row added on the right — one line per product, the page address where there is one, and a plain
+reason where there is not. A third tab explains every word in it, so the file can be forwarded on
+its own.
+
+Two things it will say that are not failures. **`held`** means the run deliberately left a product
+alone — usually no confirmed video, or a mandatory field left blank in MyGS1 — and the reason is in
+the row. **`not in export`** means the barcode is on your list and the export has no product for
+it. Both are work; neither is something that went wrong during the run.
+
 **One housekeeping job after every batch:** send `output/{client}/state.json` back to the
 maintainer. It is the record of everything published, it only exists on the machine that did the
 publishing, and two out-of-step copies is how a product gets published twice.
@@ -263,7 +311,7 @@ important one is `state.json`, the ledger — without it the tool believes nothi
 published.
 
 **The plan has fewer rows than you expected.**
-Normal, and usually right. Products are dropped when they are not on the process list, when they
+Normal, and usually right. Products are dropped when they are not on the scope list, when they
 are already published and unchanged, when they have no confirmed video in every language, or when
 mandatory data is missing. The plan gate tells you how many were dropped and why.
 
@@ -295,9 +343,10 @@ Words this tool uses that mean something specific.
 | **GS1 Digital Link** | The standard that makes a barcode lead somewhere. A record at GS1 says "this GTIN → this page". |
 | **Resolver** | GS1's service that does the leading. Writing to it is what "permanent" refers to. |
 | **Batch** (or *wave*) | One pass through Data → Content → Preflight → Publish. |
-| **Scope** | Which products a run may touch — after the process list and the video rule have cut the spreadsheet down. |
-| **Export** | The product spreadsheet from GS1. Data, not scope. |
-| **Process list** | The separate spreadsheet listing which GTINs this batch covers. Scope, not data. |
+| **Scope** | Which products a run may touch — after the scope list and the video rule have cut the spreadsheet down. |
+| **GS1 Data Source export** | The product spreadsheet from GS1. Data, not scope. Uploaded on Data. |
+| **Product scope list** | The separate spreadsheet listing which barcodes this batch covers. Scope, not data. Uploaded on Data, above the tables. Called `process-list.xlsx` on disk and `process_list` in the settings file — same thing. |
+| **Result sheet** | Your scope list handed back after a run, with what happened to each row. Built on **Runs**, beside the run it describes. |
 | **Plan** | What the run worked out it would do, row by row, before doing any of it. One row per product per language. |
 | **Row** | One product in one language. Two languages means two rows for the same product. |
 | **New / Changed / Unchanged** | How the plan classifies a row against what is already published. Unchanged rows are not touched. |
