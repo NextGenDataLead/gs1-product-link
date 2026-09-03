@@ -14,10 +14,11 @@ So this module keeps four properties:
   a web form, and losing a pruned list means redoing the pruning.
 * **The upload is kept too, separately.** ``{name}.source.xlsx`` holds the file the operator sent,
   byte for byte, from the moment it arrives. ``.bak`` only ever holds *the previous save*, so
-  after two saves the original is gone; the archive is what makes :func:`restore` mean "the list I
-  uploaded" rather than "whatever it looked like last time". It is read for Restore and for
-  display. **It never decides what gets written** — a design that derived the control file from it
-  would put a wrong join between the operator and their own list, silently.
+  after two saves the original is gone. It is what ``scripts/report_scope_result.py`` reads to
+  name the rows the operator deselected, which is a fact no other file records. **It never decides
+  what gets written** — a design that derived the control file from it would put a wrong join
+  between the operator and their own list, silently. It is not an undo: the way back from a bad
+  selection is to upload the list again, which every batch requires in any case.
 * **An empty result is refused.** ``load_process_list`` already treats zero GTINs as an error
   rather than an empty run, for the reason this project keeps designing against: an empty plan
   and a successful-looking no-op are indistinguishable. Saving an empty file here would just move
@@ -43,7 +44,6 @@ __all__ = [
     "archive",
     "archive_path",
     "read_sheet",
-    "restore",
     "save_sheet",
 ]
 
@@ -67,8 +67,8 @@ def archive_path(control: Path) -> Path:
     """Where the uploaded list is kept, beside the control file it was installed as.
 
     Deliberately **not** ``{name}.bak.xlsx``. The backup holds the state before the most recent
-    save; if the two collided, Restore would hand back the last pruned version rather than the
-    list the operator uploaded — which is the one thing Restore exists to do.
+    save, so if the two collided the archive would hold the last pruned version rather than the
+    list the operator uploaded — and the result sheet would name the wrong rows as dropped.
     """
     return control.with_suffix(f".source{control.suffix}")
 
@@ -114,32 +114,6 @@ def archive(config: ProcessListConfig, data: bytes) -> Path:
     kept.write_bytes(data)
     control.write_bytes(data)
     return kept
-
-
-def restore(config: ProcessListConfig) -> Path:
-    """Put the uploaded list back, keeping the current control file beside it. Returns the backup.
-
-    What makes deselection reversible. Without it a row removed on screen survives only in
-    ``.bak``, which the next save overwrites.
-
-    Raises:
-        ProcessListError: If no upload has been archived — there is nothing to restore, and
-            silently doing nothing under a success message is the failure mode this project
-            keeps designing against.
-    """
-    control = Path(config.path)
-    kept = archive_path(control)
-    if not kept.exists():
-        raise ProcessListError(
-            f"there is no uploaded scope list to restore: {kept} does not exist. It is written "
-            f"when a list is uploaded, so a list that arrived any other way has no original here."
-        )
-
-    backup = control.with_suffix(f".bak{control.suffix}")
-    if control.exists():
-        backup.write_bytes(control.read_bytes())
-    control.write_bytes(kept.read_bytes())
-    return backup
 
 
 def save_sheet(sheet: ProcessListSheet) -> Path:

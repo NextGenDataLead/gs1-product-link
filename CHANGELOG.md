@@ -48,8 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are one intention, and two buttons is how the second gets missed. It navigates on a 1.6 s beat,
   because the save reports the delta — "2 dropped" — and that is the only sentence left that
   contradicts an operator who still thinks a tick means *remove*; notifications do not survive a
-  page change. The count line, the held-video line and the after-a-run line are gone; Restore moved
-  beside the upload it restores.
+  page change. The count line, the held-video line, the after-a-run line and the Save and Restore
+  buttons are all gone: a batch already requires both uploads, so uploading the list again *is* the
+  undo, and a button that avoids a step the screen insists on anyway is a second way to do one
+  thing. It leaves the inverted tick box with two of its four mitigations.
 
   **The data-quality report builds itself, folded away.** It was a button, which made a fresh
   worklist something the operator had to think of asking for — and so the thing most likely to be

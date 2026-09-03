@@ -108,8 +108,8 @@ always sits on the page in a coloured band.
    Use the filter box to find a product; filtering changes only what you can see, never what is
    ticked. The table's own footer says how many are selected.
 
-   Got it wrong? **Restore the uploaded list**, beside the upload in step 2, puts back the file you
-   uploaded in one click.
+   Got the ticks wrong? Upload the list again in step 2 — that resets every tick. There is no
+   undo button, because every batch starts with both uploads anyway.
 
 **Data quality** at the bottom is folded away. It rebuilds every time you open this screen, so
 opening the fold always shows a current report — what is missing or wrong in the spreadsheet

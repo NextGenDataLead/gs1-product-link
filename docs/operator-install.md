@@ -85,8 +85,8 @@ three have an upload control**, so nothing needs copying into a folder by hand:
 - **The product scope list (`process-list.xlsx`)** — uploaded on **Data**, in its own section
   below the export. It is read before it is installed, so a file that will not open is refused
   while the list you were using is still there. Your upload is kept beside it as
-  `process-list.source.xlsx`, and **Restore the uploaded list** puts it back — which is what makes
-  unticking rows safe to get wrong.
+  `process-list.source.xlsx`, which the per-run result sheet reads to name the rows you dropped.
+  Getting the ticks wrong is undone by uploading the list again.
 - **`generation_results.json`** — uploaded on **Content**. Written fresh for each batch, not
   accumulated: a newer one replaces the run's copy rather than adding to it.
 

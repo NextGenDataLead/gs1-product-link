@@ -24,7 +24,7 @@ table, above the rest, with its own count.
 
 **A row is selected to keep it.** The previous version of this screen had the opposite verb — a
 tick meant *remove this* — so no control here may carry the old wording, the save reports the
-delta rather than the end state, and Restore puts the uploaded list back in one click.
+delta rather than the end state, and a mis-tick is undone by uploading the list again.
 """
 
 from __future__ import annotations
@@ -225,7 +225,8 @@ def _scope_list(cfg: Any, arrived: Callable[[str], None]) -> None:
             "meaning — the tool reads no other column and interprets no cell value — so you "
             "prepare a batch by ticking rows below, and your own columns are kept exactly as they "
             f"are. It is saved as {cfg.process_list.path}, and your upload is kept beside it as "
-            f"{process_list_edit.archive_path(control).name}, which is what Restore puts back. "
+            f"{process_list_edit.archive_path(control).name}, which is what the per-run result "
+            "sheet reads to name the rows you dropped. "
             "That path is fixed in clients.yml and has no command-line override, so a list saved "
             "anywhere else is invisible to the tool."
         ),
@@ -245,21 +246,6 @@ def _scope_list(cfg: Any, arrived: Callable[[str], None]) -> None:
             return f"Installed. Your upload is kept as {kept.name}."
 
         theme.upload("Product list (.xlsx)", receive, busy="Checking the list…")
-
-        def restore() -> None:
-            try:
-                backup = process_list_edit.restore(cfg.process_list)
-            except (OSError, ProcessListError) as exc:
-                theme.notify_problem(str(exc))
-                return
-            arrived("list")
-            theme.notify_ok(f"The uploaded list is back. The list you had is at {backup.name}")
-
-        # Beside the upload rather than under the table, which is where it used to be: it restores
-        # *the uploaded file*, so this is where an operator looks for it — and it is the undo for a
-        # save, which now happens on the way out of the screen. Without it the inverted tick box
-        # has no one-click way back.
-        theme.quiet_action("Restore the uploaded list", restore)
 
 
 def _scope_grid(cfg: Any, cid: str, commit: dict[str, Callable[[], bool]]) -> None:
@@ -312,9 +298,10 @@ def _scope_grid(cfg: Any, cid: str, commit: dict[str, Callable[[], bool]]) -> No
             "Every row arrives ticked, and a run processes the ticked ones. Untick a product to "
             "leave it out of this batch, then save. The filter changes only what you can see, "
             "never what is ticked, so you can search, untick, clear the filter, and nothing you "
-            "did is lost. Saving keeps the previous version beside the file, and Restore puts back "
-            "the list you uploaded — the button for that is beside the upload in step 2, which is "
-            "what makes unticking safe to get wrong. Nothing is "
+            "did is lost. Saving keeps the previous version of the file beside it, and if the "
+            "ticks come out wrong the way back is to upload the list again — every batch starts "
+            "with both "
+            "files anyway. Nothing is "
             "published here; this only settles which products are in the batch. A product with no "
             "client-confirmed video in every language is marked in the Video column and a run "
             "skips it, reporting success (media.restrict_to_mapped_gtins)."

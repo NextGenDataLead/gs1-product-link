@@ -2,8 +2,8 @@
 
 The operator's recurring job, and the one step where the shell writes to a file they authored.
 The properties worth asserting are the ones that make that safe: other columns survive, the
-previous version survives, the file they *uploaded* survives every save after it, and an empty
-result is refused.
+previous version survives, the file they *uploaded* survives every save after it — the per-run
+result sheet reads it to name the rows they dropped — and an empty result is refused.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pytest
 from lib.config import ProcessListConfig
 from lib.errors import ProcessListError
 from lib.process_list import load_process_list
-from ui.process_list_edit import archive, archive_path, read_sheet, restore, save_sheet
+from ui.process_list_edit import archive, archive_path, read_sheet, save_sheet
 
 GTIN_A = "8713195007359"
 GTIN_B = "8713195007360"
@@ -193,7 +193,11 @@ def test_a_header_below_row_one_reads_on_screen_too(tmp_path: Path) -> None:
 
 
 def test_the_archive_sits_beside_the_control_file_and_is_not_the_backup(tmp_path: Path) -> None:
-    """A collision would make Restore hand back the last pruned save, not the uploaded list."""
+    """A collision would leave the archive holding the last pruned save, not the uploaded list.
+
+    The result sheet reads the archive to name the rows the operator dropped, so a collision would
+    have it name the wrong ones — silently, and in a file that goes to the client.
+    """
     # Arrange
     control = tmp_path / "process-list.xlsx"
 
@@ -247,25 +251,6 @@ def test_an_upload_with_no_gtins_is_refused(tmp_path: Path) -> None:
     assert not control.exists()
 
 
-def test_restore_undoes_a_deselection(tmp_path: Path) -> None:
-    """The whole reason deselection is safe: the worst case is one click."""
-    # Arrange
-    source = _write(tmp_path / "upload", [["1079", GTIN_A, "keep"], ["1080", GTIN_B, "drop"]])
-    control = tmp_path / "input" / "process-list.xlsx"
-    archive(_config(control), source.read_bytes())
-    save_sheet(read_sheet(_config(control)).keeping({0}))
-    assert load_process_list(_config(control)) == frozenset({f"0{GTIN_A}"})
-
-    # Act
-    backup = restore(_config(control))
-
-    # Assert
-    assert load_process_list(_config(control)) == frozenset({f"0{GTIN_A}", f"0{GTIN_B}"})
-    assert read_sheet(_config(backup)).rows == [["1079", GTIN_A, "keep"]], (
-        "the prune is recoverable"
-    )
-
-
 def test_the_archive_survives_saves_that_overwrite_the_backup(tmp_path: Path) -> None:
     """``.bak`` holds the previous save, so after two saves the uploaded list is only here."""
     # Arrange
@@ -285,18 +270,9 @@ def test_the_archive_survives_saves_that_overwrite_the_backup(tmp_path: Path) ->
         ["1", GTIN_A, "a"],
         ["2", GTIN_B, "b"],
     ], "the backup is one save old"
-    restore(_config(control))
-    assert len(read_sheet(_config(control)).rows) == 3, "the upload is still all three"
-
-
-def test_restore_with_no_archive_raises(tmp_path: Path) -> None:
-    """Doing nothing under a success message is the failure mode this project designs against."""
-    # Arrange
-    control = _write(tmp_path, [["1079", GTIN_A, "Drain saver"]])
-
-    # Act / Assert
-    with pytest.raises(ProcessListError, match="no uploaded scope list to restore"):
-        restore(_config(control))
+    assert len(read_sheet(_config(archive_path(control))).rows) == 3, (
+        "the upload is still all three"
+    )
 
 
 # --- What the saved file is like to open --------------------------------------

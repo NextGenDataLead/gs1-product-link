@@ -160,9 +160,15 @@ than the same frame: the save reports the *delta* — "2 dropped" — and that s
 thing left on this screen that contradicts an operator who still thinks a tick means *remove*.
 Notifications do not survive a page change, so navigating immediately would make the write silent.
 
-The count line, the held-video line and the Restore button that used to sit between the table and
-the report are gone. Restore moved **beside the upload in step 2** — it restores the uploaded file,
-so that is where it belongs, and without it the inverted tick box has no one-click way back. The
+The count line, the held-video line and the Save and Restore buttons that used to sit between the
+table and the report are all gone. **Restore is gone entirely**, and that is a deliberate trade: a
+batch already requires both uploads, so uploading the list again *is* the undo, and a button whose
+job is to avoid a step the screen insists on anyway is a second way to do one thing.
+
+It leaves the inverted tick box with two of its four mitigations rather than four — the old
+wording is deleted and the save still reports the delta; the red Save button and the one-click way
+back both went with the restructure. The remaining protection is that the file the operator
+uploaded is still on their machine, minutes old. The
 video consequence moved into step 3's ⓘ; the per-row mark still carries the fact. `theme.section(step=…, explain=…)` and `theme.subhead` own that shape, so a screen
 cannot invent a second one.
 
@@ -211,8 +217,8 @@ thing twice.
 
 **`process-list.source.xlsx` is the upload, kept byte for byte.** `.bak.xlsx` holds only *the
 previous save*, so after two saves the operator's original is gone; the archive is what lets
-**Restore the uploaded list** mean "the list I sent" rather than "whatever it looked like last
-time". It is read for Restore and for display. **It never decides what gets written** — a design
+`process-list.source.xlsx` hold "the list I sent" rather than "whatever it looked like last
+time". It is read by the per-run result sheet, to name the rows the operator dropped. **It never decides what gets written** — a design
 that derived the control file from it would put a wrong join between the operator and their own
 list, silently.
 
@@ -246,7 +252,8 @@ it means *keep this row*. An operator with the old habit ticks what they want go
 exactly those. Four mitigations, all cheap and all required: the *Remove selected rows* button is
 deleted outright so no control carries the old wording; Save reports the **delta** ("Saved 36
 row(s). 2 dropped") rather than the end state, which is the sentence that contradicts them;
-`theme.action(danger=True)` keeps it red; and Restore makes the worst case one click.
+`theme.action(danger=True)` kept it red until Save became the Next button; and the worst case is
+undone by uploading the list again, which the screen requires in any case.
 
 `pagination=0` on the table is **mandatory, not cosmetic**. With pagination on, Quasar's header
 checkbox selects *this page*, and a save would quietly drop every row the operator never scrolled

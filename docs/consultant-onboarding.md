@@ -367,8 +367,7 @@ For your *first* batch, do it in this order regardless of what the guide says is
 
 1. **Cut the scope list down to two or three products.** Not the whole batch. Data → untick the
    rows you do not want → **Save the list**. **A tick means keep**, and every row arrives ticked.
-   You do not need to keep a copy first: **Restore the uploaded list** puts back what you
-   uploaded, which is how you undo this at step 6.
+   Keep the full list to hand — uploading it again is how you undo this at step 6.
 2. **Run in `pages` mode.** Pages are reversible; GS1 records are not. Take the dry run seriously —
    read the output before pressing Proceed.
 3. **Look at the actual pages on the live site.** Not the run log: the pages. Open each one in a
@@ -377,7 +376,7 @@ For your *first* batch, do it in this order regardless of what the guide says is
 4. **Only then run `links`** for the same products, which registers the barcodes permanently.
 5. **Check a barcode resolves**: open `https://id.gs1.org/01/{the 14-digit barcode}` in a browser
    and confirm it lands on the right page.
-6. **Restore the uploaded list** on Data, and repeat at full size.
+6. **Upload the full list again** on Data, and repeat at full size.
 
 > **If you publish pages now and register the links later, do them close together.** A `pages`-only
 > run updates the website but leaves the GS1 record holding whatever title it had before, and
