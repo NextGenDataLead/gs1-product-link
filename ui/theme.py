@@ -745,10 +745,15 @@ def command(argv: list[str]) -> None:
 def action(label: str, on_click: Callable[[], object], *, danger: bool = False) -> ui.button:
     """A button, which shows for as long as its work lasts that the work is happening.
 
-    ``danger`` — filled red — is reserved for the actions that actually **write**: the real run,
-    the production confirmation, saving the pruned process list. Nothing else, ever. Red on a
-    merely-negative choice like *Cancel* would put four red buttons on this screen and the one
-    that matters would stop standing out, which is the only job red has here.
+    ``danger`` — filled red — is reserved for the writes that are **hard or impossible to undo**:
+    the real run and the production confirmation. Nothing else, ever. Red on a merely-negative
+    choice like *Cancel* would put four red buttons on this screen and the one that matters would
+    stop standing out, which is the only job red has here.
+
+    It used to cover "saving the pruned process list" too, and no longer does — that save is now
+    the Data screen's :func:`onward` button, deliberately left blue. Red on a local spreadsheet
+    with a ``.bak`` beside it, on the same rail as a screen that writes permanent GS1 records,
+    says the two are the same kind of act. The narrower rule is the point of the colour.
     """
     button = ui.button(label).props("no-caps unelevated")
     button.props("color=negative" if danger else "color=primary")

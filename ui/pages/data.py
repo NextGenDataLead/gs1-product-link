@@ -118,7 +118,7 @@ def render() -> None:
             # it used to. Notifications do not survive a page change, so the beat is the fix.
             ui.timer(_TOAST_BEAT, lambda: ui.navigate.to("/content"), once=True)
 
-        onward = theme.onward("Save and write the product copy", save_and_go)
+        onward = theme.onward("Next", save_and_go)
         refresh("")
 
 
@@ -296,7 +296,8 @@ def _scope_grid(cfg: Any, cid: str, commit: dict[str, Callable[[], bool]]) -> No
         step=3,
         explain=(
             "Every row arrives ticked, and a run processes the ticked ones. Untick a product to "
-            "leave it out of this batch, then save. The filter changes only what you can see, "
+            "leave it out of this batch. Next saves your choice and moves on — there is no "
+            "separate save button. The filter changes only what you can see, "
             "never what is ticked, so you can search, untick, clear the filter, and nothing you "
             "did is lost. Saving keeps the previous version of the file beside it, and if the "
             "ticks come out wrong the way back is to upload the list again — every batch starts "

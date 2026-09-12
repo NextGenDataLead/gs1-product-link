@@ -115,9 +115,12 @@ always sits on the page in a coloured band.
 opening the fold always shows a current report — what is missing or wrong in the spreadsheet
 itself. Those values get fixed in MyGS1, not here.
 
-When you are done, **Save and write the product copy** at the foot of the screen does both: it
-saves your choice and takes you on to step 2. It tells you what it wrote first — *"Saved 36 row(s).
-2 dropped"* — so read that line before the screen changes.
+When you are done, press **Next** at the foot of the screen. It does two things: it saves your
+choice of products, and it takes you on to step 2. There is no separate save button.
+
+It tells you what it saved before it moves — *"Saved 36 row(s). 2 dropped"*. **Read that line.** It
+is the one thing that will tell you if you ticked the wrong way round, and it is gone once the
+screen changes.
 
 **Done looks like:** both files uploaded without a refusal, nothing unexpected in the *Not in the
 GS1 export* table, and the table footer showing exactly the number of products you mean selected.
