@@ -87,7 +87,7 @@ def render() -> None:
             commit.clear()
             with selection:
                 if ready:
-                    _scope_grid(cfg, cid, commit)
+                    _scope_grid(cfg, cid, commit, caption)
                 else:
                     theme.band(
                         "Upload both files above to choose the products for this run.", "quiet"
@@ -95,6 +95,8 @@ def render() -> None:
             if ready:
                 with quality:
                     _quality(cid)
+            else:
+                caption.text = ""
             onward.set_enabled(ready)
 
         with ui.element("div").classes("steps-2up"):
@@ -116,9 +118,12 @@ def render() -> None:
             # thinks a tick means *remove*. Navigating on the same frame clips the toast, which
             # would leave the write silent on a screen whose tick box means the opposite of what
             # it used to. Notifications do not survive a page change, so the beat is the fix.
+            # Disabled for the wait: four seconds of an enabled button that does nothing visible
+            # is four seconds in which it gets pressed again.
+            onward.disable()
             ui.timer(_TOAST_BEAT, lambda: ui.navigate.to("/content"), once=True)
 
-        onward = theme.onward("Next", save_and_go)
+        onward, caption = theme.onward("Next", save_and_go)
         refresh("")
 
 
@@ -200,8 +205,12 @@ _ROW = "_row"
 #: the namespace the operator's own headers live in.
 _HELD = "_held"
 
-#: Long enough to read "Saved 36 row(s). 2 dropped" before the screen changes under it.
-_TOAST_BEAT = 1.6
+#: How long the success message stands before the screen changes under it. A notification does not
+#: survive a page change, so this — not ``theme.notify_ok``'s own timeout — is how long it is
+#: actually on screen. It was 1.6s, chosen to make the toast *appear*; nobody checked it was long
+#: enough to *read*, and it was not. The message is one word now and the wait is four seconds, so
+#: the two agree. What the save will do is said before the click, in the button's caption.
+_TOAST_BEAT = 4.0
 
 #: Height of the matched table. Long enough to work in, short enough that Save stays on screen.
 _TABLE_HEIGHT = "55vh"
@@ -248,7 +257,9 @@ def _scope_list(cfg: Any, arrived: Callable[[str], None]) -> None:
         theme.upload("Product list (.xlsx)", receive, busy="Checking the list…")
 
 
-def _scope_grid(cfg: Any, cid: str, commit: dict[str, Callable[[], bool]]) -> None:
+def _scope_grid(
+    cfg: Any, cid: str, commit: dict[str, Callable[[], bool]], caption: ui.label
+) -> None:
     """The list joined against the export: what is missing above, what will run below."""
     try:
         sheet = process_list_edit.read_sheet(cfg.process_list)
@@ -299,8 +310,9 @@ def _scope_grid(cfg: Any, cid: str, commit: dict[str, Callable[[], bool]]) -> No
             "leave it out of this batch. Next saves your choice and moves on — there is no "
             "separate save button. The filter changes only what you can see, "
             "never what is ticked, so you can search, untick, clear the filter, and nothing you "
-            "did is lost. Saving keeps the previous version of the file beside it, and if the "
-            "ticks come out wrong the way back is to upload the list again — every batch starts "
+            "did is lost. Saving keeps the previous version beside the file as .bak.xlsx, and if "
+            "the ticks come out wrong the way back is to upload the list again — every batch "
+            "starts "
             "with both "
             "files anyway. Nothing is "
             "published here; this only settles which products are in the batch. A product with no "
@@ -311,27 +323,48 @@ def _scope_grid(cfg: Any, cid: str, commit: dict[str, Callable[[], bool]]) -> No
         _missing_table(columns, [row_of(n) for n in unmatched])
         below = _scope_table(columns, [row_of(n) for n in matched])
 
+        def describe() -> None:
+            caption.text = _save_line(len(below.selected) + len(unmatched), len(sheet.rows))
+
+        below.on_select(describe)
+        describe()
+
         def save() -> bool:
             # The rows the export has nothing for are kept, always, and are not counted as chosen.
             # They carry no checkbox because the only question this screen asks is "does this
             # run?", and for them the answer is no whatever anyone ticks.
             keep = {int(row[_ROW]) for row in below.selected} | set(unmatched)
-            dropped = len(sheet.rows) - len(keep)
             try:
-                backup = process_list_edit.save_sheet(sheet.keeping(keep))
+                process_list_edit.save_sheet(sheet.keeping(keep))
             except ProcessListError as exc:
                 theme.notify_problem(str(exc))
                 return False
-            # The delta, not the end state. A tick used to mean "remove this row" on this screen,
-            # and an operator with that habit unticks the rows they want *gone*; "2 dropped" is the
-            # sentence that contradicts them, and it is now the only one — the count that used to
-            # sit under the table went with the Save button.
-            theme.notify_ok(
-                f"Saved {len(keep)} row(s). {dropped} dropped; previous list at {backup.name}"
-            )
+            # One word. The numbers are in the caption above the button, where the operator read
+            # them *before* pressing it — a receipt racing a page change is the wrong place for a
+            # fact somebody has to act on, and the long version of this sentence was unreadable in
+            # the time it had. The backup path is not lost: it is in the ⓘ on this step.
+            theme.notify_ok("Saved")
             return True
 
         commit["save"] = save
+
+
+def _save_line(keep: int, total: int) -> str:
+    """What Next will do, said before it is pressed.
+
+    This is the mitigation that survives. The tick box inverted its meaning one release ago — a
+    tick used to mean *remove this row* — and an operator with that habit unticks the rows they
+    want gone and saves exactly those. "2 dropped" is the sentence that contradicts them, and it
+    has to be legible *while they can still change their mind*, not afterwards in a toast that a
+    page change is about to destroy.
+
+    Counted the way the save counts: the ticked rows plus the ones the export has nothing for,
+    which are kept regardless and carry no checkbox.
+    """
+    dropped = total - keep
+    if not dropped:
+        return f"Next saves all {total} row(s) and goes on to the copy."
+    return f"Next saves {keep} of {total} row(s) — {dropped} dropped — and goes on to the copy."
 
 
 def _missing_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:

@@ -118,9 +118,10 @@ itself. Those values get fixed in MyGS1, not here.
 When you are done, press **Next** at the foot of the screen. It does two things: it saves your
 choice of products, and it takes you on to step 2. There is no separate save button.
 
-It tells you what it saved before it moves — *"Saved 36 row(s). 2 dropped"*. **Read that line.** It
-is the one thing that will tell you if you ticked the wrong way round, and it is gone once the
-screen changes.
+**The line above the button says what it will do** — *"Next saves 35 of 37 row(s) — 2 dropped —
+and goes on to the copy"* — and it updates as you tick. Read that before you press, not after: it
+is the one thing that will tell you if you ticked the wrong way round, and it is there for as long
+as you want it. Pressing then confirms with **Saved**.
 
 **Done looks like:** both files uploaded without a refusal, nothing unexpected in the *Not in the
 GS1 export* table, and the table footer showing exactly the number of products you mean selected.

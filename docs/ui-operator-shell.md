@@ -155,10 +155,19 @@ tool; `theme.onward` is for somebody following the procedure for the first time,
 screen and wants to be told where the next thing is.
 
 It carries the save because on a screen with unsaved work "go on" and "commit what I chose" are one
-intention, and two buttons is how the second gets missed. It navigates on a **1.6 s beat** rather
-than the same frame: the save reports the *delta* — "2 dropped" — and that sentence is the only
-thing left on this screen that contradicts an operator who still thinks a tick means *remove*.
-Notifications do not survive a page change, so navigating immediately would make the write silent.
+intention, and two buttons is how the second gets missed.
+
+**What the save will do is said before the click, in the button's caption** — "Next saves 35 of 37
+row(s) — 2 dropped — and goes on to the copy", updating as rows are ticked. That is the surviving
+mitigation for the inverted tick box, and it is in the only place that works. It was a toast
+*after* the save for one round, which was wrong twice: a notification does not survive a page
+change, so it was racing the navigation; and the fact it carried is one somebody has to **act** on,
+which means it has to arrive while they can still change their mind.
+
+The toast is now one word — "Saved" — and the navigation waits `_TOAST_BEAT` = 4 s for it, which is
+long enough to read one word and was not long enough to read the eleven-word version it replaced.
+The button disables for that wait, because four seconds of an enabled button that does nothing
+visible is four seconds in which it gets pressed again.
 
 The count line, the held-video line and the Save and Restore buttons that used to sit between the
 table and the report are all gone. **Restore is gone entirely**, and that is a deliberate trade: a

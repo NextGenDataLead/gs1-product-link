@@ -192,6 +192,7 @@ body { background: var(--paper) !important; color: var(--ink) !important;
    somebody following a procedure, who wants to be told where the next thing is. */
 .onward           { margin-top: var(--space-12); padding-top: var(--space-6);
                     border-top: 1px solid var(--rule); }
+.onward .note     { margin-bottom: var(--space-2); }
 
 .upload           { display: inline-flex; width: auto; min-width: 0; max-height: none;
                     border: 1px solid var(--rule); border-radius: 3px; background: none;
@@ -585,7 +586,7 @@ def _reveals(dot: ui.element, text: str) -> None:
     dot.on("click", toggle)
 
 
-def onward(label: str, on_click: Callable[[], object]) -> ui.button:
+def onward(label: str, on_click: Callable[[], object]) -> tuple[ui.button, ui.label]:
     """The way out of a screen that is a step in a procedure. Returns the button.
 
     The rail is navigation for somebody who already knows the shape of the tool. This is for
@@ -594,12 +595,18 @@ def onward(label: str, on_click: Callable[[], object]) -> ui.button:
 
     The handler is the caller's, not a route, because on a screen with unsaved work "go on" and
     "commit what I chose" are the same intention and splitting them into two buttons is how one of
-    them gets missed. Returned so the caller can disable it while the screen is not finishable.
+    them gets missed.
+
+    Returns the button *and* a caption above it. The caption is where a screen says what pressing
+    the button will do, **before** it is pressed — which is the only place that information is
+    reliably readable. Said afterwards, in a toast, it is a receipt racing a page change; said here
+    it arrives while the operator can still act on it.
     """
     with ui.element("div").classes("onward"):
+        caption = ui.label("").classes("note")
         button = ui.button(label, on_click=on_click)
         button.props("no-caps unelevated color=primary icon-right=arrow_forward")
-    return button
+    return button, caption
 
 
 def jumps(targets: list[tuple[str, str]]) -> None:
