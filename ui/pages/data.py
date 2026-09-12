@@ -30,6 +30,7 @@ delta rather than the end state, and a mis-tick is undone by uploading the list 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,33 @@ from lib.errors import ProcessListError
 from lib.preflight import held_for_video, in_scope
 from lib.process_list import rows_in_export
 from ui import REPO_ROOT, context, process_list_edit, runner, theme
+
+
+@dataclass
+class _Batch:
+    """Which of the two files have arrived, and whether a selection has been saved.
+
+    **Module-level, keyed by client, and deliberately not persisted.** The screen rebuilds on every
+    visit — NiceGUI runs a ``@ui.page`` function per request — so a local would reset the moment
+    the operator stepped to Content and back, and demanding both uploads again for a trip to the
+    next screen is not what "every run brings both files" means. A run is a batch, not a page view.
+
+    The boundary is the **process**: restarting the shell starts a fresh batch and both uploads are
+    required again. That is the operator's own loop — open it, do a wave, close it — and it needs
+    no storage secret, no cookie and no connected client, none of which this shell has today.
+
+    What it gives up is the two-window case, where both windows would share one batch. For a
+    loopback native window driven by one person that is not a real configuration, and the wrong
+    answer there is mild: a screen that offers to choose products, not a run that inherits a scope.
+    """
+
+    export: bool = False
+    listed: bool = False
+    saved: bool = False
+
+
+#: One per client, for the life of the process. See :class:`_Batch`.
+_BATCHES: dict[str, _Batch] = {}
 
 
 def _resolve(path: str) -> Path:
@@ -74,24 +102,36 @@ def render() -> None:
         # and the quality report are not shown — not shown empty, not shown stale, not shown at
         # all. A screen that offered a batch built from whatever was left on disk is a screen that
         # lets a run inherit the previous one's scope without anybody deciding to.
-        arrived: dict[str, bool] = {"export": False, "list": False}
+        batch = _BATCHES.setdefault(cid, _Batch())
         #: The grid's save, hoisted so the Next button can call it. ``None`` until there is a grid.
         commit: dict[str, Callable[[], bool]] = {}
 
         def refresh(which: str) -> None:
-            if which:
-                arrived[which] = True
-            ready = all(arrived.values())
+            if which == "export":
+                batch.export = True
+            elif which == "list":
+                batch.listed = True
+            ready = batch.export and batch.listed
             selection.clear()
             quality.clear()
             commit.clear()
             with selection:
                 if ready:
-                    _scope_grid(cfg, cid, commit, caption)
+                    _scope_grid(cfg, cid, commit, caption, batch)
                 else:
                     theme.band(
                         "Upload both files above to choose the products for this run.", "quiet"
                     )
+                    if batch.saved:
+                        # Only reachable by restarting the shell, since arrival otherwise survives
+                        # a trip to another screen. The selection is still on disk and a run would
+                        # use it — but uploading the list again replaces it, and that is the part
+                        # worth saying before they do it rather than after.
+                        theme.band(
+                            "Your last selection was saved and a run would use it. Uploading the "
+                            "product list again replaces it with the whole list.",
+                            "warn",
+                        )
             if ready:
                 with quality:
                     _quality(cid)
@@ -101,7 +141,7 @@ def render() -> None:
 
         with ui.element("div").classes("steps-2up"):
             _export(cfg, cid, refresh)
-            _scope_list(cfg, refresh)
+            _scope_list(cfg, batch, refresh)
 
         # Bound after the row so they render below it, and before ``refresh`` is ever called.
         selection = ui.column().classes("w-full gap-0")
@@ -216,7 +256,7 @@ _TOAST_BEAT = 4.0
 _TABLE_HEIGHT = "55vh"
 
 
-def _scope_list(cfg: Any, arrived: Callable[[str], None]) -> None:
+def _scope_list(cfg: Any, batch: _Batch, arrived: Callable[[str], None]) -> None:
     if cfg.process_list is None:
         with theme.section("Choose the products for this batch", step=2):
             ui.label(
@@ -250,15 +290,18 @@ def _scope_list(cfg: Any, arrived: Callable[[str], None]) -> None:
             # Redrawn rather than left for the operator to reload: the tables below now describe
             # the file that was just replaced, and a screen that keeps showing the previous list
             # after a successful upload is the silent staleness this project designs against.
+            replaced, batch.saved = batch.saved, False
             arrived("list")
             theme.notify_ok("Product list installed.")
+            if replaced:
+                return "Installed — this replaced the selection you saved earlier."
             return f"Installed. Your upload is kept as {kept.name}."
 
         theme.upload("Product list (.xlsx)", receive, busy="Checking the list…")
 
 
 def _scope_grid(
-    cfg: Any, cid: str, commit: dict[str, Callable[[], bool]], caption: ui.label
+    cfg: Any, cid: str, commit: dict[str, Callable[[], bool]], caption: ui.label, batch: _Batch
 ) -> None:
     """The list joined against the export: what is missing above, what will run below."""
     try:
@@ -343,6 +386,7 @@ def _scope_grid(
             # them *before* pressing it — a receipt racing a page change is the wrong place for a
             # fact somebody has to act on, and the long version of this sentence was unreadable in
             # the time it had. The backup path is not lost: it is in the ⓘ on this step.
+            batch.saved = True
             theme.notify_ok("Saved")
             return True
 

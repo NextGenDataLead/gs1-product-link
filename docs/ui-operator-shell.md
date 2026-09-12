@@ -144,8 +144,22 @@ Next button is disabled. Not shown empty, not shown stale, not shown at all. A s
 a batch built from whatever was left on disk is one that lets a run inherit the previous batch's
 scope without anybody deciding to.
 
-The cost is that arrival is per *page render*, which is the only granularity the screen has:
-navigating to Content and back means uploading again. And it is why `docs/images/data.png` now
+**Arrival is remembered per client for the life of the process** — `ui.pages.data._BATCHES`, a
+module-level dict. The screen rebuilds on every visit, so a local would reset the moment the
+operator stepped to Content and back, and demanding both uploads again for a trip to the next
+screen is not what "every run brings both files" means: a run is a batch, not a page view.
+Restarting the shell starts a fresh batch, which is the operator's own loop — open it, do a wave,
+close it. It needs no storage secret, no cookie and no connected client, none of which this shell
+has; `app.storage.tab` would need all three. What it gives up is the two-window case, where both
+windows share one batch — not a real configuration for a loopback native window driven by one
+person, and the wrong answer there is mild.
+
+**Saving records itself**, so that re-uploading the list afterwards can say what it just did:
+"Installed — this replaced the selection you saved earlier." Uploading writes the file straight to
+the control path, which is what makes it the undo; the same act silently discards a save, and
+saying so is the difference between an undo and a loss.
+
+And it is why `docs/images/data.png` now
 shows the landing state — the throwaway `democlient` has no parseable GDSN export, only a
 stand-in, so its screenshot cannot reach the populated screen. A faithful synthetic export would
 fix that.
