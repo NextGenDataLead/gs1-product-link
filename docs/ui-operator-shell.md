@@ -607,21 +607,25 @@ binary that no `.gitignore` protects.
 The recipe, all of it outside the repository:
 
 1. Copy the repo to a scratch directory. Use `clients.example.yml` as its `clients.yml` —
-   `democlient` is already defined in it.
-2. Write synthetic `output/{client}/data/products.json`, `generation_results.json`, `plan.json`,
-   `plan.summary.json` and one `runs/*.jsonl` through the models in `lib.records` and
-   `lib.generator`, so the shapes are right by construction rather than by hand. Products need
-   `image_url` and the `dim_*` extras or the plan holds all of them (E22/E23) and every figure
-   reads zero. Leave `input_fingerprint` **null** on each result item — it is optional, and any
-   other value fails the doctor's staleness check.
-3. Give it `input/{client}/process-list.xlsx` (a `Barcode` column), a stand-in `products.xlsx`,
-   and `videos/mapping.yml` in `{language: [{file, gtin}]}` shape with matching files on disk. For
-   the Data screen specifically: put **one barcode on the scope list that is not in the export**,
-   or the table that exists to show them is not in the picture; leave some GTINs unmapped so the
-   per-row "no video yet" mark appears; and **backdate `products.xlsx` behind `products.json`**, or
-   the staleness band fires on files written seconds apart and the screenshot tells the operator to
-   re-parse for no reason.
-4. Run `python -m scripts.run_plan {client}` there so the plan and the rail facts agree, then
+   `democlient` is already defined in it. Copy the repo rather than only moving the working
+   directory: `lib.config.DEFAULT_CLIENTS_PATH` is anchored to the **repository** root, so a
+   scratch cwd beside the real checkout would still read the real `clients.yml`.
+2. Write the two operator files with `python -m scripts.make_demo_export`. It lands a 24-sheet
+   GDSN export and a scope list at the configured paths, and already puts **one barcode on the
+   scope list that no export row carries** — the Data screen has a table whose only job is to show
+   those, and without one it is not in the picture. Nine of its twelve products publish cleanly and
+   three are held, one by each mandatory rule, so the figures are neither all zero nor uniformly
+   green.
+3. Parse it: `python -m scripts.parse_export democlient`. Then **backdate `products.xlsx` behind
+   `products.json`**, or the staleness band fires on files written seconds apart and the screenshot
+   tells the operator to re-parse for no reason.
+4. Synthesise what no command produces — `generation_results.json`, and `runs/*.jsonl` — through
+   the models in `lib.generator`, so the shapes are right by construction rather than by hand.
+   Leave `input_fingerprint` **null** on each result item: it is optional, and any other value
+   fails the doctor's staleness check.
+5. Add `videos/mapping.yml` in `{language: [{file, gtin}]}` shape with matching files on disk,
+   leaving some GTINs unmapped so the per-row "no video yet" mark appears.
+6. Run `python -m scripts.run_plan {client}` there so the plan and the rail facts agree, then
    serve it with `ui.run(..., native=False, show=False)` on a spare port and drive Playwright
    at 1280x860.
 

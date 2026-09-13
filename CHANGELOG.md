@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The example client has an export it can actually parse, so rehearsals stop being run against
+  the live one.** `democlient` is defined in `clients.example.yml` and has been since the beginning,
+  but it had no workbook — only a stand-in whose `products.json` was seeded directly — so it could
+  never get past the Data screen's both-files-required gate. Every rehearsal of that screen was
+  therefore driven against `noviplast`, and uploading through the picker replaces the control file
+  **in place**: it corrupted that operator's real scope list three times during #125, 38 rows down
+  to 33, and on the third round the drift could not be accounted for at all.
+
+  `python -m scripts.make_demo_export` now writes a 24-sheet GDSN datapool workbook and a product
+  scope list to the paths the config declares — the paths, because nothing else in the tool will
+  look anywhere else. It defaults to `clients.example.yml`, and it **refuses to overwrite an
+  existing file without `--force`**: the one thing this command could destroy is a client's real
+  export, and something already sitting at the target is the only sign of that it can have. The
+  refusal names every clash rather than the first, so nobody learns about the second file only
+  after re-running with `--force`.
+
+  The fixture is faithful rather than merely sufficient. One worksheet per GDSN module, seven
+  header rows with each column's attribute path spread down them, the same GTIN recurring once per
+  target market, and **which market holds a given value varying by product** — which is the shape
+  `market_priority` exists to resolve. Every edge the readers have code for is present on purpose:
+  two markets that disagree about the same French name, a language carried by one market only, a
+  language absent everywhere, repeated groups in both the localised (1067) and language-agnostic
+  (Material) spellings, a case-level row that must be skipped, and an empty one. Of its twelve
+  products nine publish and three are held, **one by each mandatory rule** — a demo in which nothing
+  is ever held shows a screen the operator will not recognise the first time a real export
+  disappoints them. The scope list carries one barcode no export row does, which is the join the
+  Data screen has a whole table for.
+
+  **The barcodes cannot name a real product.** They sit on GS1 prefix `029` — restricted
+  distribution, reserved for internal use and never issued to a company — with valid check digits,
+  because an invalid one is a trap for whatever downstream check eventually looks.
+
+  `lib/demo_export.py` holds the catalogue and `lib/gdsn_layout.py` the header shape, as the writing
+  mirror of `lib.gdsn._parse_columns`; `tests/lib/test_gdsn_layout.py` round-trips one through the
+  other, so a fixture is a real test of the reader rather than a restatement of it.
+  `tests/lib/test_demo_export.py` **reads `clients.example.yml`** rather than restating it — the
+  fixture and the config are authored independently, and that test is what holds them together.
+
 - **The product scope list has an upload, and the Data screen shows it joined against the export.**
   A batch is made of two operator files — the GS1 Data Source export and the list of barcodes it
   may touch — and only the first could be uploaded. The second had to be found on disk and replaced
