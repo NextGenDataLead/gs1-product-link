@@ -70,6 +70,19 @@ the only record of why a value is what it is, so it is never round-tripped throu
 and validates the candidate with `lib/preflight.check_config` before replacing anything. It still
 does not *load* `.env`; it reads it only far enough to say whether a name has a value.
 
+**Never rehearse a screen against the real client.** Driving the Data screen with Playwright
+uploads through the picker, which replaces `input/{client}/process-list.xlsx` *in place*; doing it
+against `noviplast` corrupted that operator's real scope list three times. Use the throwaway
+`democlient` and give it data with **`python -m scripts.make_demo_export`** — a 24-sheet synthetic
+GDSN export plus a scope list, written to the paths the config declares, on GS1 prefix `029`
+(restricted distribution, never issued, so no demo barcode can name a real product). It defaults to
+`clients.example.yml`, where `democlient` lives, and **refuses to overwrite an existing file
+without `--force`**, because the one thing it could destroy is a client's real export. Twelve
+products: nine publish, three are held — one by each mandatory rule — and the scope list carries one
+barcode no export row does. `lib/demo_export.py` is what it is made of, `lib/gdsn_layout.py` the
+header shape, and `tests/lib/test_demo_export.py` checks both against `clients.example.yml` rather
+than restating it.
+
 The gates themselves live in **`lib/gates.py`** as data, and `flow-orchestrator/SKILL.md` carries a
 **Gate index** table that `tests/lib/test_gates.py` checks in both directions. Adding a gate to one
 without the other fails CI — that check exists because two implementations of one safety contract
@@ -77,7 +90,7 @@ drift silently. Read `docs/ui-operator-shell.md` before changing either.
 
 ## Layout
 
-- `lib/` — the library. `scripts/` — thirteen CLI entry points. `ui/` — the operator shell (optional
+- `lib/` — the library. `scripts/` — fourteen CLI entry points. `ui/` — the operator shell (optional
   `[ui]` extra; nothing in `lib/` or `scripts/` imports it, and the suite passes without it).
   `mcps/` — three TypeScript MCP servers (unpublished by choice, see `docs/OPEN_DECISIONS.md` OD-2).
 - **Run `python -m scripts.doctor` before a wave.** It is the preflight: config, scope, generated
