@@ -264,6 +264,20 @@ def report_quality_argv(client_id: str | None) -> list[str]:
     return ["-m", "scripts.report_quality", *([client_id] if client_id else [])]
 
 
+def report_scope_argv(client_id: str | None, *, run: str | None = None) -> list[str]:
+    """The per-run result sheet: the operator's scope list with what the run did to each row.
+
+    ``run`` is passed explicitly rather than left to default, because the default is "the newest
+    log" and the button that calls this sits on a *particular* run's card. Two runs a second apart
+    are ``{ts}.jsonl`` and ``{ts}-1.jsonl``, and a report silently written for the other one would
+    be indistinguishable from the right one until somebody read a page URL that was never visited.
+    """
+    argv = ["-m", "scripts.report_scope_result", *([client_id] if client_id else [])]
+    if run:
+        argv += ["--run", run]
+    return argv
+
+
 def build_video_map_argv(client_id: str | None, *, check: bool = True) -> list[str]:
     """The video-mapping coverage gate.
 

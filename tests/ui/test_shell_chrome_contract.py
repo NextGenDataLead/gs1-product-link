@@ -133,3 +133,36 @@ def test_the_theme_imports_nothing_but_nicegui() -> None:
         f"ui/theme.py imports {sorted(imported & {'lib', 'ui'})} — the chrome renders what it is "
         "given, so that it cannot acquire a way to read files or run commands on every page load"
     )
+
+
+def test_the_theme_offers_one_way_to_hide_a_sentence_and_it_says_what_may_be_hidden() -> None:
+    """``theme.explanation`` is a decision, not a wrapper, and the docstring is where it lives.
+
+    An inlined tooltip at each call site would render the same and lose two things. First, that it
+    is **both** a tooltip and a toggle: hover answers it for the operator already reaching past it,
+    and the press is what makes it reachable at all on a touch screen and by keyboard, where there
+    is no hover — a tooltip alone would put a screen's only account of what a file is somewhere a
+    keyboard cannot go. Second, and more expensive, **what may go behind it**: text that is true
+    every time and needed once. Never a warning, never a count, never anything true only today.
+    The staleness band on the Data screen is exactly the thing that must not be tidied in here.
+    """
+    fold = next(
+        (
+            node
+            for node in ast.walk(_tree(_THEME))
+            if isinstance(node, ast.FunctionDef) and node.name == "explanation"
+        ),
+        None,
+    )
+    assert fold is not None, "ui/theme.py no longer defines explanation()"
+
+    doc = ast.get_docstring(fold) or ""
+    assert "hover" in doc and "keyboard" in doc, (
+        "explanation()'s docstring must keep saying why it is both a tooltip and a toggle — "
+        "hover for the operator reaching past it, the press for touch and keyboard"
+    )
+    assert "warning" in doc, (
+        "explanation()'s docstring must keep saying what may NOT be hidden behind it. An ⓘ is "
+        "discoverable at the operator's leisure, so anything they must not miss belongs in a band "
+        "on the page — the Data screen's staleness warning is the case this rule is about"
+    )

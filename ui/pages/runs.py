@@ -10,6 +10,8 @@ So a partial log is shown as a partial log, not quietly rendered as a finished o
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from nicegui import ui
 
 from lib.records import RunOutcome
@@ -116,11 +118,7 @@ def _report(payload: dict[str, object]) -> None:
 
 def _run(run: context.RunLog) -> None:
     with ui.element("div").classes("card mb-4"):
-        try:
-            name = str(run.path.relative_to(REPO_ROOT))
-        except ValueError:
-            name = str(run.path)
-        ui.label(name).classes("gate-step scroll-x")
+        ui.label(str(_relative(run.path))).classes("gate-step scroll-x")
         when = run.modified.strftime("%Y-%m-%d %H:%M UTC") if run.modified else "unknown time"
         ui.label(("Dry run · " if run.dry_run else "") + when).classes("gate-title")
 
@@ -148,6 +146,11 @@ def _run(run: context.RunLog) -> None:
                 "not a GS1 fault, and it is the refusal that makes the mode safe to offer."
             ).classes("note mt-2")
 
+        # The artefact is per-run and lives beside this log, so the button that makes it belongs
+        # on this card rather than on the Data screen where the list is edited. A report generated
+        # from a screen that shows no run has to guess which run it is about.
+        _scope_report(run)
+
         with ui.expansion("Every row").classes("mt-2"):
             rows = [
                 {
@@ -168,6 +171,49 @@ def _run(run: context.RunLog) -> None:
                 rows=rows,
                 row_key="gtin",
             ).classes("w-full")
+
+
+def _relative(path: Path) -> Path:
+    """``path`` against the repository root, or unchanged when it lies outside it."""
+    try:
+        return path.relative_to(REPO_ROOT)
+    except ValueError:
+        return path
+
+
+def _scope_report(run: context.RunLog) -> None:
+    """Build the result sheet for this run, and say where it went.
+
+    The operator sent a list of barcodes and gets back a log keyed by (GTIN, language). This is
+    the sheet that turns the second back into the first — their columns, their order, with what
+    happened appended — so it can be forwarded to whoever asked for the batch.
+
+    A report, written after. Nothing in it is read back by a later run: a scope list that carried
+    its own run status is exactly the design ``lib/process_list.py`` documents the cost of.
+    """
+    cid = context.client_id()
+    if cid is None:
+        return
+
+    output = ui.log().classes("console mt-3").style("display:none")
+
+    # Async, and the subprocess runs off the event loop — see ui/pages/data.py for why both.
+    async def build() -> None:
+        # Relative where it can be, so the command on screen is one the operator can paste into a
+        # terminal from the repository root — which is the whole reason `theme.command` exists.
+        argv = runner.report_scope_argv(cid, run=str(_relative(run.path)))
+        output.style("display:block")
+        output.clear()
+        result = await runner.run_off_the_loop(argv)
+        output.push(result.display_command)
+        output.push(result.stderr or result.stdout or "(no output)")
+        if result.ok:
+            theme.notify_ok(f"Result sheet written beside {run.path.name}")
+        else:
+            theme.notify_warning("The result sheet could not be built — see the output.")
+
+    with ui.row().classes("gap-3 mt-3"):
+        theme.quiet_action("Build the result sheet", build)
 
 
 def _error_line(outcome: RunOutcome) -> str:
