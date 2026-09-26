@@ -23,7 +23,7 @@ enough to scope without re-deriving. Written 2026-07-18.
   everything; tests: `.venv/bin/python -m pytest -q`.
 - **Just completed (this session):**
   - **Phase 7.5 — GPC brick → category mapping: DONE**, all 5 DoD met. Operator supplied the GS1
-    DIY datamodel (`input/democlient/GS1 Data Source Datamodel 3.1.36.xlsx`); client signed off the
+    DIY datamodel (`input/democlient/reference/GS1 Data Source Datamodel 3.1.36.xlsx`); client signed off the
     73-brick map + 1 override in `clients.yml`. See `IMPLEMENTATION_SPEC.md` §12 Phase 7.5 and
     `democlient-page-adapter.md` §5.7.
   - **`net_content` H87 decoding: DONE** (Phase 7 page-adapter item). `reference/

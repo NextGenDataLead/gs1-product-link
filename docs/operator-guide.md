@@ -87,7 +87,7 @@ always sits on the page in a coloured band.
    products it found. **If it is not a GS1 export, or something the tool needs is missing, it is
    put back and nothing changes** — the file you had is still there, and the reason appears on
    screen. There is no separate "check" or "read" button; uploading is both.
-2. **Upload the product list** — which barcodes this batch may touch. Same again: it is read
+2. **Upload the product selection list** — which barcodes this batch may touch. Same again: it is read
    before it replaces anything, so a file that will not open is refused and the list you were
    using stays put.
 

@@ -118,7 +118,7 @@ def _report(payload: dict[str, object]) -> None:
 
 def _run(run: context.RunLog) -> None:
     with ui.element("div").classes("card mb-4"):
-        ui.label(str(_relative(run.path))).classes("gate-step scroll-x")
+        ui.label(run.stamp).classes("gate-step scroll-x")
         when = run.modified.strftime("%Y-%m-%d %H:%M UTC") if run.modified else "unknown time"
         ui.label(("Dry run · " if run.dry_run else "") + when).classes("gate-title")
 
@@ -208,7 +208,7 @@ def _scope_report(run: context.RunLog) -> None:
         output.push(result.display_command)
         output.push(result.stderr or result.stdout or "(no output)")
         if result.ok:
-            theme.notify_ok(f"Result sheet written beside {run.path.name}")
+            theme.notify_ok(f"Result sheet written for {run.stamp}")
         else:
             theme.notify_warning("The result sheet could not be built — see the output.")
 

@@ -53,6 +53,7 @@ from lib.env import load_env
 from lib.errors import ConfigError, ProcessListError
 from lib.process_list import ProcessListSheet, read_process_list
 from lib.records import Plan, ProductRecord, RunOutcome
+from lib.run_files import RESULT_NAME, newest_log, sibling
 from lib.scope_report import build_rows, legend_grid, scope_grid, units_grid
 
 _EXIT_OK = 0
@@ -67,12 +68,9 @@ _MAX_COLUMN_WIDTH = 60
 def _newest_run(client_id: str) -> Path | None:
     """The most recent run log, by mtime. See the module docstring for why not by name."""
     try:
-        paths = sorted(
-            (Path("output") / client_id / "runs").glob("*.jsonl"), key=lambda p: p.stat().st_mtime
-        )
+        return newest_log(client_id)
     except OSError:
         return None
-    return paths[-1] if paths else None
 
 
 def _load_outcomes(path: Path) -> tuple[list[RunOutcome], int]:
@@ -268,7 +266,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911, PLR0912 — on
     )
 
     columns, grid = scope_grid(uploaded, rows, cfg.wordpress.languages)
-    out = Path(args.out) if args.out else run_path.with_name(f"{run_path.stem}-scope.xlsx")
+    # Into the run's own directory, beside its log and the selection it consumed. It used to be
+    # `{stamp}-scope.xlsx` in the runs folder — a fourth naming scheme for a document about one
+    # run, sitting in a directory of other runs' documents.
+    out = Path(args.out) if args.out else sibling(run_path, RESULT_NAME)
     _write_xlsx(
         out,
         [

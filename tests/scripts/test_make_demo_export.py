@@ -21,8 +21,12 @@ from scripts import make_demo_export
 
 _EXAMPLE_CONFIG = str(Path(__file__).resolve().parents[2] / "clients.example.yml")
 
-_EXPORT = Path("input/democlient/products.xlsx")
-_SCOPE = Path("input/democlient/process-list.xlsx")
+#: Read from the example config rather than restated here. They were spelled out, and a layout
+#: change moved the files while every assertion still pointed at where they used to be — six
+#: failures that said "the demo export writes nothing" when it was writing perfectly well.
+_DEMO = load_clients(_EXAMPLE_CONFIG)["democlient"]
+_EXPORT = Path(_DEMO.export.path)
+_SCOPE = Path(_DEMO.process_list.path) if _DEMO.process_list else Path()
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +64,7 @@ def test_what_it_writes_parses_against_the_config_that_placed_it() -> None:
 
 
 def test_an_existing_file_refuses_the_whole_run(capsys: pytest.CaptureFixture[str]) -> None:
-    _EXPORT.parent.mkdir(parents=True)
+    _EXPORT.parent.mkdir(parents=True, exist_ok=True)
     _EXPORT.write_text("a real export, as far as this command can tell", encoding="utf-8")
 
     assert _run() == 1
@@ -75,8 +79,10 @@ def test_the_refusal_names_every_clash_not_just_the_first(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Learning about the second file only after re-running with --force is how one gets lost."""
-    _EXPORT.parent.mkdir(parents=True)
+    _EXPORT.parent.mkdir(parents=True, exist_ok=True)
     _EXPORT.write_text("export", encoding="utf-8")
+    # The two now live in sibling folders, not one directory — see clients.example.yml.
+    _SCOPE.parent.mkdir(parents=True, exist_ok=True)
     _SCOPE.write_text("scope", encoding="utf-8")
 
     assert _run() == 1
@@ -86,7 +92,7 @@ def test_the_refusal_names_every_clash_not_just_the_first(
 
 
 def test_force_overwrites() -> None:
-    _EXPORT.parent.mkdir(parents=True)
+    _EXPORT.parent.mkdir(parents=True, exist_ok=True)
     _EXPORT.write_text("stale", encoding="utf-8")
 
     assert _run("--force") == 0
@@ -96,7 +102,7 @@ def test_force_overwrites() -> None:
 def test_a_dry_run_writes_nothing_and_still_reports_what_would_refuse(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    _EXPORT.parent.mkdir(parents=True)
+    _EXPORT.parent.mkdir(parents=True, exist_ok=True)
     _EXPORT.write_text("stale", encoding="utf-8")
 
     assert _run("--dry-run") == 0

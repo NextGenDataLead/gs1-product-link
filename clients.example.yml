@@ -57,7 +57,7 @@ clients:
       # per module, keyed on Gtin + TargetMarketCountryCode). 'flat' = single-sheet
       # MyGS1 article list (see column_map/extras_columns). See IMPLEMENTATION_SPEC §3.
       format: gdsn
-      path: "./input/democlient/products.xlsx"
+      path: "./input/democlient/process/uploads/GS1 export/export.xlsx"
       # Markets in the order to consult them (highest priority first). Every market row
       # carries every language, so which market *has* a value varies by product — the tool
       # takes the first non-blank value per product/field/language walking this order.
@@ -67,7 +67,7 @@ clients:
       market_priority: ["528", "056", "276", "442"]   # NL, BE, DE, LU
       # ProductRecord field → GDSN attribute source. `attribute` is the GDSN attribute
       # number (e.g. "3297") or a path segment name (e.g. GpcCategoryCode). Discover
-      # these by running: python -m scripts.inspect_export input/democlient/products.xlsx
+      # these by running: python -m scripts.inspect_export "input/democlient/process/uploads/GS1 export/export.xlsx"
       # `required: true` holds a SKU out of publishing entirely while the value is missing
       # (edge E23) — in EVERY language, so a product is never half-published: a page built
       # from an incomplete record still publishes and its QR still resolves, and it looks
@@ -222,7 +222,10 @@ clients:
     # Only the GTIN column is named here; label it whatever you like (Barcode, EAN...).
     # Omit this whole block to plan every product in the export.
     process_list:
-      path: "./input/democlient/process-list.xlsx"
+      # The ticked subset — what every run reads — beside every selection ever saved.
+      # What the operator sent is under process/uploads/, which is the other half of
+      # process/: what arrived, and what was chosen from it.
+      path: "./input/democlient/process/selection/selections.xlsx"
       gtin_column: "Barcode"
 
     # Content generator (tagline + Eigenschappen copy). Two producers share one results file and

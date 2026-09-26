@@ -74,6 +74,7 @@ import argparse
 import hashlib
 import json
 import logging
+import shutil
 import sys
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
@@ -111,6 +112,7 @@ from lib.records import (
     State,
     StateEntry,
 )
+from lib.run_files import SELECTION_NAME, UPLOAD_NAME, log_path, sibling
 from lib.state import load_state, save_state
 from lib.templates import TemplateEngine
 from lib.wp_client import MediaUpload, WordPressClient
@@ -1058,6 +1060,35 @@ class _RunLog:
         self._handle.close()
 
 
+def _keep_selection(cfg: ClientConfig, log: Path) -> None:
+    """Copy the selection this run is about to consume into the run's own directory.
+
+    ``input/`` holds one thing: what the **next** run will use. It is overwritten by the next
+    batch, so a report generated afterwards from that file describes somebody else's rows — and
+    until now that was the only copy, which meant a run's own scope became unknowable the moment
+    the operator uploaded again.
+
+    Best-effort on purpose. A run that has already begun writing live pages must not be stopped by
+    a failure to copy a spreadsheet for a report, so this reports and carries on.
+    """
+    if cfg.process_list is None:
+        return
+    control = Path(cfg.process_list.path)
+    # Both documents, because the report needs both: the ticked list says what ran, and the
+    # upload it came from is the only thing that can name the rows the operator *dropped*. Reading
+    # the upload out of ``input/`` afterwards worked until the next batch replaced it.
+    for source, name in (
+        (control, SELECTION_NAME),
+        (control.parent / f"uploaded{control.suffix}", UPLOAD_NAME),
+    ):
+        if not source.is_file():
+            continue
+        try:
+            shutil.copyfile(source, sibling(log, name))
+        except OSError as exc:  # noqa: BLE001 — a report file is not worth stopping a live run
+            print(f"warning: could not keep a copy of {source}: {exc}", file=sys.stderr)
+
+
 def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per policy switch
     cfg: ClientConfig,
     confirmed: ConfirmedPlan,
@@ -1083,10 +1114,9 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
     # Announced up front, not just at the end: the name is derived from a timestamp only this
     # process knows, so nothing outside it can compute where the run is reporting to — and a
     # run that dies never reaches the closing line at all.
-    with _RunLog(
-        Path("output") / cfg.client_id / "runs" / f"{ts.strftime(_TS_FORMAT)}.jsonl"
-    ) as log:
+    with _RunLog(log_path(cfg.client_id, ts.strftime(_TS_FORMAT))) as log:
         print(f"{prefix}{len(rows)} row(s){leg}; log: {log.path}", file=sys.stderr)
+        _keep_selection(cfg, log.path)
         if dry_run or resolved_gs1 is None:
             outcomes = log.append_all(_preview_row(cfg, row, engine, ts, mode) for row in rows)
         else:

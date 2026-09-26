@@ -335,7 +335,7 @@ def test_sibling_language_failure_blocks_the_whole_gtin(
     assert rec.gs1 == []  # a partial link set would have destroyed the fr link
     assert rec.translations == []
     assert load_state("acme").entries == {}  # nl must stay retryable
-    logs = list((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
+    logs = list((tmp_path / "output" / "acme" / "runs").glob("**/*.jsonl"))
     outcomes = [json.loads(line) for line in logs[0].read_text().splitlines()]
     assert [o["status"] for o in outcomes] == ["error", "error"]
 
@@ -414,7 +414,7 @@ def test_happy_path_one_gtin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     # QR rendered to disk.
     assert (tmp_path / "output" / "acme" / "qr" / f"{GTIN_A}.svg").is_file()
     # One ok outcome logged.
-    logs = list((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
+    logs = list((tmp_path / "output" / "acme" / "runs").glob("**/*.jsonl"))
     outcomes = [json.loads(line) for line in logs[0].read_text().splitlines()]
     assert [o["status"] for o in outcomes] == ["ok"]
 
@@ -465,7 +465,7 @@ def test_verify_failure_marks_error_and_skips_state(
     assert code == 1
     assert rec.gs1 == []  # never reached GS1 after the failed verify
     assert load_state("acme").entries == {}  # row not persisted
-    logs = list((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
+    logs = list((tmp_path / "output" / "acme" / "runs").glob("**/*.jsonl"))
     outcomes = [json.loads(line) for line in logs[0].read_text().splitlines()]
     assert outcomes[0]["status"] == "error"
     assert "did not return 200" in outcomes[0]["error"]
@@ -537,7 +537,7 @@ def test_dry_run_performs_no_mutations(tmp_path: Path, monkeypatch: pytest.Monke
     assert not (tmp_path / "output" / "acme" / "state.json").exists()  # no state write
     qr_dir = tmp_path / "output" / "acme" / "qr"
     assert not qr_dir.exists() or not list(qr_dir.glob("*"))  # no QR files
-    logs = list((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
+    logs = list((tmp_path / "output" / "acme" / "runs").glob("**/*.jsonl"))
     outcomes = [json.loads(line) for line in logs[0].read_text().splitlines()]
     assert outcomes[0]["status"] == "dry-run"
 
@@ -1488,7 +1488,7 @@ def test_the_log_path_is_announced_before_the_run_not_only_after(
     assert run_execute.main(["acme", "--plan", str(plan)]) == 0
 
     opening, closing = capsys.readouterr().err.strip().splitlines()
-    logs = list((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"))
+    logs = list((tmp_path / "output" / "acme" / "runs").glob("**/*.jsonl"))
     assert str(logs[0].relative_to(tmp_path)) in opening
     assert "error(s)" not in opening  # the count is not known yet — do not imply it is
     assert "1 row(s), 0 error(s)" in closing
@@ -1511,7 +1511,7 @@ def test_two_runs_in_the_same_second_do_not_share_a_log(
     assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
     assert run_execute.main(["acme", "--plan", str(plan), "--only", "links"]) == 0
 
-    logs = sorted((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"), key=_mtime)
+    logs = sorted((tmp_path / "output" / "acme" / "runs").glob("**/*.jsonl"), key=_mtime)
     assert len(logs) == 2
     assert all(len(path.read_text().splitlines()) == 1 for path in logs)
 
@@ -1523,7 +1523,7 @@ def _read_outcomes(tmp_path: Path, *, newest: bool = False) -> list[dict[str, An
     the second one's log is the collision-suffixed ``…Z-1.jsonl`` — which sorts *before*
     ``…Z.jsonl`` lexicographically because ``-`` precedes ``.``.
     """
-    logs = sorted((tmp_path / "output" / "acme" / "runs").glob("*.jsonl"), key=_mtime)
+    logs = sorted((tmp_path / "output" / "acme" / "runs").glob("**/*.jsonl"), key=_mtime)
     path = logs[-1] if newest else logs[0]
     return [json.loads(line) for line in path.read_text().splitlines()]
 
