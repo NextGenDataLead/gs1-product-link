@@ -38,7 +38,7 @@ from typing import Any
 from nicegui import events, ui
 
 from lib.errors import ProcessListError
-from lib.input_layout import write_readme
+from lib.input_layout import export_archive_path, write_readme
 from lib.preflight import held_for_video, in_scope
 from lib.process_list import rows_in_export
 from ui import REPO_ROOT, context, process_list_edit, runner, theme
@@ -172,28 +172,34 @@ def render() -> None:
 # --- Step 1: the export -------------------------------------------------------
 
 
-def _keep_upload(target: Path, data: bytes) -> None:
-    """Keep this export upload forever, dated, beside the live file.
+def _keep_upload(target: Path, data: bytes) -> Path | None:
+    """Keep this export upload forever, dated, beside the live file. Returns where, or ``None``.
 
-    ``export/uploads/products-{stamp}.xlsx``. Written on the way *in* — the moment the file has
-    proved readable — rather than when the next upload displaces it. Archiving on replacement
-    means a file uploaded once and never replaced has no dated copy at all, which is the ordinary
-    case for a quarterly export.
+    ``process/uploads/GS1 export/export-{stamp}.xlsx``, named by
+    :func:`lib.input_layout.export_archive_path` rather than here — this had its own copy of the
+    naming and its own collision loop, which is four places that spell one layout and the reason
+    two of them were wrong for a week.
 
-    Best-effort: an upload that worked must not be reported as failed because a copy of it could
-    not be filed.
+    Written on the way *in* — the moment the file has proved readable — rather than when the next
+    upload displaces it. Archiving on replacement means a file uploaded once and never replaced has
+    no dated copy at all, which is the ordinary case for a quarterly export.
+
+    Best-effort, and now actually so: this said "best-effort" while letting an ``OSError`` out into
+    ``theme.upload``, which shows the exception and re-raises — so an upload that had already
+    landed and parsed would report as failed because a *copy* of it could not be filed.
+
+    ``None`` is not swallowed: the caller says so in the sentence it leaves on screen. There is no
+    logger anywhere under ``ui/``, and the handler's return value *is* this screen's way of
+    reporting — a failure nobody is told about would leave the operator believing they have a dated
+    copy of an export they do not.
     """
-    # Beside the live export, in its own subfolder of ``uploads/``: an export is never edited
-    # here, so the current one *is* an upload and its history belongs with it.
-    folder = target.parent
-    folder.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
-    kept = folder / f"{target.stem}-{stamp}{target.suffix}"
-    serial = 0
-    while kept.exists():
-        serial += 1
-        kept = folder / f"{target.stem}-{stamp}-{serial}{target.suffix}"
-    kept.write_bytes(data)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        kept = export_archive_path(target, datetime.now(UTC).strftime("%Y%m%dT%H%M%S"))
+        kept.write_bytes(data)
+    except OSError:
+        return None
+    return kept
 
 
 def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
@@ -232,13 +238,16 @@ def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
             # into a run built on a file nobody had opened.
             result = await runner.run_off_the_loop(runner.parse_export_argv(cid))
             if result.ok:
-                _keep_upload(target, target.read_bytes())
+                kept = _keep_upload(target, target.read_bytes())
                 write_readme(cfg)
                 # The selection below is a join against this export, so it now describes a
                 # different one — and this is the upload that unlocks it.
                 arrived("export")
                 theme.notify_ok("Export read.")
-                return f"{context.product_count(cid) or 0} products read from this export."
+                read = f"{context.product_count(cid) or 0} products read from this export."
+                if kept is None:
+                    return f"{read} A dated copy of it could not be written beside it."
+                return read
 
             # Put the old one back. A failed read that leaves the bad file in place would mean the
             # next screen describes a workbook nobody can use, with no way back but a re-upload of

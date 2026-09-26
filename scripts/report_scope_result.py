@@ -42,7 +42,7 @@ import json
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import openpyxl
 from openpyxl.styles import Font
@@ -51,9 +51,16 @@ from openpyxl.utils import get_column_letter
 from lib.config import ClientConfig, ProcessListConfig, get_client
 from lib.env import load_env
 from lib.errors import ConfigError, ProcessListError
+from lib.input_layout import archive_path
 from lib.process_list import ProcessListSheet, read_process_list
 from lib.records import Plan, ProductRecord, RunOutcome
-from lib.run_files import RESULT_NAME, newest_log, sibling
+from lib.run_files import (
+    RESULT_NAME,
+    SELECTION_NAME,
+    UPLOAD_NAME,
+    newest_log,
+    sibling,
+)
 from lib.scope_report import build_rows, legend_grid, scope_grid, units_grid
 
 _EXIT_OK = 0
@@ -116,21 +123,55 @@ def _load_products(path: Path) -> list[ProductRecord]:
     return [ProductRecord.model_validate(item) for item in data]
 
 
-def _scope_sheets(cfg: ClientConfig) -> tuple[ProcessListSheet, ProcessListSheet, bool]:
-    """The uploaded list and the control list. The flag says whether the archive was really there.
+class _Sheets(NamedTuple):
+    """The two lists this report joins, and where they were found.
 
-    Falls back to the control file for both, so a client who has never used the shell's upload
-    still gets a report — one that cannot name the deselected rows, because nothing recorded them.
+    ``uploaded`` is the superset — the list as the operator sent it — and ``control`` is the ticked
+    subset the run consumed. ``archived`` says whether ``uploaded`` is genuinely the upload; when
+    it is not, the two are the same sheet and no deselected row can be named.
+    """
+
+    uploaded: ProcessListSheet
+    control: ProcessListSheet
+    archived: bool
+    from_run: bool
+
+
+def _scope_sheets(cfg: ClientConfig, run_path: Path) -> _Sheets:
+    """The uploaded list and the ticked list, **from the run's own directory** where it has them.
+
+    This is the whole point of ``lib/run_files``: a run copies in the selection it consumed and the
+    upload that selection came from, because ``input/`` means "what the *next* run will use" and is
+    overwritten by the next batch. A report that read ``input/`` afterwards described somebody
+    else's rows.
+
+    It did read ``input/`` — and worse, it read ``selections.source.xlsx``, a path nothing has ever
+    written. So every report since the folders were split took the both-sheets-are-the-control-file
+    fallback and told the operator "no uploaded list archived", on every run, for every client. The
+    run folders had the right answer sitting beside the log the whole time.
+
+    Falls back to ``input/`` for a legacy run that kept no copies, so those still produce a report.
     """
     assert cfg.process_list is not None  # guarded by the caller
+    column = cfg.process_list.gtin_column
+
+    def read(path: Path) -> ProcessListSheet:
+        return read_process_list(ProcessListConfig(path=str(path), gtin_column=column))
+
+    used, sent = sibling(run_path, SELECTION_NAME), sibling(run_path, UPLOAD_NAME)
+    if used.is_file():
+        control = read(used)
+        if sent.is_file():
+            return _Sheets(read(sent), control, True, True)
+        return _Sheets(control, control, False, True)
+
+    # No copies in the run directory: a run from before they were kept. The live files are the best
+    # available answer and may well be a later batch's, which is what ``from_run`` exists to say.
     control = read_process_list(cfg.process_list)
-    archive = control.path.with_suffix(f".source{control.path.suffix}")
-    if not archive.exists():
-        return control, control, False
-    uploaded = read_process_list(
-        ProcessListConfig(path=str(archive), gtin_column=cfg.process_list.gtin_column)
-    )
-    return uploaded, control, True
+    archive = archive_path(control.path)
+    if not archive.is_file():
+        return _Sheets(control, control, False, False)
+    return _Sheets(read(archive), control, True, False)
 
 
 def _write_xlsx(path: Path, sheets: list[tuple[str, list[str], list[list[str]]]]) -> None:
@@ -160,7 +201,7 @@ def _size_columns(sheet: Any, columns: list[str], rows: list[list[str]]) -> None
         sheet.column_dimensions[get_column_letter(index + 1)].width = width
 
 
-def _report(rows: list[Any], unreadable: int, archived: bool, plan_used: bool) -> None:
+def _report(rows: list[Any], unreadable: int, sheets: _Sheets, plan_used: bool) -> None:
     """Say what was counted, on stderr, naming every reason a number is lower than it looks."""
     results = Counter(row.result for row in rows)
     tally = ", ".join(f"{count} {name}" for name, count in sorted(results.items()))
@@ -171,10 +212,18 @@ def _report(rows: list[Any], unreadable: int, archived: bool, plan_used: bool) -
             "usually a run killed mid-write",
             file=sys.stderr,
         )
-    if not archived:
+    if not sheets.from_run:
+        # Named separately from ``archived`` because they are different problems with the same
+        # symptom: one report is about the wrong rows, the other is about too few of them.
         print(
-            "  no uploaded list archived beside the control file, so the rows reported are the "
-            "ones that ran; any row deselected before the run cannot be named",
+            "  this run kept no copy of the list it consumed, so the rows come from the files in "
+            "input/ as they are now — which a later batch may have replaced",
+            file=sys.stderr,
+        )
+    if not sheets.archived:
+        print(
+            "  no uploaded list to compare against, so the rows reported are the ones that ran; "
+            "any row deselected before the run cannot be named",
             file=sys.stderr,
         )
     if not plan_used:
@@ -248,9 +297,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911, PLR0912 — on
         if args.list:
             listed = ProcessListConfig(path=args.list, gtin_column=cfg.process_list.gtin_column)
             uploaded = control = read_process_list(listed)
-            archived = True
+            sheets = _Sheets(uploaded, control, True, False)
         else:
-            uploaded, control, archived = _scope_sheets(cfg)
+            sheets = _scope_sheets(cfg, run_path)
+        uploaded, control = sheets.uploaded, sheets.control
     except (OSError, json.JSONDecodeError, ValueError, ProcessListError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return _EXIT_ERROR
@@ -279,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911, PLR0912 — on
         ],
     )
     print(f"Wrote {out} for {run_path.name}", file=sys.stderr)
-    _report(rows, unreadable, archived, plan is not None)
+    _report(rows, unreadable, sheets, plan is not None)
     return _EXIT_OK
 
 

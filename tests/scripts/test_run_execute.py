@@ -28,12 +28,15 @@ from lib.config import (
     GS1Config,
     GS1LinkConfig,
     MediaConfig,
+    ProcessListConfig,
     QRConfig,
     TemplateConfig,
     WordPressConfig,
 )
 from lib.errors import MediaIntegrityError, WordPressAPIError
+from lib.input_layout import archive_path
 from lib.records import LocalisedText, Plan, PlanClassification, PlanRow, ProductRecord, State
+from lib.run_files import SELECTION_NAME, UPLOAD_NAME
 from lib.state import load_state, save_state
 from lib.wp_client import MediaUpload
 from scripts import run_execute
@@ -1611,3 +1614,60 @@ def test_a_copy_less_row_never_reaches_wordpress_end_to_end(
     assert code == 0
     assert [c["meta"]["gtin"] for c in rec.wp] == [GTIN_B]
     assert set(load_state("acme").entries) == {GTIN_B}
+
+
+# --- What a run keeps beside its log -----------------------------------------
+
+
+def test_a_run_keeps_both_the_selection_it_consumed_and_the_upload_it_came_from(
+    tmp_path: Path,
+) -> None:
+    """Both, because they answer different questions — and the second one silently never landed.
+
+    ``_keep_selection`` asked for ``selection/uploaded.xlsx``, a name nothing has written since
+    ``uploads/`` and ``selection/`` were split apart. Its ``is_file`` skip meant the copy simply
+    did not happen, on every run, and the only symptom was a result sheet that said "no uploaded
+    list archived" — which reads like a client who has never used the upload button.
+    """
+    # Arrange: the live selection, and the upload it was pruned from, where the shell files them.
+    control = tmp_path / "input" / "acme" / "process" / "selection" / "selections.xlsx"
+    control.parent.mkdir(parents=True)
+    control.write_bytes(b"the ticked list")
+    upload = archive_path(control)
+    upload.parent.mkdir(parents=True)
+    upload.write_bytes(b"the list as it was sent")
+    cfg = _make_config(process_list=ProcessListConfig(path=str(control)))
+    log = tmp_path / "output" / "acme" / "runs" / "20260927T101500Z" / "run.jsonl"
+    log.parent.mkdir(parents=True)
+
+    # Act
+    run_execute._keep_selection(cfg, log)
+
+    # Assert
+    assert (log.parent / SELECTION_NAME).read_bytes() == b"the ticked list"
+    assert (log.parent / UPLOAD_NAME).read_bytes() == b"the list as it was sent", (
+        "the upload the selection came from is the only thing that can name a dropped row"
+    )
+
+
+def test_a_run_whose_client_never_uploaded_a_list_still_keeps_the_selection(
+    tmp_path: Path,
+) -> None:
+    """No archived upload is an ordinary state — a hand-placed list, or the CLI path."""
+    # Arrange
+    control = tmp_path / "input" / "acme" / "process" / "selection" / "selections.xlsx"
+    control.parent.mkdir(parents=True)
+    control.write_bytes(b"the ticked list")
+    cfg = _make_config(process_list=ProcessListConfig(path=str(control)))
+    log = tmp_path / "output" / "acme" / "runs" / "20260927T101500Z" / "run.jsonl"
+    log.parent.mkdir(parents=True)
+
+    # Act
+    run_execute._keep_selection(cfg, log)
+
+    # Assert
+    assert (log.parent / SELECTION_NAME).exists()
+    assert not (log.parent / UPLOAD_NAME).exists()
+    assert not archive_path(control).parent.exists(), (
+        "asking where the upload lives must not create input/uploads/ — a run writes to output/"
+    )

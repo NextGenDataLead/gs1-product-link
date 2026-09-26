@@ -99,6 +99,7 @@ from lib.errors import (
 )
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
+from lib.input_layout import archive_path
 from lib.media import convert_image_for_web
 from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map, prepare_video
 from lib.qr import render_qr
@@ -1077,9 +1078,14 @@ def _keep_selection(cfg: ClientConfig, log: Path) -> None:
     # Both documents, because the report needs both: the ticked list says what ran, and the
     # upload it came from is the only thing that can name the rows the operator *dropped*. Reading
     # the upload out of ``input/`` afterwards worked until the next batch replaced it.
+    #
+    # The upload's path comes from ``lib.input_layout`` and not from a guess made here. This asked
+    # for ``selection/uploaded.xlsx``, which nothing has written since the folders were split, and
+    # the ``is_file`` skip below meant the copy silently never happened — so every result sheet
+    # reported "no uploaded list archived" and could not name a single deselected row.
     for source, name in (
         (control, SELECTION_NAME),
-        (control.parent / f"uploaded{control.suffix}", UPLOAD_NAME),
+        (archive_path(control), UPLOAD_NAME),
     ):
         if not source.is_file():
             continue
