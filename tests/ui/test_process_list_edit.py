@@ -426,3 +426,28 @@ def test_restore_without_an_archive_refuses_rather_than_emptying_the_list(tmp_pa
         restore_from_upload(_config(control))
 
     assert read_sheet(_config(control)).rows == [["1", GTIN_A, "a"]], "the list is untouched"
+
+
+def test_the_dated_copy_is_byte_identical_to_the_file_a_run_will_read(tmp_path: Path) -> None:
+    """The contract the whole provenance mechanism rests on.
+
+    A record of a save identifies the dated copy by hashing the **live** file, which only works
+    because the copy is written *from those bytes* rather than saved a second time.
+
+    openpyxl stamps the wall clock into each zip member, so two saves of one workbook agree only
+    while they land inside the same second — measured, not assumed: a second apart they differ. A
+    `workbook.save(kept)` here would therefore miss the lookup **intermittently**, which is worse
+    than missing it always, and the symptom would be a selection that occasionally reads as one
+    nobody saved. This assertion is why the copy is a copy; note that it can only catch a re-save
+    when the two happen to straddle a second boundary, so treat it as pinning the invariant rather
+    than as a trap for that one edit.
+    """
+    # Arrange
+    control = _write(tmp_path / "process" / "selection", [["1079", GTIN_A], ["3086", GTIN_B]])
+
+    # Act
+    kept = save_sheet(read_sheet(_config(control)))
+
+    # Assert
+    assert kept.read_bytes() == control.read_bytes()
+    assert kept != control

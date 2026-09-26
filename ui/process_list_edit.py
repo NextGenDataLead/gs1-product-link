@@ -241,8 +241,9 @@ def save_sheet(sheet: ProcessListSheet) -> Path:
 
     # The same bytes, dated. Written from the file rather than saved twice, so the copy cannot
     # differ from what a run will read — and so a record of this save can identify the dated copy
-    # by the live file's own hash. Two openpyxl saves of one workbook differ in the zip's
-    # timestamps, which would break that quietly.
+    # by hashing the live file. openpyxl stamps the wall clock into every zip member, so two saves
+    # of one workbook match only inside the same second: saving twice would break that lookup
+    # intermittently, which is the shape of bug nobody reproduces.
     kept = selections_path(sheet.path, _stamp())
     kept.write_bytes(sheet.path.read_bytes())
     return kept

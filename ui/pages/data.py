@@ -37,6 +37,7 @@ from typing import Any
 
 from nicegui import events, ui
 
+from lib import input_layout, provenance
 from lib.errors import ProcessListError
 from lib.input_layout import export_archive_path, write_readme
 from lib.preflight import held_for_video, in_scope
@@ -239,6 +240,15 @@ def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
             result = await runner.run_off_the_loop(runner.parse_export_argv(cid))
             if result.ok:
                 kept = _keep_upload(target, target.read_bytes())
+                # What the operator called it, before the upload renamed it to export.xlsx. Without
+                # this, "which export did that run use?" can only ever be answered with a timestamp.
+                provenance.record_upload(
+                    provenance.history_path(target),
+                    "export",
+                    kept=kept,
+                    given_name=event.file.name,
+                    rows=context.product_count(cid),
+                )
                 write_readme(cfg)
                 # The selection below is a join against this export, so it now describes a
                 # different one — and this is the upload that unlocks it.
@@ -327,7 +337,18 @@ def _scope_list(cfg: Any, batch: _Batch, arrived: Callable[[str], None]) -> None
             # Read before it is installed, with the run's own reader, so a file that would fail on
             # Preflight is refused while the operator is still looking at the picker and the list
             # they were working from is untouched.
-            kept = process_list_edit.archive(cfg.process_list, await event.file.read())
+            data = await event.file.read()
+            kept = process_list_edit.archive(cfg.process_list, data)
+            provenance.record_upload(
+                provenance.history_path(_resolve(cfg.export.path)),
+                "product-list",
+                # The dated copy, not the stable name: a selection months from now points at the
+                # document that will still be there, and ``product-list.xlsx`` is replaced by the
+                # next upload.
+                kept=next(iter(input_layout.list_archives(control)), None),
+                given_name=event.file.name,
+                rows=len(process_list_edit.read_sheet(cfg.process_list).rows),
+            )
             # Redrawn rather than left for the operator to reload: the tables below now describe
             # the file that was just replaced, and a screen that keeps showing the previous list
             # after a successful upload is the silent staleness this project designs against.
@@ -440,11 +461,29 @@ def _scope_grid(
             # They carry no checkbox because the only question this screen asks is "does this
             # run?", and for them the answer is no whatever anyone ticks.
             keep = {int(row[_ROW]) for row in below.selected} | set(unmatched)
+            chosen = sheet.keeping(keep)
             try:
-                process_list_edit.save_sheet(sheet.keeping(keep))
+                saved = process_list_edit.save_sheet(chosen)
             except ProcessListError as exc:
                 theme.notify_problem(str(exc))
                 return False
+            # Which export these ticks were made against. Recorded here rather than inside
+            # ``save_sheet`` because this is the layer that knows the whole batch; that one knows
+            # only the sheet it was handed.
+            # Every path here goes through ``_resolve``, including the one ``save_sheet`` just
+            # returned. ``start.command`` cds to the repository so the two spellings are the same
+            # file, but anchoring some of them and not others would put the ledger in one place and
+            # the files it describes in another the first time that stopped being true. Resolved,
+            # the worst case is a record that is not written — ``describe`` returns None for a file
+            # it cannot read — rather than a ledger split across two trees.
+            export = _resolve(cfg.export.path)
+            provenance.record_selection(
+                provenance.history_path(export),
+                _resolve(str(saved)),
+                product_list=input_layout.archive_path(_resolve(cfg.process_list.path)),
+                export=export,
+                rows=len(chosen.rows),
+            )
             # One word. The numbers are in the caption above the button, where the operator read
             # them *before* pressing it — a receipt racing a page change is the wrong place for a
             # fact somebody has to act on, and the long version of this sentence was unreadable in

@@ -122,3 +122,12 @@ def test_the_installed_nicegui_still_offers_the_api_the_handlers_use() -> None:
     assert inspect.iscoroutinefunction(FileUpload.save), (
         "FileUpload.save is no longer awaitable — the handlers await it"
     )
+    # The operator's own filename. The upload renames the file to export.xlsx, so this is the only
+    # moment it exists — and without it "which export did that run use?" can only ever be answered
+    # with a timestamp. A rename upstream would make `event.file.name` an AttributeError *inside*
+    # the handler, where NiceGUI logs it and the browser still shows a completed upload.
+    upload_fields = {f.name for f in dataclasses.fields(FileUpload)}
+    assert "name" in upload_fields, (
+        f"FileUpload no longer carries `name`, so an upload cannot record what it was called: "
+        f"{sorted(upload_fields)}"
+    )
