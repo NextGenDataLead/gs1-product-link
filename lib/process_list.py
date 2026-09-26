@@ -1,6 +1,7 @@
 """Process list: the operator's explicit list of which GTINs a run may touch.
 
-Loads the operator-maintained control file (``input/{client_id}/process-list.xlsx``) and
+Loads the operator-maintained control file — ``input/{client_id}/process/selection/
+selections.xlsx``, at whatever path ``process_list.path`` names — and
 returns the set of GTINs in it. **Every GTIN in the file is processed.** There is no
 eligibility logic here and no interpretation of cell *values* — the file is a list, and
 being on it is the whole meaning.

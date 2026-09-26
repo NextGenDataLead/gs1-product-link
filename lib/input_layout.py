@@ -91,6 +91,19 @@ chose from it.
 | `selections.xlsx` | Your list minus the rows you unticked. **A run reads this.** |
 | `selection-{stamp}.xlsx` | Every selection you saved, dated. The newest matches the live one. |
 
+## `process/history.jsonl` — what came from what
+
+One line per upload and per save, written as it happens. It is the only place two things are
+recorded: **what you called each file when you sent it** (uploading renames it, so otherwise the
+name is gone), and **which export each selection was ticked against**.
+
+That second one is what lets the screens warn you when a selection was chosen against an export you
+have since replaced — a barcode the new export has no row for publishes nothing and reports no
+error, so there is otherwise nothing to notice.
+
+Made by the tool, for the tool. Nothing breaks if it is missing — the screens just say
+"not recorded".
+
 ## The other folders
 
 **`reference/`** — workbooks a *setup* step reads, not a run. The GS1 DIY sector datamodel lives
@@ -120,9 +133,16 @@ the original again. Nothing is lost: every selection you saved is already dated 
 
 ## What a run keeps
 
-A run copies the selection it used, and the list that selection came from, into its own folder
-under `output/{client}/runs/{stamp}/`, next to its log and the per-row result sheet. Those copies
-describe that run and are never touched by a later batch.
+Each run owns a folder under `output/{client}/runs/{stamp}/` and writes four things into it, so the
+record of a batch cannot be overwritten by the next one:
+
+| File | What it is |
+|---|---|
+| `run.jsonl` | What it did, one line per product per language, as it went. |
+| `inputs.json` | What it **read** — which selection, and which export those ticks came from. |
+| `selection-used.xlsx` | The ticked list it consumed, copied in before it started. |
+| `selection-uploaded.xlsx` | The list that came from, so dropped rows can be named. |
+| `result.xlsx` | Your own list with what happened to each row appended. |
 """
 
 

@@ -415,7 +415,7 @@ Note the split from **E19**: *corrupt JSON* is recovered from (backed up, fresh 
 
 ### `ProcessListError` ✚
 
-The process list (`input/{client_id}/process-list.xlsx`) is missing, unreadable, has no sheet
+The process list (`input/{client_id}/process/selection/selections.xlsx`) is missing, unreadable, has no sheet
 carrying the configured GTIN column, or carries the column with **no GTINs under it**. Treated like
 `ConfigError` — exit 2 — because it names exactly which products a run may touch.
 

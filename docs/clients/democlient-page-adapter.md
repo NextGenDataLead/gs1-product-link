@@ -57,7 +57,7 @@ This adapter replaces the HTML-into-body approach *for Democlient*.
   - **Only 48 of 124 products have `IsPrimaryFile = TRUE`**; view codes are mostly the C-series
     (`C1L1`, `C1R1`, `C1R0`, `C1C0`…) with only 14 `A1N0` front shots. **76 products have neither a
     primary flag nor an A1N0** → the hero image must be chosen by a deterministic fallback.
-- **Process list** (`input/democlient/process-list.xlsx`): Strict OOXML, header on row 4, data on
+- **Process list** (`input/democlient/process/selection/selections.xlsx`): Strict OOXML, header on row 4, data on
   sheet "Blad1", 13-digit barcodes. Its `Categorie` column is a **temporary personal action tracker**
   (`webpage + QR`, `GS1 + webpage + QR`, `QR only`, `moet niet`, `mag weg`) — **not** a product
   category, and absent from future exports; the tool does not use it.

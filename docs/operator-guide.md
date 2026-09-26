@@ -349,7 +349,7 @@ Words this tool uses that mean something specific.
 | **Batch** (or *wave*) | One pass through Data → Content → Preflight → Publish. |
 | **Scope** | Which products a run may touch — after the scope list and the video rule have cut the spreadsheet down. |
 | **GS1 Data Source export** | The product spreadsheet from GS1. Data, not scope. Uploaded on Data. |
-| **Product scope list** | The separate spreadsheet listing which barcodes this batch covers. Scope, not data. Uploaded on Data, above the tables. Called `process-list.xlsx` on disk and `process_list` in the settings file — same thing. |
+| **Product scope list** | The separate spreadsheet listing which barcodes this batch covers. Scope, not data. Uploaded on Data, above the tables. Called `selections.xlsx` on disk, under `process/selection/`, and `process_list` in the settings file — same thing. |
 | **Result sheet** | Your scope list handed back after a run, with what happened to each row. Built on **Runs**, beside the run it describes. |
 | **Plan** | What the run worked out it would do, row by row, before doing any of it. One row per product per language. |
 | **Row** | One product in one language. Two languages means two rows for the same product. |

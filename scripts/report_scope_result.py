@@ -11,6 +11,11 @@ nothing here decides what a later run does, which is the whole difference from t
 scope list grows a status column and the run reads it back. See ``lib/process_list.py`` for what
 that cost the last time it was tried.
 
+**Every run now writes this sheet itself**, through :func:`lib.result_sheet.build` — which is why
+the assembly lives in ``lib`` and this module is the flags, the exit codes and the summary on
+stderr. This remains the way to rebuild one for any run on demand, or to point it at a different
+list, plan or products file.
+
 Three sheets, one workbook:
 
 * ``scope``   — one row per SKU: the operator's own columns, then ``in_scope``, ``result``, and
@@ -23,12 +28,12 @@ Three sheets, one workbook:
 name**: a same-second second run is written as ``{ts}-1.jsonl``, which sorts *before* ``{ts}.jsonl``
 because ``-`` precedes ``.``.
 
-Rows come from the **uploaded** list (``process-list.source.xlsx``) when it is there, so a row the
-operator deselected is reported as deselected rather than being missing from their own report. With
-no archive it falls back to the control file and says so — the report is then about the rows that
-ran, and the deselected ones cannot be named because nothing recorded them.
+Rows come from the list the run kept beside its own log — ``selection-uploaded.xlsx`` for the
+superset and ``selection-used.xlsx`` for the ticks — so a row the operator deselected is reported as
+deselected rather than being missing from their own report. A legacy run kept neither; that falls
+back to the files in ``input/`` and **says so**, because those may belong to a later batch.
 
-Emits: output/{client_id}/runs/{run stem}-scope.xlsx
+Emits: output/{client_id}/runs/{stamp}/result.xlsx
 Exit codes:
     0  report written
     1  the run log, the scope list or the products file could not be read

@@ -317,9 +317,10 @@ def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> 
             "A spreadsheet of the barcodes this batch may touch. Being on the list is the whole "
             "meaning — the tool reads no other column and interprets no cell value — so you "
             "prepare a batch by ticking rows below, and your own columns are kept exactly as they "
-            f"are. It is saved as {cfg.process_list.path}, and your upload is kept beside it as "
-            f"{process_list_edit.archive_path(control).name}, which is what the per-run result "
-            "sheet reads to name the rows you dropped. "
+            f"are. It is saved as {cfg.process_list.path}, and your upload is kept under "
+            f"uploads/ as {process_list_edit.archive_path(control).name}. Every run copies that "
+            "file into its own folder, which is what lets the result sheet afterwards name the "
+            "rows you dropped as dropped rather than leaving them out. "
             "That path is fixed in clients.yml and has no command-line override, so a list saved "
             "anywhere else is invisible to the tool."
         ),
@@ -367,7 +368,7 @@ def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> 
             theme.announce(
                 "Back to your original list",
                 f"All {rows} row(s) from the file you uploaded are back and ticked. Every "
-                f"selection you saved is still dated under selection/selections/.",
+                f"selection you saved is still dated beside it under process/selection/.",
             )
 
         theme.quiet_action("Start again from my uploaded file", restore)
@@ -434,11 +435,9 @@ def _scope_grid(
             "leave it out of this batch. Next saves your choice and moves on — there is no "
             "separate save button. The filter changes only what you can see, "
             "never what is ticked, so you can search, untick, clear the filter, and nothing you "
-            "did is lost. Saving keeps the previous version beside the file as .bak.xlsx, and if "
-            "the ticks come out wrong the way back is to upload the list again — every batch "
-            "starts "
-            "with both "
-            "files anyway. Nothing is "
+            "did is lost. Every save is kept, dated, under process/selection/, so nothing you "
+            "ever chose is overwritten — and if the ticks come out wrong, Start again from my "
+            "uploaded file above puts the whole list back. Nothing is "
             "published here; this only settles which products are in the batch. A product with no "
             "client-confirmed video in every language is marked in the Video column and a run "
             "skips it, reporting success (media.restrict_to_mapped_gtins)."

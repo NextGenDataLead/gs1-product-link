@@ -277,7 +277,7 @@ class ProcessListError(OrchestratorError):
     """The process list is missing, unreadable, malformed, or empty.
 
     Raised by ``lib.process_list.load_process_list`` when the operator's control
-    file (``input/{client_id}/process-list.xlsx``) cannot be opened, has no sheet
+    file (``input/{client_id}/process/selection/selections.xlsx``) cannot be opened, has no sheet
     carrying the configured GTIN column, or carries the column with no GTINs under
     it. The list names exactly which GTINs a run may touch, so a missing or
     malformed one is an operator-config error and ``run_plan.py`` treats it like

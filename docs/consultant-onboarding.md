@@ -49,7 +49,7 @@ downloaded.
 - [ ] **`.env`** — the credentials.
 - [ ] **`output/noviplast/state.json`** — the ledger of what is already published. **The expensive
       one.** See §4.
-- [ ] **`input/noviplast/process-list.xlsx`** — which barcodes a batch may touch. Uploadable on Data, so this one can also arrive later.
+- [ ] **`input/noviplast/process/selection/selections.xlsx`** — which barcodes a batch may touch. Uploadable on Data, so this one can also arrive later.
 - [ ] **The video files** — several gigabytes, so they arrive on a disk, not by mail.
 
 You will also need, from Noviplast rather than from the maintainer: a fresh **GS1 Data Source
@@ -123,7 +123,7 @@ Create the folders if they do not exist. Paths are relative to the project folde
 | `clients.yml` | `clients.yml` — top level, beside `install.bat` |
 | `.env` | `.env` — top level. On macOS, `chmod 600 .env` |
 | The ledger | `output/noviplast/state.json` — **exactly there; this path is not configurable** |
-| Product scope list | `input/noviplast/process-list.xlsx` |
+| Product scope list | `input/noviplast/process/selection/selections.xlsx` |
 
 The scope list is a spreadsheet whose only meaningful column is headed **`Barcode`**. Every other
 column is yours to use however you like — the tool reads none of them, and there is no status
@@ -167,7 +167,9 @@ need to confirm it.) There is no flexibility here: a file called `products (1).x
 guessing.
 
 Once you are set up you can also drop the new file on the **Data** screen's upload area, which puts
-it at that path for you and keeps the previous one beside it as `products.bak.xlsx`.
+it at that path for you and keeps a dated copy of it beside it — `export-{stamp}.xlsx`, one per
+upload, none of them ever deleted. If the new file will not parse, the previous one is put straight
+back and nothing changes.
 
 ### What to export from MyGS1
 
