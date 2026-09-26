@@ -22,7 +22,7 @@ from nicegui import events, ui
 
 from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Gate, GateOption, Mode
 from lib.records import PlanClassification, PlanRow, SkipReason
-from ui import REPO_ROOT, context, runner, theme
+from ui import REPO_ROOT, batch_view, context, runner, theme
 from ui.session import GateNotAnsweredError, PublishSession
 
 #: Scroll to an element once the page has stopped moving under it.
@@ -79,6 +79,10 @@ def render() -> None:
             )
             return
 
+        # Above the gates, because gate 0 asks the operator to confirm the export by hand and
+        # this is the answer to it: the name they sent, how old it is, and whether the ticks below
+        # were chosen against it.
+        batch_view.render(context.batch_in_force(cfg))
         _Flow(cid, cfg).build()
 
 

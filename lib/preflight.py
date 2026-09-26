@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Final
 
 import jsonschema
 
+from lib.batch import Chosen, in_force
 from lib.categories import assign_categories, coverage_report
 from lib.config import DEFAULT_CLIENTS_PATH, ClientConfig, get_client, load_clients
 from lib.errors import (
@@ -57,6 +58,7 @@ from lib.errors import (
 from lib.generator import generation_context, load_results, missing_copy
 from lib.gs1_dl_client import GS1DigitalLinkClient
 from lib.holds import held_units
+from lib.input_layout import archive_path
 from lib.media_video import (
     VideoMapSummary,
     canon_gtin,
@@ -67,6 +69,7 @@ from lib.media_video import (
     summarize_video_map,
 )
 from lib.process_list import load_process_list
+from lib.provenance import history_path, read
 from lib.records import ProductRecord, SkipReason
 from lib.state import WILL_BE_WRITTEN, classify_units, peek_state
 from lib.wp_client import WordPressClient, WordPressIdentity
@@ -635,6 +638,57 @@ def check_process_list(cfg: ClientConfig) -> CheckResult:
     )
 
 
+def check_selection_matches_export(cfg: ClientConfig) -> CheckResult:
+    """Were these ticks chosen against the export that is on disk now?
+
+    Nothing warned about this before, and there was no way to: a selection carries no trace of the
+    export it was made against. The failure it catches is entirely silent — a barcode the current
+    export has no row for produces no plan row, no error and no count anywhere, so the only evidence
+    is a total one smaller than expected. Replacing the export after choosing a batch is the
+    ordinary way to get there.
+
+    A **warning, never a failure.** Re-checking the ticks may well be unnecessary; only the operator
+    knows. And ``NOT_RECORDED`` reports ``NA`` rather than passing, because every batch saved before
+    this was kept is in that state and a green line there would be a claim nobody made — the
+    overclaiming that had to be taken out of the scope sentence once already.
+    """
+    name, title = "selection_matches_export", "Selection vs export"
+    if cfg.process_list is None:
+        return CheckResult(name, title, Status.NA, "no `process_list` block — nothing to compare")
+
+    selection = Path(cfg.process_list.path)
+    export = Path(cfg.export.path)
+    batch = in_force(
+        export=export,
+        selection=selection,
+        product_list=archive_path(selection),
+        history=read(history_path(export)),
+        gtin_column=cfg.process_list.gtin_column,
+    )
+    if batch.chosen_against is Chosen.THIS_EXPORT:
+        return CheckResult(
+            name, title, Status.OK, "the selection in force was chosen against this export"
+        )
+    if batch.chosen_against is Chosen.NOT_RECORDED:
+        return CheckResult(
+            name,
+            title,
+            Status.NA,
+            "which export the selection was chosen against was not recorded — it predates this "
+            "being kept",
+        )
+    return CheckResult(
+        name,
+        title,
+        Status.WARN,
+        f"the selection in force was chosen against {batch.chosen_export}, and the export on disk "
+        f"is not that file",
+        remedy="Open Data and check the ticks against this export. A barcode it has no row for is "
+        "dropped with no error and no count.",
+        data={"chosen_against": batch.chosen_export},
+    )
+
+
 def check_category_coverage(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
     """Run the ``build_brick_map --check`` gate offline: every GPC brick resolves to a term."""
     if cfg.categories is None:
@@ -1104,6 +1158,7 @@ def run_checks(
         check_generator(cfg),
         check_generation_results(cfg, products),
         check_process_list(cfg),
+        check_selection_matches_export(cfg),
         check_category_coverage(cfg, products),
         check_video_coverage(cfg),
         check_ffmpeg(cfg),

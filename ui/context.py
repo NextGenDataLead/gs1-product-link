@@ -16,9 +16,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from lib.batch import Batch, in_force
 from lib.config import ClientConfig, get_client, resolve_client_id
 from lib.errors import ConfigError
 from lib.gates import Mode
+from lib.input_layout import archive_path
+from lib.provenance import history_path, read
 from lib.records import Plan, PlanSummary, ProductRecord, RunOutcome
 from lib.run_files import iter_logs, newest_log, stamp_of
 from ui import REPO_ROOT
@@ -41,14 +44,24 @@ class FileFact:
     @property
     def age(self) -> str:
         """ "12 days ago", or "missing"."""
-        if not self.exists or self.modified is None:
-            return "missing"
-        days = (datetime.now(UTC) - self.modified).days
-        if days == 0:
-            return "today"
-        if days == 1:
-            return "yesterday"
-        return f"{days} days ago"
+        return age_of(self.modified if self.exists else None)
+
+
+def age_of(modified: datetime | None) -> str:
+    """ "today" / "yesterday" / "12 days ago", or "missing".
+
+    A function as well as a property because the batch panel has the timestamp without the path —
+    ``lib.batch`` cannot import this module, and a second way of spelling "12 days ago" on the same
+    screen as the first is how the two come to disagree by a day.
+    """
+    if modified is None:
+        return "missing"
+    days = (datetime.now(UTC) - modified).days
+    if days == 0:
+        return "today"
+    if days == 1:
+        return "yesterday"
+    return f"{days} days ago"
 
 
 def file_fact(path: str | Path) -> FileFact:
@@ -511,3 +524,70 @@ def mode_from(value: str | None) -> Mode:
         return Mode(value or "")
     except ValueError:
         return Mode.PAGES
+
+
+# --- The batch in force ------------------------------------------------------------------------
+
+
+def _resolved(path: str) -> Path:
+    """A configured path against the repository root. Every path in ``clients.yml`` is relative."""
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else REPO_ROOT / candidate
+
+
+def batch_in_force(cfg: ClientConfig) -> Batch | None:
+    """Which two files a run would use, cached for as long as they do not change.
+
+    ``None`` for a client with no ``process_list`` block, which plans every product and so has no
+    selection to describe.
+
+    **Cached, and keyed on what the files actually are.** This runs on four screens and costs two
+    workbook parses plus three digests — a fifth of a second on a real export, which is why
+    ``rail_facts`` deliberately carries none of it and stays stat-cheap. The key is every input's
+    ``(mtime, size)``, so a save or an upload invalidates it by changing the thing it describes
+    rather than by anybody remembering to clear anything.
+    """
+    if cfg.process_list is None:
+        return None
+    export = _resolved(cfg.export.path)
+    selection = _resolved(cfg.process_list.path)
+    product_list = archive_path(selection)
+    history_file = history_path(export)
+
+    key = (
+        str(selection),
+        _stamp_of(export),
+        _stamp_of(selection),
+        _stamp_of(product_list),
+        _stamp_of(history_file),
+    )
+    cached = _BATCHES.get(str(selection))
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    batch = in_force(
+        export=export,
+        selection=selection,
+        product_list=product_list,
+        history=read(history_file),
+        gtin_column=cfg.process_list.gtin_column,
+        products=product_count(cfg.client_id),
+    )
+    _BATCHES[str(selection)] = (key, batch)
+    return batch
+
+
+def _stamp_of(path: Path | None) -> tuple[float, int] | None:
+    """A file's identity for cache purposes: when it changed and how big it is."""
+    if path is None:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime, stat.st_size)
+
+
+#: One entry per client, for the life of the process. Keyed by the live selection's path so a
+#: repo with two clients configured cannot serve one's batch for the other.
+_BATCHES: dict[str, tuple[tuple[object, ...], Batch]] = {}

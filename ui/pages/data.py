@@ -42,34 +42,33 @@ from lib.errors import ProcessListError
 from lib.input_layout import export_archive_path, write_readme
 from lib.preflight import held_for_video, in_scope
 from lib.process_list import rows_in_export
-from ui import REPO_ROOT, context, process_list_edit, runner, theme
+from ui import REPO_ROOT, batch_view, context, process_list_edit, runner, theme
 
 
 @dataclass
-class _Batch:
-    """Which of the two files have arrived, and whether a selection has been saved.
+class _Session:
+    """The one thing about this screen that is genuinely about *this sitting*, and not about disk.
 
-    **Module-level, keyed by client, and deliberately not persisted.** The screen rebuilds on every
-    visit — NiceGUI runs a ``@ui.page`` function per request — so a local would reset the moment
-    the operator stepped to Content and back, and demanding both uploads again for a trip to the
-    next screen is not what "every run brings both files" means. A run is a batch, not a page view.
+    It used to hold three booleans — export arrived, list arrived, selection saved — and the first
+    two gated whether the grid appeared at all. That made the batch **invisible and live at the same
+    time**: restarting the shell hid the selection while a run went on consuming it, as the band
+    that replaced the grid admitted in so many words.
 
-    The boundary is the **process**: restarting the shell starts a fresh batch and both uploads are
-    required again. That is the operator's own loop — open it, do a wave, close it — and it needs
-    no storage secret, no cookie and no connected client, none of which this shell has today.
+    So arrival is no longer remembered. What is in force is read from the files, by
+    :func:`lib.batch.in_force`, which is what a run reads too — and the risk the old rule was
+    reaching for, a batch whose ticks were chosen against a *different* export, is now detected and
+    said out loud instead of being hidden behind an absent grid.
 
-    What it gives up is the two-window case, where both windows would share one batch. For a
-    loopback native window driven by one person that is not a real configuration, and the wrong
-    answer there is mild: a screen that offers to choose products, not a run that inherits a scope.
+    ``saved`` stays, because it is not a fact about disk: it answers "did *I*, in this sitting,
+    already choose a batch?", which is what makes "this replaced the selection you saved earlier"
+    true or false. A file's timestamp cannot tell you that.
     """
 
-    export: bool = False
-    listed: bool = False
     saved: bool = False
 
 
-#: One per client, for the life of the process. See :class:`_Batch`.
-_BATCHES: dict[str, _Batch] = {}
+#: One per client, for the life of the process. See :class:`_Session`.
+_BATCHES: dict[str, _Session] = {}
 
 
 def _resolve(path: str) -> Path:
@@ -101,40 +100,32 @@ def render() -> None:
             )
             return
 
-        # **A run brings both files.** Until they have both arrived *this visit*, the selection
-        # and the quality report are not shown — not shown empty, not shown stale, not shown at
-        # all. A screen that offered a batch built from whatever was left on disk is a screen that
-        # lets a run inherit the previous one's scope without anybody deciding to.
-        batch = _BATCHES.setdefault(cid, _Batch())
+        session = _BATCHES.setdefault(cid, _Session())
         #: The grid's save, hoisted so the Next button can call it. ``None`` until there is a grid.
         commit: dict[str, Callable[[], bool]] = {}
 
-        def refresh(which: str) -> None:
-            if which == "export":
-                batch.export = True
-            elif which == "list":
-                batch.listed = True
-            ready = batch.export and batch.listed
+        def refresh(_which: str) -> None:
+            """Redraw from **disk**, not from what arrived this visit.
+
+            ``_which`` is kept because the upload handlers pass it and it reads as documentation of
+            what just happened; nothing branches on it any more. What decides whether there is a
+            batch is whether both files are there and the selection reads — ``Batch.ready``.
+            """
+            in_force = context.batch_in_force(cfg)
+            ready = in_force is not None and in_force.ready
+            panel.clear()
             selection.clear()
             quality.clear()
             commit.clear()
+            with panel:
+                batch_view.render(in_force)
             with selection:
                 if ready:
-                    _scope_grid(cfg, cid, commit, caption, batch)
+                    _scope_grid(cfg, cid, commit, caption, session)
                 else:
                     theme.band(
                         "Upload both files above to choose the products for this run.", "quiet"
                     )
-                    if batch.saved:
-                        # Only reachable by restarting the shell, since arrival otherwise survives
-                        # a trip to another screen. The selection is still on disk and a run would
-                        # use it — but uploading the list again replaces it, and that is the part
-                        # worth saying before they do it rather than after.
-                        theme.band(
-                            "Your last selection was saved and a run would use it. Uploading the "
-                            "selection list again replaces it with the whole list.",
-                            "warn",
-                        )
             if ready:
                 with quality:
                     _quality(cid)
@@ -144,9 +135,11 @@ def render() -> None:
 
         with ui.element("div").classes("steps-2up"):
             _export(cfg, cid, refresh)
-            _scope_list(cfg, batch, refresh)
+            _scope_list(cfg, session, refresh)
 
-        # Bound after the row so they render below it, and before ``refresh`` is ever called.
+        # Bound after the row so they render below it, and before ``refresh`` is ever called. The
+        # panel sits above the grid: which files this is about comes before what is in them.
+        panel = ui.column().classes("w-full gap-0")
         selection = ui.column().classes("w-full gap-0")
         quality = ui.column().classes("w-full gap-0")
 
@@ -307,7 +300,7 @@ _TOAST_BEAT = 4.0
 _TABLE_HEIGHT = "55vh"
 
 
-def _scope_list(cfg: Any, batch: _Batch, arrived: Callable[[str], None]) -> None:
+def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> None:
     if cfg.process_list is None:
         with theme.section("Choose the products for this batch", step=2):
             ui.label(
@@ -353,7 +346,7 @@ def _scope_list(cfg: Any, batch: _Batch, arrived: Callable[[str], None]) -> None
             # the file that was just replaced, and a screen that keeps showing the previous list
             # after a successful upload is the silent staleness this project designs against.
             write_readme(cfg)
-            replaced, batch.saved = batch.saved, False
+            replaced, session.saved = session.saved, False
             arrived("list")
             theme.notify_ok("Selection list installed.")
             if replaced:
@@ -369,7 +362,7 @@ def _scope_list(cfg: Any, batch: _Batch, arrived: Callable[[str], None]) -> None
             except ProcessListError as exc:
                 theme.announce("Nothing to restore", str(exc), kind="warn")
                 return
-            batch.saved = False
+            session.saved = False
             arrived("list")
             theme.announce(
                 "Back to your original list",
@@ -385,7 +378,11 @@ def _scope_list(cfg: Any, batch: _Batch, arrived: Callable[[str], None]) -> None
 
 
 def _scope_grid(
-    cfg: Any, cid: str, commit: dict[str, Callable[[], bool]], caption: ui.label, batch: _Batch
+    cfg: Any,
+    cid: str,
+    commit: dict[str, Callable[[], bool]],
+    caption: ui.label,
+    session: _Session,
 ) -> None:
     """The list joined against the export: what is missing above, what will run below."""
     try:
@@ -488,7 +485,7 @@ def _scope_grid(
             # them *before* pressing it — a receipt racing a page change is the wrong place for a
             # fact somebody has to act on, and the long version of this sentence was unreadable in
             # the time it had. The backup path is not lost: it is in the ⓘ on this step.
-            batch.saved = True
+            session.saved = True
             theme.notify_ok("Saved")
             return True
 

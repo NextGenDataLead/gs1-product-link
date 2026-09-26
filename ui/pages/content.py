@@ -37,7 +37,7 @@ from typing import Any
 from nicegui import ui
 
 from lib.config import GeneratorConfig
-from ui import REPO_ROOT, context, env_edit, runner, theme
+from ui import REPO_ROOT, batch_view, context, env_edit, runner, theme
 
 
 def render() -> None:
@@ -68,6 +68,11 @@ def render() -> None:
                 "and there is nothing to import."
             ).classes("note")
             return
+
+        # Which export and which ticks this copy is for. Generating against last quarter's
+        # export produces text for the right barcodes and the wrong products, and the only place
+        # that showed up before was the live site.
+        batch_view.render(context.batch_in_force(cfg))
 
         results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
         _live_screen(cid, cfg.generator, results_path, list(cfg.wordpress.languages))

@@ -44,6 +44,7 @@ from lib.generator import (
     result_item,
     save_results,
 )
+from lib.input_layout import archive_path
 from lib.preflight import (
     Status,
     check_config,
@@ -53,6 +54,7 @@ from lib.preflight import (
     check_gs1,
     check_process_list,
     check_scope,
+    check_selection_matches_export,
     check_video_coverage,
     check_wordpress,
     in_scope,
@@ -60,6 +62,7 @@ from lib.preflight import (
     units_needing_copy,
     worst_status,
 )
+from lib.provenance import history_path, record_selection, record_upload
 from lib.records import LocalisedText, ProductRecord, State, StateEntry
 from lib.state import diff_against_state, save_state, state_path
 from lib.wp_client import WordPressIdentity
@@ -794,6 +797,87 @@ def test_process_list_reports_the_count(tmp_path: Path) -> None:
     result = check_process_list(cfg)
     assert result.status is Status.OK
     assert result.data["count"] == 2
+
+
+# --- Selection vs export ------------------------------------------------------
+
+
+def _layout(tmp_path: Path) -> tuple[Path, ProcessListConfig]:
+    """A client in the shipped layout, with both live files present."""
+    import openpyxl  # noqa: PLC0415 — only this helper needs it
+
+    root = tmp_path / "input" / "acme" / "process"
+    export = root / "uploads" / "GS1 export" / "export.xlsx"
+    export.parent.mkdir(parents=True, exist_ok=True)
+    export.write_bytes(b"exported")
+    selection = root / "selection" / "selections.xlsx"
+    selection.parent.mkdir(parents=True, exist_ok=True)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Barcode"])
+    sheet.append([GTIN_A])
+    workbook.save(selection)
+    return export, ProcessListConfig(path=str(selection), gtin_column="Barcode")
+
+
+def _record_save(export: Path, selection: Path) -> None:
+    saved = selection.with_name("selection-20260927T101600.xlsx")
+    saved.write_bytes(selection.read_bytes())
+    record_selection(
+        history_path(export),
+        saved,
+        product_list=archive_path(selection),
+        export=export,
+    )
+
+
+def test_a_selection_chosen_against_this_export_passes(tmp_path: Path) -> None:
+    export, listed = _layout(tmp_path)
+    _record_save(export, Path(listed.path))
+    cfg = _make_config(export=ExportConfig(path=str(export)), process_list=listed)
+
+    assert check_selection_matches_export(cfg).status is Status.OK
+
+
+def test_a_selection_chosen_against_a_replaced_export_warns_and_names_it(tmp_path: Path) -> None:
+    """Nothing warned about this before, and the failure it catches is entirely silent.
+
+    A barcode the current export has no row for produces no plan row, no error and no count — the
+    only evidence is a total one smaller than expected.
+    """
+    # Arrange
+    export, listed = _layout(tmp_path)
+    dated = export.with_name("export-20260620T090000.xlsx")
+    dated.write_bytes(export.read_bytes())
+    record_upload(history_path(export), "export", kept=dated, given_name="Q2.xlsx")
+    _record_save(export, Path(listed.path))
+    export.write_bytes(b"this quarter's export")
+    cfg = _make_config(export=ExportConfig(path=str(export)), process_list=listed)
+
+    # Act
+    result = check_selection_matches_export(cfg)
+
+    # Assert
+    assert result.status is Status.WARN, "a warning, never a failure — only the operator knows"
+    assert result.data["chosen_against"] == "export-20260620T090000.xlsx"
+    assert result.remedy, "a warning with nothing to do about it is noise"
+
+
+def test_a_selection_nobody_recorded_is_na_rather_than_passing(tmp_path: Path) -> None:
+    """Every batch saved before this was kept. A green line there is a claim nobody made — the
+    overclaiming that had to be taken out of the scope sentence once already.
+    """
+    export, listed = _layout(tmp_path)
+    cfg = _make_config(export=ExportConfig(path=str(export)), process_list=listed)
+
+    assert check_selection_matches_export(cfg).status is Status.NA
+
+
+def test_a_client_with_no_selection_has_nothing_to_compare(tmp_path: Path) -> None:
+    export, _ = _layout(tmp_path)
+    cfg = _make_config(export=ExportConfig(path=str(export)), process_list=None)
+
+    assert check_selection_matches_export(cfg).status is Status.NA
 
 
 # --- Video mapping ------------------------------------------------------------
