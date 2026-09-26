@@ -102,6 +102,7 @@ from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
 from lib.input_layout import archive_path
 from lib.media import convert_image_for_web
 from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map, prepare_video
+from lib.provenance import history_path, record_run
 from lib.qr import render_qr
 from lib.records import (
     ConfirmedPlan,
@@ -113,7 +114,14 @@ from lib.records import (
     State,
     StateEntry,
 )
-from lib.run_files import SELECTION_NAME, UPLOAD_NAME, log_path, sibling
+from lib.result_sheet import build as build_result_sheet
+from lib.run_files import (
+    SELECTION_NAME,
+    SOURCES_NAME,
+    UPLOAD_NAME,
+    log_path,
+    sibling,
+)
 from lib.state import load_state, save_state
 from lib.templates import TemplateEngine
 from lib.wp_client import MediaUpload, WordPressClient
@@ -1061,7 +1069,7 @@ class _RunLog:
         self._handle.close()
 
 
-def _keep_selection(cfg: ClientConfig, log: Path) -> None:
+def _keep_selection(cfg: ClientConfig, log: Path, *, mode: str, dry_run: bool) -> None:
     """Copy the selection this run is about to consume into the run's own directory.
 
     ``input/`` holds one thing: what the **next** run will use. It is overwritten by the next
@@ -1094,6 +1102,20 @@ def _keep_selection(cfg: ClientConfig, log: Path) -> None:
         except OSError as exc:  # noqa: BLE001 — a report file is not worth stopping a live run
             print(f"warning: could not keep a copy of {source}: {exc}", file=sys.stderr)
 
+    # And what those documents *are*, by name and hash, so "which export did this run use?" has an
+    # answer that survives the next upload. The copies above answer "which rows"; they cannot say
+    # which export the ticks were chosen against, because a selection carries no trace of it.
+    export = Path(cfg.export.path)
+    record_run(
+        sibling(log, SOURCES_NAME),
+        mode=mode,
+        dry_run=dry_run,
+        selection=control,
+        product_list=archive_path(control),
+        export=export,
+        history=history_path(export),
+    )
+
 
 def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per policy switch
     cfg: ClientConfig,
@@ -1122,7 +1144,7 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
     # run that dies never reaches the closing line at all.
     with _RunLog(log_path(cfg.client_id, ts.strftime(_TS_FORMAT))) as log:
         print(f"{prefix}{len(rows)} row(s){leg}; log: {log.path}", file=sys.stderr)
-        _keep_selection(cfg, log.path)
+        _keep_selection(cfg, log.path, mode=str(mode), dry_run=dry_run)
         if dry_run or resolved_gs1 is None:
             outcomes = log.append_all(_preview_row(cfg, row, engine, ts, mode) for row in rows)
         else:
@@ -1135,12 +1157,37 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
             save_state(state)
 
     errors = sum(1 for o in outcomes if o.status == "error")
+    _write_result_sheet(cfg, log.path)
     _log.info("run complete: %d ok, %d error(s)", len(outcomes) - errors, errors)
     print(
         f"{prefix}{len(outcomes)} row(s){leg}, {errors} error(s); log: {log.path}",
         file=sys.stderr,
     )
     return _EXIT_ERRORS if errors else _EXIT_OK
+
+
+def _write_result_sheet(cfg: ClientConfig, log: Path) -> None:
+    """The per-row result sheet, without being asked for. On failure too.
+
+    The operator sent a list of barcodes and gets back a log keyed by (GTIN, language); this is
+    the sheet that turns the second back into the first. It was built by the *shell*, in the handler
+    that had just streamed the run — so a publish driven from anywhere else produced no sheet at
+    all, and the moment it is most wanted is the moment a run has half-failed, which is also when
+    nobody goes looking for a report.
+
+    Best-effort, and broadly so. Every exception is caught, not just ``OSError``: this runs after
+    live pages and permanent GS1 records already exist, and a report that raised here would take the
+    run's exit code with it — turning a publish that worked into one that reads as failed, with no
+    way to tell which from the outside.
+    """
+    if cfg.process_list is None:
+        return
+    try:
+        built = build_result_sheet(cfg, log, warn=lambda line: print(line, file=sys.stderr))
+    except Exception as exc:  # noqa: BLE001 — see the docstring; a report must not fail a publish
+        print(f"warning: could not write the result sheet: {exc}", file=sys.stderr)
+        return
+    print(f"result sheet: {built.out}", file=sys.stderr)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

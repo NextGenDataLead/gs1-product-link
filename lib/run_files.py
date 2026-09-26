@@ -42,6 +42,14 @@ UPLOAD_NAME: Final = "selection-uploaded.xlsx"
 #: The per-row outcome workbook, written when the run finishes.
 RESULT_NAME: Final = "result.xlsx"
 
+#: What this run **read**, against ``run.jsonl``'s what it did: the selection it consumed and the
+#: export that selection was chosen against, each named and hashed. Written at the start, before
+#: anything live, so a run that dies has still recorded what it touched.
+#:
+#: Not ``source.json``: that word belongs to ``.source.xlsx``, a spelling of "the uploaded list"
+#: that nothing ever wrote and two scripts spent a week looking for.
+SOURCES_NAME: Final = "inputs.json"
+
 
 def runs_dir(client_id: str) -> Path:
     """Where every run of this client is recorded."""

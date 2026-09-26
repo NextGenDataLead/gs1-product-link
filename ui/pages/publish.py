@@ -830,13 +830,11 @@ class _Flow:
                 log.clear()
                 log.push(" ".join(["python", *argv]))
                 result = await runner.stream(argv, log.push)
-                # The result sheet, without being asked for. It was a button on the Runs screen,
-                # which made the per-row record of what just happened something the operator had
-                # to know existed — and the moment it is most wanted is the moment a run has just
-                # half-failed, which is also when nobody goes looking for a report. Written on
-                # failure too, for the same reason.
-                sheet = await runner.run_off_the_loop(runner.report_scope_argv(self.cid))
-                where = " The per-row result sheet is on the Runs screen." if sheet.ok else ""
+                # No second subprocess for the result sheet. `run_execute` writes it itself now,
+                # on failure too — which it had to, because a publish driven from anywhere but this
+                # screen produced no sheet at all, and the moment it is most wanted is the moment a
+                # run has just half-failed.
+                where = " The per-row result sheet is on the Runs screen."
                 if result.ok:
                     theme.notify_ok(f"Run finished with no errors.{where}")
                 else:

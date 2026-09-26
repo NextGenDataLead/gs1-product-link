@@ -35,8 +35,9 @@ from lib.config import (
 )
 from lib.errors import MediaIntegrityError, WordPressAPIError
 from lib.input_layout import archive_path
+from lib.provenance import history_path, read_run, record_upload
 from lib.records import LocalisedText, Plan, PlanClassification, PlanRow, ProductRecord, State
-from lib.run_files import SELECTION_NAME, UPLOAD_NAME
+from lib.run_files import RESULT_NAME, SELECTION_NAME, SOURCES_NAME, UPLOAD_NAME
 from lib.state import load_state, save_state
 from lib.wp_client import MediaUpload
 from scripts import run_execute
@@ -1641,7 +1642,7 @@ def test_a_run_keeps_both_the_selection_it_consumed_and_the_upload_it_came_from(
     log.parent.mkdir(parents=True)
 
     # Act
-    run_execute._keep_selection(cfg, log)
+    run_execute._keep_selection(cfg, log, mode="both", dry_run=False)
 
     # Assert
     assert (log.parent / SELECTION_NAME).read_bytes() == b"the ticked list"
@@ -1663,7 +1664,7 @@ def test_a_run_whose_client_never_uploaded_a_list_still_keeps_the_selection(
     log.parent.mkdir(parents=True)
 
     # Act
-    run_execute._keep_selection(cfg, log)
+    run_execute._keep_selection(cfg, log, mode="both", dry_run=False)
 
     # Assert
     assert (log.parent / SELECTION_NAME).exists()
@@ -1671,3 +1672,151 @@ def test_a_run_whose_client_never_uploaded_a_list_still_keeps_the_selection(
     assert not archive_path(control).parent.exists(), (
         "asking where the upload lives must not create input/uploads/ — a run writes to output/"
     )
+
+
+def test_a_run_records_which_export_its_ticks_were_chosen_against(tmp_path: Path) -> None:
+    """The answer to "which export did that run use?", which nothing could give before.
+
+    The copies beside the log say which *rows* ran. They cannot say which export those ticks were
+    chosen against, because a selection carries no trace of it — and `input/` has moved on by the
+    time anybody asks.
+    """
+    # Arrange: an export and a list, both recorded as uploads, and a selection saved against them.
+    control = tmp_path / "input" / "acme" / "process" / "selection" / "selections.xlsx"
+    control.parent.mkdir(parents=True)
+    control.write_bytes(b"the ticked list")
+    export = tmp_path / "input" / "acme" / "process" / "uploads" / "GS1 export" / "export.xlsx"
+    export.parent.mkdir(parents=True)
+    export.write_bytes(b"exported")
+    dated = export.with_name("export-20260927T101500.xlsx")
+    dated.write_bytes(export.read_bytes())
+    ledger = history_path(export)
+    record_upload(ledger, "export", kept=dated, given_name="GDSN_export_2026-09-27.xlsx", rows=12)
+
+    cfg = _make_config(
+        export=ExportConfig(path=str(export)),
+        process_list=ProcessListConfig(path=str(control)),
+    )
+    log = tmp_path / "output" / "acme" / "runs" / "20260927T101500Z" / "run.jsonl"
+    log.parent.mkdir(parents=True)
+
+    # Act
+    run_execute._keep_selection(cfg, log, mode="both", dry_run=False)
+
+    # Assert
+    recorded = read_run(log.parent / SOURCES_NAME)
+    assert recorded is not None
+    assert recorded.dry_run is False
+    assert recorded.mode == "both"
+    assert recorded.sources["export"].name == "export-20260927T101500.xlsx"
+    assert recorded.sources["export"].given_name == "GDSN_export_2026-09-27.xlsx"
+    assert recorded.sources["selection"].sha256, "the selection is identified even with no record"
+
+
+def test_a_dry_run_says_so_in_its_record(tmp_path: Path) -> None:
+    """A rehearsal reads the same selection as a real publish and publishes nothing.
+
+    Conflating the two would report a draft selection as finished, which is the direction that costs
+    something.
+    """
+    # Arrange
+    control = tmp_path / "input" / "acme" / "process" / "selection" / "selections.xlsx"
+    control.parent.mkdir(parents=True)
+    control.write_bytes(b"the ticked list")
+    export = tmp_path / "input" / "acme" / "process" / "uploads" / "GS1 export" / "export.xlsx"
+    export.parent.mkdir(parents=True)
+    export.write_bytes(b"exported")
+    cfg = _make_config(
+        export=ExportConfig(path=str(export)),
+        process_list=ProcessListConfig(path=str(control)),
+    )
+    log = tmp_path / "output" / "acme" / "runs" / "20260927T101500Z" / "run.jsonl"
+    log.parent.mkdir(parents=True)
+
+    # Act
+    run_execute._keep_selection(cfg, log, mode="pages", dry_run=True)
+
+    # Assert
+    recorded = read_run(log.parent / SOURCES_NAME)
+    assert recorded is not None
+    assert recorded.dry_run is True
+    assert recorded.mode == "pages"
+
+
+def test_a_legacy_run_with_no_record_reads_as_none_not_as_an_error(tmp_path: Path) -> None:
+    assert read_run(tmp_path / "runs" / "20260819T234001Z" / SOURCES_NAME) is None
+
+
+def test_a_real_run_writes_its_own_result_sheet_and_its_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end, through ``main``: the run's directory holds all four of its own documents.
+
+    The sheet used to be built by the shell after streaming the run, so a publish driven from
+    anywhere else produced none — and the moment it is most wanted is the moment a run has
+    half-failed.
+    """
+    # Arrange: a client in the shipped layout, with a selection and a parsed catalogue.
+    monkeypatch.chdir(tmp_path)
+    control = tmp_path / "input" / "acme" / "process" / "selection" / "selections.xlsx"
+    _write_scope_list(control, [GTIN_A])
+    export = tmp_path / "input" / "acme" / "process" / "uploads" / "GS1 export" / "export.xlsx"
+    export.parent.mkdir(parents=True)
+    export.write_bytes(b"exported")
+    products = tmp_path / "output" / "acme" / "data" / "products.json"
+    products.parent.mkdir(parents=True)
+    products.write_text(json.dumps([_product().model_dump(mode="json")]), encoding="utf-8")
+    cfg = _make_config(
+        export=ExportConfig(path=str(export)),
+        process_list=ProcessListConfig(path=str(control)),
+    )
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl")))
+
+    # Act
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    # Assert
+    run_dir = next((tmp_path / "output" / "acme" / "runs").glob("*/"))
+    assert (run_dir / "run.jsonl").is_file(), "what it did"
+    assert (run_dir / SOURCES_NAME).is_file(), "what it read"
+    assert (run_dir / SELECTION_NAME).is_file(), "the rows it ran"
+    assert (run_dir / RESULT_NAME).is_file(), "the per-SKU outcome, without anyone asking"
+
+
+def test_a_result_sheet_that_cannot_be_built_does_not_change_the_exit_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It runs after live pages and permanent GS1 records already exist.
+
+    A report that raised here would turn a publish that worked into one that reads as failed, with
+    no way to tell which from the outside.
+    """
+    # Arrange: no products.json, so building the sheet raises.
+    monkeypatch.chdir(tmp_path)
+    control = tmp_path / "input" / "acme" / "process" / "selection" / "selections.xlsx"
+    _write_scope_list(control, [GTIN_A])
+    cfg = _make_config(process_list=ProcessListConfig(path=str(control)))
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl")))
+
+    # Act
+    code = run_execute.main(["acme", "--plan", str(plan)])
+
+    # Assert
+    assert code == 0, "a missing report must not report the publish as failed"
+    run_dir = next((tmp_path / "output" / "acme" / "runs").glob("*/"))
+    assert not (run_dir / RESULT_NAME).exists()
+    assert (run_dir / "run.jsonl").is_file(), "the run's own record is untouched by the report"
+
+
+def _write_scope_list(path: Path, gtins: list[str]) -> None:
+    import openpyxl  # noqa: PLC0415 — only this helper needs it
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Barcode"])
+    for gtin in gtins:
+        sheet.append([gtin])
+    workbook.save(path)

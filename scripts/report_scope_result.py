@@ -42,34 +42,17 @@ import json
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
-import openpyxl
-from openpyxl.styles import Font
-from openpyxl.utils import get_column_letter
-
-from lib.config import ClientConfig, ProcessListConfig, get_client
+from lib.config import get_client
 from lib.env import load_env
 from lib.errors import ConfigError, ProcessListError
-from lib.input_layout import archive_path
-from lib.process_list import ProcessListSheet, read_process_list
-from lib.records import Plan, ProductRecord, RunOutcome
-from lib.run_files import (
-    RESULT_NAME,
-    SELECTION_NAME,
-    UPLOAD_NAME,
-    newest_log,
-    sibling,
-)
-from lib.scope_report import build_rows, legend_grid, scope_grid, units_grid
+from lib.result_sheet import Sheets, build
+from lib.run_files import newest_log
 
 _EXIT_OK = 0
 _EXIT_ERROR = 1
 _EXIT_USAGE = 2
-
-#: Widest a column is auto-sized to — an error string runs to a paragraph, and a sheet whose first
-#: column is 300 characters wide is worse to work in than one that truncates on screen.
-_MAX_COLUMN_WIDTH = 60
 
 
 def _newest_run(client_id: str) -> Path | None:
@@ -80,128 +63,7 @@ def _newest_run(client_id: str) -> Path | None:
         return None
 
 
-def _load_outcomes(path: Path) -> tuple[list[RunOutcome], int]:
-    """Read a run log, keeping the rows that parse and counting the ones that do not.
-
-    A truncated final line is normal for a run killed mid-write, and discarding the whole file over
-    it would throw away the record exactly when it matters most — which is also when this report
-    is most likely to be asked for.
-    """
-    outcomes: list[RunOutcome] = []
-    unreadable = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            outcomes.append(RunOutcome.model_validate_json(line))
-        except ValueError:
-            unreadable += 1
-    return outcomes, unreadable
-
-
-def _load_plan(path: Path) -> Plan | None:
-    """The plan, for its holds. ``None`` when it is absent or will not validate."""
-    try:
-        return Plan.model_validate_json(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-
-def _plan_is_for(plan: Plan, outcomes: list[RunOutcome]) -> bool:
-    """Whether this plan plausibly belongs to this run.
-
-    ``plan.json`` is overwritten by every ``run_plan``, so for anything but the newest run it is
-    somebody else's document. A plan generated *after* the run it is being read beside describes
-    work that run never saw, and its holds would be reported as that run's — so it is refused and
-    said out loud rather than quietly used.
-    """
-    return not outcomes or plan.generated_at <= max(outcome.ts for outcome in outcomes)
-
-
-def _load_products(path: Path) -> list[ProductRecord]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return [ProductRecord.model_validate(item) for item in data]
-
-
-class _Sheets(NamedTuple):
-    """The two lists this report joins, and where they were found.
-
-    ``uploaded`` is the superset — the list as the operator sent it — and ``control`` is the ticked
-    subset the run consumed. ``archived`` says whether ``uploaded`` is genuinely the upload; when
-    it is not, the two are the same sheet and no deselected row can be named.
-    """
-
-    uploaded: ProcessListSheet
-    control: ProcessListSheet
-    archived: bool
-    from_run: bool
-
-
-def _scope_sheets(cfg: ClientConfig, run_path: Path) -> _Sheets:
-    """The uploaded list and the ticked list, **from the run's own directory** where it has them.
-
-    This is the whole point of ``lib/run_files``: a run copies in the selection it consumed and the
-    upload that selection came from, because ``input/`` means "what the *next* run will use" and is
-    overwritten by the next batch. A report that read ``input/`` afterwards described somebody
-    else's rows.
-
-    It did read ``input/`` — and worse, it read ``selections.source.xlsx``, a path nothing has ever
-    written. So every report since the folders were split took the both-sheets-are-the-control-file
-    fallback and told the operator "no uploaded list archived", on every run, for every client. The
-    run folders had the right answer sitting beside the log the whole time.
-
-    Falls back to ``input/`` for a legacy run that kept no copies, so those still produce a report.
-    """
-    assert cfg.process_list is not None  # guarded by the caller
-    column = cfg.process_list.gtin_column
-
-    def read(path: Path) -> ProcessListSheet:
-        return read_process_list(ProcessListConfig(path=str(path), gtin_column=column))
-
-    used, sent = sibling(run_path, SELECTION_NAME), sibling(run_path, UPLOAD_NAME)
-    if used.is_file():
-        control = read(used)
-        if sent.is_file():
-            return _Sheets(read(sent), control, True, True)
-        return _Sheets(control, control, False, True)
-
-    # No copies in the run directory: a run from before they were kept. The live files are the best
-    # available answer and may well be a later batch's, which is what ``from_run`` exists to say.
-    control = read_process_list(cfg.process_list)
-    archive = archive_path(control.path)
-    if not archive.is_file():
-        return _Sheets(control, control, False, False)
-    return _Sheets(read(archive), control, True, False)
-
-
-def _write_xlsx(path: Path, sheets: list[tuple[str, list[str], list[list[str]]]]) -> None:
-    """Write the workbook, each sheet with a frozen, filterable header row."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    workbook = openpyxl.Workbook()
-    workbook.remove(workbook.active)
-    for title, columns, rows in sheets:
-        sheet = workbook.create_sheet(title)
-        sheet.append(columns)
-        for row in rows:
-            sheet.append(row)
-        for cell in sheet[1]:
-            cell.font = Font(bold=True)
-        sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = sheet.dimensions
-        _size_columns(sheet, columns, rows)
-    workbook.save(path)
-    workbook.close()
-
-
-def _size_columns(sheet: Any, columns: list[str], rows: list[list[str]]) -> None:
-    """Widen each column to its widest value, capped."""
-    for index, name in enumerate(columns):
-        longest = max((len(str(row[index])) for row in rows if index < len(row)), default=0)
-        width = min(max(len(name), longest) + 2, _MAX_COLUMN_WIDTH)
-        sheet.column_dimensions[get_column_letter(index + 1)].width = width
-
-
-def _report(rows: list[Any], unreadable: int, sheets: _Sheets, plan_used: bool) -> None:
+def _report(rows: list[Any], unreadable: int, sheets: Sheets, plan_used: bool) -> None:
     """Say what was counted, on stderr, naming every reason a number is lower than it looks."""
     results = Counter(row.result for row in rows)
     tally = ", ".join(f"{count} {name}" for name, count in sorted(results.items()))
@@ -261,7 +123,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911, PLR0912 — one exit per failure
+def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns the process exit code."""
     args = _parse_args(argv)
     try:
@@ -286,71 +148,24 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911, PLR0912 — on
         )
         return _EXIT_USAGE
 
-    products_path = (
-        Path(args.products)
-        if args.products
-        else Path("output") / cfg.client_id / "data" / "products.json"
-    )
     try:
-        outcomes, unreadable = _load_outcomes(run_path)
-        products = _load_products(products_path)
-        if args.list:
-            listed = ProcessListConfig(path=args.list, gtin_column=cfg.process_list.gtin_column)
-            uploaded = control = read_process_list(listed)
-            sheets = _Sheets(uploaded, control, True, False)
-        else:
-            sheets = _scope_sheets(cfg, run_path)
-        uploaded, control = sheets.uploaded, sheets.control
+        built = build(
+            cfg,
+            run_path,
+            listed=args.list,
+            plan_path=args.plan,
+            no_plan=args.no_plan,
+            products_path=args.products,
+            out=args.out,
+            warn=lambda line: print(line, file=sys.stderr),
+        )
     except (OSError, json.JSONDecodeError, ValueError, ProcessListError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return _EXIT_ERROR
 
-    plan = _read_plan(args, cfg.client_id, outcomes)
-    rows = build_rows(
-        uploaded,
-        selected=control.listed_gtins(),
-        exported={product.gtin14 for product in products},
-        outcomes=outcomes,
-        skipped=plan.skipped if plan else [],
-        languages=cfg.wordpress.languages,
-    )
-
-    columns, grid = scope_grid(uploaded, rows, cfg.wordpress.languages)
-    # Into the run's own directory, beside its log and the selection it consumed. It used to be
-    # `{stamp}-scope.xlsx` in the runs folder — a fourth naming scheme for a document about one
-    # run, sitting in a directory of other runs' documents.
-    out = Path(args.out) if args.out else sibling(run_path, RESULT_NAME)
-    _write_xlsx(
-        out,
-        [
-            ("scope", columns, grid),
-            ("units", *units_grid(outcomes, plan.skipped if plan else [])),
-            ("legend", *legend_grid()),
-        ],
-    )
-    print(f"Wrote {out} for {run_path.name}", file=sys.stderr)
-    _report(rows, unreadable, sheets, plan is not None)
+    print(f"Wrote {built.out} for {run_path.name}", file=sys.stderr)
+    _report(built.rows, built.unreadable, built.sheets, built.plan_used)
     return _EXIT_OK
-
-
-def _read_plan(args: argparse.Namespace, client_id: str, outcomes: list[RunOutcome]) -> Plan | None:
-    """The plan whose holds this report names, or ``None`` with a reason on stderr."""
-    if args.no_plan:
-        return None
-    path = Path(args.plan) if args.plan else Path("output") / client_id / "plan.json"
-    plan = _load_plan(path)
-    if plan is None:
-        if args.plan:
-            print(f"warning: {path} could not be read as a plan", file=sys.stderr)
-        return None
-    if not _plan_is_for(plan, outcomes):
-        print(
-            f"warning: {path} was generated after this run, so it is a later run's plan — its "
-            f"holds are not reported. Pass --plan to point at the right one, or --no-plan.",
-            file=sys.stderr,
-        )
-        return None
-    return plan
 
 
 if __name__ == "__main__":

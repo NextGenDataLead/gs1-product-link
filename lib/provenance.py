@@ -96,6 +96,27 @@ class Recorded(BaseModel):
     sources: dict[str, SourceRef] = {}
 
 
+class RunInputs(BaseModel):
+    """What one run read — ``runs/{stamp}/inputs.json``.
+
+    Its own file in the run's own directory rather than a line in the ledger, because a run reads
+    ``input/`` and writes ``output/`` and that is not negotiable. Same record type, same rule, in
+    the folder that owns the artefact.
+
+    ``dry_run`` is load-bearing: a rehearsal reads the same selection as a real publish, and a
+    selection "used by" a dry run has not been published. Conflating the two would report a draft as
+    finished, which is the direction that costs something.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    v: int = VERSION
+    at: datetime
+    mode: str
+    dry_run: bool
+    sources: dict[str, SourceRef] = {}
+
+
 class History(NamedTuple):
     """The ledger as far as it could be read.
 
@@ -308,3 +329,56 @@ def record_selection(
         history,
         Recorded(what="selection", at=datetime.now(UTC), of=ref, sources=sources),
     )
+
+
+def record_run(  # noqa: PLR0913 — one keyword per document a run reads, plus where to look
+    path: Path,
+    *,
+    mode: str,
+    dry_run: bool,
+    selection: Path,
+    product_list: Path,
+    export: Path,
+    history: Path | None,
+) -> bool:
+    """Write ``inputs.json`` for a run. Returns whether it landed; never raises.
+
+    Called before the first live write, for the reason the log path is announced up front: a run
+    that dies part-way has still said what it consumed, and that is exactly when somebody needs to
+    know — live pages and permanent records may already exist for the rows that landed.
+    """
+    known = read(history)
+    sources: dict[str, SourceRef] = {}
+    read_from: tuple[tuple[What, Path], ...] = (
+        ("selection", selection),
+        ("product-list", product_list),
+        ("export", export),
+    )
+    for what, live in read_from:
+        found = resolve(live, known, what)
+        if found is not None:
+            sources[what] = found
+    payload = RunInputs(at=datetime.now(UTC), mode=mode, dry_run=dry_run, sources=sources)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return False
+    return True
+
+
+def read_run(path: Path) -> RunInputs | None:
+    """What a run read, or ``None`` — a legacy run has no such file, which is not an error."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("v") != VERSION:
+        return None
+    try:
+        return RunInputs.model_validate(data)
+    except ValidationError:
+        return None
