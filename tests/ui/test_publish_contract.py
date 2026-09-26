@@ -363,3 +363,37 @@ def test_the_screen_does_not_re_derive_which_rows_are_confirmed() -> None:
     assert not [node for node in ast.walk(confirmed) if isinstance(node, ast.ListComp)], (
         "_write_confirmed builds its own row list again — ask the session instead"
     )
+
+
+def test_the_copy_gate_has_an_empty_state() -> None:
+    """A required gate with nothing to approve must say so, not render an empty form.
+
+    On a run that writes no pages the figures are three zeroes and the link goes to an empty list,
+    so the gate asks the operator to approve text that does not exist. Answering it teaches them
+    that answering it means nothing — which is the habit every gate here is built against.
+
+    Asserted on the renderer rather than through a browser: the check is that the zero case is
+    branched on at all, and an AST test runs in CI's required job, which has no NiceGUI.
+    """
+    renderer = _renderers()["content_review"]
+    compared = [
+        node
+        for node in ast.walk(renderer)
+        if isinstance(node, ast.Compare)
+        and any(isinstance(c, ast.Constant) and c.value == 0 for c in node.comparators)
+    ]
+    assert compared, "the copy gate no longer distinguishes 'nothing to review' from a shortfall"
+
+
+def test_the_copy_gate_names_the_two_fields_it_is_about() -> None:
+    """ "Copy" is this codebase's word. The operator's words are on the page they publish.
+
+    The tagline and the Eigenschappen block are the only two things on a product page a machine
+    wrote, and a gate that calls them "the copy" leaves the operator to work out which part of the
+    page they are being asked to vouch for.
+    """
+    source = ast.get_source_segment(_PUBLISH.read_text("utf-8"), _renderers()["content_review"])
+    assert source is not None
+    assert "Eigenschappen" in source
+    assert "tagline" in source
+    assert "Eigenschappen" in BY_ID["content_review"].summary

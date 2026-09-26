@@ -253,6 +253,16 @@ body { background: var(--paper) !important; color: var(--ink) !important;
                 background: color-mix(in oklab, var(--danger) 8%, transparent); }
 .band-warn    { border-color: var(--warn);
                 background: color-mix(in oklab, var(--warn) 10%, transparent); }
+.dialog-card  { min-width: min(34rem, 90vw); max-width: min(48rem, 92vw); }
+.announce-warn   { color: var(--warn); }
+.announce-danger { color: var(--danger); }
+.announce-detail { white-space: pre-wrap; max-height: 40vh; overflow: auto; display: block; }
+.figure-row     { display: grid; gap: var(--space-4) var(--space-5); width: 100%;
+                  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+                  align-items: start; margin-bottom: var(--space-4); }
+.figure-block   { max-width: 13rem; }
+.figure-meaning { font-size: var(--text-micro); color: var(--ink-soft); line-height: 1.45;
+                  margin-top: var(--space-1); }
 .band-quiet   { border-color: var(--rule); color: var(--ink-soft);
                 background: color-mix(in oklab, var(--ink) 3%, transparent); }
 .band-link    { display: inline-block; margin-top: var(--space-2); color: inherit;
@@ -286,7 +296,15 @@ body { background: var(--paper) !important; color: var(--ink) !important;
 .gate-why code    { font-family: var(--font-mono); font-size: 0.92em;
                     background: color-mix(in oklab, var(--ink) 6%, transparent);
                     padding: 0.05em 0.3em; }
-.gate-done    { opacity: 0.55; }
+.gate-done    { opacity: 0.7; }
+/* A folded gate is a Quasar expansion wearing the card. Quasar supplies the header's own
+   padding, so the card's would double it; the body keeps it. */
+.gate-folded  { padding: 0; }
+.gate-folded .q-expansion-item__content { padding: 0 var(--space-4) var(--space-4); }
+.gate-folded .q-item__label             { font-size: var(--text-lead); font-weight: 620; }
+.gate-folded .q-item__label--caption    { font-family: var(--font-mono);
+                                          font-size: var(--text-micro); font-weight: 400;
+                                          letter-spacing: 0.04em; text-transform: uppercase; }
 
 .console      { font-family: var(--font-mono); font-size: var(--text-micro); line-height: 1.6;
                 background: oklch(19% 0.012 260); color: oklch(92% 0.01 260);
@@ -535,13 +553,14 @@ def subhead(title: str, *, step: int | None = None, explain: str = "") -> None:
         _reveals(dot, explain)
 
 
-def explanation(text: str, *, about: str) -> None:
-    """An ⓘ that shows its text on hover and keeps it on press.
+def explanation(text: str, *, about: str, rich: bool = False) -> None:
+    """An ⓘ that shows its text when pressed. Only when pressed.
 
-    **Both, deliberately.** Hover answers it without a click for an operator already reaching past
-    it; the press is what makes it reachable at all on a touch screen and by keyboard, where there
-    is no hover. A tooltip alone would put this screen's only account of what a file is somewhere a
-    keyboard cannot go.
+    It used to do both, and the hover was the mistake. Text that appears because the pointer
+    crossed something appears when nobody asked and vanishes before it is read; on a screen where
+    these sit beside numbers, it also means a paragraph flickering over the figure the operator is
+    trying to read. The press is the half that works everywhere — touch, keyboard, and a pointer —
+    so it is the only half left. The ⓘ is a real ``<button>``, so Enter and Space still open it.
 
     It is here rather than inlined at each call site because it carries a decision about *what*
     gets hidden. Only text that is **true every time and needed once** — which of the two uploads
@@ -554,11 +573,15 @@ def explanation(text: str, *, about: str) -> None:
         about: What it explains, used to label the control for a screen reader, which otherwise
                announces every one of these identically as "i".
     """
-    _reveals(_info_dot(text, about=about), text)
+    _reveals(_info_dot(text, about=about), text, rich=rich)
 
 
 def _info_dot(text: str, *, about: str) -> ui.element:
-    """The ⓘ itself: a real button, so it is focusable, with the text also on hover."""
+    """The ⓘ itself: a real button, so it is focusable and works from the keyboard.
+
+    ``text`` is not attached as a tooltip. It was, and that was the hover half — see
+    :func:`explanation`.
+    """
     dot = (
         ui.element("button")
         .classes("info-dot")
@@ -566,13 +589,17 @@ def _info_dot(text: str, *, about: str) -> ui.element:
     )
     with dot:
         ui.label("i")
-    dot.tooltip(text)
     return dot
 
 
-def _reveals(dot: ui.element, text: str) -> None:
-    """Put ``text`` in the current container, hidden, and let ``dot`` toggle it."""
-    body = ui.label(text).classes("explain")
+def _reveals(dot: ui.element, text: str, *, rich: bool = False) -> None:
+    """Put ``text`` in the current container, hidden, and let ``dot`` toggle it.
+
+    ``rich`` renders it as Markdown. The gate purposes in ``lib.gates`` are written with bold and
+    backticks — they are the same strings the skill renders as prose — and a plain label shows the
+    operator literal asterisks on the one screen where the text most needs to be readable.
+    """
+    body = (ui.markdown(text) if rich else ui.label(text)).classes("explain")
     body.set_visibility(False)
 
     shown = False
@@ -665,6 +692,37 @@ def notify_problem(text: str) -> None:
     _notify(text, "negative")
 
 
+def announce(headline: str, body: str, *, kind: str = "quiet", detail: str = "") -> None:
+    """An outcome the operator has to dismiss before the screen is usable again.
+
+    A toast is the right weight for a result the operator is already watching arrive — an upload
+    completing under the picker they are looking at. It is the wrong weight for the end of a
+    command that took minutes, because the operator went and did something else, and
+    :data:`_NOTIFY_MS` decides how long the only account of what happened stays on screen. A modal
+    waits as long as they do.
+
+    ``detail`` is the command's own output, and it is shown **only when there is a reason to read
+    it** — a failure. Kept off the screen otherwise: a console block standing under a button is
+    read as something the operator is meant to understand, and on this screen it was a line of
+    unit arithmetic that said "nothing happened" in a way nobody could tell from "it broke".
+
+    Args:
+        headline: What happened, in three or four words.
+        body: What it means, in the operator's words — ideally what to do next.
+        kind: ``quiet`` | ``warn`` | ``danger``, styling the headline the way a band is styled.
+        detail: Raw command output, shown scrollable under the body. Empty for a success.
+    """
+    with ui.dialog().props("persistent") as dialog, ui.element("div").classes("card dialog-card"):
+        ui.label(headline).classes(f"section-head announce-{kind}")
+        ui.label(body).classes("note mt-2")
+        if detail:
+            ui.label(detail).classes("console mt-3 announce-detail")
+        # Labelled "Close" rather than "OK": there is nothing here to agree to, and a modal whose
+        # button reads as consent is how an operator learns to dismiss dialogs without reading.
+        ui.button("Close", on_click=dialog.close).classes("mt-4")
+    dialog.open()
+
+
 def upload(
     label: str,
     handler: Callable[[events.UploadEventArguments], Awaitable[str]],
@@ -711,11 +769,34 @@ def upload(
     picker.on_upload(_guarded)
 
 
-def figure(value: str, label: str) -> None:
-    """A number worth reading at a glance, with its unit spelled out beneath."""
-    with ui.column().classes("gap-0"):
+@contextmanager
+def figures() -> Iterator[None]:
+    """The row a set of :func:`figure` calls goes in.
+
+    A grid rather than a flex row, because the call sites had it as one and the wrap was
+    arbitrary: four counts on a card broke 3 + 1, which reads as one figure singled out rather
+    than as a row that ran out of width. ``auto-fit`` distributes whatever fits and wraps the rest
+    into equal columns, so four become 4 across or 2 × 2 depending on the screen, and neither
+    looks like a mistake.
+    """
+    with ui.element("div").classes("figure-row"):
+        yield
+
+
+def figure(value: str, label: str, meaning: str = "") -> None:
+    """A number worth reading at a glance, with its unit spelled out beneath.
+
+    ``meaning`` is what the number counts, in a few words, under the label. A figure's label is a
+    name, not a definition — "pending", "HELD", "in the catalogue" — and on this pipeline the
+    difference between two of them is the difference between a page publishing and a page being
+    silently dropped. Where the reading is not obvious the figure says it, rather than leaving the
+    operator to infer it from a paragraph above.
+    """
+    with ui.column().classes("gap-0 figure-block"):
         ui.label(value).classes("figure")
         ui.label(label).classes("figure-label")
+        if meaning:
+            ui.label(meaning).classes("figure-meaning")
 
 
 #: Status → the class that colours it, and the word that carries it without colour.

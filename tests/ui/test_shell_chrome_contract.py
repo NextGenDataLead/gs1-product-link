@@ -166,3 +166,24 @@ def test_the_theme_offers_one_way_to_hide_a_sentence_and_it_says_what_may_be_hid
         "discoverable at the operator's leisure, so anything they must not miss belongs in a band "
         "on the page — the Data screen's staleness warning is the case this rule is about"
     )
+
+
+def test_the_info_dot_reveals_on_press_only() -> None:
+    """No tooltip: text must not appear because a pointer crossed something.
+
+    It did both for a while, and hover was the wrong half. These sit beside figures, so a hover
+    reveal is a paragraph flickering over the number the operator is reading — and it appears when
+    nobody asked and goes before it is read. The press works on touch, on a keyboard and with a
+    pointer, so it is the only half left; the ⓘ is a real ``<button>``, so Enter and Space open it.
+    """
+    dot = next(
+        node
+        for node in ast.walk(ast.parse(_THEME.read_text("utf-8")))
+        if isinstance(node, ast.FunctionDef) and node.name == "_info_dot"
+    )
+    called = {
+        node.func.attr
+        for node in ast.walk(dot)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "tooltip" not in called, "the ⓘ grew a tooltip again — that is the hover half"

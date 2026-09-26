@@ -36,6 +36,10 @@ _SKILL: Final = (
     / "SKILL.md"
 )
 
+#: The most a gate's one-line summary may run to. Two lines on a card at the width this
+#: screen uses; past that it is a paragraph wearing a short field's name.
+_SUMMARY_CHARS: Final = 110
+
 #: One row of the Gate index table: | `id` | step | required | modes |
 _ROW: Final = re.compile(
     r"^\|\s*`(?P<id>[a-z_]+)`\s*\|\s*(?P<step>[\d.]+)\s*\|(?P<required>[^|]*)\|(?P<modes>[^|]*)\|",
@@ -487,6 +491,7 @@ def test_a_gate_knows_its_own_applicability() -> None:
         step="1",
         title="X",
         purpose="why",
+        summary="what",
         options=(),
         required=False,
         modes=frozenset({Mode.LINKS}),
@@ -515,6 +520,7 @@ def test_a_gate_can_depend_on_what_the_plan_dropped() -> None:
         step="1",
         title="X",
         purpose="why",
+        summary="what",
         options=(),
         required=False,
         modes=frozenset({Mode.PAGES}),
@@ -526,3 +532,22 @@ def test_a_gate_can_depend_on_what_the_plan_dropped() -> None:
     assert not gate.applies(
         mode=Mode.PAGES, has_generator=False, is_production=False, has_missing_product_name=False
     )
+
+
+def test_every_gate_carries_a_short_line_as_well_as_its_why() -> None:
+    """``summary`` is required, and it is required to be short.
+
+    A form leads with it and keeps ``purpose`` one press away, so a gate whose summary is another
+    paragraph reproduces the slab it was added to remove — and one with no summary at all would
+    render a card with a title and no idea what it is for. Both failures are silent on screen.
+    """
+    for gate in GATES:
+        assert gate.summary.strip(), f"{gate.id} has no summary"
+        assert len(gate.summary) <= _SUMMARY_CHARS, (
+            f"{gate.id}'s summary is {len(gate.summary)} characters; it leads a card, so it has "
+            f"to fit on a line or two. The long version belongs in `purpose`."
+        )
+        assert len(gate.summary) < len(gate.purpose), (
+            f"{gate.id}'s summary is not shorter than its purpose — one of them is in the wrong "
+            f"field"
+        )
