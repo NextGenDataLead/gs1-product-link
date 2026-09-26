@@ -20,6 +20,7 @@ from lib.config import ClientConfig, get_client, resolve_client_id
 from lib.errors import ConfigError
 from lib.gates import Mode
 from lib.records import Plan, PlanSummary, ProductRecord, RunOutcome
+from lib.run_files import iter_logs, newest_log, stamp_of
 from ui import REPO_ROOT
 
 
@@ -136,6 +137,128 @@ def doctor_check(payload: Any, name: str) -> dict[str, Any] | None:
     if not isinstance(payload, list):
         return None
     return next((entry for entry in payload if entry.get("name") == name), None)
+
+
+def live_counts(payload: Any) -> dict[str, int] | None:
+    """The three figures from ``scripts.report_live_copy``, or ``None`` when it said nothing.
+
+    ``None`` rather than zeroes. Zero products needing text and a report that failed to run look
+    identical as numbers and mean opposite things, and the screen must be able to say which — a
+    green "nothing to do" built on a crashed subprocess is the failure this whole project is
+    arranged against.
+    """
+    counts = payload.get("counts") if isinstance(payload, dict) else None
+    if not isinstance(counts, dict):
+        return None
+    wanted = ("in_scope", "has_text", "needs_text", "no_inputs")
+    if not all(isinstance(counts.get(key), int) for key in wanted):
+        return None
+    return {key: int(counts[key]) for key in wanted}
+
+
+def live_products(payload: Any, bucket: str) -> list[dict[str, Any]]:
+    """The products in one bucket, in the order the report listed them."""
+    products = payload.get("products") if isinstance(payload, dict) else None
+    if not isinstance(products, list):
+        return []
+    return [
+        product
+        for product in products
+        if isinstance(product, dict) and product.get("bucket") == bucket
+    ]
+
+
+def live_gtins(payload: Any, bucket: str) -> list[str]:
+    """Just the GTINs of one bucket — what a generate command is built from."""
+    return [str(product.get("gtin", "")) for product in live_products(payload, bucket)]
+
+
+def live_checked_at(payload: Any) -> str:
+    """When the site was last asked, in minutes rather than in ISO-8601.
+
+    The stamp exists because this answer goes stale — somebody publishes, and the figures on
+    screen describe a site that has moved. "2026-09-14T14:48:18+00:00" is precise and useless for
+    that: an operator cannot subtract it from now at a glance, so a check from this morning reads
+    exactly like one from a moment ago.
+    """
+    stamp = payload.get("checked_at") if isinstance(payload, dict) else None
+    if not stamp:
+        return "just now"
+    try:
+        when = datetime.fromisoformat(str(stamp))
+    except ValueError:
+        return str(stamp)
+    minutes = int((datetime.now(UTC) - when).total_seconds() // 60)
+    if minutes < 1:
+        return "just now"
+    if minutes == 1:
+        return "a minute ago"
+    if minutes < _MINUTES_IN_HOUR:
+        return f"{minutes} minutes ago"
+    hours = minutes // _MINUTES_IN_HOUR
+    return "an hour ago" if hours == 1 else f"{hours} hours ago"
+
+
+#: Where "N minutes ago" stops reading as a number and starts reading as a duration.
+_MINUTES_IN_HOUR = 60
+
+
+def copy_summary(entry: dict[str, Any] | None) -> str | None:
+    """The coverage check in the operator's words, or ``None`` when it cannot be read.
+
+    The check itself reports in **units** — one product in one language — because that is the
+    plan's unit of work and every row count beside it is in the same currency. It is the right
+    word for the figures and the wrong word for the sentence: an operator reading "46 held by the
+    plan" has to know that a unit is half a product before the number means anything, and then
+    still has to work out that the thing to go and fix is a product.
+
+    So this says both, each where it belongs: the work in **pages** (a unit *is* a page, and that
+    is the word the operator already uses for what this publishes), and everything excluded from
+    the work in **products**, split by who unblocks it — a video to confirm, or data to fix in
+    MyGS1. Those two never merge into one "blocked" figure, for the same reason ``_excluded_aside``
+    keeps unchanged and held apart: they go to different people.
+
+    Returns ``None`` rather than a guess when the payload has no usable figures, so the caller can
+    fall back to the check's own detail instead of printing a sentence built from nothing.
+    """
+    data = (entry or {}).get("data") or {}
+    total, pending = data.get("total"), data.get("pending")
+    if not isinstance(total, int) or not isinstance(pending, int):
+        return None
+    if total == 0:
+        lead = "Nothing to write — no page in this batch needs new text."
+    elif pending == 0:
+        lead = f"Ready — all {total} page(s) this run publishes have their text."
+    else:
+        lead = (
+            f"{pending} of the {total} page(s) this run publishes have no text yet. Those pages "
+            "would be left out of the run, so generate again before publishing."
+        )
+    return lead + _excluded_products(data)
+
+
+def _excluded_products(data: dict[str, Any]) -> str:
+    """Why the batch is bigger than the work: what is finished, and what is blocked on whom."""
+    unchanged = data.get("products_unchanged")
+    video = data.get("products_held_video")
+    source = data.get("products_held_data")
+    if not all(isinstance(value, int) for value in (unchanged, video, source)):
+        return ""
+    parts = []
+    if unchanged:
+        parts.append(f"{unchanged} product(s) in this batch are already up to date")
+    blocked = [
+        text
+        for text, count in (
+            (f"{video} need a confirmed video", video),
+            (f"{source} need data fixed in MyGS1", source),
+        )
+        if count
+    ]
+    if blocked:
+        held = (video or 0) + (source or 0)
+        parts.append(f"{held} are blocked ({', '.join(blocked)})")
+    return f" {' and '.join(parts)}." if parts else ""
 
 
 @dataclass(frozen=True)
@@ -284,6 +407,17 @@ class RunLog:
     unreadable_lines: int
 
     @property
+    def stamp(self) -> str:
+        """What to call this run on screen.
+
+        Not ``path.name``: a run's log is ``{ts}/run.jsonl`` now, so every run would be labelled
+        "run.jsonl" and the list would read as one run repeated twenty times. The older flat
+        ``{ts}.jsonl`` logs are still on disk and still have to come out as the same name they
+        always did.
+        """
+        return stamp_of(self.path)
+
+    @property
     def ok(self) -> int:
         return sum(1 for o in self.outcomes if o.status == "ok")
 
@@ -325,20 +459,16 @@ def recent_runs(cid: str, limit: int = 20) -> list[RunLog]:
     Sorted by modification time rather than by name: a same-second second run is named
     ``{ts}-1.jsonl``, which sorts *before* ``{ts}.jsonl`` because ``-`` precedes ``.``.
     """
-    runs_dir = output_dir(cid) / "runs"
-    if not runs_dir.is_dir():
-        return []
-    paths = sorted(runs_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    paths = sorted(iter_logs(cid), key=lambda p: p.stat().st_mtime, reverse=True)
     return [load_run(path) for path in paths[:limit]]
 
 
 def _newest_run(cid: str) -> Path | None:
     """The most recent run log's path, without reading any of them."""
     try:
-        paths = sorted((output_dir(cid) / "runs").glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+        return newest_log(cid)
     except OSError:
         return None
-    return paths[-1] if paths else None
 
 
 def rail_facts(cid: str | None, cfg: ClientConfig | None) -> dict[str, str]:

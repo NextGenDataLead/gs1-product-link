@@ -67,7 +67,7 @@ from lib.media_video import (
     summarize_video_map,
 )
 from lib.process_list import load_process_list
-from lib.records import ProductRecord
+from lib.records import ProductRecord, SkipReason
 from lib.state import WILL_BE_WRITTEN, classify_units, peek_state
 from lib.wp_client import WordPressClient, WordPressIdentity
 
@@ -455,6 +455,41 @@ def _excluded_aside(unchanged: int, held: int) -> str:
     return f"; {' and '.join(parts)}, so this run writes no copy for them"
 
 
+def _product_counts(
+    products: list[ProductRecord],
+    wanted: set[tuple[str, str]] | None,
+    held: dict[tuple[str, str], SkipReason],
+) -> dict[str, int]:
+    """The same three groups counted in **products**, and split by what would unblock them.
+
+    Every other figure here is in units, and stays that way: units are the plan's unit of work,
+    and a count in anything else cannot be compared with the row counts beside it. These are
+    *added* rather than substituted, because the two questions have different owners — "46 held"
+    is what the run will do, "23 products blocked, 18 of them for want of a video" is what somebody
+    has to go and fix, and nobody fixes half a product in one language.
+
+    The split is by first-rule-fired, the same attribution ``held_units`` makes: E24 is the video
+    map's problem and lands with whoever confirms videos, while E23 and E22 are source data and
+    land in MyGS1. Collapsing those two into one number would send the operator to the wrong place.
+
+    Empty when :func:`units_needing_copy` could not decide, because "everything" is not a set this
+    can subtract from: a breakdown built on it would name products it never examined.
+    """
+    if wanted is None:
+        return {}
+    held_gtins = {gtin for gtin, _ in held}
+    wanted_gtins = {gtin for gtin, _ in wanted}
+    video = {gtin for (gtin, _), reason in held.items() if reason is SkipReason.NO_CONFIRMED_VIDEO}
+    return {
+        "products_to_publish": len(wanted_gtins),
+        "products_held_video": len(video),
+        "products_held_data": len(held_gtins - video),
+        "products_unchanged": len(
+            {product.gtin for product in products} - held_gtins - wanted_gtins
+        ),
+    }
+
+
 def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
     """Report whether this run's ``generation_results.json`` covers the units it will publish.
 
@@ -498,7 +533,8 @@ def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -
     total = len(products) * len(languages) if wanted is None else len(wanted)
     # Safe to ask again only because ``wanted`` is not ``None``: that is precisely the case where
     # ``units_needing_copy`` already read the video map without raising.
-    held = 0 if wanted is None else len(held_units(cfg, products))
+    held_by_unit = {} if wanted is None else held_units(cfg, products)
+    held = len(held_by_unit)
     unchanged = len(products) * len(languages) - total - held
     context = generation_context(
         languages,
@@ -540,6 +576,7 @@ def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -
         # Adding them together would report the second as the first, which is the reading that
         # makes a hold look like a success.
         "held": held,
+        **_product_counts(products, wanted, held_by_unit),
     }
     excluded = _excluded_aside(unchanged, held)
     if not missing:

@@ -66,6 +66,7 @@ from lib.wp_client import WordPressIdentity
 
 GTIN_A = "08713195007359"
 GTIN_B = "08713195007360"
+GTIN_C = "08713195007361"
 
 
 # --- Builders ----------------------------------------------------------------
@@ -614,6 +615,81 @@ def test_generation_results_keep_held_units_apart_from_unchanged_ones(
     assert result.data["held"] == 1
     assert result.data["unchanged"] == 0
     assert "1 in-scope unit(s) are held by the plan" in result.detail
+
+
+def test_generation_results_count_blocked_products_by_who_unblocks_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The units figure says what the run will do; this one says who has to go and fix something.
+
+    Held units are counted in units everywhere else, and a unit is half a product here (two
+    languages), so "46 held" is a number an operator must translate before it means anything —
+    and translating it still does not say whether to chase a video or a value in MyGS1. Split by
+    the plan's own attribution, first-rule-fired, so a product failing both is chased where the
+    plan will actually drop it rather than in two places.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        media=MediaConfig(
+            video_map_path=_write_video_map(tmp_path, [GTIN_A, GTIN_C], ["nl"]),
+            restrict_to_mapped_gtins=True,
+            require_hero_image=True,
+        ),
+    )
+    publishable = _product(GTIN_A).model_copy(update={"image_url": "https://wp.test/a.jpg"})
+    no_video = _product(GTIN_B).model_copy(update={"image_url": "https://wp.test/b.jpg"})
+    no_image = _product(GTIN_C)  # confirmed video, blank hero — E22, a source-data problem
+    save_results(_results_for(cfg, [publishable]))
+
+    result = check_generation_results(cfg, [publishable, no_video, no_image])
+
+    assert result.data["products_to_publish"] == 1
+    assert result.data["products_held_video"] == 1
+    assert result.data["products_held_data"] == 1
+
+
+def test_generation_results_count_finished_products_apart_from_blocked_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A product with nothing left to do is not a product waiting on somebody."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        process_list=_write_process_list(tmp_path, [GTIN_A, GTIN_B]),
+    )
+    live, fresh = _product(GTIN_A), _product(GTIN_B)
+    _publish(cfg, live)
+    save_results(_results_for(cfg, [fresh]))
+
+    result = check_generation_results(cfg, [live, fresh])
+
+    assert result.data["products_unchanged"] == 1
+    assert result.data["products_to_publish"] == 1
+    assert result.data["products_held_video"] == 0
+    assert result.data["products_held_data"] == 0
+
+
+def test_generation_results_leave_the_product_split_out_when_it_cannot_be_decided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``units_needing_copy`` returning ``None`` means "ask for everything", not "nothing is held".
+
+    A breakdown built on that set would name products it never examined, so there is none — and
+    the screen falls back to the check's own detail rather than printing a confident zero.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(generator=GeneratorConfig(enabled=True))
+    (tmp_path / "output" / "acme" / "data").mkdir(parents=True)
+    (tmp_path / "output" / "acme" / "state.json").write_text("{not json", encoding="utf-8")
+
+    result = check_generation_results(cfg, [_product(GTIN_A)])
+
+    # Pins the branch: "ask for everything" is one product times one language, and the FAIL-early
+    # path through an unreadable results file would satisfy the absences below without it.
+    assert result.data["total"] == 1
+    assert "products_held_video" not in result.data
+    assert "products_unchanged" not in result.data
 
 
 def test_generation_results_count_only_the_products_in_scope(

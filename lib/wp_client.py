@@ -323,6 +323,30 @@ class WordPressClient:
             roles=[str(role) for role in body.get("roles", [])],
         )
 
+    def read_page(self, post_type: str, page_id: int) -> WordPressPage | None:
+        """GET one page by id, with **no language parameter**, for reading its ACF fields.
+
+        The distinction is not cosmetic and was measured against the live site. On this WPML
+        install, a request carrying ``lang=`` answers with ``acf: []`` — an empty array — for a
+        page whose fields are populated and publicly rendering. The language-scoped *listing*
+        carries the same flaw, so every French page reads as having no tagline and no
+        Eigenschappen. Ask by id, without ``lang``, and the same page returns its fields.
+
+        So a caller checking what the site actually carries must come through here. Listing is
+        still how you find the ids — it is only the field read that has to be unscoped.
+        ``context=edit`` is harmless; ``lang`` is the one that empties it.
+
+        Read-only.
+
+        Args:
+            post_type: The (custom) post type slug.
+            page_id: The WordPress post id, from a listing.
+
+        Returns:
+            The page, or ``None`` if the id 404s — a stale listing, not an error.
+        """
+        return self._get_page(post_type, page_id)
+
     def find_by_slug(
         self, post_type: str, slug: str, language: str | None = None
     ) -> WordPressPage | None:

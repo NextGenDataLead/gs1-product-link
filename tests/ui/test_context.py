@@ -16,9 +16,20 @@ CI job rather than the optional one.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from ui.context import Scope, doctor_check, group_results, scope_from, split_results
+from ui.context import (
+    Scope,
+    copy_summary,
+    doctor_check,
+    group_results,
+    live_checked_at,
+    live_counts,
+    live_gtins,
+    scope_from,
+    split_results,
+)
 
 
 def _payload(**overrides: Any) -> list[dict[str, Any]]:
@@ -241,3 +252,130 @@ def test_grouping_drops_malformed_items_rather_than_raising() -> None:
     grouped = group_results(["not an object", {"language": "nl"}, {"gtin": "a", "language": "nl"}])
 
     assert set(grouped) == {"a"}
+
+
+# --- the coverage check, said to an operator ----------------------------------
+
+
+def _coverage(**data: Any) -> dict[str, Any]:
+    """A ``generation_results`` check entry carrying the figures a run produces."""
+    return {"name": "generation_results", "status": "ok", "detail": "…", "data": data}
+
+
+def test_a_run_with_nothing_to_write_says_so_and_says_why() -> None:
+    """The case that reads as a failure and is not: 0 generated, because 0 were needed.
+
+    In the console this run is indistinguishable from one that wrote nothing because something
+    broke — ``generated 0 via API … 0/0 unit(s) to publish have copy`` — and an operator who
+    cannot tell those apart either waits for a wave that already happened or re-runs it.
+    """
+    line = copy_summary(
+        _coverage(
+            total=0,
+            pending=0,
+            products_unchanged=8,
+            products_held_video=14,
+            products_held_data=9,
+        )
+    )
+
+    assert line is not None
+    assert line.startswith("Nothing to write")
+    assert "8 product(s) in this batch are already up to date" in line
+    assert "23 are blocked (14 need a confirmed video, 9 need data fixed in MyGS1)" in line
+
+
+def test_pages_without_text_are_stated_as_pages_that_will_be_left_out() -> None:
+    """``pending`` is the one figure that changes what the operator does next."""
+    line = copy_summary(
+        _coverage(
+            total=10, pending=4, products_unchanged=0, products_held_video=0, products_held_data=0
+        )
+    )
+
+    assert line is not None
+    assert "4 of the 10 page(s)" in line
+    assert "left out of the run" in line
+
+
+def test_a_covered_run_reads_as_ready() -> None:
+    line = copy_summary(
+        _coverage(
+            total=6, pending=0, products_unchanged=2, products_held_video=0, products_held_data=0
+        )
+    )
+
+    assert line is not None
+    assert line.startswith("Ready — all 6 page(s)")
+    assert "2 product(s) in this batch are already up to date." in line
+    # Nothing is blocked, so nobody is sent anywhere: a "0 blocked" clause reads as a category
+    # the operator should go and look at.
+    assert "blocked" not in line
+
+
+def test_a_payload_without_figures_produces_no_sentence() -> None:
+    """Better the check's own wording than a confident sentence built from nothing.
+
+    ``units_needing_copy`` could not decide, or the subprocess said something unexpected — either
+    way the caller falls back to ``detail``, and a fabricated "nothing to write" would be the one
+    reading that stops a wave nobody meant to stop.
+    """
+    assert copy_summary(None) is None
+    assert copy_summary({"name": "generation_results"}) is None
+    assert copy_summary(_coverage(total="many", pending=0)) is None
+
+
+def test_the_product_split_is_dropped_rather_than_guessed() -> None:
+    """The lead clause still stands when the breakdown is absent — it is the actionable half."""
+    line = copy_summary(_coverage(total=0, pending=0))
+
+    assert line == "Nothing to write — no page in this batch needs new text."
+
+
+# --- the live-site report -----------------------------------------------------
+
+
+def _live(**counts: int) -> dict[str, Any]:
+    return {
+        "counts": {"in_scope": 0, "has_text": 0, "needs_text": 0, "no_inputs": 0, **counts},
+        "products": [
+            {"gtin": "1", "name": "a", "bucket": "needs_text"},
+            {"gtin": "2", "name": "b", "bucket": "has_text"},
+        ],
+    }
+
+
+def test_a_failed_site_read_is_not_reported_as_nothing_to_do() -> None:
+    """Zero products needing text and a subprocess that died look identical as numbers.
+
+    They mean opposite things, and a green "nothing to do" built on a crashed command is the exact
+    failure this project is arranged against — so the reader says it could not tell.
+    """
+    assert live_counts(None) is None
+    assert live_counts({}) is None
+    assert live_counts({"counts": {"has_text": "five"}}) is None
+    assert live_counts(_live(has_text=5)) is not None
+
+
+def test_gtins_come_back_only_for_the_bucket_asked_for() -> None:
+    """The generate command is built from these, so a bucket leak writes for the wrong products."""
+    assert live_gtins(_live(), "needs_text") == ["1"]
+    assert live_gtins(_live(), "has_text") == ["2"]
+    assert live_gtins(_live(), "no_inputs") == []
+    assert live_gtins("not a payload", "needs_text") == []
+
+
+def test_the_check_time_is_shown_as_an_age() -> None:
+    """A stamp exists because the answer goes stale, and ISO-8601 cannot be subtracted at a glance.
+
+    A check from this morning has to read differently from one taken a moment ago, or the screen
+    quietly passes off a picture of a site that has since moved.
+    """
+    now = datetime.now(UTC)
+    assert live_checked_at({"checked_at": now.isoformat()}) == "just now"
+    assert live_checked_at({"checked_at": (now - timedelta(minutes=5)).isoformat()}) == (
+        "5 minutes ago"
+    )
+    assert live_checked_at({"checked_at": (now - timedelta(hours=3)).isoformat()}) == "3 hours ago"
+    # Unparseable is shown verbatim rather than as "just now": a wrong age is worse than a raw one.
+    assert live_checked_at({"checked_at": "whenever"}) == "whenever"

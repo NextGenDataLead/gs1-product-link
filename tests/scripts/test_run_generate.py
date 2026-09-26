@@ -851,3 +851,92 @@ def test_emit_asks_for_everything_when_the_client_has_no_url_patterns(
     assert run_generate.main(["noviplast", "--emit"]) == 0
 
     assert len(_read_requests_file().requests) == 2
+
+
+# --- --gtins: the operator names the products --------------------------------
+
+
+def test_gtins_writes_for_exactly_the_named_products_in_every_language(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The path that lets a screen drive generation from the **site** instead of the ledger.
+
+    ``state.json`` records what this machine wrote and does not travel, so a second operator's
+    copy can be confidently wrong about a page that is live and correct. Asked for named products,
+    this reads no state at all and asks for every language of each — deliberately wider than the
+    default, because a unit the ledger would call UNCHANGED is exactly what somebody picking a
+    product to regenerate means to overwrite.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(languages=["nl", "fr"]))
+    _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
+
+    code = run_generate.main(["noviplast", "--emit", "--gtins", GTIN_B])
+
+    assert code == 0
+    units = {(request.gtin, request.language) for request in _read_requests_file().requests}
+    assert units == {(GTIN_B, "nl"), (GTIN_B, "fr")}
+
+
+def test_gtins_accepts_a_comma_separated_list_and_repeats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both forms, because the shell sends one string and a person types several flags."""
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config())
+    _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
+
+    run_generate.main(["noviplast", "--emit", "--gtins", f"{GTIN_A},{GTIN_B}"])
+    both = {request.gtin for request in _read_requests_file().requests}
+
+    run_generate.main(["noviplast", "--emit", "--gtins", GTIN_A, "--gtins", GTIN_B])
+
+    assert both == {GTIN_A, GTIN_B}
+    assert {request.gtin for request in _read_requests_file().requests} == both
+
+
+def test_gtins_picks_within_the_process_list_never_around_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Scope is not a suggestion. A GTIN the operator has not put in scope is named back to them.
+
+    Writing it quietly would make ``--gtins`` a way around the process list, which is the one
+    control deciding what a run may touch at all.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(process_list=_write_process_list(tmp_path, [GTIN_A])))
+    _write_products("noviplast", [_product(GTIN_A), _product(GTIN_B)])
+
+    run_generate.main(["noviplast", "--emit", "--gtins", f"{GTIN_A},{GTIN_B}"])
+
+    assert {request.gtin for request in _read_requests_file().requests} == {GTIN_A}
+    assert GTIN_B in caplog.text
+
+
+def test_gtins_is_not_the_same_as_no_gtins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``None`` means "use the ledger"; an empty set means "the operator named nothing".
+
+    Conflating them turns a typo into a regeneration of the whole batch, which is real money and
+    a rewrite of live pages.
+    """
+    assert run_generate._named_gtins(None) is None
+    assert run_generate._named_gtins([]) == frozenset()
+    assert run_generate._named_gtins(["  "]) == frozenset()
+
+
+def test_gtins_never_reports_a_negative_unchanged_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The coverage line derives "already live and unchanged" by subtraction.
+
+    On this path the named set deliberately includes units the ledger would call unchanged, and
+    every held unit as well, so the subtraction went **negative** — it printed "-4 already live
+    and unchanged". A count that can be negative is a count nobody should be shown.
+    """
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(languages=["nl", "fr"]))
+    _write_products("noviplast", [_product(GTIN_A)])
+
+    run_generate.main(["noviplast", "--emit", "--gtins", GTIN_A])
+
+    assert "-" not in capsys.readouterr().err.split("without")[-1]
