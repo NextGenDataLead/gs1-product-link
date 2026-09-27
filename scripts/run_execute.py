@@ -1041,9 +1041,21 @@ class _RunLog:
     _MAX_COLLISIONS: Final = 100
 
     def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
         for n in range(self._MAX_COLLISIONS):
-            candidate = path if n == 0 else path.with_stem(f"{path.stem}-{n}")
+            # The **directory** takes the suffix, not the log. Suffixing the log gave
+            # `{stamp}/run-1.jsonl`, which `run_files.iter_logs` matches with neither of its globs
+            # — `*/run.jsonl` nor `*.jsonl` — so a same-second second run was invisible on the Runs
+            # screen and to `newest_log`, which is what `report_scope_result` reports on by default.
+            # Two runs in one second is precisely what a re-run after a failure looks like, and an
+            # invisible run is the one case an operator most needs to see: live pages and permanent
+            # GS1 records may already exist for the rows that landed.
+            #
+            # As a directory the suffix costs nothing: `*/run.jsonl` finds it, `stamp_of` labels it
+            # `{stamp}-1`, and `sibling` puts its own four documents inside it rather than in a
+            # subfolder of the first run's.
+            folder = path.parent if n == 0 else path.parent.with_name(f"{path.parent.name}-{n}")
+            candidate = folder / path.name
+            folder.mkdir(parents=True, exist_ok=True)
             try:
                 self._handle = candidate.open("x", encoding="utf-8")
             except FileExistsError:

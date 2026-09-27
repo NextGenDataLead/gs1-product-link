@@ -324,3 +324,29 @@ def test_recording_an_upload_that_was_never_archived_is_false_not_an_exception(
     assert (
         record_upload(_ledger(client), "export", kept=_export(client), given_name="x.xlsx") is False
     ), "a kept path that is not on disk records nothing"
+
+
+def test_the_recorded_row_count_comes_back_with_the_name(client: Path) -> None:
+    """So a caller that only wants to *name* a file need not parse a workbook to size it.
+
+    Without this, ``inputs.json`` recorded ``rows: null`` for every document and the Runs screen
+    could name the export a run used but not say how many rows its selection held.
+    """
+    live = _export(client)
+    live.write_bytes(b"exported")
+    dated = live.with_name("export-20260927T101500.xlsx")
+    dated.write_bytes(b"exported")
+    record_upload(_ledger(client), "export", kept=dated, given_name="GDSN.xlsx", rows=12)
+
+    assert resolve(live, read(_ledger(client)), "export").rows == 12  # type: ignore[union-attr]
+
+
+def test_a_count_the_caller_supplies_wins_over_the_recorded_one(client: Path) -> None:
+    """The caller counted the file in front of it; the record describes bytes that matched."""
+    live = _export(client)
+    live.write_bytes(b"exported")
+    dated = live.with_name("export-20260927T101500.xlsx")
+    dated.write_bytes(b"exported")
+    record_upload(_ledger(client), "export", kept=dated, given_name="GDSN.xlsx", rows=12)
+
+    assert resolve(live, read(_ledger(client)), "export", rows=99).rows == 99  # type: ignore[union-attr]

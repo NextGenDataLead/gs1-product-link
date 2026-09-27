@@ -37,7 +37,15 @@ from lib.errors import MediaIntegrityError, WordPressAPIError
 from lib.input_layout import archive_path
 from lib.provenance import history_path, read_run, record_upload
 from lib.records import LocalisedText, Plan, PlanClassification, PlanRow, ProductRecord, State
-from lib.run_files import RESULT_NAME, SELECTION_NAME, SOURCES_NAME, UPLOAD_NAME
+from lib.run_files import (
+    RESULT_NAME,
+    SELECTION_NAME,
+    SOURCES_NAME,
+    UPLOAD_NAME,
+    iter_logs,
+    sibling,
+    stamp_of,
+)
 from lib.state import load_state, save_state
 from lib.wp_client import MediaUpload
 from scripts import run_execute
@@ -1518,14 +1526,28 @@ def test_two_runs_in_the_same_second_do_not_share_a_log(
     logs = sorted((tmp_path / "output" / "acme" / "runs").glob("**/*.jsonl"), key=_mtime)
     assert len(logs) == 2
     assert all(len(path.read_text().splitlines()) == 1 for path in logs)
+    # And **both are visible**. The collision used to suffix the log inside one directory —
+    # `{stamp}/run-1.jsonl` — which `iter_logs` matches with neither of its globs, so the second
+    # run vanished from the Runs screen and from `newest_log`. Two runs in one second is exactly
+    # what a re-run after a failure looks like, and that run is the one an operator most needs to
+    # see: live pages and permanent records may already exist for the rows that landed.
+    seen = sorted(path.resolve() for path in iter_logs("acme"))
+    assert seen == sorted(path.resolve() for path in logs), (
+        "a same-second run must not be invisible"
+    )
+    assert len({stamp_of(path) for path in logs}) == 2, "and must not share the first one's label"
+    for path in logs:
+        assert sibling(path, SOURCES_NAME).parent == path.parent, (
+            "each run's own documents belong beside its own log"
+        )
 
 
 def _read_outcomes(tmp_path: Path, *, newest: bool = False) -> list[dict[str, Any]]:
     """The RunOutcome dicts from the run log (the newest one, when several runs happened).
 
-    Ordered by mtime, not by name: two runs inside one test start in the same second, so
-    the second one's log is the collision-suffixed ``…Z-1.jsonl`` — which sorts *before*
-    ``…Z.jsonl`` lexicographically because ``-`` precedes ``.``.
+    Ordered by mtime, not by name: two runs inside one test start in the same second, so the
+    second one lands in the collision-suffixed directory ``{stamp}-1/`` — which sorts *before*
+    ``{stamp}/`` lexicographically, because ``-`` precedes the path separator.
     """
     logs = sorted((tmp_path / "output" / "acme" / "runs").glob("**/*.jsonl"), key=_mtime)
     path = logs[-1] if newest else logs[0]

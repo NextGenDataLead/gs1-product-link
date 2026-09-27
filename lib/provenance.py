@@ -264,7 +264,18 @@ def resolve(
         return None
     for entry in reversed(history.entries):
         if entry.what == what and entry.of.sha256 == ref.sha256:
-            return ref.model_copy(update={"name": entry.of.name, "given_name": entry.of.given_name})
+            # The row count comes from the record too, when the caller has not counted for itself.
+            # These are the same bytes, so it is the same count — and it spares a caller that only
+            # wants to *name* a file from parsing a workbook to say how big it was. Without it,
+            # ``inputs.json`` recorded ``rows: null`` for everything, so the Runs screen could name
+            # the export a run used but not say how many rows its selection held.
+            return ref.model_copy(
+                update={
+                    "name": entry.of.name,
+                    "given_name": entry.of.given_name,
+                    "rows": ref.rows if ref.rows is not None else entry.of.rows,
+                }
+            )
     return ref
 
 
