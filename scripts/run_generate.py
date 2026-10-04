@@ -87,6 +87,7 @@ from lib.generator import (
 )
 from lib.holds import held_units
 from lib.llm import AnthropicClient, load_voice_template
+from lib.media_video import canon_gtin
 from lib.preflight import in_scope, units_needing_copy
 from lib.records import ProductRecord, SkipReason
 
@@ -153,9 +154,35 @@ class _Prepared(NamedTuple):
     #: from the units left out for being already live: both are units this run writes no copy for,
     #: and only one of them is finished. Empty when ``units`` is ``None`` — nothing was narrowed.
     held: dict[tuple[str, str], SkipReason]
+    #: Whether the operator named the products (``--gtins``) instead of the ledger choosing them.
+    #: The "already live and unchanged" figure is derived by subtraction, and on this path the
+    #: subtraction is meaningless — the named set deliberately includes units the ledger would
+    #: call unchanged, and every held unit as well, so the formula went **negative**. A count that
+    #: can be negative is a count nobody should be shown.
+    named: bool = False
 
 
-def _prepare(cfg: ClientConfig, context: GenerationContext, products_path: Path) -> _Prepared:
+def _named_gtins(values: list[str] | None) -> frozenset[str] | None:
+    """Parse ``--gtins`` into canonical 14-digit GTINs, or ``None`` when it was not given.
+
+    ``None`` and the empty set are different answers and the difference decides the run: ``None``
+    means "use the default selection", an empty set means "the operator named nothing", and
+    conflating them would turn a typo into a full regeneration of the batch.
+    """
+    if values is None:
+        return None
+    return frozenset(
+        canon_gtin(item.strip()) for value in values for item in value.split(",") if item.strip()
+    )
+
+
+def _prepare(
+    cfg: ClientConfig,
+    context: GenerationContext,
+    products_path: Path,
+    *,
+    only_gtins: frozenset[str] | None = None,
+) -> _Prepared:
     """Load products, narrow them to the units this run will write, and compute the requests.
 
     **Scope is applied here, once, because all three producer paths run through it** — ``--emit``,
@@ -191,11 +218,62 @@ def _prepare(cfg: ClientConfig, context: GenerationContext, products_path: Path)
     Pure apart from reading its input file, the video map, and peeking at ``state.json``.
     """
     products = in_scope(cfg, _load_products(products_path))
+    if only_gtins is not None:
+        return _for_named(cfg, context, products, only_gtins)
     units = units_needing_copy(cfg, products)
     # Only when ``units`` is not ``None``, which is exactly the case where ``units_needing_copy``
     # has already read the video map without raising — so this cannot fail where it used not to.
     held = held_units(cfg, products) if units is not None else {}
     return _Prepared(pending_requests(products, context, units=units), products, units, held)
+
+
+def _for_named(
+    cfg: ClientConfig,
+    context: GenerationContext,
+    products: list[ProductRecord],
+    only_gtins: frozenset[str],
+) -> _Prepared:
+    """``--gtins``: write copy for exactly these products, in every configured language.
+
+    The default selection asks ``state.json`` which units a run would create or change. That is
+    the right question when the ledger is the truth, and this exists because it is not always: the
+    ledger records what *this machine* wrote and does not travel between machines, so a second
+    operator's copy can be confidently wrong about a page that is live and correct. The operator
+    shell asks the **site** instead, and then needs a way to say "write copy for these".
+
+    So this path reads no state at all. It narrows to the named products and asks for every
+    language of each, which is deliberately wider than the default: a unit the ledger would call
+    UNCHANGED is exactly what somebody picking a product to regenerate means to overwrite.
+
+    Holds are computed and reported but **not applied**. A product with no confirmed video will
+    not publish, so copy for it is copy nobody reads — the 74-to-20 narrowing this module's other
+    path exists for. Refusing here would be different: the operator named this product, from a
+    screen that showed them it was waiting on a video, and a command that silently drops what it
+    was explicitly told to do is worse than one that spends a few tokens. It warns instead.
+
+    Scope still applies. ``--gtins`` picks *within* the process list, never around it: a GTIN the
+    operator has not put in scope is named back to them as unknown rather than quietly written.
+    """
+    ordered = [product for product in products if product.gtin14 in only_gtins]
+    missing = only_gtins - {product.gtin14 for product in ordered}
+    if missing:
+        _log.warning(
+            "--gtins named %d GTIN(s) not in scope for this client, and they are ignored: %s",
+            len(missing),
+            ", ".join(sorted(missing)),
+        )
+    units = {(product.gtin, language) for product in ordered for language in context.languages}
+    held = held_units(cfg, ordered)
+    if held:
+        _log.warning(
+            "%d of the named unit(s) belong to products the plan will hold (no confirmed video, "
+            "or missing mandatory data). Copy is being written for them anyway because they were "
+            "named explicitly; they will not publish until the hold is cleared.",
+            len(held),
+        )
+    return _Prepared(
+        pending_requests(ordered, context, units=units), ordered, units, held, named=True
+    )
 
 
 def _unchanged_units(prepared: _Prepared, context: GenerationContext) -> int:
@@ -209,7 +287,7 @@ def _unchanged_units(prepared: _Prepared, context: GenerationContext) -> int:
     held one has never published and will not until its source data or its video is fixed. Counting
     the second as the first is how a hold gets read as a success.
     """
-    if prepared.units is None:
+    if prepared.units is None or prepared.named:
         return 0
     return (
         len(prepared.products) * len(context.languages) - len(prepared.units) - len(prepared.held)
@@ -458,6 +536,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Path to the parsed products JSON (default: output/{id}/data/products.json)",
     )
     parser.add_argument(
+        "--gtins",
+        action="append",
+        metavar="GTIN[,GTIN…]",
+        help=(
+            "Write copy for exactly these products, in every language, instead of asking "
+            "state.json which units a run would create or change. Repeatable, and accepts a "
+            "comma-separated list. Picks within the process list, never around it."
+        ),
+    )
+    parser.add_argument(
         "--results",
         help=(
             "Path to the results JSON to check (default: output/{id}/data/generation_results.json)."
@@ -504,7 +592,7 @@ def main(argv: list[str] | None = None) -> int:
             cfg.export.gdsn_map,
             cfg.export.gdsn_extras,
         )
-        prepared = _prepare(cfg, context, products_path)
+        prepared = _prepare(cfg, context, products_path, only_gtins=_named_gtins(args.gtins))
         requests, products = prepared.requests, prepared.products
 
         if args.backend == "api":

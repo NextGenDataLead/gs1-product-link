@@ -238,12 +238,32 @@ centimetres to the same machine — it is the seconds the handler spends reading
 which would otherwise look like nothing had happened. That is how an operator comes to press a
 thing twice.
 
-**`process-list.source.xlsx` is the upload, kept byte for byte.** `.bak.xlsx` holds only *the
-previous save*, so after two saves the operator's original is gone; the archive is what lets
-`process-list.source.xlsx` hold "the list I sent" rather than "whatever it looked like last
-time". It is read by the per-run result sheet, to name the rows the operator dropped. **It never decides what gets written** — a design
-that derived the control file from it would put a wrong join between the operator and their own
-list, silently.
+**`process/uploads/product-list.xlsx` is the upload, kept byte for byte**, and every upload is also
+kept dated beside it. `.bak.xlsx` held only *the previous save*, so after two saves the operator's
+original was gone; archiving on the way **in** is what lets the undated name hold "the list I sent"
+rather than "whatever it looked like last time". Each run copies it into its own folder as
+`selection-uploaded.xlsx`, which is what the result sheet reads to name the rows the operator
+dropped — reading it out of `input/` afterwards described whatever the next batch had put there.
+**It never decides what gets written** — a design that derived the control file from it would put a
+wrong join between the operator and their own list, silently.
+
+**Which export a selection was ticked against is recorded, not inferred.** `process/history.jsonl`
+takes one line per upload and per save; a run writes `runs/{stamp}/inputs.json`. Both name the
+archived filename and carry its sha256 — the **name is the reference and the hash is the check**,
+the convention `lib/generator.py` states as "a validity check only, never a reuse key". Two facts
+live nowhere else: what the operator called each file when they sent it (uploading renames it), and
+which export each set of ticks was chosen against. The second is what makes the stale-batch warning
+possible at all, and a selection with no record reads as *not recorded* — a third answer, never as
+agreement and never as staleness. Every batch saved before this existed is in that state.
+
+**The batch in force is read from disk, on every screen.** `lib/batch.in_force` describes it and
+`ui/batch_view` renders it, on Data, Content, Preflight and Publish. It replaced three booleans held
+for the life of the process, which gated whether the Data screen showed the selection at all: before
+this, restarting the shell hid the grid while a run went on consuming the file, as the band that
+replaced it said in so many words. A batch that is invisible and live at once is worse than either.
+The risk that rule was reaching for — ticks chosen against an export since replaced — is now
+detected and stated instead of hidden. Cached on every input's `(mtime, size)`, because it costs two
+workbook parses and three digests, which is also why `rail_facts` still carries none of it.
 
 **The grid is the scope list joined against the export**, and that join is the reason this screen
 was rebuilt. A barcode on the list that the export carries no row for produces no error, no plan

@@ -34,10 +34,10 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from nicegui import events, ui
+from nicegui import ui
 
 from lib.config import GeneratorConfig
-from ui import REPO_ROOT, context, env_edit, runner, theme
+from ui import REPO_ROOT, batch_view, context, env_edit, runner, theme
 
 
 def render() -> None:
@@ -53,7 +53,7 @@ def render() -> None:
         theme.heading(
             theme.eyebrow("Content"),
             "Content",
-            "The tagline and Eigenschappen text, generated elsewhere and reviewed here.",
+            "The two things on a product page a machine writes, and who is without them.",
         )
         if cfg is None or cid is None:
             theme.blocked(
@@ -69,169 +69,247 @@ def render() -> None:
             ).classes("note")
             return
 
+        # Which export and which ticks this copy is for. Generating against last quarter's
+        # export produces text for the right barcodes and the wrong products, and the only place
+        # that showed up before was the live site.
+        batch_view.render(context.batch_in_force(cfg))
+
         results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
-        _coverage_and_review(cid, cfg.generator, results_path, list(cfg.wordpress.languages))
+        _live_screen(cid, cfg.generator, results_path, list(cfg.wordpress.languages))
 
 
-def _generate(cid: str, generator: GeneratorConfig, recheck: Callable[[], Awaitable[None]]) -> None:
-    """Write this run's copy through the API backend — when a key makes that possible.
-
-    The producer is chosen by whether the configured variable has a value, checked with
-    :func:`ui.env_edit.describe`, which reads ``.env`` as text and returns presence and length
-    without ever holding the value. No key means no button: an action that can only fail is worse
-    than an absence, because the operator has to run it to find out.
-
-    Generating is offered above importing rather than beside it. Both write the same file, and the
-    one that needs no hand-off is the one to reach for first.
-
-    This does not lower the bar on what publishes. Copy written here is read below as text, which
-    is gate 1 of 2; ``plan.json`` is gate 2. Nothing about a machine-written tagline is more
-    trustworthy than a session-written one — the pipeline fails just as silently either way.
-    """
-    with theme.section("Generate the copy"):
-        secret = env_edit.describe([generator.api_key_env])[generator.api_key_env]
-        ui.label(
-            f"Writes the tagline and Eigenschappen for every unit this run will publish, through "
-            f"the Anthropic API — model {generator.model}, voice {generator.prompt_version}. Copy "
-            f"is written fresh for each run and never reused, so generating again replaces this "
-            f"run's copy rather than adding to it."
-        ).classes("note")
-
-        if not secret.present:
-            theme.band(
-                f"{generator.api_key_env} is not set, so this machine reaches Anthropic not at "
-                f"all. Set it on the Setup screen to generate here, or import a file written "
-                f"elsewhere below.",
-            )
-            return
-
-        async def go() -> None:
-            argv = runner.run_generate_argv(cid)
-            log.style("display:block")
-            log.clear()
-            log.push(" ".join(["python", *argv]))
-            result = await runner.stream(argv, log.push)
-            # Re-check for the same reason the upload handler does: the coverage figures and the
-            # copy below now describe the file that was just written, and a screen still showing
-            # the previous copy after a successful run is the silent staleness this project keeps
-            # designing against.
-            await recheck()
-            if result.ok:
-                theme.notify_ok("Copy written — read it below before planning.")
-            else:
-                theme.notify_warning(f"Generation exited {result.returncode} — read the output.")
-
-        theme.action("Generate copy for this run", go)
-        log = ui.log().classes("console mt-4").style("display:none")
-
-
-def _import(results_path: Path, recheck: Callable[[], Awaitable[None]]) -> None:
-    with theme.section("Import"):
-        ui.label(
-            "The other producer: a Claude Code session running the content-generator skill, on a "
-            "machine that has a Claude subscription rather than an API key. It writes the same "
-            "file, which arrives by hand. Written fresh for each run either way, so importing a "
-            "newer one replaces this run's copy rather than adding to it."
-        ).classes("note")
-
-        # Async for the same reason as the export upload — see ui/pages/data.py.
-        async def upload(event: events.UploadEventArguments) -> None:
-            results_path.parent.mkdir(parents=True, exist_ok=True)
-            if results_path.exists():
-                results_path.with_suffix(".bak.json").write_bytes(results_path.read_bytes())
-            await event.file.save(results_path)
-            # Re-check rather than ask them to: both sections below now describe the file that
-            # was just replaced, and a screen that keeps showing the previous copy after a
-            # successful import is the silent-staleness this project keeps designing against.
-            await recheck()
-            theme.notify_ok("Copy imported — coverage and text below are for the new file.")
-
-        ui.upload(on_upload=upload, auto_upload=True, max_files=1).props(
-            'accept=".json" flat bordered'
-        ).classes("w-full max-w-xl")
-
-        fact = context.file_fact(results_path)
-        ui.label(
-            f"{results_path.relative_to(REPO_ROOT)} — {fact.age}"
-            if fact.exists
-            else "No copy imported yet."
-        ).classes("mono mt-2")
-
-
-def _coverage_and_review(
+def _live_screen(
     cid: str, generator: GeneratorConfig, results_path: Path, languages: list[str]
 ) -> None:
-    """Import, coverage and the copy itself — all fed by one preflight run.
+    """The screen, driven by what the **site** carries rather than by the ledger.
 
-    They used to be three independent sections, and the middle one was the only one that knew
-    what this run covers. Coverage came from the doctor and was correctly scoped; the review read
-    the copy file straight off disk and listed **every GTIN in it**. So one screen showed a scoped
-    number above an unscoped list with nothing to tell them apart.
+    Everything here used to be derived from ``state.json``: which units a run would write, which
+    of those had copy, how much was outstanding. That ledger records what *this machine* wrote and
+    does not travel between machines, so on a second operator's copy it can be confidently wrong
+    about a page that is live and correct. The one question this screen exists to answer — *does
+    this product have a tagline and an Eigenschappen block?* — has an authoritative source, and it
+    is the site.
 
-    Drawing them together is not tidiness. They answer the same question at two zoom levels, and
-    a re-check that moved the count without moving the list would restore exactly the disagreement
-    this replaces.
+    So there is one button that asks, and three numbers that come back, each labelled with what
+    happens to it: **process** (no live text and the export can supply it), **skip** (no live text
+    and it cannot — a MyGS1 worklist, not a button), and **skip** (live text already).
+
+    The third is skipped *by default*, and that is the only part a person has to decide: whether
+    the inputs moved since the live text was written. Nothing here can tell — the site reports
+    that a tagline exists, never which export values produced it, and the fingerprint that would
+    say is in the ledger this screen exists to stop depending on. So it is a tick box, and the
+    ticks join the automatic set in **one** Process button: two buttons made the run two runs, and
+    an operator who pressed only the obvious one wrote half of what they meant to.
+
+    The read is slow (a listing per language, then one request per page, because a language-scoped
+    read answers ``acf: []`` on this site) and needs credentials this process does not hold. So it
+    is a subprocess, and it runs only when pressed.
     """
     payload: Any = None
-    result: Any = None
+    selection: set[str] = set()
 
     def show(fetched: tuple[Any, runner.CommandResult]) -> None:
-        nonlocal payload, result
+        nonlocal payload
         payload, result = fetched
-        coverage_body.clear()
-        review_body.clear()
-        with coverage_body:
-            _coverage_figures(payload, result)
-        with review_body:
-            _review(context.scope_from(payload), results_path, languages)
+        selection.clear()
+        status.clear()
+        picker.clear()
+        action.clear()
+        with status:
+            _live_figures(payload, result)
+        ready = context.live_gtins(payload, "needs_text")
+        # The button is built before the list that feeds it, so the list's tick boxes have
+        # something to update — the containers were created in reading order above, so building
+        # them out of order does not move anything on screen.
+        with action:
+            sync = _process_panel(cid, generator, ready, selection, refresh)
+        with picker:
+            _override(payload, selection, sync)
 
-    def first_draw() -> None:
-        """The blocking form, called once while the page is still being built.
+    async def refresh() -> None:
+        show(await runner.run_json_off_the_loop(runner.report_live_copy_argv(cid)))
 
-        A page build is synchronous anyway — there is no rendered button waiting to show that it
-        is working — so the quarter-second here costs nothing an operator can see. Every *click*
-        goes through ``recheck`` instead, which is the one that must not freeze the screen.
-        """
-        show(runner.run_json(runner.doctor_argv(cid, offline=True)))
-
-    async def recheck() -> None:
-        show(await runner.run_json_off_the_loop(runner.doctor_argv(cid, offline=True)))
-
-    _generate(cid, generator, recheck)
-    _import(results_path, recheck)
-    with theme.section("Coverage against the current export"):
-        theme.quiet_action("Re-check against the current export", recheck)
-        coverage_body = ui.column().classes("w-full mt-4")
-    with theme.section("Review the copy"):
+    with theme.section("What the site is missing"):
         ui.label(
-            "The second gate on this text is the plan, and execution is draft-first — but this is "
-            "the last place it is read as text rather than as a count. Check it against the real "
-            "product: this pipeline fails silently, and a 'validated N' figure proves only that "
-            "N things were shaped correctly."
+            "Two things on every product page are written by a machine: the tagline at the top "
+            "and the Eigenschappen bullet list. Everything else — brand, size, material, barcode "
+            "— comes from the GS1 export and is never invented. This asks the live site which "
+            "products are missing those two."
         ).classes("note")
-        review_body = ui.column().classes("w-full")
-    first_draw()
+        theme.action("Check the live site", refresh)
+        ui.label("One request per page, so it takes a few seconds. Nothing is written.").classes(
+            "note mt-2"
+        )
+        status = ui.column().classes("w-full mt-4")
+        with status:
+            theme.band("Not checked yet — press the button to ask the site.")
+
+    with theme.section("Override: also process products that already have live text"):
+        ui.label(
+            "The third figure above is skipped by default. Tick a product here to include it "
+            "anyway — for text that is live but whose GS1 data has moved since it was written. "
+            "Nothing on this machine can detect that for you: the site can say a tagline exists, "
+            "never which export values produced it. So it is your call, and nothing is ticked."
+        ).classes("note")
+        picker = ui.column().classes("w-full mt-3")
+        with picker:
+            ui.label("Check the live site first.").classes("note")
+
+    with theme.section("Write the text"):
+        action = ui.column().classes("w-full")
+        with action:
+            ui.label("Check the live site first.").classes("note")
+
+    with theme.section("Review the text"):
+        ui.label(
+            "The last place this is read as text rather than as a count. Check it against the "
+            "real product: this pipeline fails silently, and a 'validated N' figure proves only "
+            "that N things were shaped correctly."
+        ).classes("note")
+        _review(None, results_path, languages)
 
 
-def _coverage_figures(payload: Any, result: Any) -> None:
-    entry = context.doctor_check(payload, "generation_results")
-    if entry is None:
-        theme.band(getattr(result, "stderr", "") or "Could not read the coverage check.", "warn")
+def _live_figures(payload: Any, result: Any) -> None:
+    """The three counts, ordered and labelled by what happens to their products.
+
+    "have text / need text / cannot be written" described three states and left the operator to
+    work out which one the button acted on — and two of the three are skipped here for completely
+    different reasons, one fixable on this machine and one only in MyGS1. The verb is the label,
+    and the one that gets written comes first.
+    """
+    counts = context.live_counts(payload)
+    if counts is None:
+        theme.band(getattr(result, "stderr", "") or "The site could not be read.", "danger")
         return
-    data = entry.get("data") or {}
-    with ui.row().classes("gap-12 items-end mb-4"):
-        theme.figure(str(data.get("total", "—")), "units to publish")
-        theme.figure(str(data.get("covered", "—")), "have copy")
-        theme.figure(str(data.get("pending", "—")), "pending")
-    if entry["status"] == "ok":
-        theme.band(str(entry["detail"]).capitalize() + ".")
-    else:
-        theme.band(str(entry["detail"]), "danger")
-        ui.label(str(entry.get("remedy", ""))).classes("remedy")
-        pending = data.get("pending_units") or []
-        if pending:
-            named = ", ".join(f"{gtin} ({lang})" for gtin, lang in pending)
-            ui.label(f"Pending: {named}").classes("mono mt-3 scroll-x")
+    with theme.figures():
+        theme.figure(
+            str(counts["needs_text"]),
+            "no live text · process",
+            "the export can supply it, so these are written",
+        )
+        theme.figure(
+            str(counts["no_inputs"]),
+            "no live text · skip",
+            "no attr 1083 or 1067 in the export — fix in MyGS1",
+        )
+        theme.figure(
+            str(counts["has_text"]),
+            "live text already · skip",
+            "already on the site — override by ticking one below",
+        )
+    ui.label(f"The site was checked {context.live_checked_at(payload)}.").classes("note mb-3")
+
+    blocked = context.live_gtins(payload, "no_inputs")
+    if blocked:
+        theme.band(
+            f"{len(blocked)} product(s) are skipped because nothing can be written for them: the "
+            "export carries neither a marketing message (attr 1083) nor a feature/benefit (attr "
+            "1067). Those are fixed in MyGS1 and re-exported, never here.",
+            "warn",
+        )
+        ui.label(", ".join(blocked)).classes("mono scroll-x note")
+
+
+def _override(payload: Any, selection: set[str], sync: Callable[[], None]) -> None:
+    """Every product the site already has text for, each with a tick box, none ticked.
+
+    Unticked by default, and never remembered across a check. Including one rewrites text that is
+    live and, as far as anything here can tell, correct — so the default has to be "do nothing".
+    A screen that arrives with rows ticked is a screen that rewrites a batch because somebody
+    pressed the obvious button.
+    """
+    products = context.live_products(payload, "has_text")
+    if not products:
+        ui.label("Nothing has live text yet, so there is nothing to override.").classes("note")
+        return
+
+    def toggle(gtin: str, on: bool) -> None:
+        if on:
+            selection.add(gtin)
+        else:
+            selection.discard(gtin)
+        sync()
+
+    for product in products:
+        with ui.row().classes("items-center gap-3 w-full"):
+            ui.checkbox(
+                value=False,
+                on_change=lambda event, gtin=str(product["gtin"]): toggle(gtin, bool(event.value)),
+            )
+            ui.label(str(product["gtin"])).classes("mono")
+            ui.label(str(product.get("name") or "")).classes("note")
+
+
+def _process_panel(
+    cid: str,
+    generator: GeneratorConfig,
+    ready: list[str],
+    selection: set[str],
+    refresh: Callable[[], Awaitable[None]],
+) -> Callable[[], None]:
+    """One button for both halves of the run, and the sentence saying what it will do.
+
+    There were two — write the missing, and regenerate the ticked — and that made one intention
+    into two runs. The failure is not hypothetical in this codebase's history: given two buttons
+    where one is obviously primary, the second gets pressed some of the time, and a run that
+    writes half of what the operator meant reports success either way.
+
+    So the set is the **union**, recomputed at click time rather than captured when the button was
+    built, and the caption keeps the two halves visible so a total of 13 is never mistaken for 13
+    missing pages. Returns the updater the tick boxes call.
+    """
+    caption = ui.label("").classes("note mb-2")
+    secret = env_edit.describe([generator.api_key_env])[generator.api_key_env]
+    if not secret.present:
+        caption.text = ""
+        theme.band(
+            f"{generator.api_key_env} is not set, so this machine cannot write text at all. Set "
+            "it on the Setup screen.",
+            "warn",
+        )
+        return lambda: None
+
+    def chosen() -> list[str]:
+        """The union, read when the button is pressed — the ticks keep moving until then."""
+        return sorted({*ready, *selection})
+
+    async def go() -> None:
+        picked = chosen()
+        if not picked:
+            theme.announce(
+                "Nothing to write", "Nothing needs text, and nothing is ticked.", kind="warn"
+            )
+            return
+        output: list[str] = []
+        result = await runner.stream(runner.run_generate_argv(cid, picked), output.append)
+        await refresh()
+        if result.ok:
+            theme.announce(
+                "Text written",
+                f"{len(picked)} product(s) were written. Read them below before publishing.",
+            )
+        else:
+            theme.announce(
+                "Generation failed",
+                f"The command exited {result.returncode} and nothing was written. The output "
+                "below is what it said.",
+                kind="danger",
+                detail="\n".join(output[-_FAILURE_LINES:]) or "(no output)",
+            )
+
+    button = theme.action("Process", go)
+
+    def sync() -> None:
+        total = len(chosen())
+        picked = len(selection)
+        caption.text = f"{total} product(s) will be written: {len(ready)} with no live text" + (
+            f", plus {picked} you ticked above." if picked else ", and nothing ticked above."
+        )
+        button.set_text(f"Process {total} product(s)")
+        button.set_enabled(bool(total))
+
+    sync()
+    return sync
 
 
 def _review(scope: context.Scope | None, results_path: Path, languages: list[str]) -> None:
@@ -335,6 +413,10 @@ def _entries(entries: dict[str, Any], languages: list[str], results_path: Path) 
             "note"
         )
 
+
+#: How much of a failed command's output to put in the dialog. Enough for a traceback's tail,
+#: short enough that the Close button stays on screen without scrolling to it.
+_FAILURE_LINES = 40
 
 _MAX_SHOWN = 25
 #: How many GTINs to name in a one-line list before summarising the remainder.

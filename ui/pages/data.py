@@ -3,7 +3,7 @@
 A run reads **two** operator files, and this screen is where both arrive:
 
 * the **GS1 Data Source export** — the product data, parsed into ``products.json``;
-* the **product scope list** — which barcodes this run may touch.
+* the **product selection list** — which barcodes this run may touch.
 
 They are different documents from different places, and confusing them is the most expensive
 mistake available here, so each has its own section, its own upload and its own name. The config
@@ -31,42 +31,44 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from nicegui import events, ui
 
+from lib import input_layout, provenance
 from lib.errors import ProcessListError
+from lib.input_layout import export_archive_path, write_readme
 from lib.preflight import held_for_video, in_scope
 from lib.process_list import rows_in_export
-from ui import REPO_ROOT, context, process_list_edit, runner, theme
+from ui import REPO_ROOT, batch_view, context, process_list_edit, runner, theme
 
 
 @dataclass
-class _Batch:
-    """Which of the two files have arrived, and whether a selection has been saved.
+class _Session:
+    """The one thing about this screen that is genuinely about *this sitting*, and not about disk.
 
-    **Module-level, keyed by client, and deliberately not persisted.** The screen rebuilds on every
-    visit — NiceGUI runs a ``@ui.page`` function per request — so a local would reset the moment
-    the operator stepped to Content and back, and demanding both uploads again for a trip to the
-    next screen is not what "every run brings both files" means. A run is a batch, not a page view.
+    It used to hold three booleans — export arrived, list arrived, selection saved — and the first
+    two gated whether the grid appeared at all. That made the batch **invisible and live at the same
+    time**: restarting the shell hid the selection while a run went on consuming it, as the band
+    that replaced the grid admitted in so many words.
 
-    The boundary is the **process**: restarting the shell starts a fresh batch and both uploads are
-    required again. That is the operator's own loop — open it, do a wave, close it — and it needs
-    no storage secret, no cookie and no connected client, none of which this shell has today.
+    So arrival is no longer remembered. What is in force is read from the files, by
+    :func:`lib.batch.in_force`, which is what a run reads too — and the risk the old rule was
+    reaching for, a batch whose ticks were chosen against a *different* export, is now detected and
+    said out loud instead of being hidden behind an absent grid.
 
-    What it gives up is the two-window case, where both windows would share one batch. For a
-    loopback native window driven by one person that is not a real configuration, and the wrong
-    answer there is mild: a screen that offers to choose products, not a run that inherits a scope.
+    ``saved`` stays, because it is not a fact about disk: it answers "did *I*, in this sitting,
+    already choose a batch?", which is what makes "this replaced the selection you saved earlier"
+    true or false. A file's timestamp cannot tell you that.
     """
 
-    export: bool = False
-    listed: bool = False
     saved: bool = False
 
 
-#: One per client, for the life of the process. See :class:`_Batch`.
-_BATCHES: dict[str, _Batch] = {}
+#: One per client, for the life of the process. See :class:`_Session`.
+_BATCHES: dict[str, _Session] = {}
 
 
 def _resolve(path: str) -> Path:
@@ -98,40 +100,32 @@ def render() -> None:
             )
             return
 
-        # **A run brings both files.** Until they have both arrived *this visit*, the selection
-        # and the quality report are not shown — not shown empty, not shown stale, not shown at
-        # all. A screen that offered a batch built from whatever was left on disk is a screen that
-        # lets a run inherit the previous one's scope without anybody deciding to.
-        batch = _BATCHES.setdefault(cid, _Batch())
+        session = _BATCHES.setdefault(cid, _Session())
         #: The grid's save, hoisted so the Next button can call it. ``None`` until there is a grid.
         commit: dict[str, Callable[[], bool]] = {}
 
-        def refresh(which: str) -> None:
-            if which == "export":
-                batch.export = True
-            elif which == "list":
-                batch.listed = True
-            ready = batch.export and batch.listed
+        def refresh(_which: str) -> None:
+            """Redraw from **disk**, not from what arrived this visit.
+
+            ``_which`` is kept because the upload handlers pass it and it reads as documentation of
+            what just happened; nothing branches on it any more. What decides whether there is a
+            batch is whether both files are there and the selection reads — ``Batch.ready``.
+            """
+            in_force = context.batch_in_force(cfg)
+            ready = in_force is not None and in_force.ready
+            panel.clear()
             selection.clear()
             quality.clear()
             commit.clear()
+            with panel:
+                batch_view.render(in_force)
             with selection:
                 if ready:
-                    _scope_grid(cfg, cid, commit, caption, batch)
+                    _scope_grid(cfg, cid, commit, caption, session)
                 else:
                     theme.band(
                         "Upload both files above to choose the products for this run.", "quiet"
                     )
-                    if batch.saved:
-                        # Only reachable by restarting the shell, since arrival otherwise survives
-                        # a trip to another screen. The selection is still on disk and a run would
-                        # use it — but uploading the list again replaces it, and that is the part
-                        # worth saying before they do it rather than after.
-                        theme.band(
-                            "Your last selection was saved and a run would use it. Uploading the "
-                            "product list again replaces it with the whole list.",
-                            "warn",
-                        )
             if ready:
                 with quality:
                     _quality(cid)
@@ -141,9 +135,11 @@ def render() -> None:
 
         with ui.element("div").classes("steps-2up"):
             _export(cfg, cid, refresh)
-            _scope_list(cfg, batch, refresh)
+            _scope_list(cfg, session, refresh)
 
-        # Bound after the row so they render below it, and before ``refresh`` is ever called.
+        # Bound after the row so they render below it, and before ``refresh`` is ever called. The
+        # panel sits above the grid: which files this is about comes before what is in them.
+        panel = ui.column().classes("w-full gap-0")
         selection = ui.column().classes("w-full gap-0")
         quality = ui.column().classes("w-full gap-0")
 
@@ -170,6 +166,36 @@ def render() -> None:
 # --- Step 1: the export -------------------------------------------------------
 
 
+def _keep_upload(target: Path, data: bytes) -> Path | None:
+    """Keep this export upload forever, dated, beside the live file. Returns where, or ``None``.
+
+    ``process/uploads/GS1 export/export-{stamp}.xlsx``, named by
+    :func:`lib.input_layout.export_archive_path` rather than here — this had its own copy of the
+    naming and its own collision loop, which is four places that spell one layout and the reason
+    two of them were wrong for a week.
+
+    Written on the way *in* — the moment the file has proved readable — rather than when the next
+    upload displaces it. Archiving on replacement means a file uploaded once and never replaced has
+    no dated copy at all, which is the ordinary case for a quarterly export.
+
+    Best-effort, and now actually so: this said "best-effort" while letting an ``OSError`` out into
+    ``theme.upload``, which shows the exception and re-raises — so an upload that had already
+    landed and parsed would report as failed because a *copy* of it could not be filed.
+
+    ``None`` is not swallowed: the caller says so in the sentence it leaves on screen. There is no
+    logger anywhere under ``ui/``, and the handler's return value *is* this screen's way of
+    reporting — a failure nobody is told about would leave the operator believing they have a dated
+    copy of an export they do not.
+    """
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        kept = export_archive_path(target, datetime.now(UTC).strftime("%Y%m%dT%H%M%S"))
+        kept.write_bytes(data)
+    except OSError:
+        return None
+    return kept
+
+
 def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
     target = _resolve(cfg.export.path)
 
@@ -194,9 +220,11 @@ def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
         async def receive(event: events.UploadEventArguments) -> str:
             problems.style("display:none")
             target.parent.mkdir(parents=True, exist_ok=True)
-            backup = target.with_suffix(f".bak{target.suffix}")
-            if target.exists():
-                backup.write_bytes(target.read_bytes())
+            # Held in memory rather than written to a ``.bak``: it exists only to put the previous
+            # export back if this one will not parse, which is a rollback and not an archive. The
+            # archive is the dated copy below, written only once the file has proved readable —
+            # an unreadable upload is not one of the operator's originals, it is a mistake.
+            previous = target.read_bytes() if target.exists() else None
             await event.file.save(target)
 
             # Reading it *is* the check. There was a "check it" button and a "read it" button, and
@@ -204,17 +232,31 @@ def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
             # into a run built on a file nobody had opened.
             result = await runner.run_off_the_loop(runner.parse_export_argv(cid))
             if result.ok:
+                kept = _keep_upload(target, target.read_bytes())
+                # What the operator called it, before the upload renamed it to export.xlsx. Without
+                # this, "which export did that run use?" can only ever be answered with a timestamp.
+                provenance.record_upload(
+                    provenance.history_path(target),
+                    "export",
+                    kept=kept,
+                    given_name=event.file.name,
+                    rows=context.product_count(cid),
+                )
+                write_readme(cfg)
                 # The selection below is a join against this export, so it now describes a
                 # different one — and this is the upload that unlocks it.
                 arrived("export")
                 theme.notify_ok("Export read.")
-                return f"{context.product_count(cid) or 0} products read from this export."
+                read = f"{context.product_count(cid) or 0} products read from this export."
+                if kept is None:
+                    return f"{read} A dated copy of it could not be written beside it."
+                return read
 
             # Put the old one back. A failed read that leaves the bad file in place would mean the
             # next screen describes a workbook nobody can use, with no way back but a re-upload of
             # a file the operator may no longer have.
-            if backup.exists():
-                target.write_bytes(backup.read_bytes())
+            if previous is not None:
+                target.write_bytes(previous)
             problems.style("display:block")
             problems.clear()
             problems.push(result.stderr or result.stdout or "(no output)")
@@ -233,9 +275,11 @@ def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
 
 # --- Product scope list ---------------------------------------------------------
 #
-# Named "Process list" on screen until now, which is the config key. It is not what the file is
-# to the person who maintains it: a list of the products in this batch. The key stays; the words
-# the operator reads are the ones that describe their own document.
+# Named "Process list" on screen until two renames ago, which is the config key; then "product
+# list", which is one word away from "the product data" in step 1 — the exact confusion this
+# screen is built to prevent. It is a **selection**: which of the exported products this batch
+# touches. The config key `process_list` stays (it is in clients.yml, the schema, the doctor
+# payload and five call sites); only what the operator reads changes.
 
 #: The row key: a row's position in the sheet as first read. Fixed when the grid is built and
 #: never renumbered — see ``ProcessListSheet.keeping`` for what accumulating edits does instead.
@@ -256,7 +300,7 @@ _TOAST_BEAT = 4.0
 _TABLE_HEIGHT = "55vh"
 
 
-def _scope_list(cfg: Any, batch: _Batch, arrived: Callable[[str], None]) -> None:
+def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> None:
     if cfg.process_list is None:
         with theme.section("Choose the products for this batch", step=2):
             ui.label(
@@ -267,15 +311,16 @@ def _scope_list(cfg: Any, batch: _Batch, arrived: Callable[[str], None]) -> None
     control = _resolve(cfg.process_list.path)
 
     with theme.section(
-        "Upload the product list",
+        "Upload the product selection list",
         step=2,
         explain=(
             "A spreadsheet of the barcodes this batch may touch. Being on the list is the whole "
             "meaning — the tool reads no other column and interprets no cell value — so you "
             "prepare a batch by ticking rows below, and your own columns are kept exactly as they "
-            f"are. It is saved as {cfg.process_list.path}, and your upload is kept beside it as "
-            f"{process_list_edit.archive_path(control).name}, which is what the per-run result "
-            "sheet reads to name the rows you dropped. "
+            f"are. It is saved as {cfg.process_list.path}, and your upload is kept under "
+            f"uploads/ as {process_list_edit.archive_path(control).name}. Every run copies that "
+            "file into its own folder, which is what lets the result sheet afterwards name the "
+            "rows you dropped as dropped rather than leaving them out. "
             "That path is fixed in clients.yml and has no command-line override, so a list saved "
             "anywhere else is invisible to the tool."
         ),
@@ -286,22 +331,59 @@ def _scope_list(cfg: Any, batch: _Batch, arrived: Callable[[str], None]) -> None
             # Read before it is installed, with the run's own reader, so a file that would fail on
             # Preflight is refused while the operator is still looking at the picker and the list
             # they were working from is untouched.
-            kept = process_list_edit.archive(cfg.process_list, await event.file.read())
+            data = await event.file.read()
+            kept = process_list_edit.archive(cfg.process_list, data)
+            provenance.record_upload(
+                provenance.history_path(_resolve(cfg.export.path)),
+                "product-list",
+                # The dated copy, not the stable name: a selection months from now points at the
+                # document that will still be there, and ``product-list.xlsx`` is replaced by the
+                # next upload.
+                kept=next(iter(input_layout.list_archives(control)), None),
+                given_name=event.file.name,
+                rows=len(process_list_edit.read_sheet(cfg.process_list).rows),
+            )
             # Redrawn rather than left for the operator to reload: the tables below now describe
             # the file that was just replaced, and a screen that keeps showing the previous list
             # after a successful upload is the silent staleness this project designs against.
-            replaced, batch.saved = batch.saved, False
+            write_readme(cfg)
+            replaced, session.saved = session.saved, False
             arrived("list")
-            theme.notify_ok("Product list installed.")
+            theme.notify_ok("Selection list installed.")
             if replaced:
                 return "Installed — this replaced the selection you saved earlier."
             return f"Installed. Your upload is kept as {kept.name}."
 
-        theme.upload("Product list (.xlsx)", receive, busy="Checking the list…")
+        theme.upload("Product selection list (.xlsx)", receive, busy="Checking the list…")
+
+        def restore() -> None:
+            """Put the operator's own upload back as the list, ticks and all."""
+            try:
+                rows = process_list_edit.restore_from_upload(cfg.process_list)
+            except ProcessListError as exc:
+                theme.announce("Nothing to restore", str(exc), kind="warn")
+                return
+            session.saved = False
+            arrived("list")
+            theme.announce(
+                "Back to your original list",
+                f"All {rows} row(s) from the file you uploaded are back and ticked. Every "
+                f"selection you saved is still dated beside it under process/selection/.",
+            )
+
+        theme.quiet_action("Start again from my uploaded file", restore)
+        ui.label(
+            "Ticked too many rows off? This puts your own upload back exactly as you sent it — "
+            "no need to find the file again."
+        ).classes("note mt-2")
 
 
 def _scope_grid(
-    cfg: Any, cid: str, commit: dict[str, Callable[[], bool]], caption: ui.label, batch: _Batch
+    cfg: Any,
+    cid: str,
+    commit: dict[str, Callable[[], bool]],
+    caption: ui.label,
+    session: _Session,
 ) -> None:
     """The list joined against the export: what is missing above, what will run below."""
     try:
@@ -353,11 +435,11 @@ def _scope_grid(
             "leave it out of this batch. Next saves your choice and moves on — there is no "
             "separate save button. The filter changes only what you can see, "
             "never what is ticked, so you can search, untick, clear the filter, and nothing you "
-            "did is lost. Saving keeps the previous version beside the file as .bak.xlsx, and if "
-            "the ticks come out wrong the way back is to upload the list again — every batch "
-            "starts "
-            "with both "
-            "files anyway. Nothing is "
+            "did is lost. A column that is empty on some rows offers (blank) as something to "
+            "filter for, which is how you find the ones nobody has done yet. "
+            "Every save is kept, dated, under process/selection/, so nothing you "
+            "ever chose is overwritten — and if the ticks come out wrong, Start again from my "
+            "uploaded file above puts the whole list back. Nothing is "
             "published here; this only settles which products are in the batch. A product with no "
             "client-confirmed video in every language is marked in the Video column and a run "
             "skips it, reporting success (media.restrict_to_mapped_gtins)."
@@ -377,16 +459,34 @@ def _scope_grid(
             # They carry no checkbox because the only question this screen asks is "does this
             # run?", and for them the answer is no whatever anyone ticks.
             keep = {int(row[_ROW]) for row in below.selected} | set(unmatched)
+            chosen = sheet.keeping(keep)
             try:
-                process_list_edit.save_sheet(sheet.keeping(keep))
+                saved = process_list_edit.save_sheet(chosen)
             except ProcessListError as exc:
                 theme.notify_problem(str(exc))
                 return False
+            # Which export these ticks were made against. Recorded here rather than inside
+            # ``save_sheet`` because this is the layer that knows the whole batch; that one knows
+            # only the sheet it was handed.
+            # Every path here goes through ``_resolve``, including the one ``save_sheet`` just
+            # returned. ``start.command`` cds to the repository so the two spellings are the same
+            # file, but anchoring some of them and not others would put the ledger in one place and
+            # the files it describes in another the first time that stopped being true. Resolved,
+            # the worst case is a record that is not written — ``describe`` returns None for a file
+            # it cannot read — rather than a ledger split across two trees.
+            export = _resolve(cfg.export.path)
+            provenance.record_selection(
+                provenance.history_path(export),
+                _resolve(str(saved)),
+                product_list=input_layout.archive_path(_resolve(cfg.process_list.path)),
+                export=export,
+                rows=len(chosen.rows),
+            )
             # One word. The numbers are in the caption above the button, where the operator read
             # them *before* pressing it — a receipt racing a page change is the wrong place for a
             # fact somebody has to act on, and the long version of this sentence was unreadable in
             # the time it had. The backup path is not lost: it is in the ⓘ on this step.
-            batch.saved = True
+            session.saved = True
             theme.notify_ok("Saved")
             return True
 
@@ -445,20 +545,68 @@ def _missing_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
     table.props("dense flat bordered")
 
 
-def _scope_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> ui.table:
-    """The rows a run will act on, all selected, searchable. Returns the table."""
+class _Selection:
+    """The ticked rows, as a set of row keys that filtering never touches.
+
+    **This is the Google Sheets model, not the Excel one.** A tick is a property of a *row*, not of
+    what happens to be on screen. Filtering changes the view and nothing else; a bulk tick or
+    untick applies to the rows the filter is showing; the running total counts the whole file,
+    visible or not. So: 100 ticked, filter to 30, untick those → 70. Or nothing ticked, filter to
+    20, tick all → 20.
+
+    Held in Python rather than read off ``table.selected``, because that list only ever holds rows
+    the table is currently rendering. Filter a ticked row out of view and it drops out of
+    ``selected``; save then, and the operator loses rows they never touched — silently, since the
+    count would agree with itself the whole way down.
+    """
+
+    def __init__(self, keys: set[int]) -> None:
+        self.keys = keys
+
+    def sync_from(self, visible: list[dict[str, Any]], selected: list[dict[str, Any]]) -> None:
+        """Fold a table event back in: only the visible rows can have changed."""
+        shown = {int(row[_ROW]) for row in visible}
+        self.keys = (self.keys - shown) | {int(row[_ROW]) for row in selected}
+
+    def add(self, rows: list[dict[str, Any]]) -> None:
+        self.keys |= {int(row[_ROW]) for row in rows}
+
+    def remove(self, rows: list[dict[str, Any]]) -> None:
+        self.keys -= {int(row[_ROW]) for row in rows}
+
+
+#: How many distinct values a column may hold before its filter becomes free text. Below this a
+#: picker is better — the operator sees what the column *contains*, which is most of why they
+#: filter; above it, a list of 300 barcodes is a worse way to find one than typing four digits.
+_PICKER_MAX = 12
+
+#: What a blank cell is called in a filter, in both controls. A column in the operator's own file
+#: is routinely part empty, and those rows are usually the point — "not on the website yet" is a
+#: blank, not a word.
+BLANK_LABEL = "(blank)"
+
+
+def _scope_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> Any:
+    """The rows a run will act on, all ticked, filterable per column.
+
+    One box matching every column was the whole filter. It is still here — it is the fastest way
+    to find one barcode and nothing per-column replaces it — but it could not answer the question
+    the operator actually has, which is "show me the rows where *this* column says *that*".
+    """
     theme.subhead(
         f"In the GS1 export ({len(rows)}) — tick the ones to process",
         explain=(
-            "Every row arrives ticked. Untick a product to leave it out of this batch, then press "
-            "Save the list. Filtering changes only what you can see, never what is ticked."
+            "Every row arrives ticked. Untick a product to leave it out of this batch. Filters "
+            "change only what you can see, never what is ticked, and the tick buttons act on the "
+            "rows the filters are showing — so you can filter to twenty rows, untick all twenty, "
+            "clear the filters, and the other eighty are exactly as you left them."
         ),
     )
-    search = (
-        ui.input(placeholder="Filter — matches every column")
-        .props("dense clearable")
-        .classes("w-full max-w-sm")
-    )
+    selection = _Selection({int(row[_ROW]) for row in rows})
+    # Created before the table so they render above it. You filter, then look — controls under the
+    # thing they control are read as a footer, and on a table this tall they are off screen.
+    filters = ui.row().classes("items-end gap-3 w-full flex-wrap mt-3")
+    bulk = ui.row().classes("items-center gap-3 mt-2 mb-1 flex-wrap")
     held_column = {
         "name": _HELD,
         "label": "Video",
@@ -466,9 +614,10 @@ def _scope_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> u
         "align": "left",
         "sortable": True,
     }
+    all_columns = [*columns, held_column]
     table = ui.table(
-        columns=[*columns, held_column],
-        rows=rows,
+        columns=all_columns,
+        rows=list(rows),
         row_key=_ROW,
         selection="multiple",
         # Mandatory, not cosmetic: with pagination on, the header checkbox selects *this page*,
@@ -476,12 +625,171 @@ def _scope_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> u
         pagination=0,
     ).classes("w-full mt-2")
     table.props(f'dense flat bordered virtual-scroll style="height: {_TABLE_HEIGHT}"')
-    # Independent of the filter in Quasar 2.18, so a selection survives typing in the box. What
-    # does not survive is the header checkbox's meaning — its tri-state describes the rows the
-    # filter is showing, not the file — which is what the count label beside the table is for.
-    table.selected = list(rows)
-    table.bind_filter_from(search, "value")
-    return table
+
+    #: Column field -> the operator's filter for it. Read on every redraw; empty means "no filter".
+    per_column: dict[str, Any] = {}
+    search: Any = None
+    listeners: list[Callable[[], None]] = []
+
+    def visible() -> list[dict[str, Any]]:
+        """The rows every active filter admits — all of them, ANDed."""
+        text = str(getattr(search, "value", "") or "").strip().lower()
+        kept = []
+        for row in rows:
+            if text and not any(text in str(value).lower() for value in row.values()):
+                continue
+            if all(_admits(per_column.get(field), row.get(field)) for field in per_column):
+                kept.append(row)
+        return kept
+
+    def redraw() -> None:
+        shown = visible()
+        table.rows = shown
+        # Rebuilt from the selection, never from what the table was showing a moment ago: the two
+        # disagree the instant a filter hides a ticked row, and the table's copy is the lossy one.
+        table.selected = [row for row in shown if int(row[_ROW]) in selection.keys]
+        table.update()
+        for listen in listeners:
+            listen()
+
+    def on_table_select() -> None:
+        selection.sync_from(visible(), list(table.selected))
+        for listen in listeners:
+            listen()
+
+    table.on_select(on_table_select)
+
+    with filters:
+        search = (
+            ui.input(placeholder="Find in any column")
+            .props("dense clearable")
+            .classes("w-full max-w-xs")
+        )
+        search.on_value_change(redraw)
+        for column in all_columns:
+            per_column[column["field"]] = _column_filter(column, rows, redraw)
+
+    with bulk:
+        tick = ui.button("Tick all shown", on_click=lambda: (selection.add(visible()), redraw()))
+        untick = ui.button(
+            "Untick all shown", on_click=lambda: (selection.remove(visible()), redraw())
+        )
+        for button in (tick, untick):
+            button.props("flat dense no-caps")
+        shown_label = ui.label("").classes("note")
+
+    def describe_shown() -> None:
+        count = len(visible())
+        ticked = sum(1 for row in visible() if int(row[_ROW]) in selection.keys)
+        shown_label.text = (
+            f"{count} of {len(rows)} row(s) shown; {ticked} of those ticked."
+            if count != len(rows)
+            else f"All {len(rows)} row(s) shown; {ticked} ticked."
+        )
+
+    listeners.append(describe_shown)
+    redraw()
+    return _Grid(selection, rows, listeners)
+
+
+class _Grid:
+    """What the save and the caption need from the table, without reaching into the widget."""
+
+    def __init__(
+        self, selection: _Selection, rows: list[dict[str, Any]], listeners: list[Callable[[], None]]
+    ) -> None:
+        self._selection = selection
+        self._rows = rows
+        self._listeners = listeners
+
+    @property
+    def selected(self) -> list[dict[str, Any]]:
+        """Every ticked row in the file — not merely the ticked rows on screen."""
+        return [row for row in self._rows if int(row[_ROW]) in self._selection.keys]
+
+    def on_select(self, handler: Callable[[], None]) -> None:
+        self._listeners.append(handler)
+        handler()
+
+
+def _column_filter(column: dict[str, Any], rows: list[dict[str, Any]], redraw: Any) -> Any:
+    """One column's filter: a value picker when it has few values, free text when it has many.
+
+    A picker is what the operator means by "filter on column D" — they want to see what D
+    contains. It stops being that the moment the column is a barcode or a description, where the
+    list is as long as the file and typing four characters is faster than finding one entry in
+    three hundred.
+
+    **An empty cell is one of the things a column contains**, and both controls can ask for it
+    under the same name. This shipped building the picker's options from the column's values *minus*
+    the empty one, which made blanks the single thing in a column that could not be filtered for —
+    on the pilot's own list that is 52 rows of "Momenteel op Website", 16 of "Al in Gs1" and 81 of
+    "Link naar site", and "show me the ones nobody has done yet" is how a batch gets prepared.
+    """
+    field = column["field"]
+    label = str(column["label"])
+    options = _picker_options(rows, field)
+    if options is not None:
+        control = (
+            ui.select(options, multiple=True, label=label, clearable=True)
+            .props("dense outlined use-chips")
+            .classes("min-w-40")
+        )
+    else:
+        control = ui.input(placeholder=label).props("dense clearable outlined").classes("w-40")
+        if any(not cell for cell in _cells(rows, field)):
+            # Typing cannot express "empty" — every string is a substring of nothing — so this
+            # control takes the picker's word for it. On hover, because a column this wide has no
+            # room to say it and the sentence belongs with the control rather than in a paragraph.
+            control.tooltip(f"Type {BLANK_LABEL} to show only the rows where this column is empty")
+    control.on_value_change(redraw)
+    return control
+
+
+def _cells(rows: list[dict[str, Any]], field: str) -> list[str]:
+    """One column's cells as the filters compare them: text, stripped, blank for absent."""
+    return [str(row.get(field) or "").strip() for row in rows]
+
+
+def _picker_options(rows: list[dict[str, Any]], field: str) -> dict[str, str] | None:
+    """A column's picker options, or ``None`` when it has too many values to enumerate.
+
+    Pure, and separate from the widget, so the decision and the options are testable without a
+    browser — which is what the blank option needed, since getting it wrong is invisible: a filter
+    that silently matches nothing looks exactly like a column with nothing in it.
+
+    Keyed by the cell value and labelled for a person. The blank option's value is the **empty
+    string** — what a blank cell compares equal to — so :func:`_admits` needs no case of its own.
+    Quasar round-trips it as ``[""]``, measured in a browser rather than assumed, because an option
+    the widget quietly dropped would filter to nothing while looking selected.
+    """
+    cells = _cells(rows, field)
+    values = sorted(set(cells) - {""})
+    if len(values) > _PICKER_MAX:
+        return None
+    # No blank option for a column that has none: an option matching nothing can only mislead.
+    options = {"": BLANK_LABEL} if "" in cells else {}
+    options.update({value: value for value in values})
+    return options
+
+
+def _admits(control: Any, value: Any) -> bool:
+    """Whether one column's filter lets a cell through. No filter admits everything."""
+    chosen = getattr(control, "value", None)
+    if not chosen:
+        return True
+    cell = str(value or "").strip()
+    if isinstance(chosen, list):
+        # The picker's blank option carries the empty string, which is exactly what a blank cell
+        # reads as — so asking for blanks is the ordinary path here, not a special case.
+        return cell in chosen
+    needle = str(chosen).strip()
+    if needle == BLANK_LABEL:
+        # The one typed string that is not a substring search. A column whose cells literally read
+        # "(blank)" would be unsearchable for that word, which is a trade worth making: the word is
+        # the picker's own, so the two controls cannot mean different things by it.
+        return not cell
+    return needle.lower() in cell.lower()
 
 
 # --- Quality ------------------------------------------------------------------

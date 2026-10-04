@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Final
 
 import jsonschema
 
+from lib.batch import Chosen, in_force
 from lib.categories import assign_categories, coverage_report
 from lib.config import DEFAULT_CLIENTS_PATH, ClientConfig, get_client, load_clients
 from lib.errors import (
@@ -57,6 +58,7 @@ from lib.errors import (
 from lib.generator import generation_context, load_results, missing_copy
 from lib.gs1_dl_client import GS1DigitalLinkClient
 from lib.holds import held_units
+from lib.input_layout import archive_path
 from lib.media_video import (
     VideoMapSummary,
     canon_gtin,
@@ -67,7 +69,8 @@ from lib.media_video import (
     summarize_video_map,
 )
 from lib.process_list import load_process_list
-from lib.records import ProductRecord
+from lib.provenance import history_path, read
+from lib.records import ProductRecord, SkipReason
 from lib.state import WILL_BE_WRITTEN, classify_units, peek_state
 from lib.wp_client import WordPressClient, WordPressIdentity
 
@@ -455,6 +458,41 @@ def _excluded_aside(unchanged: int, held: int) -> str:
     return f"; {' and '.join(parts)}, so this run writes no copy for them"
 
 
+def _product_counts(
+    products: list[ProductRecord],
+    wanted: set[tuple[str, str]] | None,
+    held: dict[tuple[str, str], SkipReason],
+) -> dict[str, int]:
+    """The same three groups counted in **products**, and split by what would unblock them.
+
+    Every other figure here is in units, and stays that way: units are the plan's unit of work,
+    and a count in anything else cannot be compared with the row counts beside it. These are
+    *added* rather than substituted, because the two questions have different owners — "46 held"
+    is what the run will do, "23 products blocked, 18 of them for want of a video" is what somebody
+    has to go and fix, and nobody fixes half a product in one language.
+
+    The split is by first-rule-fired, the same attribution ``held_units`` makes: E24 is the video
+    map's problem and lands with whoever confirms videos, while E23 and E22 are source data and
+    land in MyGS1. Collapsing those two into one number would send the operator to the wrong place.
+
+    Empty when :func:`units_needing_copy` could not decide, because "everything" is not a set this
+    can subtract from: a breakdown built on it would name products it never examined.
+    """
+    if wanted is None:
+        return {}
+    held_gtins = {gtin for gtin, _ in held}
+    wanted_gtins = {gtin for gtin, _ in wanted}
+    video = {gtin for (gtin, _), reason in held.items() if reason is SkipReason.NO_CONFIRMED_VIDEO}
+    return {
+        "products_to_publish": len(wanted_gtins),
+        "products_held_video": len(video),
+        "products_held_data": len(held_gtins - video),
+        "products_unchanged": len(
+            {product.gtin for product in products} - held_gtins - wanted_gtins
+        ),
+    }
+
+
 def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
     """Report whether this run's ``generation_results.json`` covers the units it will publish.
 
@@ -498,7 +536,8 @@ def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -
     total = len(products) * len(languages) if wanted is None else len(wanted)
     # Safe to ask again only because ``wanted`` is not ``None``: that is precisely the case where
     # ``units_needing_copy`` already read the video map without raising.
-    held = 0 if wanted is None else len(held_units(cfg, products))
+    held_by_unit = {} if wanted is None else held_units(cfg, products)
+    held = len(held_by_unit)
     unchanged = len(products) * len(languages) - total - held
     context = generation_context(
         languages,
@@ -540,6 +579,7 @@ def check_generation_results(cfg: ClientConfig, products: list[ProductRecord]) -
         # Adding them together would report the second as the first, which is the reading that
         # makes a hold look like a success.
         "held": held,
+        **_product_counts(products, wanted, held_by_unit),
     }
     excluded = _excluded_aside(unchanged, held)
     if not missing:
@@ -595,6 +635,57 @@ def check_process_list(cfg: ClientConfig) -> CheckResult:
         Status.OK,
         f"{len(listed)} GTIN(s) listed for processing in {cfg.process_list.path}",
         data={"count": len(listed)},
+    )
+
+
+def check_selection_matches_export(cfg: ClientConfig) -> CheckResult:
+    """Were these ticks chosen against the export that is on disk now?
+
+    Nothing warned about this before, and there was no way to: a selection carries no trace of the
+    export it was made against. The failure it catches is entirely silent — a barcode the current
+    export has no row for produces no plan row, no error and no count anywhere, so the only evidence
+    is a total one smaller than expected. Replacing the export after choosing a batch is the
+    ordinary way to get there.
+
+    A **warning, never a failure.** Re-checking the ticks may well be unnecessary; only the operator
+    knows. And ``NOT_RECORDED`` reports ``NA`` rather than passing, because every batch saved before
+    this was kept is in that state and a green line there would be a claim nobody made — the
+    overclaiming that had to be taken out of the scope sentence once already.
+    """
+    name, title = "selection_matches_export", "Selection vs export"
+    if cfg.process_list is None:
+        return CheckResult(name, title, Status.NA, "no `process_list` block — nothing to compare")
+
+    selection = Path(cfg.process_list.path)
+    export = Path(cfg.export.path)
+    batch = in_force(
+        export=export,
+        selection=selection,
+        product_list=archive_path(selection),
+        history=read(history_path(export)),
+        gtin_column=cfg.process_list.gtin_column,
+    )
+    if batch.chosen_against is Chosen.THIS_EXPORT:
+        return CheckResult(
+            name, title, Status.OK, "the selection in force was chosen against this export"
+        )
+    if batch.chosen_against is Chosen.NOT_RECORDED:
+        return CheckResult(
+            name,
+            title,
+            Status.NA,
+            "which export the selection was chosen against was not recorded — it predates this "
+            "being kept",
+        )
+    return CheckResult(
+        name,
+        title,
+        Status.WARN,
+        f"the selection in force was chosen against {batch.chosen_export}, and the export on disk "
+        f"is not that file",
+        remedy="Open Data and check the ticks against this export. A barcode it has no row for is "
+        "dropped with no error and no count.",
+        data={"chosen_against": batch.chosen_export},
     )
 
 
@@ -1067,6 +1158,7 @@ def run_checks(
         check_generator(cfg),
         check_generation_results(cfg, products),
         check_process_list(cfg),
+        check_selection_matches_export(cfg),
         check_category_coverage(cfg, products),
         check_video_coverage(cfg),
         check_ffmpeg(cfg),

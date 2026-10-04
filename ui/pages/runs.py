@@ -14,7 +14,9 @@ from pathlib import Path
 
 from nicegui import ui
 
+from lib.provenance import read_run
 from lib.records import RunOutcome
+from lib.run_files import SOURCES_NAME, sibling
 from ui import REPO_ROOT, context, runner, theme
 
 
@@ -118,9 +120,10 @@ def _report(payload: dict[str, object]) -> None:
 
 def _run(run: context.RunLog) -> None:
     with ui.element("div").classes("card mb-4"):
-        ui.label(str(_relative(run.path))).classes("gate-step scroll-x")
+        ui.label(run.stamp).classes("gate-step scroll-x")
         when = run.modified.strftime("%Y-%m-%d %H:%M UTC") if run.modified else "unknown time"
         ui.label(("Dry run · " if run.dry_run else "") + when).classes("gate-title")
+        _what_it_read(run)
 
         with ui.row().classes("gap-12 items-end my-3"):
             theme.figure(str(run.ok), "ok")
@@ -173,6 +176,37 @@ def _run(run: context.RunLog) -> None:
             ).classes("w-full")
 
 
+def _what_it_read(run: context.RunLog) -> None:
+    """Which export and which selection this run consumed, from its own record.
+
+    The figures below say what happened; this says what it happened *to*. Without it the only
+    honest answer to "which export did that run use?" is a shrug, because ``input/`` has been
+    replaced since — which is the whole reason a run writes this down before it starts.
+    """
+    recorded = read_run(sibling(run.path, SOURCES_NAME))
+    if recorded is None:
+        ui.label(
+            "This run kept no record of what it read — it predates that being written down."
+        ).classes("note")
+        return
+
+    export = recorded.sources.get("export")
+    selection = recorded.sources.get("selection")
+    parts: list[str] = []
+    if export is not None:
+        # The name they sent, then the archived copy in brackets. A run identified only by
+        # `export-20260920T015319.xlsx` asks the operator to remember a timestamp.
+        if export.given_name:
+            parts.append(f"ran against “{export.given_name}” ({export.name})")
+        else:
+            parts.append(f"ran against {export.name or 'an export nothing recorded'}")
+    if selection is not None and selection.rows is not None:
+        parts.append(f"selection of {selection.rows} row(s)")
+    ui.label(" · ".join(parts) if parts else "Nothing recorded about what it read.").classes(
+        "note scroll-x"
+    )
+
+
 def _relative(path: Path) -> Path:
     """``path`` against the repository root, or unchanged when it lies outside it."""
     try:
@@ -208,7 +242,7 @@ def _scope_report(run: context.RunLog) -> None:
         output.push(result.display_command)
         output.push(result.stderr or result.stdout or "(no output)")
         if result.ok:
-            theme.notify_ok(f"Result sheet written beside {run.path.name}")
+            theme.notify_ok(f"Result sheet written for {run.stamp}")
         else:
             theme.notify_warning("The result sheet could not be built — see the output.")
 

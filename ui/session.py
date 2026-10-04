@@ -184,6 +184,43 @@ class PublishSession:
         """The required gates still standing between this session and a run."""
         return tuple(gate for gate in self.gates if gate.required and not self.proceeded(gate.id))
 
+    def folds(self, gate: Gate) -> bool:
+        """Whether a screen should render this gate as one line rather than as a card.
+
+        Presentation, decided here rather than on the screen, because it is a question about
+        *answers* and this is what holds them — and because the screen imports NiceGUI, which CI's
+        required job does not install, so a rule living there is a rule no required test can reach.
+
+        Folded is not hidden: a folded gate opens on a click and keeps its **why** and its
+        controls, so an answer can still be re-read or changed. What folding removes is the scroll
+        between the operator and the question actually in front of them; in ``both`` mode the
+        screen renders eight gates, and every one of them used to stand open at once.
+
+        **A required gate is never folded before it is answered.** That is the line this must not
+        cross: the gates are the safety mechanism, and one folded away is one answered unread.
+        """
+        if gate.id in self.answers:
+            return True
+        return not (gate.required or self._has_work(gate))
+
+    def _has_work(self, gate: Gate) -> bool:
+        """Whether an unanswered optional gate is asking for something *now*.
+
+        Deliberately not "is it the next unanswered gate". The languages gate is answered only by
+        *changing* the languages, so an operator who takes the default never answers it at all —
+        under that rule it stayed :meth:`next_gate` for the whole walk, which meant the row-diff
+        gate could never be next, which meant it could never open. A fold rule whose failure mode
+        is a collapsed row-by-row walk is worse than the scrolling it was removing, because an
+        undecided row is not published.
+
+        So each optional gate says when it matters, and the two that never do stay folded: the
+        languages filter has a default that is right every time, and the post-run summary is a
+        link to a screen that holds the answer permanently.
+        """
+        if gate.id == "row_diff":
+            return self.answers.get("plan_review") == "changed-review"
+        return False
+
     @property
     def next_gate(self) -> Gate | None:
         """The next gate to present, required or not, or ``None`` when all have been answered."""

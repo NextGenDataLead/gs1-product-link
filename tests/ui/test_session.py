@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from lib.gates import Mode
+from lib.gates import BY_ID, GATES, Mode
 from lib.records import (
     LocalisedText,
     Plan,
@@ -535,3 +535,64 @@ def test_the_gtins_are_passed_through_byte_for_byte() -> None:
     session = _session()
     session.answer("plan_review", "all")
     assert session.confirmed_pairs(_plan(odd)) == [["8713195000527", "nl"]]
+
+
+# --- which gates a screen stands open ----------------------------------------
+
+
+def _answered(**answers: str) -> PublishSession:
+    """A session with these gate answers and nothing else. Named apart from ``_session`` above:
+    a second ``def _session`` in this module silently replaced the first for every test in it."""
+    session = _session()
+    session.answers.update(answers)
+    return session
+
+
+def test_no_required_gate_folds_before_it_is_answered() -> None:
+    """The line the fold must not cross.
+
+    The gates are this project's safety mechanism, and one folded behind a chevron is one answered
+    without being read. Folding removes the scroll around the question, never the question.
+    """
+    session = _session()
+    for gate in GATES:
+        if gate.required:
+            assert not session.folds(gate), f"{gate.id} is required and would render folded"
+
+
+def test_an_answered_gate_folds_whatever_it_is() -> None:
+    """Including the required ones: a decision already made is not the one being made."""
+    for gate in GATES:
+        assert _answered(**{gate.id: "confirm"}).folds(gate), f"{gate.id} stays open once answered"
+
+
+def test_the_row_walk_opens_exactly_when_the_operator_asked_for_it() -> None:
+    """Gate 6 is optional only in the sense that a run can avoid reaching it.
+
+    Choosing ``changed-review`` at gate 5 *is* asking to walk every changed row, and a walk that
+    arrives collapsed is the scroll-saving rule doing harm: the rows nobody opens are the rows
+    nobody decides, and an undecided row is not published.
+    """
+    row_diff = BY_ID["row_diff"]
+
+    assert _answered().folds(row_diff)
+    assert _answered(plan_review="all").folds(row_diff)
+    assert not _answered(plan_review="changed-review").folds(row_diff)
+
+
+def test_folding_does_not_depend_on_which_gate_is_next() -> None:
+    """The rule this replaces did, and the languages gate broke it.
+
+    That gate is answered only by *changing* the languages, so an operator who accepts the default
+    never answers it — it stayed ``next_gate`` for the whole walk, and the row walk could
+    therefore never open. Pinned here: the row walk opens on its own answer while the languages
+    gate is still untouched, and is still the one ``next_gate`` names.
+    """
+    session = _answered(intent="confirm", plan_review="changed-review")
+
+    # The walk is past gate 0 and the operator has taken the default languages, so this is where
+    # ``next_gate`` sticks — for the rest of the run, whatever else they answer.
+    assert session.next_gate is not None
+    assert session.next_gate.id == "languages"
+    assert not session.folds(BY_ID["row_diff"])
+    assert session.folds(BY_ID["languages"])

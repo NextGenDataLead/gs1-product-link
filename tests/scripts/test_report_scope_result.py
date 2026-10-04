@@ -27,6 +27,7 @@ from lib.config import (
     ProcessListConfig,
     WordPressConfig,
 )
+from lib.input_layout import archive_path
 from lib.records import (
     LocalisedText,
     Plan,
@@ -35,6 +36,7 @@ from lib.records import (
     SkippedUnit,
     SkipReason,
 )
+from lib.run_files import RESULT_NAME, SELECTION_NAME, UPLOAD_NAME
 from scripts import report_scope_result
 
 GTIN = "08713195000001"
@@ -82,7 +84,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A temp cwd with a scope list, a parsed export, and one run log."""
     monkeypatch.chdir(tmp_path)
     _write_list(
-        tmp_path / "input" / "process-list.xlsx",
+        _control(tmp_path),
         [["1079", "Drain saver", "8713195000001"], ["3086", "Contour King", "8713195000002"]],
     )
     products = tmp_path / "output" / "acme" / "data" / "products.json"
@@ -115,8 +117,13 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, cfg: ClientConfig) -> None:
     monkeypatch.setattr(report_scope_result, "get_client", lambda _cid: cfg)
 
 
+def _control(tmp_path: Path) -> Path:
+    """The live selection, at the path the shipped layout puts it."""
+    return tmp_path / "input" / "acme" / "process" / "selection" / "selections.xlsx"
+
+
 def _list_config(tmp_path: Path) -> ProcessListConfig:
-    return ProcessListConfig(path=str(tmp_path / "input" / "process-list.xlsx"))
+    return ProcessListConfig(path=str(_control(tmp_path)))
 
 
 def _sheets(path: Path) -> dict[str, list[tuple[object, ...]]]:
@@ -135,7 +142,7 @@ def test_the_workbook_has_the_three_sheets_and_the_operators_header(
 
     # Assert
     assert code == 0
-    out = workspace / "output" / "acme" / "runs" / "20260827T085405Z-scope.xlsx"
+    out = workspace / "output" / "acme" / "runs" / "20260827T085405Z" / RESULT_NAME
     sheets = _sheets(out)
     assert list(sheets) == ["scope", "units", "legend"]
     assert sheets["scope"][0] == (
@@ -164,7 +171,9 @@ def test_one_known_row_reads_the_way_the_run_went(
     report_scope_result.main(["acme"])
 
     # Assert
-    scope = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z-scope.xlsx")["scope"]
+    scope = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z" / RESULT_NAME)[
+        "scope"
+    ]
     published, missing = scope[1], scope[2]
     assert published[:3] == ("1079", "Drain saver", "8713195000001")
     assert published[3:5] == ("yes", "error")
@@ -186,7 +195,9 @@ def test_the_units_sheet_carries_a_row_per_unit(
     report_scope_result.main(["acme"])
 
     # Assert
-    units = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z-scope.xlsx")["units"]
+    units = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z" / RESULT_NAME)[
+        "units"
+    ]
     assert [(row[1], row[3]) for row in units[1:]] == [("nl", "ok"), ("fr", "error")]
 
 
@@ -211,28 +222,71 @@ def test_the_newest_run_is_chosen_by_mtime_not_by_name(
     report_scope_result.main(["acme"])
 
     # Assert
-    assert (runs / "20260827T085405Z-1-scope.xlsx").exists()
-    assert not (runs / "20260827T085405Z-scope.xlsx").exists()
+    assert (runs / "20260827T085405Z-1" / RESULT_NAME).exists()
+    assert not (runs / "20260827T085405Z" / RESULT_NAME).exists()
 
 
-def test_the_uploaded_list_is_reported_so_a_deselected_row_still_appears(
+def test_the_run_s_own_copies_are_what_the_report_joins(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The report is about the batch the operator asked for, not only the rows that ran."""
-    # Arrange: the archive holds both rows; the control file holds one.
+    """A deselected row still appears — and the rows come from **this** run, not from ``input/``.
+
+    The two halves are one test because the bug was both at once: the report read a path in
+    ``input/`` that nothing writes, so it silently reported the live files and claimed no upload was
+    archived. Here ``input/`` holds a *different, later* batch, so a report that read it would name
+    the wrong barcodes as well as too few rows.
+    """
+    # Arrange: this run kept its own two lists — the upload had two rows, the operator ran one.
+    run = workspace / "output" / "acme" / "runs" / "20260827T085405Z"
+    run.mkdir(parents=True, exist_ok=True)
     _write_list(
-        workspace / "input" / "process-list.source.xlsx",
-        [["1079", "Drain saver", "8713195000001"], ["3086", "Contour King", "8713195000002"]],
+        run / UPLOAD_NAME,
+        [["1079", "Drain saver", GTIN], ["3086", "Contour King", "8713195000002"]],
     )
-    _write_list(workspace / "input" / "process-list.xlsx", [["1079", "Drain saver", GTIN]])
+    _write_list(run / SELECTION_NAME, [["1079", "Drain saver", GTIN]])
+    # A later batch has since replaced the live files. Nothing here may come from them.
+    _write_list(_control(workspace), [["9999", "Somebody else's batch", "8713195000009"]])
     _patch_client(monkeypatch, _config(_list_config(workspace)))
 
     # Act
     report_scope_result.main(["acme"])
 
     # Assert
-    scope = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z-scope.xlsx")["scope"]
+    scope = _sheets(run / RESULT_NAME)["scope"]
+    assert [row[2] for row in scope[1:]] == [GTIN, "8713195000002"], (
+        "the report joined the live input/ files, which belong to a later batch"
+    )
     assert [row[3] for row in scope[1:]] == ["yes", "not selected"]
+
+
+def test_a_legacy_run_with_no_copies_falls_back_to_the_upload_in_input(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Runs predating the run-owns-its-inputs layout still report, and say where the rows came from.
+
+    ``archive_path`` is what names the upload — the whole reason the layout lives in ``lib`` rather
+    than being spelled here and in two scripts.
+    """
+    # Arrange: no copies in the run directory; the upload sits where the shell files it.
+    control = _control(workspace)
+    _write_list(
+        archive_path(control),
+        [["1079", "Drain saver", GTIN], ["3086", "Contour King", "8713195000002"]],
+    )
+    _write_list(control, [["1079", "Drain saver", GTIN]])
+    _patch_client(monkeypatch, _config(_list_config(workspace)))
+
+    # Act
+    report_scope_result.main(["acme"])
+
+    # Assert
+    scope = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z" / RESULT_NAME)[
+        "scope"
+    ]
+    assert [row[3] for row in scope[1:]] == ["yes", "not selected"]
+    assert "kept no copy of the list it consumed" in capsys.readouterr().err, (
+        "a report built from input/ must say so — it may describe a later batch"
+    )
 
 
 def test_a_plan_generated_after_the_run_is_refused(
@@ -270,7 +324,9 @@ def test_a_plan_generated_after_the_run_is_refused(
 
     # Assert
     assert "a later run's plan" in capsys.readouterr().err
-    units = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z-scope.xlsx")["units"]
+    units = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z" / RESULT_NAME)[
+        "units"
+    ]
     assert all(row[2] == "run log" for row in units[1:]), "no hold from the wrong plan leaked in"
 
 
@@ -302,7 +358,9 @@ def test_a_plan_from_before_the_run_supplies_its_holds(
     report_scope_result.main(["acme"])
 
     # Assert
-    units = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z-scope.xlsx")["units"]
+    units = _sheets(workspace / "output" / "acme" / "runs" / "20260827T085405Z" / RESULT_NAME)[
+        "units"
+    ]
     assert ("plan", "held") in [(row[2], row[3]) for row in units[1:]]
 
 

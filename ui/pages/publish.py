@@ -22,7 +22,7 @@ from nicegui import events, ui
 
 from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Gate, GateOption, Mode
 from lib.records import PlanClassification, PlanRow, SkipReason
-from ui import REPO_ROOT, context, runner, theme
+from ui import REPO_ROOT, batch_view, context, runner, theme
 from ui.session import GateNotAnsweredError, PublishSession
 
 #: Scroll to an element once the page has stopped moving under it.
@@ -79,7 +79,30 @@ def render() -> None:
             )
             return
 
+        # Above the gates, because gate 0 asks the operator to confirm the export by hand and
+        # this is the answer to it: the name they sent, how old it is, and whether the ticks below
+        # were chosen against it.
+        batch_view.render(context.batch_in_force(cfg))
         _Flow(cid, cfg).build()
+
+
+#: What each plan count actually decides, under its own figure. The four words are the pipeline's
+#: vocabulary, not the operator's, and three of them are about what will *not* happen: UNCHANGED
+#: and HELD are both zero-work and only one of them is finished. An operator reading "New: 0"
+#: alone concludes there is nothing to do — which is exactly the misreading gate 5 exists to stop.
+_COUNT_MEANING: Final = {
+    PlanClassification.NEW: "pages that do not exist yet",
+    PlanClassification.CHANGED: "live pages this run would rewrite",
+    PlanClassification.UNCHANGED: "already live and identical — skipped",
+    # **Not** the "held" the doctor and ``lib.holds`` report. That one is a product blocked by
+    # missing mandatory data or an unconfirmed video (E23/E24/E22), and those never become rows at
+    # all — they are the "never became rows" band under these counts.
+    # :class:`~lib.records.PlanClassification.HELD` is a product somebody **deliberately took
+    # down** with ``run_unpublish``, whose hashes still match and which would therefore classify
+    # UNCHANGED and be quietly republished. One word, two meanings, in one tool — so the figure
+    # says which one rather than leaving the operator to carry the distinction.
+    PlanClassification.HELD: "unpublished on purpose — a routine run never puts it back",
+}
 
 
 class _Flow:
@@ -178,20 +201,78 @@ class _Flow:
         self.client.run_javascript(_SCROLL_WHEN_SETTLED.replace("ANCHOR", anchor))
 
     def _gate(self, gate: Gate) -> None:
+        """One gate, open or folded.
+
+        Eight cards stand on this screen in ``both`` mode, and they used to be open all at once —
+        an answered gate kept its full body and dimmed to 55% opacity, so the decision the operator
+        is *on* sat in a column of decisions already made and decisions that do not apply. That is
+        the shape that reads as ceremony, and a flow that reads as ceremony is answered like one.
+
+        Folded is not hidden: every folded gate opens on a click, keeps its **why**, and keeps its
+        controls, so an answer can still be re-read or changed. What folding removes is the scroll
+        between the operator and the question in front of them.
+
+        The unanswered optional gates fold too — the languages filter, the post-run summary — but
+        not one with work in it: gate 6 walks every changed row, and is optional only in the sense
+        that a run can avoid reaching it. Collapsing the work the operator has just asked for would
+        be the worst of both.
+        """
         answered = gate.id in self.session.answers
-        classes = "gate gate-done" if answered else "gate"
-        with ui.element("div").classes(classes).props(f"id=gate-{gate.id}"):
+        if self.session.folds(gate):
+            self._folded_gate(gate, answered=answered)
+            return
+        with ui.element("div").classes("gate").props(f"id=gate-{gate.id}"):
             ui.label(f"STEP {gate.step}{' · REQUIRED' if gate.required else ''}").classes(
                 "gate-step"
             )
-            ui.label(gate.title).classes("gate-title")
-            # Markdown, not a label. Seven of the nine gate purposes in `lib.gates` are written
-            # with bold and backticks — they are the same strings the skill renders as prose — so
-            # a plain label showed the operator literal `**` and backticks on the one screen where
-            # the text most needs to be read. The emphasis is doing work in those sentences: it is
-            # on "permanent", on "how many products this run could touch".
-            ui.markdown(gate.purpose).classes("gate-why")
-            getattr(self, f"_gate_{gate.id}", self._gate_default)(gate)
+            with ui.element("div").classes("head-row"):
+                ui.label(gate.title).classes("gate-title")
+                theme.explanation(gate.purpose, about=gate.title, rich=True)
+            ui.label(gate.summary).classes("gate-lede")
+            self._gate_body(gate)
+
+    def _folded_gate(self, gate: Gate, *, answered: bool) -> None:
+        """The same gate as one line, opening to the whole thing.
+
+        The caption carries the answer rather than a tick, because "answered" is not the fact the
+        operator needs on a re-read — *which* answer is. ``new-only`` and ``all`` are both a green
+        gate 5, and they publish different runs.
+        """
+        caption = (
+            f"Step {gate.step} · {self._answer_label(gate)}"
+            if answered
+            else (f"Step {gate.step} · optional")
+        )
+        classes = "gate gate-folded w-full" + (" gate-done" if answered else "")
+        with (
+            ui.expansion(gate.title, caption=caption)
+            .classes(classes)
+            .props(f"id=gate-{gate.id} dense")
+        ):
+            with ui.element("div").classes("head-row"):
+                ui.label(gate.summary).classes("gate-lede")
+                theme.explanation(gate.purpose, about=gate.title, rich=True)
+            self._gate_body(gate)
+
+    def _answer_label(self, gate: Gate) -> str:
+        """What was chosen, in the words the gate offered — or the raw answer for a gate with no
+        options, which is the languages filter and nothing else."""
+        chosen = self.session.chosen(gate.id)
+        return chosen.label if chosen else self.session.answers.get(gate.id, "answered")
+
+    def _gate_body(self, gate: Gate) -> None:
+        """The controls, and nothing above them but one line.
+
+        ``gate.purpose`` used to render here in full — seven of the nine are several sentences —
+        so every gate opened with a slab of prose and the question underneath it. Eight of those
+        at once is the screen the operator called over-complete, and prose nobody reads is worse
+        than prose behind a press: it trains the eye to skip the region the warnings live in.
+
+        It is still one press away, on the ⓘ beside the title, and rendered as Markdown there:
+        the emphasis in those sentences is load-bearing — on *permanent*, on *how many products
+        this run could touch*.
+        """
+        getattr(self, f"_gate_{gate.id}", self._gate_default)(gate)
 
     # -- per-gate bodies ------------------------------------------------------
 
@@ -212,16 +293,24 @@ class _Flow:
         """
         fact = context.file_fact(self.cfg.export.path)
         scope = context.scope_from(self.doctor)
-        with ui.row().classes("gap-12 items-end mb-4 flex-wrap"):
+        with theme.figures():
             if scope is None:
                 # Never fall back to the catalogue count here. A wrong number under the right
                 # label is worse than no number: it reads as an answer.
-                theme.figure("—", "products in scope")
+                theme.figure("—", "products in scope", "could not be read")
             else:
-                theme.figure(str(scope.in_scope), "products in scope")
-                theme.figure(str(scope.total), "in the catalogue")
-            theme.figure(fact.age, "export modified")
-            theme.figure(self.cfg.gs1.environment, "environment")
+                theme.figure(
+                    str(scope.in_scope),
+                    "products in scope",
+                    "the most this run could touch, not what it writes",
+                )
+                theme.figure(str(scope.total), "in the catalogue", "every product in the export")
+            theme.figure(fact.age, "export modified", "when that file last changed")
+            theme.figure(
+                self.cfg.gs1.environment,
+                "environment",
+                "production records can never be deleted",
+            )
         if scope is None:
             theme.band(
                 "Could not read what this run would touch — the preflight did not report its "
@@ -283,16 +372,57 @@ class _Flow:
         ).classes("note mt-2")
 
     def _gate_content_review(self, gate: Gate) -> None:
+        """The same three figures the Content screen shows, from the same read of the same check.
+
+        The first one was labelled **units in scope** and is not that: ``total`` counts the units
+        this run needs copy *for* — NEW or CHANGED, minus what the plan will hold — which on a
+        27-product scope is routinely 0. So the gate read "0 units in scope" at the moment the
+        operator is forming their picture of the run, which is the defect gate 0 was fixed for
+        once already: a number standing under a label describing something else.
+
+        Worded identically to the Content screen on purpose. Two surfaces reading one payload and
+        naming it differently is how an operator comes to believe they are two different numbers.
+        """
         entry = context.doctor_check(self.doctor, "generation_results")
+        data = (entry or {}).get("data") or {}
+        summary = context.copy_summary(entry)
+        if entry is not None and data.get("total") == 0:
+            # Nothing to approve. Three zeroes and a "Copy is good" button is a required gate
+            # asking a question with no content — the operator reads it as broken, or worse
+            # answers it and learns that answering this gate means nothing. Say the state instead,
+            # and say why: the sentence below names what is finished and what is stuck.
+            theme.band(
+                "Nothing to review — this run publishes no pages, so no tagline or Eigenschappen "
+                "text was written for it. Confirm to carry on; there is nothing here to read."
+            )
+            if summary:
+                ui.label(summary).classes("note mb-3")
+            self._options(gate)
+            return
         if entry is not None:
-            data = entry.get("data") or {}
-            with ui.row().classes("gap-12 items-end mb-3"):
-                theme.figure(str(data.get("total", "—")), "units in scope")
-                theme.figure(str(data.get("covered", "—")), "have copy")
-                theme.figure(str(data.get("pending", "—")), "pending")
+            with theme.figures():
+                theme.figure(
+                    str(data.get("total", "—")),
+                    "pages to publish",
+                    "pages this run creates or rewrites",
+                )
+                theme.figure(
+                    str(data.get("covered", "—")),
+                    "have text",
+                    "of those, how many have a tagline and Eigenschappen for this export",
+                )
+                theme.figure(
+                    str(data.get("pending", "—")),
+                    "pending",
+                    "no text yet — these are dropped from the run",
+                )
             if entry["status"] != "ok":
-                theme.band(str(entry["detail"]), "danger")
-        ui.link("Read the copy on the Content screen →", "/content").classes("mono mb-3")
+                theme.band(summary or str(entry["detail"]), "danger")
+            elif summary:
+                theme.band(summary)
+        ui.link("Read the tagline and Eigenschappen on the Content screen →", "/content").classes(
+            "mono mb-3"
+        )
         self._options(gate)
 
     def _gate_missing_field(self, gate: Gate) -> None:
@@ -411,9 +541,13 @@ class _Flow:
                 "danger",
             )
 
-        with ui.row().classes("gap-12 items-end my-4 flex-wrap"):
+        with theme.figures():
             for classification in PlanClassification:
-                theme.figure(str(plan.counts.get(classification, 0)), classification.value)
+                theme.figure(
+                    str(plan.counts.get(classification, 0)),
+                    classification.value,
+                    _COUNT_MEANING.get(classification, ""),
+                )
 
         # An empty plan is the failure this project keeps designing against: executing it would
         # report success having published nothing. Said here, permanently, rather than left to a
@@ -696,10 +830,15 @@ class _Flow:
                 log.clear()
                 log.push(" ".join(["python", *argv]))
                 result = await runner.stream(argv, log.push)
+                # No second subprocess for the result sheet. `run_execute` writes it itself now,
+                # on failure too — which it had to, because a publish driven from anywhere but this
+                # screen produced no sheet at all, and the moment it is most wanted is the moment a
+                # run has just half-failed.
+                where = " The per-row result sheet is on the Runs screen."
                 if result.ok:
-                    theme.notify_ok("Run finished with no errors")
+                    theme.notify_ok(f"Run finished with no errors.{where}")
                 else:
-                    theme.notify_problem(f"Run exited {result.returncode} — read the log")
+                    theme.notify_problem(f"Run exited {result.returncode} — read the log.{where}")
 
             log = ui.log().classes("console mt-4").style("display:none")
             theme.action(

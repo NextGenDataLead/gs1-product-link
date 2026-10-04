@@ -243,7 +243,18 @@ def run_plan_argv(client_id: str | None, *, include_published: bool = False) -> 
     return argv
 
 
-def run_generate_argv(client_id: str | None) -> list[str]:
+def report_live_copy_argv(client_id: str | None) -> list[str]:
+    """Ask the **site** which products have no tagline or Eigenschappen yet.
+
+    The one read in this shell that does not come from a local file. It is slow by nature — the
+    field values are only truthful when each page is fetched by id, so it is one request per page
+    plus a listing per language — which is exactly why it is a button the operator presses rather
+    than something that runs on every page load.
+    """
+    return ["-m", "scripts.report_live_copy", *([client_id] if client_id else []), "--json"]
+
+
+def run_generate_argv(client_id: str | None, gtins: list[str] | None = None) -> list[str]:
     """Write this run's copy through the Anthropic Messages API.
 
     The only command here that reaches a third party, and the only one that needs an API key. It
@@ -255,8 +266,23 @@ def run_generate_argv(client_id: str | None) -> list[str]:
     half of the seam, answered by a Claude Code session rather than by this screen, and the API
     backend writes and re-reads the results file itself — so there is no separate validate step to
     forget.
+
+    ``gtins`` names the products to write for, which is how this screen drives it: the selection
+    comes from what the *site* is missing, or from rows the operator ticked, and neither is a
+    question ``state.json`` can answer. Omitted, the command falls back to its ledger-derived
+    selection. An **empty list is not omission** — it would build a command that regenerates the
+    whole batch — so it is refused here rather than sent.
     """
-    return ["-m", "scripts.run_generate", *([client_id] if client_id else []), "--backend", "api"]
+    if gtins is not None and not gtins:
+        raise ValueError("refusing to build a generate command for an empty GTIN selection")
+    return [
+        "-m",
+        "scripts.run_generate",
+        *([client_id] if client_id else []),
+        "--backend",
+        "api",
+        *(["--gtins", ",".join(gtins)] if gtins else []),
+    ]
 
 
 def report_quality_argv(client_id: str | None) -> list[str]:

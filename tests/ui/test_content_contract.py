@@ -65,122 +65,169 @@ def _own_calls(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     }
 
 
-def test_the_copy_review_filters_by_scope() -> None:
-    """The review must show this run's batch, not every GTIN the file happens to carry.
+def test_the_screen_asks_the_site_once_and_draws_everything_from_that() -> None:
+    """One read, one renderer.
 
-    Asserted as "it calls the splitter" rather than by inspecting the rendering, because the
-    splitter is where the decision lives and ``tests/ui/test_context.py`` covers what it decides.
+    The figures and the regenerate list are two views of the same answer. Fetched separately they
+    would be two subprocesses per redraw — and the expensive half — one could move without the
+    other, so a screen could offer to regenerate a product the counts above had just called
+    textless. Both are required to come from the same ``show``.
     """
-    review = _function("_review")
-    assert "split_results" in _calls(review), (
-        "_review does not split the copy by scope, so it is listing every GTIN in the file "
-        "under a coverage figure that is scoped to this run"
-    )
-    # And that it hands over the scope it was given. Calling the splitter with `None` is a legal
-    # call that reproduces the defect exactly — every entry comes back as in-scope — so asserting
-    # the call alone is not enough.
-    call = next(
-        inner
-        for inner in ast.walk(review)
-        if isinstance(inner, ast.Call)
-        and (getattr(inner.func, "attr", None) or getattr(inner.func, "id", None))
-        == "split_results"
-    )
-    passed = {arg.id for arg in call.args if isinstance(arg, ast.Name)} | {
-        kw.value.id for kw in call.keywords if isinstance(kw.value, ast.Name)
-    }
-    assert "scope" in passed, (
-        "_review calls split_results without passing its `scope` argument, so every entry "
-        f"comes back in scope and nothing is filtered; it passes {sorted(passed)}"
-    )
-
-
-def test_the_screen_runs_one_preflight_for_both_sections() -> None:
-    """Coverage and the review answer the same question at two zoom levels.
-
-    Fetched separately they would be two subprocesses per render, and — the expensive half — a
-    re-check could move the count without moving the list, restoring the very disagreement this
-    screen was fixed to remove.
-
-    Two fetchers, one renderer. ``first_draw`` is the blocking form, run once while the page is
-    still being built; ``recheck`` is the one every *click* takes, off the event loop so the
-    button can show that it is working. What must not multiply is the thing that decides what the
-    two sections say, so both are required to hand their payload to the same ``show``.
-    """
-    fetches = {"run_json", "run_json_off_the_loop"}
-    callers = sorted(
+    fetchers = sorted(
         node.name
         for node in ast.walk(_tree())
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and fetches & _own_calls(node)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and "report_live_copy_argv" in _own_calls(node)
     )
-    assert callers == ["first_draw", "recheck"], (
-        f"expected only the two shared fetchers to run the preflight; found {callers}"
-    )
-    for name in callers:
-        assert "show" in _own_calls(_function(name)), (
-            f"{name} does not hand its payload to `show`, so the coverage figures and the copy "
-            "below can be redrawn from two different reads of the same run"
-        )
+    assert fetchers == ["refresh"], f"expected one fetcher; found {fetchers}"
+    assert "show" in _calls(_function("refresh"))
 
 
-def test_importing_a_cache_redraws_what_it_invalidated() -> None:
-    """Both sections below describe the file the upload just replaced.
+def test_the_site_is_read_off_the_event_loop() -> None:
+    """It is one request per page. Blocking the loop would freeze the whole window for it."""
+    assert "run_json_off_the_loop" in _calls(_function("refresh"))
+    assert "run_json" not in _own_calls(_function("refresh"))
 
-    A screen that keeps showing the previous cache after a successful import is the silent
-    staleness this project keeps designing against — and the upload handler is the one place that
-    knows the file changed.
+
+def test_generating_re_asks_the_site_it_just_changed() -> None:
+    """The counts and the list describe the site as it was before the write.
+
+    A screen that keeps showing "11 need text" after writing text for all eleven is the silent
+    staleness this project keeps designing against — and the handler is the one place that knows
+    the site changed.
     """
-    assert "recheck" in _calls(_function("upload")), (
-        "the upload handler does not re-check, so coverage and the copy below still describe the "
-        "cache that was just overwritten"
+    handler = next(
+        node
+        for node in ast.walk(_function("_process_panel"))
+        if isinstance(node, ast.AsyncFunctionDef)
+    )
+    assert "refresh" in _calls(handler)
+
+
+def test_generation_reports_its_outcome_in_something_that_must_be_dismissed() -> None:
+    """A toast decides for the operator how long the only account of a run stays on screen.
+
+    Writing text for a batch takes minutes, which is long enough that nobody watches it, so the
+    message lands on an empty chair. Both outcomes go through the modal, the failing one included.
+    """
+    handler = next(
+        node
+        for node in ast.walk(_function("_process_panel"))
+        if isinstance(node, ast.AsyncFunctionDef)
+    )
+    calls = _calls(handler)
+    assert "announce" in calls
+    assert not (calls & {"notify_ok", "notify_warning", "notify_problem"})
+
+
+def test_generation_shows_no_console_block() -> None:
+    """Raw output under a button reads as something the operator should understand.
+
+    The lines are still captured, because a failure has to be explainable; they are shown only
+    then, in the dialog, where there is a reason to read them.
+    """
+    assert "log" not in _calls(_function("_process_panel"))
+    assert "stream" in _calls(_function("_process_panel")), (
+        "dropping the console must not turn the write into a blocking call"
     )
 
 
-# --- the producer offered here ------------------------------------------------
-
-
-def test_generate_is_offered_before_import() -> None:
-    """Both write the same file; the one needing no hand-off is the one to reach for first."""
-    body = _own_calls(_function("_coverage_and_review"))
-    assert {"_generate", "_import"} <= body
-
-    order = [
-        node.func.id
-        for node in ast.walk(_function("_coverage_and_review"))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in {"_generate", "_import"}
-    ]
-    assert order == ["_generate", "_import"]
-
-
-def test_generate_renders_nothing_clickable_without_a_key() -> None:
+def test_no_process_button_without_a_key() -> None:
     """An action that can only fail is worse than an absence — you must run it to find out.
 
     The presence check comes from ``env_edit.describe``, which reads ``.env`` as text and returns
-    presence and length only. Asserting the early ``return`` is what stops a later edit from
-    turning the guard into a band that merely sits above a live button.
+    presence and length only. Asserting the early ``return`` is what stops a later edit turning
+    the guard into a band that merely sits above a live button.
     """
-    generate = _function("_generate")
-    assert "describe" in _own_calls(generate)
+    button = _function("_process_panel")
+    assert "describe" in _own_calls(button)
+    guard = next(
+        (node for node in button.body if isinstance(node, ast.If)),
+        None,
+    )
+    assert guard is not None
+    assert any(isinstance(node, ast.Return) for node in ast.walk(guard))
 
-    guards = [
+
+def test_nothing_is_preselected_for_the_override() -> None:
+    """Regenerating rewrites text that is live and, as far as anything here knows, correct.
+
+    So the default has to be "do nothing". A screen that arrives with rows ticked is a screen
+    that rewrites a batch because somebody pressed the obvious button, and the write is the one
+    thing on this screen that costs money and changes a live page.
+    """
+    checkboxes = [
         node
-        for node in ast.walk(generate)
-        if isinstance(node, ast.If) and any(isinstance(stmt, ast.Return) for stmt in ast.walk(node))
+        for node in ast.walk(_function("_override"))
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "checkbox"
     ]
-    assert guards, "no early return guarding the key-absent branch"
+    assert checkboxes, "the regenerate list no longer renders tick boxes"
+    for call in checkboxes:
+        value = next((kw.value for kw in call.keywords if kw.arg == "value"), None)
+        assert isinstance(value, ast.Constant) and value.value is False, (
+            "a regenerate row is pre-ticked"
+        )
 
 
-def test_generate_refreshes_the_coverage_it_just_invalidated() -> None:
-    """The figures and the copy below describe the previous file until something says otherwise.
+def test_the_screen_names_the_two_fields_it_writes() -> None:
+    """ "Copy" is this codebase's word; the operator's words are on the page they publish."""
+    source = _CONTENT.read_text("utf-8")
+    assert "Eigenschappen" in source
+    assert "tagline" in source
 
-    The upload handler is held to the same rule; a screen that keeps showing the old copy after a
-    successful run is the silent staleness this project keeps designing against.
+
+def test_each_figure_says_what_happens_to_its_products() -> None:
+    """Three states, three verbs. The label is the decision, not the description.
+
+    "have text / need text / cannot be written" names three conditions and leaves the operator to
+    work out which one the button acts on — and on this screen two of the three are skipped for
+    completely different reasons, one fixable here and one only in MyGS1. Labelling them
+    process/skip/skip is what makes the button's scope readable without reading the paragraph.
     """
-    handlers = [
-        node for node in ast.walk(_function("_generate")) if isinstance(node, ast.AsyncFunctionDef)
+    source = _CONTENT.read_text("utf-8")
+    for label in ("no live text · process", "no live text · skip", "live text already · skip"):
+        assert label in source, f"the figures no longer say what happens to {label!r}"
+
+
+def test_the_override_is_tied_to_the_bucket_it_overrides() -> None:
+    """The manual selection exists to reverse one of the three figures, and says which.
+
+    Detached from it, the regenerate list reads as a second, unrelated feature — and an operator
+    who has just been told those products are skipped has no reason to look for the control that
+    un-skips them.
+    """
+    source = _CONTENT.read_text("utf-8")
+    assert "Override" in source
+    assert "skipped by default" in source
+
+
+def test_one_button_writes_both_halves_of_the_run() -> None:
+    """Two buttons made one intention into two runs.
+
+    Given two, where one is obviously primary, the second gets pressed some of the time — and a
+    run that writes half of what the operator meant reports success either way. The automatic set
+    and the ticked set go to one command, and the union is read when the button is pressed rather
+    than captured when it was built, because the ticks keep moving until then.
+    """
+    panel = _function("_process_panel")
+    chosen = next(
+        node
+        for node in ast.walk(panel)
+        if isinstance(node, ast.FunctionDef) and node.name == "chosen"
+    )
+    names = {
+        node.id for node in ast.walk(chosen) if isinstance(node, ast.Name) and node.id != "sorted"
+    }
+    assert {"ready", "selection"} <= names, (
+        "the Process button no longer unions the automatic set with the ticked one"
+    )
+    handler = next(node for node in ast.walk(panel) if isinstance(node, ast.AsyncFunctionDef))
+    assert "chosen" in _calls(handler), "the handler captured a set instead of re-reading it"
+
+    buttons = [
+        node
+        for node in ast.walk(_tree())
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "action"
     ]
-    assert len(handlers) == 1, "expected exactly one async click handler"
-    assert "recheck" in _calls(handlers[0])
-    assert "stream" in _calls(handlers[0]), "must stream, not block: the run takes minutes"
+    # `theme.action` builds every button on this screen: one to ask the site, one to write.
+    assert len(buttons) == 2, f"expected two buttons on this screen; found {len(buttons)}"

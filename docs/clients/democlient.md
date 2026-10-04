@@ -8,7 +8,7 @@ Phase 7 to record the create-only gate.
 Democlient's run is **create-only**, and which products are in scope comes from an
 operator-maintained file, **not** the datasource export:
 
-- **Location:** `input/democlient/process-list.xlsx` (git-ignored, operator-provided).
+- **Location:** `input/democlient/process/selection/selections.xlsx` (git-ignored, operator-provided).
 - **Required column:** the GTIN column only — `Barcode` by default, relabelable via
   `process_list.gtin_column`. Every other column is ignored, so the operator can keep
   their own working notes (article number, description, existing URL) beside it.

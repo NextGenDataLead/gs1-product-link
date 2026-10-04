@@ -67,7 +67,7 @@ always announce itself**.
 | `clients.yml` | your copy | project root | Nothing runs; the app says the config did not load |
 | `.env` | your copy, edited per §2 | project root | Every live check fails |
 | `output/noviplast/state.json` | **your most recent copy** | exactly that path | **Everything republishes as new.** Silent |
-| `input/noviplast/process-list.xlsx` | your copy | that path | Red band on the Data screen; no upload exists for it |
+| `input/noviplast/process/selection/selections.xlsx` | your copy | that path | Red band on the Data screen; no upload exists for it |
 | The video files | the delivery disk | `input/noviplast/videos/NL` and `/FR` | Products silently out of scope |
 
 Send `.env` over something that is not email. Say out loud that it holds production credentials in

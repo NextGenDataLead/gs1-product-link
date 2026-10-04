@@ -170,6 +170,14 @@ class Gate:
     step: str
     title: str
     purpose: str
+    #: One sentence saying what this gate is for, in the words an operator uses. ``purpose`` is
+    #: the full *why* — several sentences, each carrying an incident — and it earns its length on
+    #: a surface that is read once, carefully. On a form it is a slab above the controls, and a
+    #: slab above the controls is scrolled past: the screen showed eight of them at once, and the
+    #: question the operator had to answer was underneath. So the screen leads with this and keeps
+    #: ``purpose`` one press away. Never a substitute for it — a gate that shows only the short
+    #: line is a gate answered without the reason being available at all.
+    summary: str
     options: tuple[GateOption, ...]
     required: bool
     modes: frozenset[Mode]
@@ -237,6 +245,7 @@ GATES: Final[tuple[Gate, ...]] = (
         id="intent",
         step="0",
         title="Intent confirmation",
+        summary="What this run will do, to which file, and in which environment.",
         purpose=(
             "States the mode, cross-checks the configured export file against the one the "
             "operator has in mind, gives **how many products this run could touch** and the "
@@ -265,6 +274,7 @@ GATES: Final[tuple[Gate, ...]] = (
         id="languages",
         step="2",
         title="Language selection",
+        summary="Which languages this run covers. All of them unless you narrow it.",
         purpose=(
             "Which of the client's configured languages this run covers. Intersected with the "
             "confirmed rows at step 6."
@@ -277,6 +287,9 @@ GATES: Final[tuple[Gate, ...]] = (
         id="content_review",
         step="3",
         title="Generated copy review (gate 1 of 2)",
+        summary=(
+            "Read the machine-written tagline and Eigenschappen text before it reaches a live page."
+        ),
         purpose=(
             "The tagline and Eigenschappen are LLM-written, so they are read before they can "
             "reach a page. Review the copy against the real product, not the 'validated N' count "
@@ -304,6 +317,9 @@ GATES: Final[tuple[Gate, ...]] = (
         id="missing_field",
         step="4",
         title="Missing-field prompt",
+        summary=(
+            "Products with no name in one language. They cannot be published — decide what happens."
+        ),
         purpose=(
             "The units `run_plan` dropped because the product carries no `product_name` in that "
             "language (E18), named one by one. **This gate appears only when a unit was actually "
@@ -327,6 +343,10 @@ GATES: Final[tuple[Gate, ...]] = (
         id="plan_review",
         step="5",
         title="Plan review (gate 2 of 2)",
+        summary=(
+            "The run sheet: which pages get created, rewritten or left alone. Choose how much "
+            "of it runs."
+        ),
         purpose=(
             "The last look before anything is written. Show the counts, the gate exclusions, and "
             "the units dropped before classification — an operator reading 'New: 0' alone "
@@ -348,6 +368,7 @@ GATES: Final[tuple[Gate, ...]] = (
         id="row_diff",
         step="6",
         title="Per-row diff",
+        summary="Decide each live page this run would rewrite, one at a time.",
         purpose=(
             "Only on `changed-review`. **Every CHANGED row is walked, not only the ones carrying "
             "a diff.** State records the prior `title` and `wp_url` and nothing else, so a row "
@@ -378,6 +399,7 @@ GATES: Final[tuple[Gate, ...]] = (
         id="production",
         step="8",
         title="Production environment confirmation",
+        summary="This run writes to the real GS1 register, and those records are permanent.",
         purpose=(
             "Mandatory, non-overridable, and enforced per run rather than per session. Skipped in "
             "`pages` mode only because gate 0 has already named the environment and nothing "
@@ -404,6 +426,7 @@ GATES: Final[tuple[Gate, ...]] = (
         id="dry_run",
         step="8.5",
         title="Dry run",
+        summary="The same run with nothing written. Read what it says it would do, then answer.",
         purpose=(
             "The same command with `--dry-run` and every other flag identical. Catches a plan "
             "pointing at the wrong rows, the wrong leg or the wrong URLs while it still costs "
@@ -422,6 +445,7 @@ GATES: Final[tuple[Gate, ...]] = (
         id="post_run",
         step="11",
         title="Post-run summary",
+        summary="What actually happened, row by row.",
         purpose=(
             "What actually ran, per row, with each error named. In `links` mode a refused GTIN "
             "means its target URL did not serve — read that as 'the page is not where the plan "

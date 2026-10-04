@@ -150,7 +150,8 @@ def build_rows(  # noqa: PLR0913 — five named inputs read better than a contex
     """Join the uploaded list against what the run did, one row per SKU.
 
     Args:
-        sheet: The **uploaded** list — ``process-list.source.xlsx`` — not the control file. It is
+        sheet: The **uploaded** list — ``runs/{stamp}/selection-uploaded.xlsx`` — not the
+            ticked one. It is
             the superset, so a row the operator deselected still appears, named as deselected
             rather than silently absent.
         selected: GTIN-14s in the control file the run actually read. A row of ``sheet`` not in

@@ -44,6 +44,7 @@ from lib.generator import (
     result_item,
     save_results,
 )
+from lib.input_layout import archive_path
 from lib.preflight import (
     Status,
     check_config,
@@ -53,6 +54,7 @@ from lib.preflight import (
     check_gs1,
     check_process_list,
     check_scope,
+    check_selection_matches_export,
     check_video_coverage,
     check_wordpress,
     in_scope,
@@ -60,12 +62,14 @@ from lib.preflight import (
     units_needing_copy,
     worst_status,
 )
+from lib.provenance import history_path, record_selection, record_upload
 from lib.records import LocalisedText, ProductRecord, State, StateEntry
 from lib.state import diff_against_state, save_state, state_path
 from lib.wp_client import WordPressIdentity
 
 GTIN_A = "08713195007359"
 GTIN_B = "08713195007360"
+GTIN_C = "08713195007361"
 
 
 # --- Builders ----------------------------------------------------------------
@@ -616,6 +620,81 @@ def test_generation_results_keep_held_units_apart_from_unchanged_ones(
     assert "1 in-scope unit(s) are held by the plan" in result.detail
 
 
+def test_generation_results_count_blocked_products_by_who_unblocks_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The units figure says what the run will do; this one says who has to go and fix something.
+
+    Held units are counted in units everywhere else, and a unit is half a product here (two
+    languages), so "46 held" is a number an operator must translate before it means anything —
+    and translating it still does not say whether to chase a video or a value in MyGS1. Split by
+    the plan's own attribution, first-rule-fired, so a product failing both is chased where the
+    plan will actually drop it rather than in two places.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        media=MediaConfig(
+            video_map_path=_write_video_map(tmp_path, [GTIN_A, GTIN_C], ["nl"]),
+            restrict_to_mapped_gtins=True,
+            require_hero_image=True,
+        ),
+    )
+    publishable = _product(GTIN_A).model_copy(update={"image_url": "https://wp.test/a.jpg"})
+    no_video = _product(GTIN_B).model_copy(update={"image_url": "https://wp.test/b.jpg"})
+    no_image = _product(GTIN_C)  # confirmed video, blank hero — E22, a source-data problem
+    save_results(_results_for(cfg, [publishable]))
+
+    result = check_generation_results(cfg, [publishable, no_video, no_image])
+
+    assert result.data["products_to_publish"] == 1
+    assert result.data["products_held_video"] == 1
+    assert result.data["products_held_data"] == 1
+
+
+def test_generation_results_count_finished_products_apart_from_blocked_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A product with nothing left to do is not a product waiting on somebody."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(
+        generator=GeneratorConfig(enabled=True),
+        process_list=_write_process_list(tmp_path, [GTIN_A, GTIN_B]),
+    )
+    live, fresh = _product(GTIN_A), _product(GTIN_B)
+    _publish(cfg, live)
+    save_results(_results_for(cfg, [fresh]))
+
+    result = check_generation_results(cfg, [live, fresh])
+
+    assert result.data["products_unchanged"] == 1
+    assert result.data["products_to_publish"] == 1
+    assert result.data["products_held_video"] == 0
+    assert result.data["products_held_data"] == 0
+
+
+def test_generation_results_leave_the_product_split_out_when_it_cannot_be_decided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``units_needing_copy`` returning ``None`` means "ask for everything", not "nothing is held".
+
+    A breakdown built on that set would name products it never examined, so there is none — and
+    the screen falls back to the check's own detail rather than printing a confident zero.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _make_config(generator=GeneratorConfig(enabled=True))
+    (tmp_path / "output" / "acme" / "data").mkdir(parents=True)
+    (tmp_path / "output" / "acme" / "state.json").write_text("{not json", encoding="utf-8")
+
+    result = check_generation_results(cfg, [_product(GTIN_A)])
+
+    # Pins the branch: "ask for everything" is one product times one language, and the FAIL-early
+    # path through an unreadable results file would satisfy the absences below without it.
+    assert result.data["total"] == 1
+    assert "products_held_video" not in result.data
+    assert "products_unchanged" not in result.data
+
+
 def test_generation_results_count_only_the_products_in_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -718,6 +797,87 @@ def test_process_list_reports_the_count(tmp_path: Path) -> None:
     result = check_process_list(cfg)
     assert result.status is Status.OK
     assert result.data["count"] == 2
+
+
+# --- Selection vs export ------------------------------------------------------
+
+
+def _layout(tmp_path: Path) -> tuple[Path, ProcessListConfig]:
+    """A client in the shipped layout, with both live files present."""
+    import openpyxl  # noqa: PLC0415 — only this helper needs it
+
+    root = tmp_path / "input" / "acme" / "process"
+    export = root / "uploads" / "GS1 export" / "export.xlsx"
+    export.parent.mkdir(parents=True, exist_ok=True)
+    export.write_bytes(b"exported")
+    selection = root / "selection" / "selections.xlsx"
+    selection.parent.mkdir(parents=True, exist_ok=True)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Barcode"])
+    sheet.append([GTIN_A])
+    workbook.save(selection)
+    return export, ProcessListConfig(path=str(selection), gtin_column="Barcode")
+
+
+def _record_save(export: Path, selection: Path) -> None:
+    saved = selection.with_name("selection-20260927T101600.xlsx")
+    saved.write_bytes(selection.read_bytes())
+    record_selection(
+        history_path(export),
+        saved,
+        product_list=archive_path(selection),
+        export=export,
+    )
+
+
+def test_a_selection_chosen_against_this_export_passes(tmp_path: Path) -> None:
+    export, listed = _layout(tmp_path)
+    _record_save(export, Path(listed.path))
+    cfg = _make_config(export=ExportConfig(path=str(export)), process_list=listed)
+
+    assert check_selection_matches_export(cfg).status is Status.OK
+
+
+def test_a_selection_chosen_against_a_replaced_export_warns_and_names_it(tmp_path: Path) -> None:
+    """Nothing warned about this before, and the failure it catches is entirely silent.
+
+    A barcode the current export has no row for produces no plan row, no error and no count — the
+    only evidence is a total one smaller than expected.
+    """
+    # Arrange
+    export, listed = _layout(tmp_path)
+    dated = export.with_name("export-20260620T090000.xlsx")
+    dated.write_bytes(export.read_bytes())
+    record_upload(history_path(export), "export", kept=dated, given_name="Q2.xlsx")
+    _record_save(export, Path(listed.path))
+    export.write_bytes(b"this quarter's export")
+    cfg = _make_config(export=ExportConfig(path=str(export)), process_list=listed)
+
+    # Act
+    result = check_selection_matches_export(cfg)
+
+    # Assert
+    assert result.status is Status.WARN, "a warning, never a failure — only the operator knows"
+    assert result.data["chosen_against"] == "export-20260620T090000.xlsx"
+    assert result.remedy, "a warning with nothing to do about it is noise"
+
+
+def test_a_selection_nobody_recorded_is_na_rather_than_passing(tmp_path: Path) -> None:
+    """Every batch saved before this was kept. A green line there is a claim nobody made — the
+    overclaiming that had to be taken out of the scope sentence once already.
+    """
+    export, listed = _layout(tmp_path)
+    cfg = _make_config(export=ExportConfig(path=str(export)), process_list=listed)
+
+    assert check_selection_matches_export(cfg).status is Status.NA
+
+
+def test_a_client_with_no_selection_has_nothing_to_compare(tmp_path: Path) -> None:
+    export, _ = _layout(tmp_path)
+    cfg = _make_config(export=ExportConfig(path=str(export)), process_list=None)
+
+    assert check_selection_matches_export(cfg).status is Status.NA
 
 
 # --- Video mapping ------------------------------------------------------------

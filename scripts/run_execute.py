@@ -74,6 +74,7 @@ import argparse
 import hashlib
 import json
 import logging
+import shutil
 import sys
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
@@ -98,8 +99,10 @@ from lib.errors import (
 )
 from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
+from lib.input_layout import archive_path
 from lib.media import convert_image_for_web
 from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map, prepare_video
+from lib.provenance import history_path, record_run
 from lib.qr import render_qr
 from lib.records import (
     ConfirmedPlan,
@@ -110,6 +113,14 @@ from lib.records import (
     RunOutcome,
     State,
     StateEntry,
+)
+from lib.result_sheet import build as build_result_sheet
+from lib.run_files import (
+    SELECTION_NAME,
+    SOURCES_NAME,
+    UPLOAD_NAME,
+    log_path,
+    sibling,
 )
 from lib.state import load_state, save_state
 from lib.templates import TemplateEngine
@@ -1030,9 +1041,21 @@ class _RunLog:
     _MAX_COLLISIONS: Final = 100
 
     def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
         for n in range(self._MAX_COLLISIONS):
-            candidate = path if n == 0 else path.with_stem(f"{path.stem}-{n}")
+            # The **directory** takes the suffix, not the log. Suffixing the log gave
+            # `{stamp}/run-1.jsonl`, which `run_files.iter_logs` matches with neither of its globs
+            # — `*/run.jsonl` nor `*.jsonl` — so a same-second second run was invisible on the Runs
+            # screen and to `newest_log`, which is what `report_scope_result` reports on by default.
+            # Two runs in one second is precisely what a re-run after a failure looks like, and an
+            # invisible run is the one case an operator most needs to see: live pages and permanent
+            # GS1 records may already exist for the rows that landed.
+            #
+            # As a directory the suffix costs nothing: `*/run.jsonl` finds it, `stamp_of` labels it
+            # `{stamp}-1`, and `sibling` puts its own four documents inside it rather than in a
+            # subfolder of the first run's.
+            folder = path.parent if n == 0 else path.parent.with_name(f"{path.parent.name}-{n}")
+            candidate = folder / path.name
+            folder.mkdir(parents=True, exist_ok=True)
             try:
                 self._handle = candidate.open("x", encoding="utf-8")
             except FileExistsError:
@@ -1056,6 +1079,54 @@ class _RunLog:
 
     def __exit__(self, *exc: object) -> None:
         self._handle.close()
+
+
+def _keep_selection(cfg: ClientConfig, log: Path, *, mode: str, dry_run: bool) -> None:
+    """Copy the selection this run is about to consume into the run's own directory.
+
+    ``input/`` holds one thing: what the **next** run will use. It is overwritten by the next
+    batch, so a report generated afterwards from that file describes somebody else's rows — and
+    until now that was the only copy, which meant a run's own scope became unknowable the moment
+    the operator uploaded again.
+
+    Best-effort on purpose. A run that has already begun writing live pages must not be stopped by
+    a failure to copy a spreadsheet for a report, so this reports and carries on.
+    """
+    if cfg.process_list is None:
+        return
+    control = Path(cfg.process_list.path)
+    # Both documents, because the report needs both: the ticked list says what ran, and the
+    # upload it came from is the only thing that can name the rows the operator *dropped*. Reading
+    # the upload out of ``input/`` afterwards worked until the next batch replaced it.
+    #
+    # The upload's path comes from ``lib.input_layout`` and not from a guess made here. This asked
+    # for ``selection/uploaded.xlsx``, which nothing has written since the folders were split, and
+    # the ``is_file`` skip below meant the copy silently never happened — so every result sheet
+    # reported "no uploaded list archived" and could not name a single deselected row.
+    for source, name in (
+        (control, SELECTION_NAME),
+        (archive_path(control), UPLOAD_NAME),
+    ):
+        if not source.is_file():
+            continue
+        try:
+            shutil.copyfile(source, sibling(log, name))
+        except OSError as exc:  # noqa: BLE001 — a report file is not worth stopping a live run
+            print(f"warning: could not keep a copy of {source}: {exc}", file=sys.stderr)
+
+    # And what those documents *are*, by name and hash, so "which export did this run use?" has an
+    # answer that survives the next upload. The copies above answer "which rows"; they cannot say
+    # which export the ticks were chosen against, because a selection carries no trace of it.
+    export = Path(cfg.export.path)
+    record_run(
+        sibling(log, SOURCES_NAME),
+        mode=mode,
+        dry_run=dry_run,
+        selection=control,
+        product_list=archive_path(control),
+        export=export,
+        history=history_path(export),
+    )
 
 
 def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per policy switch
@@ -1083,10 +1154,9 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
     # Announced up front, not just at the end: the name is derived from a timestamp only this
     # process knows, so nothing outside it can compute where the run is reporting to — and a
     # run that dies never reaches the closing line at all.
-    with _RunLog(
-        Path("output") / cfg.client_id / "runs" / f"{ts.strftime(_TS_FORMAT)}.jsonl"
-    ) as log:
+    with _RunLog(log_path(cfg.client_id, ts.strftime(_TS_FORMAT))) as log:
         print(f"{prefix}{len(rows)} row(s){leg}; log: {log.path}", file=sys.stderr)
+        _keep_selection(cfg, log.path, mode=str(mode), dry_run=dry_run)
         if dry_run or resolved_gs1 is None:
             outcomes = log.append_all(_preview_row(cfg, row, engine, ts, mode) for row in rows)
         else:
@@ -1099,12 +1169,37 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
             save_state(state)
 
     errors = sum(1 for o in outcomes if o.status == "error")
+    _write_result_sheet(cfg, log.path)
     _log.info("run complete: %d ok, %d error(s)", len(outcomes) - errors, errors)
     print(
         f"{prefix}{len(outcomes)} row(s){leg}, {errors} error(s); log: {log.path}",
         file=sys.stderr,
     )
     return _EXIT_ERRORS if errors else _EXIT_OK
+
+
+def _write_result_sheet(cfg: ClientConfig, log: Path) -> None:
+    """The per-row result sheet, without being asked for. On failure too.
+
+    The operator sent a list of barcodes and gets back a log keyed by (GTIN, language); this is
+    the sheet that turns the second back into the first. It was built by the *shell*, in the handler
+    that had just streamed the run — so a publish driven from anywhere else produced no sheet at
+    all, and the moment it is most wanted is the moment a run has half-failed, which is also when
+    nobody goes looking for a report.
+
+    Best-effort, and broadly so. Every exception is caught, not just ``OSError``: this runs after
+    live pages and permanent GS1 records already exist, and a report that raised here would take the
+    run's exit code with it — turning a publish that worked into one that reads as failed, with no
+    way to tell which from the outside.
+    """
+    if cfg.process_list is None:
+        return
+    try:
+        built = build_result_sheet(cfg, log, warn=lambda line: print(line, file=sys.stderr))
+    except Exception as exc:  # noqa: BLE001 — see the docstring; a report must not fail a publish
+        print(f"warning: could not write the result sheet: {exc}", file=sys.stderr)
+        return
+    print(f"result sheet: {built.out}", file=sys.stderr)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
