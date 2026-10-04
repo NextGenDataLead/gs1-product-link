@@ -435,7 +435,9 @@ def _scope_grid(
             "leave it out of this batch. Next saves your choice and moves on — there is no "
             "separate save button. The filter changes only what you can see, "
             "never what is ticked, so you can search, untick, clear the filter, and nothing you "
-            "did is lost. Every save is kept, dated, under process/selection/, so nothing you "
+            "did is lost. A column that is empty on some rows offers (blank) as something to "
+            "filter for, which is how you find the ones nobody has done yet. "
+            "Every save is kept, dated, under process/selection/, so nothing you "
             "ever chose is overwritten — and if the ticks come out wrong, Start again from my "
             "uploaded file above puts the whole list back. Nothing is "
             "published here; this only settles which products are in the batch. A product with no "
@@ -578,6 +580,11 @@ class _Selection:
 #: filter; above it, a list of 300 barcodes is a worse way to find one than typing four digits.
 _PICKER_MAX = 12
 
+#: What a blank cell is called in a filter, in both controls. A column in the operator's own file
+#: is routinely part empty, and those rows are usually the point — "not on the website yet" is a
+#: blank, not a word.
+BLANK_LABEL = "(blank)"
+
 
 def _scope_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> Any:
     """The rows a run will act on, all ticked, filterable per column.
@@ -712,20 +719,58 @@ def _column_filter(column: dict[str, Any], rows: list[dict[str, Any]], redraw: A
     contains. It stops being that the moment the column is a barcode or a description, where the
     list is as long as the file and typing four characters is faster than finding one entry in
     three hundred.
+
+    **An empty cell is one of the things a column contains**, and both controls can ask for it
+    under the same name. This shipped building the picker's options from the column's values *minus*
+    the empty one, which made blanks the single thing in a column that could not be filtered for —
+    on the pilot's own list that is 52 rows of "Momenteel op Website", 16 of "Al in Gs1" and 81 of
+    "Link naar site", and "show me the ones nobody has done yet" is how a batch gets prepared.
     """
     field = column["field"]
-    values = sorted({str(row.get(field) or "").strip() for row in rows} - {""})
     label = str(column["label"])
-    if len(values) <= _PICKER_MAX:
+    options = _picker_options(rows, field)
+    if options is not None:
         control = (
-            ui.select(values, multiple=True, label=label, clearable=True)
+            ui.select(options, multiple=True, label=label, clearable=True)
             .props("dense outlined use-chips")
             .classes("min-w-40")
         )
     else:
         control = ui.input(placeholder=label).props("dense clearable outlined").classes("w-40")
+        if any(not cell for cell in _cells(rows, field)):
+            # Typing cannot express "empty" — every string is a substring of nothing — so this
+            # control takes the picker's word for it. On hover, because a column this wide has no
+            # room to say it and the sentence belongs with the control rather than in a paragraph.
+            control.tooltip(f"Type {BLANK_LABEL} to show only the rows where this column is empty")
     control.on_value_change(redraw)
     return control
+
+
+def _cells(rows: list[dict[str, Any]], field: str) -> list[str]:
+    """One column's cells as the filters compare them: text, stripped, blank for absent."""
+    return [str(row.get(field) or "").strip() for row in rows]
+
+
+def _picker_options(rows: list[dict[str, Any]], field: str) -> dict[str, str] | None:
+    """A column's picker options, or ``None`` when it has too many values to enumerate.
+
+    Pure, and separate from the widget, so the decision and the options are testable without a
+    browser — which is what the blank option needed, since getting it wrong is invisible: a filter
+    that silently matches nothing looks exactly like a column with nothing in it.
+
+    Keyed by the cell value and labelled for a person. The blank option's value is the **empty
+    string** — what a blank cell compares equal to — so :func:`_admits` needs no case of its own.
+    Quasar round-trips it as ``[""]``, measured in a browser rather than assumed, because an option
+    the widget quietly dropped would filter to nothing while looking selected.
+    """
+    cells = _cells(rows, field)
+    values = sorted(set(cells) - {""})
+    if len(values) > _PICKER_MAX:
+        return None
+    # No blank option for a column that has none: an option matching nothing can only mislead.
+    options = {"": BLANK_LABEL} if "" in cells else {}
+    options.update({value: value for value in values})
+    return options
 
 
 def _admits(control: Any, value: Any) -> bool:
@@ -735,8 +780,16 @@ def _admits(control: Any, value: Any) -> bool:
         return True
     cell = str(value or "").strip()
     if isinstance(chosen, list):
+        # The picker's blank option carries the empty string, which is exactly what a blank cell
+        # reads as — so asking for blanks is the ordinary path here, not a special case.
         return cell in chosen
-    return str(chosen).strip().lower() in cell.lower()
+    needle = str(chosen).strip()
+    if needle == BLANK_LABEL:
+        # The one typed string that is not a substring search. A column whose cells literally read
+        # "(blank)" would be unsearchable for that word, which is a trade worth making: the word is
+        # the picker's own, so the two controls cannot mean different things by it.
+        return not cell
+    return needle.lower() in cell.lower()
 
 
 # --- Quality ------------------------------------------------------------------

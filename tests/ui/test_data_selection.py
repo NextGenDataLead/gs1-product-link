@@ -21,7 +21,14 @@ import pytest
 
 pytest.importorskip("nicegui", reason="the ui extra is not installed here")
 
-from ui.pages.data import _ROW, _admits, _Selection  # noqa: E402
+from ui.pages.data import (
+    _PICKER_MAX,
+    _ROW,
+    BLANK_LABEL,
+    _admits,
+    _picker_options,
+    _Selection,
+)  # noqa: E402
 
 
 def _rows(count: int) -> list[dict[str, Any]]:
@@ -125,3 +132,102 @@ def test_matching_ignores_case_and_surrounding_space() -> None:
         value = " Rugsteun "
 
     assert _admits(_Typed(), "rugsteun blauw")
+
+
+# --- Blanks are something a column contains ----------------------------------
+
+
+def test_the_picker_offers_blank_when_the_column_has_any() -> None:
+    """The bug this fixes: options were the column's values **minus** the empty one.
+
+    So on a list where "Momenteel op Website" is blank for every row nobody has done, those rows
+    were the one thing in the column that could not be filtered for — and they are the rows a batch
+    gets prepared by finding.
+    """
+    rows = [{"c0": "ja"}, {"c0": ""}, {"c0": "nee"}, {"c0": None}]
+
+    options = _picker_options(rows, "c0")
+
+    assert options is not None
+    assert list(options) == ["", "ja", "nee"], "blank first, then the real values in order"
+    assert options[""] == BLANK_LABEL, "and labelled, because an empty chip is invisible"
+
+
+def test_a_column_with_no_blanks_offers_no_blank_option() -> None:
+    """It would be an option that matches nothing — a filter that can only mislead."""
+    options = _picker_options([{"c0": "ja"}, {"c0": "nee"}], "c0")
+
+    assert options is not None
+    assert "" not in options
+
+
+def test_asking_the_picker_for_blanks_admits_only_blank_cells() -> None:
+    """The empty string is the option's own value, so this needs no special case in ``_admits``.
+
+    Quasar round-trips the empty-string option as ``[""]`` — measured in a browser, not assumed,
+    because an option the widget quietly dropped would filter to nothing while looking selected.
+    """
+
+    class _PickedBlank:
+        value = [""]
+
+    assert _admits(_PickedBlank(), "")
+    assert _admits(_PickedBlank(), None), "a cell the sheet never filled is blank too"
+    assert _admits(_PickedBlank(), "   "), "and so is one holding only spaces"
+    assert not _admits(_PickedBlank(), "ja")
+
+
+def test_blanks_can_be_asked_for_alongside_real_values() -> None:
+    """Selecting more than one option is an OR, and blank is just one of them."""
+
+    class _Picked:
+        value = ["", "nee"]
+
+    assert _admits(_Picked(), "")
+    assert _admits(_Picked(), "nee")
+    assert not _admits(_Picked(), "ja")
+
+
+def test_the_text_control_takes_the_pickers_word_for_blank() -> None:
+    """Typing cannot express "empty" — every string is a substring of nothing.
+
+    A wide column gets free text rather than a picker, and "Link naar site" is blank on 81 of the
+    pilot's 118 rows, so the same question has to be askable there.
+    """
+
+    class _TypedBlank:
+        value = BLANK_LABEL
+
+    assert _admits(_TypedBlank(), "")
+    assert _admits(_TypedBlank(), None)
+    assert not _admits(_TypedBlank(), "https://noviplast.nl/x")
+
+
+def test_the_blank_word_is_matched_whole_not_as_a_substring_search() -> None:
+    """Otherwise typing it would ALSO loosely match a cell containing the word, which is neither."""
+
+    class _TypedBlank:
+        value = BLANK_LABEL
+
+    assert not _admits(_TypedBlank(), "see (blank) in column D")
+
+
+def test_a_column_with_too_many_values_gets_no_picker_at_all() -> None:
+    """A barcode column's picker would be as long as the file. Typing four characters beats it."""
+    many = [{"c0": f"value {n}"} for n in range(_PICKER_MAX + 1)]
+
+    assert _picker_options(many, "c0") is None
+
+
+def test_blanks_do_not_count_towards_the_picker_threshold() -> None:
+    """The threshold asks "is this column enumerable", which one synthetic option does not change.
+
+    Counting it would flip a column sitting exactly at the limit over to free text purely because
+    some of its rows are empty — losing the picker for all its real values to gain the blank.
+    """
+    at_limit = [{"c0": f"value {n}"} for n in range(_PICKER_MAX)] + [{"c0": ""}]
+
+    options = _picker_options(at_limit, "c0")
+
+    assert options is not None
+    assert len(options) == _PICKER_MAX + 1
