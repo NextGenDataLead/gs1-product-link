@@ -1,8 +1,9 @@
 """The video mapping — every file, its state, and the hints for the ones still unset.
 
-Reached from the Data screen rather than the rail, because it is one file's editor rather than a
-step of the run. It exists because the mapping decided whether a product could be published at
-all, and was the one input with no way to reach it from here: with
+In the rail under "This machine" rather than among the numbered four, and reached from the Data
+screen's hold band as well, because it is one file's editor rather than a step of the run. It
+exists because the mapping decided whether a product could be published at all, and was the one
+input with no way to reach it from here: with
 ``media.restrict_to_mapped_gtins`` on, a product without a confirmed video in **every** language
 never reaches the plan. An operator could complete every screen in the app and still produce an
 empty plan, with the fix available only in a text editor.

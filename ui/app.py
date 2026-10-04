@@ -40,9 +40,10 @@ def _data() -> None:
     data.render()
 
 
-# Not in the rail: this is one input file's editor, reached from the Data screen. The rail is
-# numbered, and each screen's heading says "Step N", so an entry here would number a detour
-# as a step of the run.
+# In the rail, under "This machine" rather than among the numbered four — see ``theme.TOOLS``,
+# which is where the split into a numbered batch and unnumbered tools settled what this is: one
+# input file's editor, not a step of the run. It is also reached from the Data screen, by the band
+# that counts how much of the batch this file is holding.
 @ui.page("/videos")
 def _video_map() -> None:
     video_map.render()

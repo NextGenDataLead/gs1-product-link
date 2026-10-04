@@ -648,6 +648,24 @@ def band(text: str, kind: str = "quiet") -> None:
     ui.label(text).classes(f"band band-{kind}")
 
 
+def routed_band(text: str, *, link_label: str, route: str, kind: str = "quiet") -> ui.label:
+    """A :func:`band` with a way out, and its label handed back so the text can be rewritten.
+
+    The label is returned because the first band that is not a verdict carries a **count**: the
+    Data screen says how much of the batch the video rule is holding, counted from the rows the
+    operator has ticked, so it changes while they tick. A band stating a number that was true when
+    the page rendered is the one thing this helper must not make easy.
+
+    ``kind`` is the band's own vocabulary — quiet | warn | danger — because a route is not by
+    itself bad news. :func:`blocked` is this at ``danger``, and is still the only way to say the
+    screen cannot proceed.
+    """
+    with ui.element("div").classes(f"band band-{kind}"):
+        label = ui.label(text)
+        ui.link(link_label, route).classes("band-link")
+    return label
+
+
 def blocked(text: str, *, link_label: str, route: str) -> None:
     """A band that names what is wrong and offers the screen that fixes it.
 
@@ -656,9 +674,7 @@ def blocked(text: str, *, link_label: str, route: str) -> None:
     and this band is shown at exactly the moment the config is too broken for the rail's facts to
     render, which is the worst moment to be relying on the operator's sense of the layout.
     """
-    with ui.element("div").classes("band band-danger"):
-        ui.label(text)
-        ui.link(link_label, route).classes("band-link")
+    routed_band(text, link_label=link_label, route=route, kind="danger")
 
 
 #: How long a toast stays up, by how much the operator loses if they miss it. A success is
