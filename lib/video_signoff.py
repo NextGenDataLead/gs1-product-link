@@ -32,17 +32,21 @@ quoted back.
 
 from __future__ import annotations
 
+import io
 import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final
+from pathlib import Path
+from typing import IO, Final
 
 from lib.media_video import CONFIRMED, SKIP, UNSET, VideoMap, canon_gtin, state_of
-from lib.xlsx import Grid
+from lib.xlsx import Grid, read_grid
 
-#: Header spellings accepted for each column, normalised by :func:`_norm`. The sheet may be our own
-#: report (``language`` / ``file`` / ``gtin``) or something the client built; Dutch and French are
-#: here because the pilot's own operator files are in both.
+#: Header spellings recognised for each column, normalised by :func:`_norm`. These are a **pre-fill,
+#: not a requirement**: the screen always shows which column it read for what and lets the operator
+#: change it. This list is a guess about somebody else's spreadsheet and it has already been wrong
+#: once — the real sign-off sheet calls the barcode ``current_gtin``, so the import refused the one
+#: file it exists for. A list like this cannot be completed by thinking harder about it.
 LANGUAGE_COLUMNS: Final = ("language", "lang", "languagecode", "taal", "langue")
 FILE_COLUMNS: Final = ("file", "filename", "video", "videofile", "bestand", "fichier")
 GTIN_COLUMNS: Final = (
@@ -160,6 +164,61 @@ def columns(grid: Grid) -> dict[str, int] | None:
     return found
 
 
+#: The fewest filled cells a row needs before it could be a header at all. Two, because the sheet
+#: has at least a filename and a barcode in it, and a title row above the table is one cell.
+_HEADER_CELLS: Final = 2
+
+
+def read_sheet(source: Path | bytes) -> Grid | None:
+    """The sign-off sheet, by the names we know or failing that by shape. ``None`` if neither works.
+
+    Two passes, and the second is why the operator can fix a sheet this module does not recognise.
+    The first looks for a header carrying names from :data:`GTIN_COLUMNS` and :data:`FILE_COLUMNS` —
+    the ordinary case, and it needs no decisions. The second accepts the first row with
+    :data:`_HEADER_CELLS` filled cells, so a sheet whose columns are called something nobody
+    anticipated still arrives on screen with its headers listed, where they can be assigned.
+
+    Without that second pass the column picker could not exist: a sheet we cannot find a header in
+    is a sheet we cannot show columns for, and the operator would be told to go and rename things in
+    Excel to match a list the tool never shows them.
+
+    Taking ``bytes`` as well as a path is not incidental either: each pass needs its own stream,
+    and an upload is bytes that were deliberately never written to disk.
+    """
+    for recognises in (is_header, _could_be_a_header):
+        grid = read_grid(_stream(source), header_row=recognises)
+        if grid is not None:
+            return grid
+    return None
+
+
+def _stream(source: Path | bytes) -> Path | IO[bytes]:
+    """A fresh readable for one pass. A path reopens; bytes need wrapping each time."""
+    return io.BytesIO(source) if isinstance(source, bytes) else source
+
+
+def _could_be_a_header(texts: Sequence[str]) -> bool:
+    """Whether a row could be a header at all, knowing nothing about what its columns are called.
+
+    Deliberately crude. It can mistake the first data row for the header, and that is survivable
+    precisely because of what happens next: the operator is shown the column names it found, and
+    ``fr`` / ``Airfryer Basket_FR.mpg`` listed as column *names* is unmistakable.
+    """
+    return sum(1 for text in texts if text.strip()) >= _HEADER_CELLS
+
+
+def column_options(grid: Grid) -> dict[int, str]:
+    """Every column of the sheet, labelled for a picker: ``{position: name}``.
+
+    A blank header cell is still a column — the sheet may have one, and it may even be the one
+    wanted — so it is offered by position rather than dropped.
+    """
+    return {
+        index: name.strip() or f"(column {index + 1}, no heading)"
+        for index, name in enumerate(grid.header)
+    }
+
+
 def is_header(texts: Sequence[str]) -> bool:
     """Whether a row of cell texts is the sheet's header — it names a barcode **and** a file.
 
@@ -176,22 +235,27 @@ def plan(
     *,
     exported: Collection[str],
     languages: Collection[str],
+    where: Mapping[str, int] | None = None,
 ) -> SignoffPlan:
     """Decide every row of the sheet against the mapping and the export.
 
     Args:
-        grid: The sheet, as :func:`lib.xlsx.read_grid` returned it.
+        grid: The sheet, as :func:`read_sheet` returned it.
         vmap: The mapping as it stands. Never modified.
         exported: GTIN-14s the export carries — ``{p.gtin14 for p in products}``. Empty skips that
             check, deliberately: an import run before ``parse_export`` should report "not in the
             export" for nothing rather than for every row.
         languages: The configured languages, so a sheet naming one the client invented is caught
             rather than silently filling a block no run reads.
+        where: Which column is which, as ``{"language": i, "file": j, "gtin": k}``. The operator's
+            answer when they have given one; :func:`columns` guesses when they have not. Explicit
+            rather than always inferred because the guess is about a file this project does not
+            control, and it has already been wrong on the only real sheet there is.
 
     Returns:
-        The plan — empty when the sheet has no recognisable columns.
+        The plan — empty when no columns were given and none could be recognised.
     """
-    where = columns(grid)
+    where = where if where is not None else columns(grid)
     if where is None:
         return SignoffPlan(())
     known = {

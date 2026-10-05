@@ -21,7 +21,6 @@ What this screen will not do, and why:
 
 from __future__ import annotations
 
-import io
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -211,10 +210,11 @@ def _signoff(  # noqa: PLR0913 — the sheet, the mapping, and what to do once i
         explain=(
             "The spreadsheet the client fills in — `python -m scripts.report_video_candidates` "
             "writes the one to send them, and this reads it back. Any sheet with a language, a "
-            "filename and a barcode column will do, under whatever those are called (EAN, "
-            "Barcode, Taal, Filename…); every other column is ignored, and the table may sit "
-            "below a title row on any sheet of the workbook. Uploading writes nothing: it shows "
-            "what the sheet would change, and a second press applies it. Only rows that are still "
+            "filename and a barcode column will do, whatever they are called: the headings are "
+            "read where they are recognised and you can change any of them, so a sheet nobody "
+            "anticipated still works. Every other column is ignored, and the table may sit below "
+            "a title row on any sheet of the workbook. Uploading writes nothing: it shows what "
+            "the sheet would change, and a second press applies it. Only rows that are still "
             "unset are ever filled — a row already signed off is reported as a conflict and left "
             "exactly as it is."
         ),
@@ -234,31 +234,99 @@ def _signoff(  # noqa: PLR0913 — the sheet, the mapping, and what to do once i
 
             data = await event.file.read()
             try:
-                grid = xlsx.read_grid(io.BytesIO(data), header_row=video_signoff.is_header)
+                grid = video_signoff.read_sheet(data)
             except (OSError, zipfile.BadZipFile, ET.ParseError) as exc:
                 theme.notify_problem(f"That file could not be read as a spreadsheet: {exc}")
                 return "Not read."
-            if grid is None or video_signoff.columns(grid) is None:
+            if grid is None:
                 theme.notify_problem(
-                    "No sheet in that file has both a barcode column and a filename column. The "
-                    "ⓘ above lists the names this looks for."
+                    "No sheet in that file has a row that could be a header — every row is empty "
+                    "or holds a single cell."
                 )
-                return "Not read — no sheet with the columns this needs."
+                return "Not read — no sheet with a header row in it."
 
+            exported = {product.gtin14 for product in context.load_products(cid)}
+            plan_box.clear()
+            with plan_box:
+                _columns_then_plan(grid, path, cid, cfg, pending, applied, exported)
+            return f"{len(grid.rows)} row(s) read from {event.file.name}."
+
+        theme.upload("Sign-off sheet (.xlsx)", receive, busy="Reading the sheet…")
+
+
+def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what it is checked against
+    grid: xlsx.Grid,
+    path: Path,
+    cid: str,
+    cfg: ClientConfig,
+    pending: dict[tuple[str, str], str],
+    applied: Callable[[], None],
+    exported: set[str],
+) -> None:
+    """Which column is which — always shown, pre-filled from a guess — and the plan below it.
+
+    **The guess is never the last word.** The accepted spellings in :mod:`lib.video_signoff` are a
+    list of names somebody here imagined a client might use, and it was wrong about the only real
+    sheet that exists: it calls the barcode ``current_gtin``, so the import refused the file it was
+    built for. A list like that cannot be finished by thinking harder, so it pre-fills three pickers
+    instead of deciding anything, and the operator — who has the file open in Excel — settles it.
+
+    Shown even when the guess is right, because that is what makes the guess auditable. A column
+    silently read as the barcode is the one mistake here that would publish the wrong video.
+    """
+    detected = video_signoff.columns(grid) or {}
+    options = video_signoff.column_options(grid)
+    chosen: dict[str, Any] = {}
+    plan_box = ui.column().classes("w-full")
+
+    with theme.section("Which column is which"):
+        ui.label(
+            "Read from the sheet's own headings where they are recognised. Change any of them — "
+            "nothing is written by looking."
+        ).classes("note")
+        with ui.row().classes("gap-4 flex-wrap mt-2"):
+            for name, label in _COLUMN_LABELS:
+                select = ui.select(
+                    options, value=detected.get(name), label=label, clearable=True
+                ).props("dense outlined")
+                select.classes("min-w-56")
+                chosen[name] = select
+
+    def redraw() -> None:
+        where = {
+            name: int(select.value) for name, select in chosen.items() if select.value is not None
+        }
+        plan_box.clear()
+        with plan_box:
+            if len(where) < len(_COLUMN_LABELS):
+                missing = [label for name, label in _COLUMN_LABELS if name not in where]
+                theme.band(
+                    f"Choose a column for: {', '.join(missing).lower()}. Then this will say what "
+                    "the sheet would change.",
+                    "quiet",
+                )
+                return
             decided = video_signoff.plan(
                 grid,
                 load_video_map(path),
-                exported={product.gtin14 for product in context.load_products(cid)},
+                exported=exported,
                 languages=cfg.wordpress.languages,
+                where=where,
             )
-            plan_box.clear()
-            with plan_box:
-                _plan_view(decided, path, pending, applied)
-            fills = len(decided.of(video_signoff.FILL))
-            theme.notify_ok(f"Read. {fills} row(s) would be filled — nothing is written yet.")
-            return f"{len(decided.rows)} row(s) read from {event.file.name}."
+            _plan_view(decided, path, pending, applied)
 
-        theme.upload("Sign-off sheet (.xlsx)", receive, busy="Reading the sheet…")
+    for select in chosen.values():
+        select.on_value_change(redraw)
+    redraw()
+
+
+#: The three columns the import needs, labelled as the operator would describe them rather than as
+#: the mapping names them. "Barcode" and not "GTIN": nobody outside this project says GTIN.
+_COLUMN_LABELS: Final = (
+    ("language", "Language"),
+    ("file", "Video filename"),
+    ("gtin", "Barcode"),
+)
 
 
 #: The plan's tables, in the order somebody acts on them: what will happen, then what they have to

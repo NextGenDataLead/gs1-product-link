@@ -26,9 +26,11 @@ from lib.video_signoff import (
     FILL,
     REJECTED,
     UNCHANGED,
+    column_options,
     columns,
     is_header,
     plan,
+    read_sheet,
 )
 from lib.xlsx import Grid, read_grid
 
@@ -301,3 +303,64 @@ def test_a_numeric_cell_and_a_text_cell_are_the_same_barcode_through_a_real_file
     decided = plan(grid, vmap, exported=_EXPORTED, languages=_LANGUAGES)
 
     assert {row.gtin for row in decided.rows} == {_GTIN14}
+
+
+def test_a_sheet_whose_columns_are_called_nothing_we_know_still_arrives_on_screen() -> None:
+    """The reason the column picker can exist at all.
+
+    The accepted spellings are a guess about somebody else's spreadsheet, and the guess was wrong
+    about the only real sheet there is. A file we cannot recognise must still come back with its
+    headings listed, so the operator can say which column is which — being told to go and rename
+    things in Excel to match a list the tool never shows is not a fix.
+    """
+    wb = Workbook()
+    sheet = wb.active
+    sheet.append(["kolom A", "het filmpje", "streepjescode"])
+    sheet.append(["nl", "Bulbman.mpg", _GTIN13])
+    stream = io.BytesIO()
+    wb.save(stream)
+
+    grid = read_sheet(stream.getvalue())
+
+    assert grid is not None
+    assert columns(grid) is None, "nothing here is recognisable — that is the premise"
+    assert column_options(grid) == {0: "kolom A", 1: "het filmpje", 2: "streepjescode"}
+
+
+def test_the_operators_own_column_choice_overrides_every_guess() -> None:
+    """What the picker sends back. Three positions, and the names are not consulted again."""
+    grid = Grid(["kolom A", "het filmpje", "streepjescode"], [["nl", "Bulbman.mpg", _GTIN13]])
+
+    decided = plan(
+        grid,
+        _map(),
+        exported=_EXPORTED,
+        languages=_LANGUAGES,
+        where={"language": 0, "file": 1, "gtin": 2},
+    )
+
+    assert [(row.outcome, row.gtin) for row in decided.rows] == [(FILL, _GTIN14)]
+
+
+def test_a_column_with_no_heading_is_still_offered_by_position() -> None:
+    """It may be the one wanted, and a sheet exported from a report often has one."""
+    grid = Grid(["language", "", "gtin"], [["nl", "Bulbman.mpg", _GTIN13]])
+
+    assert column_options(grid)[1] == "(column 2, no heading)"
+
+
+def test_the_fallback_header_never_swallows_a_title_row() -> None:
+    """A one-cell title above the table is not a header, however loose the fallback is."""
+    wb = Workbook()
+    sheet = wb.active
+    sheet.append(["Video sign-off — round 2"])
+    sheet.append([])
+    sheet.append(["taal", "video", "code"])
+    sheet.append(["nl", "Bulbman.mpg", _GTIN13])
+    stream = io.BytesIO()
+    wb.save(stream)
+
+    grid = read_sheet(stream.getvalue())
+
+    assert grid is not None
+    assert grid.header == ["taal", "video", "code"]
