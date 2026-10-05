@@ -346,6 +346,13 @@ _PLAN_SECTIONS: Final = (
         "row-by-row table below.",
     ),
     (
+        video_signoff.AMBIGUOUS,
+        "Two videos for one product ({n}) — nothing here will be applied",
+        "The sheet gives these barcodes a second video in the same language. A product can carry "
+        "only one video per language: applying both would attach neither, and the page would "
+        "publish without a video. Keep one and mark the other `skip` in the table below.",
+    ),
+    (
         video_signoff.REJECTED,
         "Could not be used ({n})",
         "Each of these says what is wrong with it. A barcode problem is fixed in the sheet and the "
@@ -371,6 +378,7 @@ def _plan_view(
     with ui.row().classes("gap-12 items-end mb-4"):
         theme.figure(str(len(decided.of(video_signoff.FILL))), "row(s) would be filled")
         theme.figure(str(len(decided.of(video_signoff.CONFLICT))), "conflict(s)")
+        theme.figure(str(len(decided.of(video_signoff.AMBIGUOUS))), "two-video clash(es)")
         theme.figure(str(len(decided.of(video_signoff.REJECTED))), "rejected")
         theme.figure(str(len(decided.of(video_signoff.UNCHANGED))), "already set")
         theme.figure(str(len(decided.of(video_signoff.BLANK))), "left blank")

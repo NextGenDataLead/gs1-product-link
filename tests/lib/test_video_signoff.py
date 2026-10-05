@@ -21,6 +21,7 @@ from openpyxl import Workbook
 
 from lib.media_video import SKIP, VideoMap, VideoMapEntry
 from lib.video_signoff import (
+    AMBIGUOUS,
     BLANK,
     CONFLICT,
     FILL,
@@ -364,3 +365,108 @@ def test_the_fallback_header_never_swallows_a_title_row() -> None:
 
     assert grid is not None
     assert grid.header == ["taal", "video", "code"]
+
+
+def test_two_sheet_rows_claiming_one_barcode_are_both_held_back() -> None:
+    """What the pilot's own sheet does: `Roll Light Summer.mpg` and `…Winter.mpg`, one GTIN.
+
+    Two genuine videos of one product, which the mapping cannot express. Applying both attaches
+    **neither** — ``resolve`` returns ``None`` for an ambiguous pair — to a product that still
+    counts as mapped, so the page publishes with no video and nothing says why.
+    """
+    vmap = VideoMap(
+        by_language={
+            "nl": [
+                VideoMapEntry(file="Roll Light Summer.mpg", gtin=""),
+                VideoMapEntry(file="Roll Light Winter.mpg", gtin=""),
+            ],
+            "fr": [],
+        }
+    )
+    grid = _sheet(
+        ("nl", "Roll Light Summer.mpg", _GTIN13), ("nl", "Roll Light Winter.mpg", _GTIN13)
+    )
+
+    decided = plan(grid, vmap, exported=_EXPORTED, languages=_LANGUAGES)
+
+    assert [row.outcome for row in decided.rows] == [AMBIGUOUS, AMBIGUOUS]
+    assert decided.edits == {}, "neither may be applied — one of them has to be chosen by a person"
+    assert "Roll Light Winter.mpg" in decided.rows[0].detail, "each names its rival"
+
+
+def test_a_fill_colliding_with_an_existing_confirmed_file_is_held_back() -> None:
+    """The collision can come from the mapping rather than from the sheet."""
+    vmap = VideoMap(
+        by_language={
+            "nl": [
+                VideoMapEntry(file="Super Trap.mp4", gtin=_GTIN13),
+                VideoMapEntry(file="Super Trap.mpg", gtin=""),
+            ],
+            "fr": [],
+        }
+    )
+
+    decided = plan(
+        _sheet(("nl", "Super Trap.mpg", _GTIN13)), vmap, exported=_EXPORTED, languages=_LANGUAGES
+    )
+
+    assert decided.rows[0].outcome == AMBIGUOUS
+    assert "Super Trap.mp4" in decided.rows[0].detail
+
+
+def test_a_collision_is_found_across_barcode_widths() -> None:
+    """The pilot's real case, and the one that was invisible: 13-digit in the file, 14 in the sheet.
+
+    Compared as text these are two different GTINs and the pair looks fine. ``resolve``
+    canonicalises, finds two files, and attaches nothing.
+    """
+    vmap = VideoMap(
+        by_language={
+            "nl": [
+                VideoMapEntry(file="Super Trap.mp4", gtin=_GTIN13),
+                VideoMapEntry(file="Super Trap.mpg", gtin=""),
+            ],
+            "fr": [],
+        }
+    )
+
+    decided = plan(
+        _sheet(("nl", "Super Trap.mpg", _GTIN14)), vmap, exported=_EXPORTED, languages=_LANGUAGES
+    )
+
+    assert decided.rows[0].outcome == AMBIGUOUS
+
+
+def test_one_barcode_in_two_languages_is_the_normal_case_and_not_a_clash() -> None:
+    """A product needs a video in *every* language, so this must stay the ordinary path."""
+    vmap = VideoMap(
+        by_language={
+            "nl": [VideoMapEntry(file="Bulbman.mpg", gtin="")],
+            "fr": [VideoMapEntry(file="Bulbman FR.mpg", gtin="")],
+        }
+    )
+    grid = _sheet(("nl", "Bulbman.mpg", _GTIN13), ("fr", "Bulbman FR.mpg", _GTIN13))
+
+    decided = plan(grid, vmap, exported=_EXPORTED, languages=_LANGUAGES)
+
+    assert [row.outcome for row in decided.rows] == [FILL, FILL]
+    assert len(decided.edits) == 2
+
+
+def test_many_files_may_be_skip_without_clashing() -> None:
+    """``skip`` is not a product, so it cannot collide with another ``skip``."""
+    vmap = VideoMap(
+        by_language={
+            "nl": [
+                VideoMapEntry(file="Trailer A.mpg", gtin=""),
+                VideoMapEntry(file="Trailer B.mpg", gtin=""),
+            ],
+            "fr": [],
+        }
+    )
+    grid = _sheet(("nl", "Trailer A.mpg", "skip"), ("nl", "Trailer B.mpg", "skip"))
+
+    decided = plan(grid, vmap, exported=_EXPORTED, languages=_LANGUAGES)
+
+    assert [row.outcome for row in decided.rows] == [FILL, FILL]
+    assert len(decided.edits) == 2

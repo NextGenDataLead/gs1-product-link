@@ -77,6 +77,9 @@ CONFLICT: Final = "conflict"
 BLANK: Final = "blank"
 #: The row cannot be applied: an unknown language or file, or a barcode that is not one.
 REJECTED: Final = "rejected"
+#: Applying this row would leave one GTIN mapped to two files in one language. Reported, never
+#: applied — see :func:`_mark_ambiguous`.
+AMBIGUOUS: Final = "ambiguous"
 
 #: Canonical GTIN width, as :func:`lib.media_video.canon_gtin` pads to.
 _GTIN_WIDTH: Final = 14
@@ -262,14 +265,65 @@ def plan(
         language: {entry.file for entry in entries}
         for language, entries in vmap.by_language.items()
     }
-    return SignoffPlan(
-        tuple(
-            _decide(row, line, where, vmap, known, exported=exported, languages=languages)
-            # Line 1 is the header to the person reading the sheet, so the first data row is line
-            # 2. Off by one here and every rejection points at the row above the problem.
-            for line, row in enumerate(grid.rows, start=2)
-        )
-    )
+    decided = [
+        _decide(row, line, where, vmap, known, exported=exported, languages=languages)
+        # Line 1 is the header to the person reading the sheet, so the first data row is line 2.
+        # Off by one here and every rejection points at the row above the problem.
+        for line, row in enumerate(grid.rows, start=2)
+    ]
+    return SignoffPlan(_mark_ambiguous(decided, vmap))
+
+
+def _mark_ambiguous(decided: Sequence[SignoffRow], vmap: VideoMap) -> tuple[SignoffRow, ...]:
+    """Turn into :data:`AMBIGUOUS` any fill that would leave one GTIN on two files in one language.
+
+    **One video per product per language, or none at all.** :meth:`VideoMap.resolve` returns
+    ``None`` when a GTIN is confirmed to more than one file in a language, so applying such a pair
+    does not attach two videos — it attaches *neither*, to a product that still counts as mapped.
+    The page then publishes without a video and nothing says why.
+
+    This is not hypothetical and it is not the sheet being careless. The pilot's own sign-off sheet
+    names `Roll Light Summer.mpg` and `Roll Light Winter.mpg` for one GTIN — two genuine videos of
+    one product, which the mapping has no way to express — and separately pairs ``Super Trap.mp4``
+    with ``Super Trap.mpg``, one video in two formats. Both were applied silently before this check
+    existed, and the second was invisible even to the coverage report, because
+    :func:`lib.media_video.check_video_map` was comparing raw cells: 13-digit beside 14-digit did
+    not look like a duplicate to it, while ``resolve`` canonicalises and saw one.
+
+    Checked over the **resulting** state — existing confirmed rows plus every fill in this sheet —
+    because either side can supply the collision, and a sheet that collides with itself is the case
+    that actually happened. Reported rather than resolved: which of two files to keep is a decision
+    about the videos, and the operator has them open.
+    """
+    claims: dict[tuple[str, str], list[str]] = {}
+    for language, entries in vmap.by_language.items():
+        for entry in entries:
+            if state_of(entry.gtin) == CONFIRMED:
+                claims.setdefault((language, canon_gtin(entry.gtin)), []).append(entry.file)
+    for row in decided:
+        if row.outcome == FILL and row.gtin != SKIP:
+            claims.setdefault((row.language, row.gtin), []).append(row.file)
+
+    marked = []
+    for row in decided:
+        others = claims.get((row.language, row.gtin), []) if row.outcome == FILL else []
+        rival = sorted(name for name in others if name != row.file)
+        if row.outcome == FILL and row.gtin != SKIP and rival:
+            marked.append(
+                SignoffRow(
+                    row.line,
+                    row.language,
+                    row.file,
+                    row.given,
+                    row.gtin,
+                    AMBIGUOUS,
+                    f"{row.gtin} would also be mapped to {', '.join(rival)} in {row.language}; "
+                    "one GTIN can carry only one video per language, so both would get none",
+                )
+            )
+            continue
+        marked.append(row)
+    return tuple(marked)
 
 
 def _decide(  # noqa: PLR0913 — one collaborator per question this row has to answer
