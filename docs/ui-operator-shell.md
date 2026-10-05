@@ -618,6 +618,15 @@ it, each of them a refusal:
 - **The sheet is read and not kept.** Where operator inputs are filed is an open question here, and
   an upload that invented a folder of its own would be answering it by accident. The mapping's own
   dated backup is what somebody would go looking for anyway.
+- **The operator says which column is which; the recognised names only pre-fill the pickers.** The
+  list of accepted spellings is a guess about somebody else's spreadsheet, and it was wrong about
+  the only real sign-off sheet there is — it calls the barcode `current_gtin`, so the import refused
+  the file it was built for. Adding that name fixes today and not the next sheet. The pickers show
+  even when the guess is right, because that is what makes the guess auditable: a column silently
+  read as the barcode is the one mistake on this screen that would publish the wrong video. It is
+  also why `read_sheet` has a second pass that finds a header row by *shape* — a sheet we cannot
+  recognise must still arrive with its headings listed, since "rename your columns to match a list
+  we never show you" is not a fix.
 
 The workbook reader behind it is `lib/xlsx.py` — `lib.process_list`'s, lifted out when this became
 its second caller. Both read files whose table starts below a title row, on a sheet that is not the

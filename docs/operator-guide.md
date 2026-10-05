@@ -312,9 +312,12 @@ machine guess at which product the filename means, nothing more. Nothing is writ
 You do not have to type them in. When the client sends back the spreadsheet with the barcodes
 filled in, upload it under **Import the client's sign-off sheet**.
 
-- It needs three columns: the language, the video filename, and the barcode. They can be called
-  anything sensible — *EAN*, *Barcode*, *Taal*, *Filename* — and any other columns are ignored. The
-  table can sit below a title row, on any sheet of the workbook.
+- It needs three columns: the language, the video filename, and the barcode. **You say which is
+  which** — the tool reads the sheet's headings, fills the three boxes in with its best guess, and
+  you change any it got wrong. So the columns can be called anything at all, and any other columns
+  are ignored. The table can sit below a title row, on any sheet of the workbook.
+- **Check those three boxes every time, even when they look right.** Reading the wrong column as
+  the barcode is the one mistake here that would put the wrong video on a product.
 - **Uploading changes nothing.** It shows you what the sheet would do, row by row, and only then
   offers a button that does it.
 - **A row the client has already signed off is never overwritten.** If the sheet disagrees with a
