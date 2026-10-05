@@ -45,7 +45,22 @@ from lib.xlsx import Grid
 #: here because the pilot's own operator files are in both.
 LANGUAGE_COLUMNS: Final = ("language", "lang", "languagecode", "taal", "langue")
 FILE_COLUMNS: Final = ("file", "filename", "video", "videofile", "bestand", "fichier")
-GTIN_COLUMNS: Final = ("gtin", "gtin13", "gtin14", "ean", "ean13", "barcode", "barcodenumber")
+GTIN_COLUMNS: Final = (
+    "gtin",
+    "gtin13",
+    "gtin14",
+    "ean",
+    "ean13",
+    "barcode",
+    "barcodenumber",
+    # ``current_gtin`` is what an earlier revision of ``report_video_candidates`` called it, and the
+    # operator still has sheets in that shape. In both schemas the one barcode column is *both* the
+    # mapping's current value and where the client writes their answer — they edit it in place — so
+    # reading it is safe by construction: an untouched row decides UNCHANGED, a filled one FILL, and
+    # one that disagrees with sign-off CONFLICT, which is never applied.
+    "currentgtin",
+    "currentean",
+)
 
 #: What was decided about one row.
 FILL: Final = "fill"

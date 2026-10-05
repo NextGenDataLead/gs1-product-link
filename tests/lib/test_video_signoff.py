@@ -210,6 +210,20 @@ def test_our_own_report_is_read_back_without_mistaking_a_hint_for_an_answer() ->
     assert plan(grid, _map(), exported=_EXPORTED, languages=_LANGUAGES).rows[0].gtin == _GTIN14
 
 
+def test_the_barcode_column_is_found_under_an_earlier_reports_name_for_it() -> None:
+    """``current_gtin`` is what an earlier ``report_video_candidates`` called the column, and the
+    operator still holds sheets in that shape — the one in ``test-uploads`` carries 99 answers.
+
+    Safe by construction, because in both schemas that single column is *both* the mapping's current
+    value and where the client writes theirs: an untouched row decides UNCHANGED, a filled one FILL,
+    and one disagreeing with sign-off CONFLICT, which is never applied.
+    """
+    grid = _sheet(("fr", "Bulbman.mpg", _GTIN13), header=("language", "file", "current_gtin"))
+
+    assert columns(grid) == {"language": 0, "file": 1, "gtin": 2}
+    assert is_header(["language", "file", "state", "current_gtin"])
+
+
 def test_the_columns_are_found_under_the_names_a_client_would_use() -> None:
     """Nobody outside this project calls a barcode a GTIN."""
     grid = _sheet(("fr", "Bulbman.mpg", _GTIN13), header=("Language Code", "Filename", "EAN"))
