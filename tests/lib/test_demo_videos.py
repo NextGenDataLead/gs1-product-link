@@ -43,20 +43,20 @@ def _gtins(*indexes: int) -> set[str]:
     return {CATALOGUE[i].gtin for i in indexes}
 
 
-def test_four_are_held_for_video_and_one_has_two_videos(tmp_path: Path) -> None:
+def test_five_are_held_for_video_one_of_them_for_two_videos(tmp_path: Path) -> None:
     status = _status(tmp_path)
 
-    assert {p.gtin for p in status.held} == _gtins(6, 7, 9, 10)
+    assert {p.gtin for p in status.held} == _gtins(6, 7, 8, 9, 10)
     assert {p.gtin for p in status.clashing} == _gtins(8)
     # Product 6's French row is unset too: until the sheet fills it, it is a file with no barcode.
     assert [v.file for v in status.unassigned] == ["Passoire FR.mp4", demo_videos.MYSTERY]
     assert status.not_in_map == () and status.files_missing == ()
 
 
-def test_eight_pass_the_gate_before_the_sheet_and_nine_after(tmp_path: Path) -> None:
-    """The nine the demo export has always promised — once the client's sheet is applied."""
+def test_seven_pass_the_gate_before_the_sheet_and_eight_after(tmp_path: Path) -> None:
+    """Eight once the client's sheet is applied; the ninth waits for a Dutch video to be skipped."""
     vmap = _mapping(tmp_path)
-    assert fully_mapped_gtins(vmap, _LANGUAGES) == _gtins(0, 1, 2, 3, 4, 5, 8, 11)
+    assert fully_mapped_gtins(vmap, _LANGUAGES) == _gtins(0, 1, 2, 3, 4, 5, 11)
 
     decided = plan(_grid(), vmap, exported=_gtins(*range(12)), languages=_LANGUAGES)
     filled = demo_videos.mapping_text()
@@ -64,7 +64,7 @@ def test_eight_pass_the_gate_before_the_sheet_and_nine_after(tmp_path: Path) -> 
         filled = filled.replace(f"{{file: {file}, gtin: ''}}", f"{{file: {file}, gtin: '{gtin}'}}")
     after = fully_mapped_gtins(_mapping(tmp_path, filled), _LANGUAGES)
 
-    assert after == _gtins(0, 1, 2, 3, 4, 5, 6, 8, 11)
+    assert after == _gtins(0, 1, 2, 3, 4, 5, 6, 11)
 
 
 def _grid() -> Grid:

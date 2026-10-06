@@ -251,15 +251,26 @@ class VideoMap(BaseModel):
 
 
 def _confirmed_gtins(entries: list[VideoMapEntry]) -> set[str]:
-    """Canonical GTIN-14 set of the confirmed (non-blank, non-``skip``) entries in one language."""
-    return {canon_gtin(e.gtin) for e in entries if state_of(e.gtin) == CONFIRMED}
+    """Canonical GTIN-14s confirmed to **exactly one** file in one language.
+
+    Exactly one, not at least one. A GTIN confirmed to two files is ambiguous, and
+    :meth:`VideoMap.resolve` attaches neither — so counting it here let a product through the gate
+    that then published with no video in that language, reporting success. It was a ``set`` of
+    every confirmed cell, which is how two rows collapsed into one "mapped" GTIN unnoticed.
+    """
+    counts = Counter(canon_gtin(e.gtin) for e in entries if state_of(e.gtin) == CONFIRMED)
+    return {gtin for gtin, count in counts.items() if count == 1}
 
 
 def fully_mapped_gtins(vmap: VideoMap, languages: list[str]) -> frozenset[str]:
-    """Canonical GTIN-14 set of GTINs confirmed in **every** language in ``languages``.
+    """Canonical GTIN-14 set of GTINs with exactly one confirmed video in **every** language.
 
     This is the pilot allowlist: a product is runnable only once it has a client-confirmed video
-    in each language, so the page can be published complete in all languages at once.
+    in each language, so the page can be published complete in all languages at once. A GTIN
+    confirmed to two files in a language is held like one with none: the page could not get a
+    video there, and the data-quality report (§1b) names both files so one can be marked ``skip``.
+    Equivalently: :meth:`VideoMap.resolve` finds a file in every language — which is what
+    ``run_execute`` attaches, so passing the gate and getting a video cannot disagree.
     """
     per_language = [_confirmed_gtins(vmap.by_language.get(lang, [])) for lang in languages]
     if not per_language:

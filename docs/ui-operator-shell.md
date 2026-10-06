@@ -336,9 +336,11 @@ the same product). It used to say "no video yet" for all of them, which on the p
 different jobs. Data is the only per-SKU grid in the shell, so it is the only place that fact can
 live per row; on the pilot, 19 of the 37 were held and the screen used to show none of it.
 
-**Only a held product gets a mark**, because the line under the table counts marks as holds. A
-product whose only problem is two videos in one language passes the gate and publishes without
-that video; the report names it, and this column deliberately does not.
+**Only a held product gets a mark**, because the line under the table counts marks as holds. Two
+videos confirmed for one product in one language is a hold like none: the page could not get
+either, so the gate (`fully_mapped_gtins`) requires **exactly one** per language. It used to count
+any confirmed row, and a two-video product published with no video in that language, reporting
+success.
 
 **That mark replaced a *Video mapping* section here**, which was two figures and a link. The
 coverage figures now sit under step 3, and a per-row mark says the same thing against the product
@@ -738,7 +740,7 @@ The recipe, all of it outside the repository:
    row, `mapping.yml` in the row-per-line shape the editor accepts, and
    `test-uploads/video-signoff.xlsx` with one row per import outcome and the real sheet's
    `current_gtin` column. Of the twelve products, three are held by a mandatory rule; before the
-   sheet is applied eight pass the video gate and four are held, after it nine — so the figures are
+   sheet is applied seven pass the video gate and five are held, after it eight — so the figures are
    neither all zero nor uniformly green. To photograph the uploads, move the export and the list
    into `test-uploads/` and upload them through the pickers.
 3. Parse it: `python -m scripts.parse_export democlient`. Then **backdate `products.xlsx` behind

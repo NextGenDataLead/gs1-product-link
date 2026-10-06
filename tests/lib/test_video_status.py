@@ -75,8 +75,8 @@ def test_a_product_has_a_video_exactly_when_resolve_attaches_one() -> None:
 def test_held_is_exactly_what_the_gate_holds() -> None:
     """``held`` is the gate's word: the same combinations, checked against ``fully_mapped_gtins``.
 
-    The Data screen counts its Video column as holds, so a ``held`` that also swept in the
-    clashing products would tell the operator a run skips something it in fact publishes.
+    The Data screen counts its Video column as holds, so the two must never disagree about which
+    products a run skips.
     """
     spellings = ["8713195000001", _A, "skip", "", "   "]
     for nl, fr in itertools.product(spellings, repeat=2):
@@ -88,23 +88,23 @@ def test_held_is_exactly_what_the_gate_holds() -> None:
         assert held == ({_A} - fully_mapped_gtins(vmap, _LANGUAGES)), (nl, fr)
 
 
-def test_two_files_for_one_product_count_as_mapped_for_the_gate_but_attach_nothing() -> None:
-    """The latent trap this module exists to name, and must not hide.
+def test_two_files_for_one_product_in_one_language_hold_it() -> None:
+    """The trap this module used to only name: two nl videos, so ``resolve`` attaches neither.
 
-    ``fully_mapped_gtins`` is a set, so a GTIN confirmed to two files in nl is "mapped" there —
-    while ``resolve`` returns ``None`` and the page would get no nl video.
+    The gate counted a set of confirmed cells, so the GTIN was "mapped" in nl and published with
+    no nl video, reporting success. It is held now, and still named as clashing so the report can
+    show both files.
     """
     vmap = _map(nl=[("a.mpg", _A), ("b.mpg", _A)], fr=[("c.mpg", _A)])
 
-    (product,) = _status(vmap, _A).products
+    status = _status(vmap, _A)
+    (product,) = status.products
 
-    assert _A in fully_mapped_gtins(vmap, _LANGUAGES)  # the gate admits it
+    assert _A not in fully_mapped_gtins(vmap, _LANGUAGES)  # the gate holds it
     assert product.by_language == {"nl": CLASHING, "fr": HAS_VIDEO}
     assert product.files["nl"] == ("a.mpg", "b.mpg")
-    assert not product.attaches_a_video
     assert waiting_on(product) == "two videos in nl"
-    status = _status(vmap, _A)
-    assert status.held == ()  # it publishes — with no nl video
+    assert [p.gtin for p in status.held] == [_A]
     assert [p.gtin for p in status.clashing] == [_A]
 
 

@@ -18,8 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without costing a single tick. The sign-off upload refuses a GS1 export by name.
 - **§1 of the data-quality report: which selected products are waiting on a video, and on what.**
   1a every held product with a mark per language and what it waits on; 1b products with two videos
-  confirmed in one language (the tool attaches neither, and the gate still admits them — said, not
-  silently fixed); 1c the files with no barcode yet, the one list not narrowed to the selection, now
+  confirmed in one language, with both filenames (held — see Changed); 1c the files with no barcode yet, the one list not narrowed to the selection, now
   with the folder gaps the check always found and the report never showed; 1d the client's newest
   sign-off sheet **re-planned against the mapping on every render**, with rejections listed by the
   sheet's own row number. The Summary's video counts come from the same join.
@@ -154,6 +153,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text true every time and needed once, never a warning or a count.
 
 ### Changed
+- **A product with two videos confirmed in one language is held, like one with none.** The video
+  gate counted any confirmed row, so a GTIN confirmed to two files passed — and since a page can
+  carry only one video per language, the run attached *neither* and published without one,
+  reporting success. `fully_mapped_gtins` now requires exactly one per language, which is what
+  `VideoMap.resolve` (the attach) has always required, so passing the gate and getting a video
+  cannot disagree. Every path inherits it — plan, execute, preflight, the Data grid and the report.
+  Measured on the pilot before changing it: no product moves (both two-video products were already
+  held for want of a French video), so nothing live is affected. The report's §1b lists them with
+  both filenames; mark one `skip` and the product publishes on the next run.
 - **The data-quality report is renumbered, and §6 keeps its number.** One section inserted, one
   absorbed: §1 Video (new) · §2 copy blocker (was 1) · §3 inferred claims (was 2) · §4 MyGS1 fixes,
   4a/4b (was 3) · §5 translated (was 4) · §6 Categories (unchanged). The old *§5 Video mapping

@@ -270,11 +270,10 @@ def _clash_lines(status: VideoStatus) -> list[str]:
     return [
         "### 1b. Mapped to two videos",
         "",
-        "Each of these has two videos confirmed for one language, so the tool attaches **neither** "
-        "and §0 shows that language as missing. Keep one in `mapping.yml` and mark the other "
-        "`skip`. **The publish gate still admits a product confirmed to two files**: one held "
-        "today only for its other language would, once that arrives, publish without a video "
-        "here and report success.",
+        "Each of these has two videos confirmed for one language. The tool cannot choose between "
+        "them, so the product is **held** — it is in 1a too — and §0 shows that language as "
+        "missing. Keep one in `mapping.yml` and mark the other `skip`; the product publishes on "
+        "the next run.",
         "",
         *table(["GTIN", "Product", "Language", "Files"], rows),
         "",

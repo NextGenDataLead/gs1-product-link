@@ -9,16 +9,17 @@ Every state the screen and the report distinguish is here once, on purpose:
 ====================  ============================================================================
 products 0–5, 11      a video in nl and fr — publish
 product 6             nl confirmed, fr row **unset** — held until the sign-off sheet fills it
-product 8             **two files confirmed in nl**, one in fr — passes the gate and attaches no nl
-                      video (§1b)
+product 8             **two files confirmed in nl**, one in fr — held until one is marked ``skip``
+                      (§1a and §1b)
 product 9             nl only, and already held for missing data — needs both (the ¹ in §1a)
 products 7, 10        nothing — held for missing data and for video
 ``Demo promo.mp4``    ``skip`` — a decision, not a gap
 ``Mystery clip.mp4``  unset — waiting for a barcode (§1c, with product 6's French row)
 ====================  ============================================================================
 
-So before the sheet is applied eight products pass the gate (seven plus the two-video one) and
-four are held; after it, nine pass — the nine that :mod:`lib.demo_export` has always promised.
+So before the sheet is applied seven products pass the gate and five are held; after it, eight
+pass. The ninth that :mod:`lib.demo_export` promises publishes once one of product 8's two Dutch
+videos is marked ``skip`` in the mapping — which is the demo of what to do about §1b.
 
 The sheet carries one row per outcome the import decides, and calls its barcode column
 ``current_gtin`` — the real sheet's spelling, which the column pickers exist because of:

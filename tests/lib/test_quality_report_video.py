@@ -150,12 +150,12 @@ def test_the_four_parts_carry_the_sections_number_in_order() -> None:
 
 
 def test_the_headline_counts_what_publishes_and_what_is_held() -> None:
-    """Five products: one attaches everywhere; three are held; one is clash-only — not held,
-    and not counted as having a video either, because its page gets no nl video."""
+    """Five products: one attaches everywhere and four are held — including the one whose only
+    problem is two videos in nl, because the page could not get an nl video."""
     section = _section(_render(VideoReport(_status())))
 
     assert "**1 of 5** in-scope products have a confirmed video in every language" in section
-    assert "**3** are held" in section
+    assert "**4** are held" in section
     assert "also held for missing source data" not in section.split("###")[0]
 
 
@@ -177,10 +177,11 @@ def test_held_lists_every_held_product_with_a_mark_per_language_and_what_it_wait
         for row in _rows(_part(_render(VideoReport(_status())), "a"))
     }
 
-    assert set(rows) == {_NL_ONLY, _NOTHING, _CLASH}
+    assert set(rows) == {_NL_ONLY, _NOTHING, _CLASH, _CLASH_ONLY}
     assert rows[_NL_ONLY][2:] == ["●", "○", "needs fr"]
     assert rows[_NOTHING][2:] == ["○", "○", "needs nl, fr"]
     assert rows[_CLASH][2:] == ["2", "○", "needs fr; two videos in nl"]
+    assert rows[_CLASH_ONLY][2:] == ["2", "●", "two videos in nl"]  # held for the clash alone
 
 
 def test_held_is_unbounded_because_each_row_is_a_job() -> None:
@@ -205,7 +206,7 @@ def test_held_says_it_is_the_product_side_and_what_joins_it_to_the_files() -> No
 # --- 1b: two videos -----------------------------------------------------------------------------
 
 
-def test_two_videos_names_both_files_including_the_product_that_is_not_held() -> None:
+def test_two_videos_names_both_files_and_says_the_product_is_held() -> None:
     clash = _part(_render(VideoReport(_status())), "b")
     rows = _rows(clash)
 
@@ -213,8 +214,8 @@ def test_two_videos_names_both_files_including_the_product_that_is_not_held() ->
         (_CLASH, "nl", "clash-a.mpg, clash-b.mpg"),
         (_CLASH_ONLY, "nl", "solo-a.mpg, solo-b.mpg"),
     ]
-    assert "neither" in clash
-    assert "gate still admits" in clash
+    assert "**held**" in clash
+    assert "mark the other `skip`" in clash
 
 
 # --- 1c: the file side --------------------------------------------------------------------------
@@ -328,7 +329,7 @@ def _summary_row(md: str, finding: str) -> list[str]:
 def test_the_summary_counts_from_the_same_status_as_the_section() -> None:
     md = _render(VideoReport(_status()), mandatory_gaps={_NOTHING: []})
 
-    assert _summary_row(md, "**No confirmed video (E24)**")[2] == "3 GTINs (1 also E23)"
+    assert _summary_row(md, "**No confirmed video (E24)**")[2] == "4 GTINs (1 also E23)"
     unassigned = _summary_row(md, "Videos not yet mapped to a GTIN")
     assert unassigned[2] == "1"
     assert unassigned[4] == "Unknown — these name no product"
