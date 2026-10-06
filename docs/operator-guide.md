@@ -98,7 +98,7 @@ nothing is deleted, and the client's video sign-offs are not touched.
 
    The three sit side by side because none of them waits on another: bring whichever you have.
 
-<img src="images/data-choose.png" alt="Coverage figures — 13 in product list, 9 eligible, 9 selected, 4 not eligible, 2 missing videos — then step 4: the folded tables Not in the GS1 export and Not eligible, each with its count, a table of products missing a video, and the eligible products with tick boxes." width="900">
+<img src="images/data-choose.png" alt="Coverage figures — 13 in product list, 9 eligible, 9 selected, 4 not eligible, 2 missing videos — then step 4: the folded tables Not in the GS1 export, Not eligible and Missing video(s), each with its count, and the eligible products with tick boxes." width="900">
 
 **Coverage** counts your batch, in products, from left to right: how many are **in your product
 list**, how many of those are **eligible** (the export has them and nothing stops them being
@@ -121,9 +121,10 @@ live **without a video**. The figures change as you tick.
      only one where the choice is yours. Every row arrives ticked; the **Video** column repeats
      which languages a product goes live without a video in.
 
-   The first two start **folded** — press the title to open one; the count is in the title either
-   way. They have no tick boxes on purpose: nothing can publish those products, so there is nothing
-   to choose. They stay in your list either way.
+   The first three start **folded** — press the title to open one; the count is in the title either
+   way. None of them has tick boxes: nothing can publish the first two, so there is nothing to
+   choose, and the missing-video products are ticked in the eligible table below. Products that
+   are not eligible stay in your list either way.
 
    > ⚠️ **A tick means keep.** Untick a product to leave it out. If you used an earlier version of
    > this app, the button under the table said *Remove selected rows* and meant the opposite — it

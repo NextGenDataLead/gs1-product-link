@@ -144,7 +144,7 @@ on a product exactly when the plan would publish it; `tests/lib/test_eligibility
 both settings of `media.publish_without_video`.
 
 **Step 4 splits the list four ways, in reading order:** not in the GS1 export · not eligible (with a
-*Why* column) · missing video(s) · eligible. Only the last has tick boxes, and the first two start **folded** with their
+*Why* column) · missing video(s) · eligible. Only the last has tick boxes, and the first three start **folded** with their
 count in the title (operator feedback): they are reference, the eligible table is the work. A save keeps the ticked
 eligible rows **and every row that is not eligible**: nothing can run those, and keeping them is what
 lets the result sheet name them afterwards. Unticks live in a per-client `batch_grid.Ticks` for the

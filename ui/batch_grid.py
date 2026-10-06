@@ -230,6 +230,7 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
         "confirms a video, the next run adds it to the page.",
         [*columns, _wrapping(_VIDEO, "Waiting on")],
         bare,
+        collapsed=True,
     )
     grid = _scope_table(columns, eligible, untick=ticks.unticked)
     keys = {int(row[_ROW]) for row in eligible}
@@ -283,8 +284,8 @@ def _readonly(
     """A headed table with no choice in it. Absent when empty: an empty table is not a finding.
 
     ``collapsed`` folds it, with the count in the title so the fold still says how many: the
-    operator asked for the two tables of products a run cannot publish to start shut — they are
-    reference, and the eligible table is the work.
+    operator asked for all three read-only tables to start shut — they are reference, and the
+    eligible table (which repeats the missing videos in its Video column) is the work.
     """
     if not rows:
         return
