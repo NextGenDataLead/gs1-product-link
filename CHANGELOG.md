@@ -181,6 +181,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text true every time and needed once, never a warning or a count.
 
 ### Changed
+- **The Data screen's eligible table keeps its column headers in view while its rows scroll**
+  (operator feedback, 2026-10-07). A `sticky-head` class in `ui/theme.py`, opaque in both themes.
 - **The mapping is no longer edited in the shell.** *The mapping, file by file* — the row-by-row
   editor, its coverage figures and fuzzy hints — is removed from the Data screen; the operator
   edits `videos/mapping.yml` directly (the guide shows how). The sign-off sheet import stays and is

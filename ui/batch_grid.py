@@ -387,6 +387,7 @@ def _scope_table(
         pagination=0,
     ).classes("w-full mt-2")
     table.props(f'dense flat bordered virtual-scroll style="height: {_TABLE_HEIGHT}"')
+    table.classes("sticky-head")  # the column names stay visible while the rows scroll
 
     #: Column field -> the operator's filter for it. Read on every redraw; empty means "no filter".
     per_column: dict[str, Any] = {}

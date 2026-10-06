@@ -308,6 +308,12 @@ body { background: var(--paper) !important; color: var(--ink) !important;
 .gate-folded  { padding: 0; }
 .gate-folded .q-expansion-item__content { padding: 0 var(--space-4) var(--space-4); }
 
+/* A table whose column headers stay on screen while its rows scroll (operator feedback,
+   2026-10-07): the Data screen's eligible table scrolls inside a fixed height, and past the first
+   screenful nobody could tell which column was "Momenteel op Website". The header needs an opaque
+   background or the rows show through it; Quasar's own surface colour is what the table paints. */
+.sticky-head thead tr th { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+
 /* A fold whose arrow sits right after its title, not at the far edge of the row (operator
    feedback, 2026-10-06): on a wide screen the arrow was a page-width away from the words it opens,
    and read as belonging to nothing. The header row packs left; the title no longer stretches. */
