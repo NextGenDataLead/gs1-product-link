@@ -173,7 +173,7 @@ apart.
 **Importing the client's sheet.** You do not have to type barcodes in. When the client sends back
 the spreadsheet with the barcodes filled in, upload it in **step 3**.
 
-<img src="images/data-videos.png" alt="After a sign-off sheet was uploaded in step 3: under the three uploads, three boxes saying which column is the language, the filename and the barcode; six figures — 1 would be filled, 1 conflict, 0 two-video clashes, 1 rejected, 1 already set, 1 left blank; tables for each; and a Fill in button." width="760">
+<img src="images/data-videos.png" alt="After a sign-off sheet was uploaded in step 3: under the three uploads, three boxes saying which column is the language, the filename and the barcode; six figures — 1 would be filled, 1 conflict, 1 two-video clash, 1 rejected, 1 already set, 1 left blank — a table of the two-video clash already in the mapping, tables for each outcome, and a Fill in button." width="760">
 
 - It needs three columns: the language, the video filename, and the barcode. **You say which is
   which** — the tool reads the sheet's headings, fills the three boxes in with its best guess, and
@@ -187,10 +187,14 @@ the spreadsheet with the barcodes filled in, upload it in **step 3**.
 - **A row the client has already signed off is never overwritten.** If the sheet disagrees with a
   barcode already in the mapping, it is listed as a *conflict* and left exactly as it is. Settle
   those yourself, in the mapping file (below).
-- Rows it cannot use say why, and name the row number in the spreadsheet so you can point the
+- **Rejected** rows say why, and name the row number in the spreadsheet so you can point the
   client at it. The commonest one: a barcode that arrived as **8.7132E+12** because the column was
   formatted as a number. Ask for that column to be set to text and the file sent again — the digits
   are genuinely gone from the file, so there is nothing to recover at this end.
+- **The figures match the rest of the app.** *Two-video clashes* counts products, the ones
+  already in the mapping plus any this sheet would add — the same number as *Not eligible* and the
+  report — and lists the existing ones. *Left blank* says how many mapping rows still have no
+  barcode, the figure the preflight reports.
 - Dropped a GS1 export in this slot by mistake? It is refused, by name. Nothing is kept.
 
 **Changing the mapping yourself.** The app does not edit the mapping row by row. When something

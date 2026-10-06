@@ -404,9 +404,10 @@ def _signoff_lines(video: VideoReport) -> list[str]:
         "",
         f"Of its {len(plan.rows)} rows: **{n[FILL]}** would fill an empty slot, {n[UNCHANGED]} "
         f"already match, **{n[CONFLICT]}** disagree with what is signed off, **{n[AMBIGUOUS]}** "
-        f"would give one product two videos, **{len(rejected)}** cannot be applied, and "
-        f"{len(blank)} are still blank. Fills are applied with one button in the operator "
-        "shell, so they are a count here rather than a list.",
+        f"would give a product a new two-video clash (1b lists the "
+        f"{len(video.status.clashing)} already in the selection), **{len(rejected)}** are "
+        f"rejected, and {len(blank)} are still blank. Fills are applied with one button in the "
+        "operator shell, so they are a count here rather than a list.",
         "",
         "**Needs a person — never applied automatically:**",
         "",
@@ -415,7 +416,7 @@ def _signoff_lines(video: VideoReport) -> list[str]:
             [_row_cells(row) for row in needs_a_person],
         ),
         "",
-        "**Cannot be applied — for the client to correct in the sheet:**",
+        "**Rejected — for the client to correct in the sheet:**",
         "",
         *table(
             ["Row", "Language", "File", "Barcode as read", "Why"], [_row_cells(r) for r in rejected]

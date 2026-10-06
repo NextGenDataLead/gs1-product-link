@@ -217,7 +217,7 @@ def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what 
                 applied()
                 redraw()  # the plan now describes the file after the fills: nothing left to apply
 
-            _plan_view(replan(), session, done, replan)
+            _plan_view(replan(), session, done, replan, cfg.wordpress.languages)
 
     for select in chosen.values():
         select.on_value_change(redraw)
@@ -251,7 +251,7 @@ _PLAN_SECTIONS: Final = (
     ),
     (
         video_signoff.AMBIGUOUS,
-        "Two videos for one product ({n}) — nothing here will be applied",
+        "Two-video clashes from this sheet ({n}) — nothing here will be applied",
         "The sheet gives these barcodes a second video in the same language. A product can carry "
         "only one video per language: applying both would attach neither, and the page would "
         "publish without a video. Keep one and mark the other `skip` in the mapping file "
@@ -259,7 +259,7 @@ _PLAN_SECTIONS: Final = (
     ),
     (
         video_signoff.REJECTED,
-        "Could not be used ({n})",
+        "Rejected ({n})",
         "Each of these says what is wrong with it. A barcode problem is fixed in the sheet and the "
         "file uploaded again; an unknown filename usually means the mapping has no row for that "
         "video yet — add a row for it to the mapping file (videos/mapping.yml).",
@@ -272,6 +272,7 @@ def _plan_view(
     session: MappingSession,
     applied: Callable[[], None],
     replan: Callable[[], video_signoff.SignoffPlan],
+    languages: list[str],
 ) -> None:
     """What the sheet would do, then the button that does it.
 
@@ -279,15 +280,51 @@ def _plan_view(
     conflict is work a person has to settle, a rejection is a defect in the sheet, and a blank is a
     row the client has not reached yet. Added together, the only number anybody could act on would
     be the one that disappeared.
-    """
-    with ui.row().classes("gap-12 items-end mb-4"):
-        theme.figure(str(len(decided.of(video_signoff.FILL))), "row(s) would be filled")
-        theme.figure(str(len(decided.of(video_signoff.CONFLICT))), "conflict(s)")
-        theme.figure(str(len(decided.of(video_signoff.AMBIGUOUS))), "two-video clash(es)")
-        theme.figure(str(len(decided.of(video_signoff.REJECTED))), "rejected")
-        theme.figure(str(len(decided.of(video_signoff.UNCHANGED))), "already set")
-        theme.figure(str(len(decided.of(video_signoff.BLANK))), "left blank")
 
+    **Every figure that is also counted elsewhere carries the elsewhere number.** Two-video clashes
+    are counted in products, the mapping's and this sheet's together — the figure report §1b and
+    step 4's *Not eligible* show — and *left blank* says how it relates to the doctor's "rows with
+    no GTIN yet". A 0 here beside a 2 there read as a contradiction, because it was a different
+    count under the same name (operator feedback, 2026-10-07).
+    """
+    try:
+        context = video_signoff.mapping_context(decided, load_video_map(session.path), languages)
+    except VideoMapError as exc:
+        theme.band(str(exc), "danger")
+        return
+    rejected = len(decided.of(video_signoff.REJECTED))
+    blank = len(decided.of(video_signoff.BLANK))
+    with theme.figures():
+        theme.figure(
+            str(len(decided.of(video_signoff.FILL))),
+            "would be filled",
+            "empty rows this sheet fills",
+        )
+        theme.figure(
+            str(len(decided.of(video_signoff.CONFLICT))),
+            "conflict(s)",
+            "never applied — see below",
+        )
+        theme.figure(
+            str(context.clashing_products),
+            "two-video clash(es)",
+            f"products · {len(context.existing_products)} in the mapping · "
+            f"{len(context.new_clashes)} new from this sheet",
+        )
+        theme.figure(str(rejected), "rejected", "see Rejected below")
+        theme.figure(
+            str(len(decided.of(video_signoff.UNCHANGED))),
+            "already set",
+            "sheet agrees with mapping",
+        )
+        theme.figure(
+            str(blank),
+            "left blank",
+            f"no barcode · {context.unset} mapping row(s) have none",
+        )
+
+    if context.clashes:
+        _clash_table(context.clashes)
     for outcome, title, note in _PLAN_SECTIONS:
         rows = decided.of(outcome)
         if rows:
@@ -341,6 +378,28 @@ def _plan_view(
         )
 
     theme.action(f"Fill in the {len(fills)} row(s) from this sheet", apply)
+
+
+def _clash_table(clashes: tuple[video_signoff.Clash, ...]) -> None:
+    """The mapping's own two-video clashes — the products report §1b and *Not eligible* list."""
+    products = len({clash.gtin for clash in clashes})
+    theme.subhead(f"Two-video clashes already in the mapping ({products})")
+    ui.label(
+        "These products have two videos confirmed for one language, so neither is attached and the "
+        "product is held — the same ones report §1b and Not eligible in step 4 list. This sheet "
+        "does not change them: keep one file and mark the other `skip` in videos/mapping.yml."
+    ).classes("note")
+    columns = [
+        {"name": "gtin", "label": "GTIN", "field": "gtin", "align": "left"},
+        {"name": "language", "label": "Lang", "field": "language", "align": "left"},
+        {"name": "files", "label": "Files", "field": "files", "align": "left"},
+    ]
+    data = [
+        {"key": n, "gtin": c.gtin, "language": c.language, "files": ", ".join(c.files)}
+        for n, c in enumerate(clashes)
+    ]
+    table = ui.table(columns=columns, rows=data, row_key="key", pagination=0)
+    table.classes("w-full mt-2 mb-6").props("dense flat bordered")
 
 
 def _plan_table(title: str, note: str, rows: tuple[video_signoff.SignoffRow, ...]) -> None:
