@@ -29,7 +29,7 @@ from lib.config import (
 )
 from lib.errors import VideoMapError
 from lib.gdsn import GdsnSource
-from lib.holds import confirmed_video_gtins, held_units
+from lib.holds import held_units, video_gate_for
 from lib.records import LocalisedText, ProductRecord, SkipReason
 
 GTIN_A = "08713195007359"
@@ -92,12 +92,12 @@ def _video_map(tmp_path: Path, confirmed: dict[str, list[str]]) -> MediaConfig:
     return MediaConfig(video_map_path=str(path), restrict_to_mapped_gtins=True)
 
 
-# --- confirmed_video_gtins ----------------------------------------------------
+# --- video_gate_for ----------------------------------------------------------
 
 
 def test_no_media_config_disables_the_video_hold_rather_than_holding_everything() -> None:
-    """``None``, not an empty set — the difference between "unrestricted" and "nothing passes"."""
-    assert confirmed_video_gtins(_config()) is None
+    """``None``, not a closed gate — the difference between "unrestricted" and "nothing passes"."""
+    assert video_gate_for(_config()) is None
 
 
 def test_a_media_block_that_does_not_restrict_disables_the_video_hold(tmp_path: Path) -> None:
@@ -105,14 +105,46 @@ def test_a_media_block_that_does_not_restrict_disables_the_video_hold(tmp_path: 
         update={"restrict_to_mapped_gtins": False}
     )
 
-    assert confirmed_video_gtins(_config(media=media)) is None
+    gate = video_gate_for(_config(media=media))
+
+    assert gate is not None, "unenforced, it still answers which file a page gets"
+    assert not gate.enforced
+    assert gate.admits(GTIN_B), "holds nothing"
+    assert held_units(_config(media=media), []) == {}
+
+
+def test_an_unreadable_map_on_an_unrestricted_client_is_no_gate_not_an_error(
+    tmp_path: Path,
+) -> None:
+    """It decides nothing about what may publish, so it must not start failing runs."""
+    broken = tmp_path / "broken.yml"
+    broken.write_text("nl:\n\t- stray tab\n", encoding="utf-8")
+    media = MediaConfig(video_map_path=str(broken), restrict_to_mapped_gtins=False)
+
+    assert video_gate_for(_config(media=media)) is None
 
 
 def test_a_video_is_needed_in_every_language(tmp_path: Path) -> None:
     """ "Fully mapped" means every configured language, which is what holds the nl-only GTINs."""
     media = _video_map(tmp_path, {"nl": [GTIN_A, GTIN_B], "fr": [GTIN_A]})
 
-    assert confirmed_video_gtins(_config(media=media)) == frozenset({GTIN_A})
+    gate = video_gate_for(_config(media=media))
+
+    assert gate is not None
+    assert gate.confirmed == frozenset({GTIN_A})
+    assert gate.admits(GTIN_A)
+    assert not gate.admits(GTIN_B)
+
+
+def test_publish_without_video_admits_the_nl_only_gtin(tmp_path: Path) -> None:
+    media = _video_map(tmp_path, {"nl": [GTIN_A, GTIN_B], "fr": [GTIN_A]}).model_copy(
+        update={"publish_without_video": True}
+    )
+
+    gate = video_gate_for(_config(media=media))
+
+    assert gate is not None
+    assert gate.admits(GTIN_B)
 
 
 # --- E24: no confirmed video --------------------------------------------------

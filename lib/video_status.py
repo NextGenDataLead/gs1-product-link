@@ -89,17 +89,38 @@ class VideoStatus:
         unassigned: Rows in the mapping with no barcode filled in yet.
         not_in_map: Files in a video folder that have no row in the mapping.
         files_missing: Rows naming a file that is not in the folder.
+        publish_without_video: ``media.publish_without_video`` — whether a missing video holds a
+            product or only marks it. Carried here so :attr:`held` stays the gate's word: the same
+            mapping holds 48 products under one setting and 2 under the other.
     """
 
     products: tuple[ProductVideo, ...]
     unassigned: tuple[UnassignedVideo, ...]
     not_in_map: tuple[UnassignedVideo, ...]
     files_missing: tuple[UnassignedVideo, ...]
+    publish_without_video: bool = False
 
     @property
     def held(self) -> tuple[ProductVideo, ...]:
-        """The products a run holds (E24): some language has no video, or two competing for it."""
+        """The products a run holds (E24): two videos competing for a language, always; and no
+        video in some language, unless the client publishes without one."""
+        if self.publish_without_video:
+            return self.clashing
         return tuple(product for product in self.products if not product.attaches_a_video)
+
+    @property
+    def without_video(self) -> tuple[ProductVideo, ...]:
+        """The products a run publishes with no video in at least one language.
+
+        Empty unless :attr:`publish_without_video`: otherwise every such product is held instead.
+        """
+        if not self.publish_without_video:
+            return ()
+        return tuple(
+            product
+            for product in self.products
+            if not product.attaches_a_video and not product.languages_in(CLASHING)
+        )
 
     @property
     def clashing(self) -> tuple[ProductVideo, ...]:
@@ -113,6 +134,7 @@ def video_status(
     *,
     languages: Sequence[str],
     files_by_language: Mapping[str, list[str]],
+    publish_without_video: bool = False,
 ) -> VideoStatus:
     """Join the in-scope products to the mapping, and list what the mapping cannot join.
 
@@ -121,6 +143,7 @@ def video_status(
         scoped: The products in scope — the selection list's, not the catalogue's.
         languages: The site's languages; a product needs a video in each.
         files_by_language: The filenames found in each language's video folder.
+        publish_without_video: See :attr:`VideoStatus.publish_without_video`.
     """
     products = sorted(
         (_product(vmap, product, languages) for product in scoped),
@@ -135,6 +158,7 @@ def video_status(
         unassigned=tuple(sorted(gaps.get("video_unconfirmed", []))),
         not_in_map=tuple(sorted(gaps.get("video_missing_from_map", []))),
         files_missing=tuple(sorted(gaps.get("video_file_missing", []))),
+        publish_without_video=publish_without_video,
     )
 
 

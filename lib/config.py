@@ -344,6 +344,12 @@ class MediaConfig(BaseModel):
     # When true, run_plan and run_execute restrict to GTINs with a client-confirmed video in every
     # language (see lib.media_video.fully_mapped_gtins) — every other GTIN is blocked from runs.
     restrict_to_mapped_gtins: bool = False
+    # Only meaningful with restrict_to_mapped_gtins. When true, a GTIN with no confirmed video in
+    # some language is NOT held: it publishes with no video there, and every surface lists it as
+    # missing one. A GTIN confirmed to two files in one language is still held — the page could not
+    # tell which to show — and the "already published" drop restrict_to_mapped_gtins also drives is
+    # unchanged. See lib.media_video.VideoGate.
+    publish_without_video: bool = False
     # When true, a GTIN whose SOURCE image_url is blank is held out of the plan (E22) — a hero
     # image is treated as required, not optional. Off by default so text-only/imageless clients
     # are unaffected. This is a plan-time source-completeness gate; a runtime image fetch failure

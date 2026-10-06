@@ -22,6 +22,7 @@ import pytest
 from lib.config import WordPressConfig
 from lib.errors import ConfigError, StateError
 from lib.gdsn import GdsnSource
+from lib.media_video import VideoGate, VideoMap, VideoMapEntry
 from lib.records import (
     LocalisedText,
     PlanClassification,
@@ -41,6 +42,7 @@ from lib.state import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+_GTIN = "08713195007359"
 _HASH_LEN = 64
 
 
@@ -343,6 +345,21 @@ def test_content_hash_sensitive_to_each_input(
 
 
 # --- diff_against_state (§4.8, §8.2, Phase 7) --------------------------------
+
+
+def _gate(
+    confirmed: frozenset[str] = frozenset(),
+    *,
+    clashing: frozenset[str] = frozenset(),
+    publish_without_video: bool = False,
+    files: dict[str, list[tuple[str, str]]] | None = None,
+) -> VideoGate:
+    """A gate built by hand, so each test names the one property it is about."""
+    by_language = {
+        language: [VideoMapEntry(file=file, gtin=gtin) for file, gtin in rows]
+        for language, rows in (files or {}).items()
+    }
+    return VideoGate(confirmed, clashing, publish_without_video, VideoMap(by_language=by_language))
 
 
 def _wp(**overrides: object) -> WordPressConfig:
@@ -1104,7 +1121,7 @@ def test_diff_holds_the_whole_sku_without_a_confirmed_video() -> None:
         State(client_id="noviplast", entries={}),
         ["nl", "fr"],
         _wp(),
-        video_gtins=frozenset({"08713195000000"}),  # some other GTIN
+        video_gate=_gate(frozenset({"08713195000000"})),  # some other GTIN
     )
 
     assert rows == []
@@ -1118,17 +1135,17 @@ def test_diff_publishes_when_the_video_is_confirmed() -> None:
         State(client_id="noviplast", entries={}),
         ["nl"],
         _wp(),
-        video_gtins=frozenset({"08713195007359"}),
+        video_gate=_gate(frozenset({"08713195007359"})),
     )
 
     assert [r.language for r in rows] == ["nl"]
     assert skipped == []
 
 
-def test_no_video_set_means_no_video_hold() -> None:
-    """``None`` disables E24; an empty set would hold every product, which is a different thing."""
+def test_no_video_gate_means_no_video_hold() -> None:
+    """``None`` disables E24; a closed gate would hold every product, which is a different thing."""
     rows, _ = diff_against_state(
-        [_product()], State(client_id="noviplast", entries={}), ["nl"], _wp(), video_gtins=None
+        [_product()], State(client_id="noviplast", entries={}), ["nl"], _wp(), video_gate=None
     )
 
     assert [r.language for r in rows] == ["nl"]
@@ -1147,10 +1164,140 @@ def test_missing_data_is_reported_ahead_of_a_missing_video() -> None:
         ["nl", "fr"],
         _wp(),
         mandatory_sources=gdsn_map,
-        video_gtins=frozenset(),  # also has no video
+        video_gate=_gate(),  # also has no video
     )
 
     assert {s.reason for s in skipped} == {SkipReason.MISSING_MANDATORY_FIELD}
+
+
+def test_publish_without_video_admits_a_product_with_no_confirmed_video() -> None:
+    rows, skipped = diff_against_state(
+        [_product()],
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        video_gate=_gate(publish_without_video=True),
+    )
+
+    assert [r.language for r in rows] == ["nl", "fr"]
+    assert skipped == []
+
+
+def test_two_confirmed_videos_in_one_language_hold_even_when_publishing_without_video() -> None:
+    """The client must pick one: the tool will not, and a page cannot show both."""
+    rows, skipped = diff_against_state(
+        [_product()],
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        video_gate=_gate(clashing=frozenset({_GTIN}), publish_without_video=True),
+    )
+
+    assert rows == []
+    assert {s.reason for s in skipped} == {SkipReason.NO_CONFIRMED_VIDEO}
+    assert all("two confirmed videos" in s.detail for s in skipped)
+
+
+def _live_with_video(video_file: str | None) -> State:
+    """``_GTIN``'s nl page as published from the current product, recording ``video_file``."""
+    (row,), _ = diff_against_state(
+        [_product()], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    )
+    entry = _entry().model_copy(
+        update={
+            "content_hash": row.content_hash,
+            "wp_url": row.target_url,
+            "video_file": video_file,
+        }
+    )
+    return State(client_id="noviplast", entries={_GTIN: {"nl": entry}})
+
+
+_ARRIVED = {"nl": [("Rugsteun.mp4", _GTIN)]}
+
+
+def test_a_video_confirmed_after_a_page_went_live_without_one_reclassifies_it_changed() -> None:
+    """The content hash does not cover the video, so without this the page never gets it."""
+    gate = _gate(publish_without_video=True, files=_ARRIVED)
+
+    (row,), _ = diff_against_state(
+        [_product()], _live_with_video(""), ["nl"], _wp(), video_gate=gate
+    )
+
+    assert row.classification is PlanClassification.CHANGED
+    assert row.diff == {"video": ("none", "Rugsteun.mp4")}
+
+
+def test_the_same_video_as_recorded_leaves_the_page_unchanged() -> None:
+    gate = _gate(publish_without_video=True, files=_ARRIVED)
+
+    (row,), _ = diff_against_state(
+        [_product()], _live_with_video("Rugsteun.mp4"), ["nl"], _wp(), video_gate=gate
+    )
+
+    assert row.classification is PlanClassification.UNCHANGED
+
+
+def test_an_entry_that_never_recorded_its_video_is_not_reclassified() -> None:
+    """Every page published before the field existed was published under the rule needing one."""
+    gate = _gate(publish_without_video=True, files=_ARRIVED)
+
+    (row,), _ = diff_against_state(
+        [_product()], _live_with_video(None), ["nl"], _wp(), video_gate=gate
+    )
+
+    assert row.classification is PlanClassification.UNCHANGED
+
+
+def test_a_video_leaving_the_mapping_does_not_reclassify_the_page() -> None:
+    """The write path cannot take a video off a page, so re-running it would record a lie."""
+    gate = _gate(publish_without_video=True)
+
+    (row,), _ = diff_against_state(
+        [_product()], _live_with_video("Rugsteun.mp4"), ["nl"], _wp(), video_gate=gate
+    )
+
+    assert row.classification is PlanClassification.UNCHANGED
+
+
+def test_a_file_that_failed_to_prepare_is_not_retried_every_run() -> None:
+    """Otherwise each run rewrites the live page and its GS1 record and fails the same way."""
+    gate = _gate(publish_without_video=True, files=_ARRIVED)
+    state = _live_with_video("")
+    entry = state.entries[_GTIN]["nl"].model_copy(update={"video_failed": "Rugsteun.mp4"})
+    state = State(client_id="noviplast", entries={_GTIN: {"nl": entry}})
+
+    (row,), _ = diff_against_state([_product()], state, ["nl"], _wp(), video_gate=gate)
+
+    assert row.classification is PlanClassification.UNCHANGED
+
+
+def test_an_unenforced_gate_holds_nothing_but_still_sees_an_arrival() -> None:
+    """A client without restrict_to_mapped_gtins still gets a later video onto the page."""
+    gate = VideoGate(
+        frozenset(),
+        frozenset(),
+        False,
+        VideoMap(by_language={"nl": [VideoMapEntry(file="Rugsteun.mp4", gtin=_GTIN)]}),
+        enforced=False,
+    )
+
+    (row,), skipped = diff_against_state(
+        [_product()], _live_with_video(""), ["nl"], _wp(), video_gate=gate
+    )
+
+    assert skipped == []
+    assert row.classification is PlanClassification.CHANGED
+
+
+def test_classify_units_sees_an_arriving_video_too() -> None:
+    """``run_generate`` asks this to decide which units need copy; a CHANGED row without copy
+    would be dropped by E21 and the video would never land."""
+    gate = _gate(publish_without_video=True, files=_ARRIVED)
+
+    classified = classify_units([_product()], _live_with_video(""), ["nl"], _wp(), video_gate=gate)
+
+    assert classified[(_GTIN, "nl")] is PlanClassification.CHANGED
 
 
 def test_diff_empty_products_yields_no_rows() -> None:

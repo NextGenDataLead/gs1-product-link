@@ -57,16 +57,16 @@ from lib.errors import (
 )
 from lib.generator import generation_context, load_results, missing_copy
 from lib.gs1_dl_client import GS1DigitalLinkClient
-from lib.holds import held_units
+from lib.holds import held_units, video_gate_for
 from lib.input_layout import archive_path
 from lib.media_video import (
     VideoMapSummary,
     canon_gtin,
     check_video_map,
     files_by_language,
-    fully_mapped_gtins,
     load_video_map,
     summarize_video_map,
+    video_gate,
 )
 from lib.process_list import load_process_list
 from lib.provenance import history_path, read
@@ -279,10 +279,11 @@ def in_scope(cfg: ClientConfig, products: list[ProductRecord]) -> list[ProductRe
 
 
 def held_for_video(cfg: ClientConfig, scoped: list[ProductRecord]) -> list[ProductRecord]:
-    """Which of ``scoped`` E24 will hold: no client-confirmed video in every language.
+    """Which of ``scoped`` E24 will hold — what :class:`lib.media_video.VideoGate` does not admit.
 
-    Composed from :func:`lib.media_video.fully_mapped_gtins` — the same primitive ``run_plan``
-    holds on — rather than re-deciding what "confirmed" means. A second opinion about that is the
+    No confirmed video in every language, unless ``media.publish_without_video``; two confirmed
+    files in one language, always. Composed from the same gate ``run_plan`` holds on rather than
+    re-deciding what "confirmed" means. A second opinion about that is the
     mistake :func:`in_scope` exists to prevent.
 
     Empty when the rule is off, when there is no mapping, or when the mapping will not load. The
@@ -297,8 +298,41 @@ def held_for_video(cfg: ClientConfig, scoped: list[ProductRecord]) -> list[Produ
         vmap = load_video_map(Path(media.video_map_path))
     except VideoMapError:
         return []
-    allowed = fully_mapped_gtins(vmap, list(cfg.wordpress.languages))
-    return [product for product in scoped if canon_gtin(product.gtin) not in allowed]
+    gate = video_gate(
+        vmap, list(cfg.wordpress.languages), publish_without_video=media.publish_without_video
+    )
+    return [product for product in scoped if not gate.admits(product.gtin)]
+
+
+def without_video(cfg: ClientConfig, scoped: list[ProductRecord]) -> list[ProductRecord]:
+    """Which of ``scoped`` will publish with no video in at least one language.
+
+    Non-empty only under ``media.publish_without_video``: these are the products the gate admits
+    although they are not confirmed in every language. Every surface that says what a run
+    publishes says this beside it, because a page without its video looks finished — and the
+    count of pages, which is what every other figure is, cannot tell the two apart.
+
+    Empty when the rule is off, when there is no mapping, or when it will not load — the same
+    three cases, for the same reasons, as :func:`held_for_video`.
+    """
+    media = cfg.media
+    if (
+        media is None
+        or not media.restrict_to_mapped_gtins
+        or not media.publish_without_video
+        or not media.video_map_path
+    ):
+        return []
+    try:
+        vmap = load_video_map(Path(media.video_map_path))
+    except VideoMapError:
+        return []
+    gate = video_gate(vmap, list(cfg.wordpress.languages), publish_without_video=True)
+    return [
+        product
+        for product in scoped
+        if gate.admits(product.gtin) and canon_gtin(product.gtin) not in gate.confirmed
+    ]
 
 
 def load_video_status(cfg: ClientConfig, scoped: list[ProductRecord]) -> VideoStatus | None:
@@ -325,6 +359,7 @@ def load_video_status(cfg: ClientConfig, scoped: list[ProductRecord]) -> VideoSt
         scoped,
         languages=cfg.wordpress.languages,
         files_by_language=files_by_language(media.video_folders),
+        publish_without_video=media.restrict_to_mapped_gtins and media.publish_without_video,
     )
 
 
@@ -359,10 +394,26 @@ def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult
     # The video rule is reported as what it is — a hold on products that are in scope — rather
     # than as a narrowing that already happened.
     held = held_for_video(cfg, scoped)
+    bare = without_video(cfg, scoped)
+    publishes_bare = (
+        cfg.media is not None
+        and cfg.media.restrict_to_mapped_gtins
+        and cfg.media.publish_without_video
+    )
     if held:
+        why = (
+            "two confirmed videos in one language"
+            if publishes_bare
+            else "want of a confirmed video in every language"
+        )
         detail += (
-            f". {len(held)} of those are held for want of a confirmed video in every language "
-            f"(media.restrict_to_mapped_gtins), so a run would publish {len(scoped) - len(held)}"
+            f". {len(held)} of those are held for {why} (media.restrict_to_mapped_gtins), so a "
+            f"run would publish {len(scoped) - len(held)}"
+        )
+    if bare:
+        detail += (
+            f". {len(bare)} would publish with no video in at least one language "
+            "(media.publish_without_video)"
         )
     data: dict[str, object] = {
         "in_scope": len(scoped),
@@ -447,13 +498,16 @@ def units_needing_copy(
         return None  # check_state_file is where a broken state file is reported
     try:
         held = held_units(cfg, scoped_products)
+        gate = video_gate_for(cfg)
     except VideoMapError:
         return None  # check_video_map reports this; do not fail twice over it
     # Categories are inside the content hash, so they must be assigned exactly as ``run_plan``
     # assigns them or every live unit classifies CHANGED and the narrowing silently does nothing.
     categorised, _ = assign_categories(cfg.categories, scoped_products)
     try:
-        classified = classify_units(categorised, state, cfg.wordpress.languages, cfg.wordpress)
+        classified = classify_units(
+            categorised, state, cfg.wordpress.languages, cfg.wordpress, video_gate=gate
+        )
     except ConfigError:
         return None  # check_config reports the missing patterns
     return {
@@ -812,7 +866,11 @@ def check_video_coverage(cfg: ClientConfig) -> CheckResult:
         "video_map",
         "Video mapping",
         Status.WARN,
-        _video_gap_detail(summary, restricted=media.restrict_to_mapped_gtins),
+        _video_gap_detail(
+            summary,
+            restricted=media.restrict_to_mapped_gtins,
+            publishes_bare=media.publish_without_video,
+        ),
         remedy=_VIDEO_FILES_REMEDY if summary.no_files_found else _VIDEO_GAP_REMEDY,
         data=data,
     )
@@ -832,7 +890,9 @@ _VIDEO_GAP_REMEDY = (
 )
 
 
-def _video_gap_detail(summary: VideoMapSummary, *, restricted: bool) -> str:
+def _video_gap_detail(
+    summary: VideoMapSummary, *, restricted: bool, publishes_bare: bool = False
+) -> str:
     """Say what is actually missing, counting each kind against its own denominator.
 
     This line used to read ``284 of 0 video file(s) are not yet confirmed``: every gap of every
@@ -860,7 +920,12 @@ def _video_gap_detail(summary: VideoMapSummary, *, restricted: bool) -> str:
     parts.append(f"{summary.confirmed_gtins} GTIN(s) confirmed in every language")
 
     detail = "; ".join(parts)
-    if restricted:
+    if restricted and publishes_bare:
+        detail += (
+            " — the rest publish with no video where one is missing "
+            "(media.publish_without_video), except a GTIN mapped to two files, which is held"
+        )
+    elif restricted:
         detail += " — and only those can be published, because media.restrict_to_mapped_gtins is on"
     return detail
 

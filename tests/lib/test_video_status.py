@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import itertools
 
-from lib.media_video import VideoMap, VideoMapEntry, fully_mapped_gtins
+from lib.media_video import VideoMap, VideoMapEntry, fully_mapped_gtins, video_gate
 from lib.records import LocalisedText, ProductRecord
 from lib.video_status import (
     CLASHING,
@@ -38,7 +38,12 @@ def _map(**rows: list[tuple[str, str]]) -> VideoMap:
     )
 
 
-def _status(vmap: VideoMap, *gtins: str, files: dict[str, list[str]] | None = None) -> VideoStatus:
+def _status(
+    vmap: VideoMap,
+    *gtins: str,
+    files: dict[str, list[str]] | None = None,
+    publish_without_video: bool = False,
+) -> VideoStatus:
     on_disk = files
     if on_disk is None:  # every mapped file is on disk unless the test says otherwise
         on_disk = {lang: [e.file for e in entries] for lang, entries in vmap.by_language.items()}
@@ -47,6 +52,7 @@ def _status(vmap: VideoMap, *gtins: str, files: dict[str, list[str]] | None = No
         [_product(g) for g in gtins],
         languages=_LANGUAGES,
         files_by_language=on_disk,
+        publish_without_video=publish_without_video,
     )
 
 
@@ -86,6 +92,28 @@ def test_held_is_exactly_what_the_gate_holds() -> None:
         )
         held = {p.gtin for p in _status(vmap, _A).held}
         assert held == ({_A} - fully_mapped_gtins(vmap, _LANGUAGES)), (nl, fr)
+
+
+def test_held_and_without_video_are_exactly_what_the_gate_decides_under_either_setting() -> None:
+    """Held is what the gate does not admit; without-video is what it admits incompletely.
+
+    The same combinations as above, under both settings. The Data screen, the report and the run
+    all read one of the two, so they must partition the products exactly as ``run_execute`` will.
+    """
+    spellings = ["8713195000001", _A, "skip", "", "   "]
+    for setting, (nl, fr) in itertools.product(
+        [False, True], itertools.product(spellings, repeat=2)
+    ):
+        vmap = _map(
+            nl=[("a.mpg", nl), ("b.mpg", nl)] if nl == _A else [("a.mpg", nl)],
+            fr=[("c.mpg", fr)],
+        )
+        gate = video_gate(vmap, _LANGUAGES, publish_without_video=setting)
+        status = _status(vmap, _A, publish_without_video=setting)
+        held = {p.gtin for p in status.held}
+        bare = {p.gtin for p in status.without_video}
+        assert held == ({_A} - {g for g in [_A] if gate.admits(g)}), (setting, nl, fr)
+        assert bare == ({_A} - held - gate.confirmed), (setting, nl, fr)
 
 
 def test_two_files_for_one_product_in_one_language_hold_it() -> None:

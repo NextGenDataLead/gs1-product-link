@@ -135,7 +135,9 @@ def video_lines(
         *_clash_lines(status),
         "### 1c. Videos still waiting for a barcode",
         "",
-        *_backlog_lines(status.unassigned, client_id),
+        *_backlog_lines(
+            status.unassigned, client_id, publish_without_video=status.publish_without_video
+        ),
         *_folder_lines(status),
         *_signoff_lines(video),
     ]
@@ -215,6 +217,8 @@ def _headline(status: VideoStatus, also_held: frozenset[str]) -> list[str]:
     attached = sum(product.attaches_a_video for product in status.products)
     held = status.held
     both = sum(product.gtin in also_held for product in held)
+    if status.publish_without_video:
+        return [_headline_publishing_bare(status, attached, total, also_held), ""]
     sentence = (
         f"**{attached} of {total}** in-scope products have a confirmed video in every language. "
         f"**{len(held)}** are held and will not be published at all — in any language, by a run "
@@ -227,10 +231,34 @@ def _headline(status: VideoStatus, also_held: frozenset[str]) -> list[str]:
     return [sentence, ""]
 
 
+def _headline_publishing_bare(
+    status: VideoStatus, attached: int, total: int, also_held: frozenset[str]
+) -> str:
+    """The headline when a missing video marks a product rather than holding it."""
+    bare = status.without_video
+    sentence = (
+        f"**{attached} of {total}** in-scope products have a confirmed video in every language. "
+        f"**{len(bare)}** publish with no video in at least one language "
+        "(media.publish_without_video) — the page goes live and looks finished, so each is a job "
+        "for the client."
+    )
+    if status.held:
+        sentence += (
+            f" **{len(status.held)}** are held because two videos are confirmed for one language "
+            "(1b)."
+        )
+    both = sum(product.gtin in also_held for product in bare)
+    if both:
+        sentence += f" {both} of those {len(bare)} are held anyway for missing source data (E23)."
+    return sentence
+
+
 def _held_lines(
     status: VideoStatus, languages: Sequence[str], also_held: frozenset[str]
 ) -> list[str]:
     header = ["GTIN", "Product", *languages, "Waiting on"]
+    if status.publish_without_video:
+        return _bare_lines(status, languages, also_held, header)
     rows = [
         [
             f"`{product.gtin}`" + (" ¹" if product.gtin in also_held else ""),
@@ -256,6 +284,34 @@ def _held_lines(
     ]
 
 
+def _bare_lines(
+    status: VideoStatus,
+    languages: Sequence[str],
+    also_held: frozenset[str],
+    header: list[str],
+) -> list[str]:
+    """1a when a missing video marks a product: the ones a run publishes without one."""
+    rows = [
+        [
+            f"`{product.gtin}`" + (" ¹" if product.gtin in also_held else ""),
+            cell(product.name),
+            *(_MARK.get(product.by_language.get(lang, ""), _NONE) for lang in languages),
+            waiting_on(product),
+        ]
+        for product in status.without_video
+    ]
+    return [
+        "### 1a. Published without a video in some language",
+        "",
+        "One row per product a run publishes with a language missing its video. ● one confirmed "
+        "video · ○ none. ¹ held anyway for missing source data (E23). When the client confirms a "
+        "video, the next run adds it to the page that is already live.",
+        "",
+        *table(header, rows),
+        "",
+    ]
+
+
 def _clash_lines(status: VideoStatus) -> list[str]:
     rows = [
         [
@@ -271,16 +327,19 @@ def _clash_lines(status: VideoStatus) -> list[str]:
         "### 1b. Mapped to two videos",
         "",
         "Each of these has two videos confirmed for one language. The tool cannot choose between "
-        "them, so the product is **held** — it is in 1a too — and §0 shows that language as "
-        "missing. Keep one in `mapping.yml` and mark the other `skip`; the product publishes on "
-        "the next run.",
+        "them, so the product is **held**"
+        + ("" if status.publish_without_video else " — it is in 1a too —")
+        + " and §0 shows that language as missing. Keep one in `mapping.yml` and mark the "
+        "other `skip`; the product publishes on the next run.",
         "",
         *table(["GTIN", "Product", "Language", "Files"], rows),
         "",
     ]
 
 
-def _backlog_lines(entries: tuple[UnassignedVideo, ...], client_id: str) -> list[str]:
+def _backlog_lines(
+    entries: tuple[UnassignedVideo, ...], client_id: str, *, publish_without_video: bool = False
+) -> list[str]:
     """The unassigned files — a count, a sample, and how many more. No HTML: the report is read raw.
 
     It used to wrap every filename in ``<details><summary>``, which folds on a rendering surface
@@ -291,8 +350,13 @@ def _backlog_lines(entries: tuple[UnassignedVideo, ...], client_id: str) -> list
         f"**{len(entries)}** video files have no GTIN assigned yet. This is the one list in the "
         "report not narrowed to the selection: a file nobody has assigned names no product, so "
         f"there is nothing to narrow it by. Client to map each filename → GTIN in {mapping} (or "
-        "mark `skip`). A product only becomes publishable once it has a confirmed video in "
-        "**every** language.",
+        "mark `skip`). "
+        + (
+            "A product publishes without one meanwhile, and gets it on the next run once mapped."
+            if publish_without_video
+            else "A product only becomes publishable once it has a confirmed video in "
+            "**every** language."
+        ),
         "",
     ]
     if entries:

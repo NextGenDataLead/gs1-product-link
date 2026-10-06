@@ -84,6 +84,7 @@ from typing import Final, NamedTuple
 
 from pydantic import ValidationError
 
+from lib import run_quality
 from lib.acf import build_acf_payload
 from lib.config import ClientConfig, GS1LinkConfig, MediaConfig, get_client
 from lib.env import load_env
@@ -101,7 +102,13 @@ from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import GS1DigitalLinkClient, LinkInput
 from lib.input_layout import archive_path
 from lib.media import convert_image_for_web
-from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map, prepare_video
+from lib.media_video import (
+    CLOSED_GATE,
+    VideoGate,
+    load_video_map,
+    prepare_video,
+    video_gate,
+)
 from lib.provenance import history_path, record_run
 from lib.qr import render_qr
 from lib.records import (
@@ -116,11 +123,13 @@ from lib.records import (
 )
 from lib.result_sheet import build as build_result_sheet
 from lib.run_files import (
+    QUALITY_NAME,
     SELECTION_NAME,
     SOURCES_NAME,
     UPLOAD_NAME,
     log_path,
     sibling,
+    stamp_of,
 )
 from lib.state import load_state, save_state
 from lib.templates import TemplateEngine
@@ -204,6 +213,8 @@ class _Page(NamedTuple):
     url: str
     title: str
     featured_media_id: int | None = None
+    video_file: str | None = None
+    video_failed: str | None = None
 
 
 def _known_pages(gtin: str, fresh: dict[str, _Page], state: State) -> dict[str, _Page]:
@@ -393,9 +404,28 @@ class _RowMedia(NamedTuple):
     image_acf_value: int | str | None
     video_media_id: int | None
     created_ids: tuple[int, ...] = ()
+    #: What the page was given — see :attr:`lib.records.StateEntry.video_file`.
+    video_file: str | None = None
+    #: A confirmed file that would not prepare — see :attr:`lib.records.StateEntry.video_failed`.
+    video_failed: str | None = None
 
 
 _NO_MEDIA = _RowMedia(None, None, None)
+
+
+class _Video(NamedTuple):
+    """This language's video upload, and the filename the page is recorded as carrying.
+
+    ``file`` is ``None`` when the client tracks no videos for this language at all, ``""`` when it
+    does and the page gets none — no confirmed file, an unreadable mapping, a file that would not
+    prepare — and the filename when one was uploaded. ``""`` is recorded so the next run can tell a
+    page that is *waiting* for a video from one that never could have one.
+    """
+
+    upload: MediaUpload | None
+    file: str | None
+    #: A confirmed filename that could not be prepared; ``file`` is then ``""``.
+    failed: str | None = None
 
 
 def _row_media(cfg: ClientConfig, row: PlanRow, wp: WordPressClient) -> _RowMedia:
@@ -422,8 +452,11 @@ def _row_media(cfg: ClientConfig, row: PlanRow, wp: WordPressClient) -> _RowMedi
     hero_id = hero.media_id if hero else None
     image_value = _image_acf_value(media, hero_id, wp)
     video = _video_media_id(cfg.client_id, media, row, wp)
-    created = tuple(up.media_id for up in (hero, video) if up is not None and up.created)
-    return _RowMedia(hero_id, image_value, video.media_id if video else None, created)
+    upload = video.upload
+    created = tuple(up.media_id for up in (hero, upload) if up is not None and up.created)
+    return _RowMedia(
+        hero_id, image_value, upload.media_id if upload else None, created, video.file, video.failed
+    )
 
 
 def _hero_media_id(
@@ -458,19 +491,19 @@ def _image_acf_value(
 
 def _video_media_id(
     client_id: str, media: MediaConfig, row: PlanRow, wp: WordPressClient
-) -> MediaUpload | None:
-    """Resolve, prepare (transcode), and upload this language's video; ``None`` if none matches."""
+) -> _Video:
+    """Resolve, prepare (transcode), and upload this language's video — see :class:`_Video`."""
     folder = media.video_folders.get(row.language)
     if not folder or not media.video_map_path:
-        return None
+        return _Video(None, None)
     try:
         vmap = load_video_map(Path(media.video_map_path))
     except VideoMapError as exc:
         _log.warning("could not load video map %s: %s (skipping video)", media.video_map_path, exc)
-        return None
+        return _Video(None, "")
     filename = vmap.resolve(row.gtin, row.language)
     if not filename:
-        return None
+        return _Video(None, "")
     prepared = prepare_video(
         Path(folder) / filename,
         Path("output") / client_id / "media" / "videos",
@@ -478,8 +511,9 @@ def _video_media_id(
         ffmpeg_bin=media.ffmpeg_bin,
     )
     if prepared is None:
-        return None
-    return wp.upload_media(prepared, title=f"{row.title} video {row.language} ({row.gtin})")
+        return _Video(None, "", filename)
+    upload = wp.upload_media(prepared, title=f"{row.title} video {row.language} ({row.gtin})")
+    return _Video(upload, filename)
 
 
 # --- Execution ---------------------------------------------------------------
@@ -577,9 +611,18 @@ def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcom
     page_url = page["link"]
     outcome.wp_page_id = page["id"]
     outcome.wp_url = page_url
+    # A file that would not prepare leaves the ACF field untouched, so the page still shows
+    # whatever video it had: record that, not "no video", or the note and the next plan both lie.
+    video_file = media.video_file
+    if media.video_failed is not None:
+        video_file = prior.video_file if prior is not None else ""
+    outcome.video_file = video_file
+    outcome.video_failed = media.video_failed
     if not wp.verify_url(page_url):
         raise RuntimeError(f"WordPress URL {page_url} did not return 200")
-    return _Page(page["id"], page_url, row.title, media.featured_media_id)
+    return _Page(
+        page["id"], page_url, row.title, media.featured_media_id, video_file, media.video_failed
+    )
 
 
 def _item_description(cfg: ClientConfig, rows: list[PlanRow], pages: dict[str, _Page]) -> str:
@@ -687,6 +730,8 @@ def _finish_pages(  # noqa: PLR0913 — one collaborator per step; bundling them
             gs1_link_set_hash=prior.gs1_link_set_hash if prior else "",
             last_run=ts,
             title=row.title,  # the next run diffs against this (§10.6.2)
+            video_file=page.video_file,  # lets a page published without one get it later
+            video_failed=page.video_failed,
         )
     return entries
 
@@ -978,13 +1023,14 @@ def _drop_without_copy(rows: list[PlanRow], *, generator_configured: bool) -> li
     return kept
 
 
-def _pilot_allowlist(cfg: ClientConfig) -> frozenset[str] | None:
-    """The canonical GTINs a run may touch, or ``None`` when unrestricted (§9.5).
+def _pilot_allowlist(cfg: ClientConfig) -> VideoGate | None:
+    """The video gate a run must pass, or ``None`` when unrestricted (§9.5).
 
-    ``None`` unless the client sets ``media.restrict_to_mapped_gtins``. Otherwise the set of GTINs
-    with a client-confirmed video in every language, read live from the mapping file. If the
-    mapping cannot be loaded the set is **empty** (block everything) — failing safe, since a run
-    that cannot determine the allowlist must not publish anything.
+    ``None`` unless the client sets ``media.restrict_to_mapped_gtins``. Otherwise the
+    :class:`~lib.media_video.VideoGate` built live from the mapping file — the same object the plan
+    held against, so the two cannot disagree about ``media.publish_without_video``. If the mapping
+    cannot be loaded the gate is **closed** (block everything) — failing safe, since a run that
+    cannot determine what may publish must not publish anything.
     """
     media = cfg.media
     if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
@@ -997,26 +1043,29 @@ def _pilot_allowlist(cfg: ClientConfig) -> frozenset[str] | None:
             media.video_map_path,
             exc,
         )
-        return frozenset()
-    return fully_mapped_gtins(vmap, cfg.wordpress.languages)
+        return CLOSED_GATE
+    return video_gate(
+        vmap, cfg.wordpress.languages, publish_without_video=media.publish_without_video
+    )
 
 
-def _restrict_to_pilot(rows: list[PlanRow], allowlist: frozenset[str] | None) -> list[PlanRow]:
-    """Drop rows for GTINs outside the pilot allowlist so no other GTIN is ever written (§9.5).
+def _restrict_to_pilot(rows: list[PlanRow], gate: VideoGate | None) -> list[PlanRow]:
+    """Drop rows for GTINs the video gate does not admit, so none is ever written (§9.5).
 
     A hard safety gate applied to every run: even a plan passed with ``--plan`` cannot publish a
-    GTIN that lacks a client-confirmed video in each language. ``None`` means unrestricted.
+    GTIN the gate holds — no confirmed video in some language (unless the client publishes without
+    one), or two confirmed files in one. ``None`` means unrestricted.
     """
-    if allowlist is None:
+    if gate is None:
         return rows
-    blocked = sorted({row.gtin for row in rows if canon_gtin(row.gtin) not in allowlist})
+    blocked = sorted({row.gtin for row in rows if not gate.admits(row.gtin)})
     if blocked:
         _log.warning(
-            "pilot restriction: blocking %d GTIN(s) with no confirmed video in every language: %s",
+            "pilot restriction: blocking %d GTIN(s) the video rule holds: %s",
             len(blocked),
             ", ".join(blocked),
         )
-    return [row for row in rows if canon_gtin(row.gtin) in allowlist]
+    return [row for row in rows if gate.admits(row.gtin)]
 
 
 class _RunLog:
@@ -1170,6 +1219,8 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
 
     errors = sum(1 for o in outcomes if o.status == "error")
     _write_result_sheet(cfg, log.path)
+    if not dry_run and resolved_gs1 is not None:
+        _write_quality_note(log.path, outcomes)
     _log.info("run complete: %d ok, %d error(s)", len(outcomes) - errors, errors)
     print(
         f"{prefix}{len(outcomes)} row(s){leg}, {errors} error(s); log: {log.path}",
@@ -1200,6 +1251,26 @@ def _write_result_sheet(cfg: ClientConfig, log: Path) -> None:
         print(f"warning: could not write the result sheet: {exc}", file=sys.stderr)
         return
     print(f"result sheet: {built.out}", file=sys.stderr)
+
+
+def _write_quality_note(log: Path, outcomes: list[RunOutcome]) -> None:
+    """The run's ``data-quality.md`` — the pages it published with no video. Best-effort.
+
+    Written beside the log on every live run, including one where nothing is missing, so the
+    absence of the file means "this run predates it" rather than "nothing to report". Caught as
+    broadly as :func:`_write_result_sheet`, for the same reason: it runs after live writes, and a
+    report must never turn a publish that worked into one that reads as failed.
+    """
+    try:
+        target = sibling(log, QUALITY_NAME)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(run_quality.render(stamp_of(log), outcomes), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 — see the docstring; a report must not fail a publish
+        print(f"warning: could not write the data-quality note: {exc}", file=sys.stderr)
+        return
+    bare = len(run_quality.without_video(outcomes))
+    if bare:
+        print(f"{bare} page(s) went live without a video — see {target}", file=sys.stderr)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
