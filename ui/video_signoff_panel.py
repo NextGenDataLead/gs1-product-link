@@ -1,9 +1,9 @@
 """The client's video sign-off sheet as a panel: upload it, say which column is which, apply.
 
-A component, not a screen — see :mod:`ui.video_map_panel` for why the video work moved onto the
-screen where the batch is chosen. This is the half that reads a document from outside; that one is
-the half that edits ``mapping.yml``. They share one :class:`~ui.video_map_panel.MappingSession`, so
-an import and a row edit can never write over each other.
+A component, not a screen: it sits on the Data screen, where the batch is chosen. It is the one
+place the shell writes ``mapping.yml`` — the mapping is otherwise edited in the file itself (see
+:mod:`ui.video_map_panel`) — and it writes through a :class:`~ui.video_map_panel.MappingSession`,
+which re-reads the file before re-planning so a hand edit made meanwhile is never overwritten.
 """
 
 from __future__ import annotations
@@ -77,16 +77,6 @@ def render(  # noqa: PLR0913 — the client, the mapping, what to redraw after, 
     ):
 
         async def receive(event: events.UploadEventArguments) -> str:
-            # Refused rather than merged: an import rewrites the whole file, so one on top of
-            # unsaved row edits would write the import and silently drop the edits — one success
-            # message for both. The one refusal the session keeps: it is about the text itself.
-            if session.dirty():
-                theme.notify_problem(
-                    f"Save or discard your {len(session.pending)} unsaved row edit(s) first — an "
-                    "import rewrites the whole file and would drop them."
-                )
-                return "Not read — there are unsaved edits in the mapping."
-
             data = await event.file.read()
             try:
                 grid = video_signoff.read_sheet(data)
@@ -257,22 +247,22 @@ _PLAN_SECTIONS: Final = (
         "Conflicts ({n}) — nothing here will be touched",
         "The mapping already carries a different confirmed GTIN for these files. A confirmed row "
         "is client sign-off, so an import never overwrites one: settle these by hand, in "
-        "The mapping, file by file, below.",
+        "the mapping file (videos/mapping.yml).",
     ),
     (
         video_signoff.AMBIGUOUS,
         "Two videos for one product ({n}) — nothing here will be applied",
         "The sheet gives these barcodes a second video in the same language. A product can carry "
         "only one video per language: applying both would attach neither, and the page would "
-        "publish without a video. Keep one and mark the other `skip` in The mapping, "
-        "file by file, below.",
+        "publish without a video. Keep one and mark the other `skip` in the mapping file "
+        "(videos/mapping.yml).",
     ),
     (
         video_signoff.REJECTED,
         "Could not be used ({n})",
         "Each of these says what is wrong with it. A barcode problem is fixed in the sheet and the "
         "file uploaded again; an unknown filename usually means the mapping has no row for that "
-        "video yet — Add files that are on disk, in The mapping, file by file, adds it.",
+        "video yet — add a row for it to the mapping file (videos/mapping.yml).",
     ),
 )
 
@@ -309,14 +299,8 @@ def _plan_view(
         return
 
     def apply() -> None:
-        if session.dirty():
-            theme.notify_problem(
-                f"Save or discard your {len(session.pending)} unsaved row edit(s) first — "
-                "applying the sheet rewrites the whole file and would drop them."
-            )
-            return
         # **Re-planned now**, against the file as it is at this moment — never the fills computed
-        # when the plan was drawn. In between, a row may have been set by hand in the mapping below
+        # when the plan was drawn. In between, a row may have been set by hand in mapping.yml
         # (or by another window), and applying the old fills would overwrite it: a confirmed row is
         # client sign-off, and the import's whole contract is that it never touches one.
         session.reload()

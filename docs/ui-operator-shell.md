@@ -374,10 +374,8 @@ run publishes it without a video there (#134). Two confirmed videos in one langu
 so it is in *Not eligible* with "two videos in nl — the client must keep one".
 
 **The Data screen redraws from three entry points** — a list or export arrived (step 4, the
-funnel, the report); the mapping was written (the fold, step 4 — rebuilt, with `Ticks` keeping the
-choices — and the report); a sign-off sheet arrived (the report only, since nothing was applied).
-The mapping's own figures (publishable GTINs, rows needing a GTIN, files on disk, the coverage
-check) moved inside its fold: the funnel answers the batch's question, they answer the file's.
+funnel, the report); a sign-off sheet was applied (step 4 — rebuilt, with `Ticks` keeping the
+choices — and the report); a sign-off sheet only arrived (the report, since nothing was applied).
 
 
 ### The videos, on the Data screen
@@ -390,35 +388,26 @@ That is also why it moved: an input that decides a batch's size belongs where th
 
 **`/videos` was deleted, not kept as an unlisted route.** With no screen linking to it, a surviving
 route would have been a second live editor of one client-sign-off file, holding its own copy of the
-text and knowing nothing of the session below. The work lives in two components beside
-`ui/batch_view.py`: `ui/video_signoff_panel.py` (step 3) and `ui/video_map_panel.py` (coverage, and
-the mapping row by row). Both are import-checked as `PANEL_MODULES`, and the AST contracts that
+text and knowing nothing of the session below. What is left lives in two components beside
+`ui/batch_view.py`: `ui/video_signoff_panel.py` (step 3) and `ui/video_map_panel.py` (the session it
+writes through). Both are import-checked as `PANEL_MODULES`, and the AST contracts that
 used to stop at `ui/pages/` read `ui/*.py` too — a rule an extraction could escape by moving a
 handler one folder up is not a rule.
 
-**The mapping is folded, and built the first time it opens.** Two 55vh tables on one screen were
-settled by the fold rather than by negotiating heights. It is built lazily because of what was
-measured first: a `virtual-scroll` table built inside a folded section is measured at zero height
-and opens as a dozen rows over a blank band until something scrolls it; built on first open it
-renders full (`theme.fold`).
+**The mapping is edited in its file, not in the shell (operator decision, 2026-10-06).** The
+row-by-row editor — *The mapping, file by file*, a fold under the uploads with its own coverage
+figures, fuzzy hints and a Save — was removed: what a batch needs to know about videos is already in
+step 4's *Missing video(s)* and report §1, and a second editor of one client-sign-off file invites
+edits nobody signed. The operator adjusts `videos/mapping.yml` by hand (the guide shows the line
+shape) and reloads; `build_video_map --check` and the doctor still report its gaps.
+`MappingSession` survives for the import alone: every write re-reads the file, and a file changed on
+disk since it was read — now the normal case — is re-read before the import is re-planned. Its
+staged-edit machinery and the "save your row edits first" refusals went with the editor.
 
-**Unsaved edits live in a `MappingSession`, outside the page.** The editor used to read the file
-once, when the screen was built, and keep staged edits in a closure — fine on a screen that never
-redraws, wrong on Data, which redraws on every upload. Kept per client at module level, like
-`data._BATCHES`: staged edits survive any redraw; every write re-reads the file, so the two old
-instructions to "reload this page" are gone; a file changed on disk since it was read is re-read
-before a Save rather than silently overwritten, with `write_validated`'s row-loss refusal as the
-backstop. The one refusal kept is the one about the text: an import (or an Apply) rewrites the whole
-file, so it refuses while there are unsaved row edits.
-
-**Neither of its writes is red.** Red is for a write that is hard or impossible to undo — Publish's
-run and production confirmation, Setup's two saves. Both mapping writes keep a `.bak` and are
-refused if the candidate lost a row, and the fold put them on the screen whose own save had been
-taken out of red on purpose. `tests/ui/test_shell_chrome_contract.py` holds red to two screens.
-
-It lists every file per language with its state (unset · confirmed · `skip` · not on disk), offers
-`build_video_map`'s ranked fuzzy hints as *suggestions that fill the box*, and stages edits until
-one Save. Three things it will not do:
+**The import's write is not red.** Red is for a write that is hard or impossible to undo — Publish's
+run and production confirmation, Setup's two saves. The import keeps a `.bak` and is refused if the
+candidate lost a row. `tests/ui/test_shell_chrome_contract.py` holds red to two screens. And it will
+not:
 
 - **Re-draft the file.** Confirmed rows are client sign-off. Drafting stays a terminal job, where
   redirecting the output over the mapping is a deliberate act rather than a click.

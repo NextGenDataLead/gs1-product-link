@@ -26,14 +26,12 @@ def _session(tmp_path: Path, text: str = _TEXT) -> MappingSession:
     return session
 
 
-def test_reload_reads_the_rows_and_keeps_staged_edits(tmp_path: Path) -> None:
+def test_reload_reads_the_rows(tmp_path: Path) -> None:
     session = _session(tmp_path)
-    session.pending[("nl", "a.mp4")] = "08713195000028"
 
     session.reload()
 
     assert [row.file for row in session.rows] == ["a.mp4", "b.mp4"]
-    assert session.dirty()  # a redraw or a re-read never costs the operator their edits
 
 
 def test_an_unreadable_file_is_a_problem_in_words_not_an_exception(tmp_path: Path) -> None:

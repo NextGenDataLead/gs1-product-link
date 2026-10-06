@@ -181,6 +181,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text true every time and needed once, never a warning or a count.
 
 ### Changed
+- **The mapping is no longer edited in the shell.** *The mapping, file by file* — the row-by-row
+  editor, its coverage figures and fuzzy hints — is removed from the Data screen; the operator
+  edits `videos/mapping.yml` directly (the guide shows how). The sign-off sheet import stays and is
+  now the shell's only write to the mapping. `MappingSession` keeps only what that write needs.
 - **Data no longer shows the Batch in force card, and *Start again from my uploaded file* is gone**
   (replaced by Clear all; re-uploading the list remains the undo for ticks). The mapping's own
   figures moved inside *The mapping, file by file*. Step 3 is titled *Upload the video sign-off

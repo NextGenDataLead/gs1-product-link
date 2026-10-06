@@ -6,11 +6,11 @@ order an operator assembles a batch:
 1. the **product selection list** — which barcodes this batch may touch;
 2. the **GS1 Data Source export** — the product data, parsed into ``products.json``;
 3. the client's **video sign-off sheet** — which video is which product's, applied to
-   ``mapping.yml``;
+   ``mapping.yml``. The mapping itself is edited in that file, never on this screen;
 
 side by side, because they are three documents arriving from three places and none waits on
-another. Under them: what the sign-off sheet would change, the mapping file by file (folded), the
-**coverage** funnel — in product list → eligible → selected — and
+another. Under them: what the sign-off sheet would change, the **coverage** funnel — in product
+list → eligible → selected — and
 
 4. **choose and save** — the list split into not in the export, not eligible (and why), missing
    video(s), and the eligible products, the only ones with a tick box (:mod:`ui.batch_grid`).
@@ -141,7 +141,6 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
         theme.jumps(
             [
                 ("Uploads", "uploads"),
-                ("Video mapping", "video-mapping"),
                 ("Coverage", "coverage"),
                 ("Choose", "choose"),
                 ("Data quality", "data-quality"),
@@ -163,9 +162,8 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             report_changed()
 
         def mapping_changed() -> None:
-            """The mapping was written: the fold, eligibility (a video can unblock a product), the
+            """The sign-off sheet was applied: eligibility (a video can unblock a product) and the
             report. Ticks survive — :class:`ui.batch_grid.Ticks` outlives the rebuild."""
-            redraw_videos()
             draw_choose()
             report_changed()
 
@@ -198,7 +196,6 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             _signoff(cfg, cid, mapping, mapping_changed, report_changed, signoff_area)
         _clear_all(cfg, cid, session, batch_changed)
         signoff_area.append(ui.column().classes("w-full mt-8"))
-        redraw_videos = _mapping_fold(cfg, cid, mapping, mapping_changed)
 
         coverage = ui.element("section").classes("section").props("id=coverage")
         selection = ui.column().classes("w-full gap-0")
@@ -302,38 +299,6 @@ def _signoff(  # noqa: PLR0913 — the client, the mapping, what to redraw, and 
     video_signoff_panel.render(
         cfg, cid, mapping, applied=changed, archived=archived, step=3, plan_into=plan_into
     )
-
-
-def _mapping_fold(
-    cfg: ClientConfig,
-    cid: str,
-    mapping: video_map_panel.MappingSession | None,
-    changed: Callable[[], None],
-) -> Callable[[], None]:
-    """The mapping, file by file, folded and built on first open — with its own figures on top.
-
-    **Built lazily.** Two tall tables on one screen were settled by the fold rather than by
-    negotiating heights, and building it on first open is what makes it render full (see
-    :func:`ui.theme.fold`). Returns its refresh, which :func:`render` calls after every write.
-    """
-    if mapping is None:
-        return lambda: None
-
-    def build() -> None:
-        video_map_panel.coverage(cfg, cid, mapping)
-        video_map_panel.rows(cfg, cid, mapping, changed)
-
-    folded = theme.fold(
-        "The mapping, file by file",
-        build,
-        anchor="video-mapping",
-        explain=(
-            "Every video file and the product it maps to, one row each. Pick a row to read its "
-            "suggestions and stage a barcode; Save writes every staged row at once and keeps the "
-            "previous file as a backup. Staged rows survive anything else you do on this screen."
-        ),
-    )
-    return folded.refresh
 
 
 # --- Clear all ---------------------------------------------------------------------

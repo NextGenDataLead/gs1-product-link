@@ -923,9 +923,9 @@ def action(label: str, on_click: Callable[[], object], *, danger: bool = False) 
     that matters would stop standing out, which is the only job red has here.
 
     Deliberately **not** red, because each is a local file with a way back: the Data screen's save
-    (:func:`onward`, which re-uploading the selection undoes), and both video-mapping writes —
-    *Save the mapping* and filling rows from the client's sign-off sheet — which keep a ``.bak``
-    and are refused outright by ``video_map_edit.write_validated`` if the candidate lost a row.
+    (:func:`onward`, which re-uploading the selection undoes), and the one video-mapping write —
+    filling rows from the client's sign-off sheet — which keeps a ``.bak`` and is refused outright
+    by ``video_map_edit.write_validated`` if the candidate lost a row.
     Red on those, on the same rail as a screen that writes permanent GS1 records, says they are
     the same kind of act. The narrower rule is the point of the colour, and
     ``tests/ui/test_shell_chrome_contract.py`` holds it to these two screens.

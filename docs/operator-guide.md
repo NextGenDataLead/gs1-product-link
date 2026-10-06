@@ -186,26 +186,27 @@ the spreadsheet with the barcodes filled in, upload it in **step 3**.
   report can always say what it still changes.
 - **A row the client has already signed off is never overwritten.** If the sheet disagrees with a
   barcode already in the mapping, it is listed as a *conflict* and left exactly as it is. Settle
-  those yourself, in *The mapping, file by file*.
+  those yourself, in the mapping file (below).
 - Rows it cannot use say why, and name the row number in the spreadsheet so you can point the
   client at it. The commonest one: a barcode that arrived as **8.7132E+12** because the column was
   formatted as a number. Ask for that column to be set to text and the file sent again — the digits
   are genuinely gone from the file, so there is nothing to recover at this end.
 - Dropped a GS1 export in this slot by mistake? It is refused, by name. Nothing is kept.
 
-**The mapping, file by file** is folded under the uploads. Open it to see every video file, per
-language, and what it maps to.
+**Changing the mapping yourself.** The app does not edit the mapping row by row. When something
+needs changing by hand — a conflict, a product with two videos in one language, a new video file —
+open the mapping file, `videos/mapping.yml` in the client's input folder, in a plain text editor
+(TextEdit in plain-text mode, or any code editor). Each line is one video file and the barcode it
+belongs to:
 
-<img src="images/data-mapping.png" alt="The mapping, file by file, opened: a table of every video file with its language, state — confirmed, skip or needs a GTIN — its barcode and whether the file is on disk, then Add files that are on disk but not in the mapping, and Save the mapping." width="760">
+```
+  - {file: "Aqua Mat v2.mp4", gtin: "08713195006864"}
+  - {file: "Aqua Power.mpg", gtin: ""}
+```
 
-Click a row and you get a box for the barcode, plus a few suggestions — those are a machine guess
-at which product the filename means, nothing more. Nothing is written until you press *Save the
-mapping*, and the previous version of the file is always kept beside it. Rows you have changed but
-not saved stay changed whatever else you do on the screen — but while there are any, a sheet import
-refuses to run, because it rewrites the whole file and would otherwise throw your edits away.
-
-After a save or an import, everything on the screen that counts from the mapping updates by itself:
-the coverage figures, the Video column, and the report. Your ticks are untouched.
+Fill in the barcode between the quotes, or write `skip` for a video that belongs to no product.
+Leave the rest of the line as it is. Save, then reload the Data screen: the *Missing video(s)* table,
+the Video column and the report all count from the file as it is now. Your ticks are untouched.
 
 ---
 
