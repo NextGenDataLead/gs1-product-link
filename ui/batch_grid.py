@@ -120,8 +120,8 @@ def draw_funnel(box: ui.element, counts: Funnel) -> None:
         )
         with theme.figures():
             theme.figure(str(counts.listed), "in product list", "barcodes on your list")
-            theme.figure(str(counts.eligible), "eligible", "in the export, nothing holds them")
-            theme.figure(str(counts.selected), "selected", "eligible and ticked — what runs")
+            theme.figure(str(counts.eligible), "eligible", "in the export, not held")
+            theme.figure(str(counts.selected), "selected", "ticked — what runs")
             theme.figure(
                 str(counts.not_in_export + counts.not_eligible),
                 "not eligible",
@@ -211,6 +211,7 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
         "no tick box because there is nothing to choose.",
         columns,
         missing,
+        collapsed=True,
     )
     _readonly(
         f"Not eligible — {_held_title(held)} ({len(held)})",
@@ -220,6 +221,7 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
         "box, and become eligible on their own once fixed.",
         [*columns, _wrapping(_WHY, "Why")],
         held,
+        collapsed=True,
     )
     _readonly(
         f"Missing video(s) ({len(bare)})",
@@ -271,16 +273,34 @@ def _wrapping(name: str, label: str) -> dict[str, Any]:
 
 
 def _readonly(
-    title: str, explain: str, columns: list[dict[str, Any]], rows: list[dict[str, Any]]
+    title: str,
+    explain: str,
+    columns: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    *,
+    collapsed: bool = False,
 ) -> None:
-    """A headed table with no choice in it. Absent when empty: an empty table is not a finding."""
+    """A headed table with no choice in it. Absent when empty: an empty table is not a finding.
+
+    ``collapsed`` folds it, with the count in the title so the fold still says how many: the
+    operator asked for the two tables of products a run cannot publish to start shut — they are
+    reference, and the eligible table is the work.
+    """
     if not rows:
         return
+    if collapsed:
+        fold = ui.expansion(title).classes("section w-full mb-4").props("dense")
+        with fold:
+            ui.label(explain).classes("explain")
+            _table(columns, rows)
+        return
     theme.subhead(title, explain=explain)
-    table = ui.table(columns=columns, rows=rows, row_key=_ROW, pagination=0).classes(
-        "w-full mt-2 mb-8"
-    )
-    table.props("dense flat bordered")
+    _table(columns, rows)
+
+
+def _table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
+    table = ui.table(columns=columns, rows=rows, row_key=_ROW, pagination=0)
+    table.classes("w-full mt-2 mb-8").props("dense flat bordered")
 
 
 class _Selection:
