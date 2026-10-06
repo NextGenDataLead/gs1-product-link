@@ -43,11 +43,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from lib.errors import VideoMapError
 from lib.generator import generation_context, translation_gaps
-from lib.mandatory import missing_mandatory
+from lib.mandatory import MandatoryGap, missing_mandatory
 from lib.media_video import load_video_map, video_gate
 from lib.records import SkipReason
 
@@ -55,7 +55,6 @@ if TYPE_CHECKING:
     from lib.config import ClientConfig
     from lib.gdsn import GdsnSource
     from lib.generator import GenerationContext
-    from lib.mandatory import MandatoryGap
     from lib.media_video import VideoGate
     from lib.records import ProductRecord
 
@@ -90,26 +89,26 @@ def video_gate_for(cfg: ClientConfig) -> VideoGate | None:
     )
 
 
-def held_units(
-    cfg: ClientConfig, products: list[ProductRecord]
-) -> dict[tuple[str, str], SkipReason]:
-    """Every ``(GTIN, language)`` the plan will hold whatever a producer writes, and which rule.
+class ProductHold(NamedTuple):
+    """Why the plan holds one product, whatever a producer writes.
 
-    Keyed by unit rather than by product because the plan's unit of work is ``(GTIN, language)``,
-    and a count in any other unit cannot be compared with the row counts beside it — the same
-    reason :func:`lib.state.diff_against_state` records each of these three per language, even
-    though all three drop the whole product.
+    Attributes:
+        reason: The first rule that fires, in ``diff_against_state``'s order (E23, E24, E22).
+        gaps: The E23 gaps generation cannot close — empty for any other reason. They are what an
+            operator fixes in MyGS1, so a screen that says "missing data" can say *which*.
+    """
 
-    Args:
-        cfg: The client config; supplies the mandatory sources, the video map and
-            ``media.require_hero_image``.
-        products: The products to ask about — already narrowed to this run's scope by
-            :func:`lib.preflight.in_scope`.
+    reason: SkipReason
+    gaps: tuple[MandatoryGap, ...] = ()
 
-    Returns:
-        ``(gtin, language) -> reason`` for each held unit; empty when nothing is held. The reason
-        is the first rule that fires, in ``diff_against_state``'s order (E23, E24, E22), so a
-        product failing two is attributed the way the plan will attribute it.
+
+def held_products(cfg: ClientConfig, products: list[ProductRecord]) -> dict[str, ProductHold]:
+    """``{gtin: why}`` for every product the plan will hold — :func:`held_units`, per product.
+
+    The same three rules in the same order, computed once: :func:`held_units` is this keyed by
+    unit. The Data screen needs it per product, with the gaps, to say which products are not
+    eligible and why; a second walk of the rules there would be the second opinion this module
+    exists to prevent.
 
     Raises:
         VideoMapError: See :func:`video_gate_for`.
@@ -135,18 +134,47 @@ def held_units(
         else None
     )
 
-    held: dict[tuple[str, str], SkipReason] = {}
+    held: dict[str, ProductHold] = {}
     for product in products:
-        if _unfillable_gaps(product, sources, languages, context):  # E23
-            reason = SkipReason.MISSING_MANDATORY_FIELD
+        if gaps := _unfillable_gaps(product, sources, languages, context):  # E23
+            held[product.gtin] = ProductHold(SkipReason.MISSING_MANDATORY_FIELD, tuple(gaps))
         elif video is not None and not video.admits(product.gtin):  # E24
-            reason = SkipReason.NO_CONFIRMED_VIDEO
+            held[product.gtin] = ProductHold(SkipReason.NO_CONFIRMED_VIDEO)
         elif require_hero and not (product.image_url or "").strip():  # E22
-            reason = SkipReason.BLANK_HERO_IMAGE
-        else:
-            continue
-        held.update({(product.gtin, language): reason for language in languages})
+            held[product.gtin] = ProductHold(SkipReason.BLANK_HERO_IMAGE)
     return held
+
+
+def held_units(
+    cfg: ClientConfig, products: list[ProductRecord]
+) -> dict[tuple[str, str], SkipReason]:
+    """Every ``(GTIN, language)`` the plan will hold whatever a producer writes, and which rule.
+
+    Keyed by unit rather than by product because the plan's unit of work is ``(GTIN, language)``,
+    and a count in any other unit cannot be compared with the row counts beside it — the same
+    reason :func:`lib.state.diff_against_state` records each of these three per language, even
+    though all three drop the whole product.
+
+    Args:
+        cfg: The client config; supplies the mandatory sources, the video map and
+            ``media.require_hero_image``.
+        products: The products to ask about — already narrowed to this run's scope by
+            :func:`lib.preflight.in_scope`.
+
+    Returns:
+        ``(gtin, language) -> reason`` for each held unit; empty when nothing is held. The reason
+        is the first rule that fires, in ``diff_against_state``'s order (E23, E24, E22), so a
+        product failing two is attributed the way the plan will attribute it.
+
+    Raises:
+        VideoMapError: See :func:`video_gate_for`.
+    """
+    languages = cfg.wordpress.languages
+    return {
+        (gtin, language): hold.reason
+        for gtin, hold in held_products(cfg, products).items()
+        for language in languages
+    }
 
 
 def _unfillable_gaps(

@@ -142,13 +142,13 @@ def test_a_product_confirmed_in_one_language_names_the_other() -> None:
     (product,) = _status(vmap, _A).products
 
     assert product.by_language == {"nl": HAS_VIDEO, "fr": MISSING}
-    assert waiting_on(product) == "needs fr"
+    assert waiting_on(product) == "no confirmed video in fr"
 
 
 def test_a_product_with_nothing_names_every_language_in_configured_order() -> None:
     (product,) = _status(_map(nl=[], fr=[]), _A).products
 
-    assert waiting_on(product) == "needs nl, fr"
+    assert waiting_on(product) == "no confirmed video in nl, fr"
 
 
 def test_a_product_with_a_video_everywhere_is_waiting_on_nothing() -> None:

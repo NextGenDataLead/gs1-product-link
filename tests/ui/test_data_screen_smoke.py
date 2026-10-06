@@ -1,4 +1,4 @@
-"""The Data screen builds, end to end, through the real app — with all four steps and both folds.
+"""The Data screen builds, end to end, through the real app — four steps, and the report fold.
 
 A smoke test, not a rendering test. It cannot say the screen looks right; it says that a GET of
 ``/data`` runs the whole of ``render()`` for a client with a batch and a video mapping and comes
@@ -80,7 +80,7 @@ async def _get(route: str) -> httpx.Response:
             return await client.get(route)
 
 
-def test_the_data_screen_builds_with_four_steps_and_both_folds(
+def test_the_data_screen_builds_with_four_steps_and_no_mapping_editor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import ui.app  # noqa: F401, PLC0415 — importing registers the routes
@@ -99,9 +99,10 @@ def test_the_data_screen_builds_with_four_steps_and_both_folds(
     for title in (
         "Upload the product selection list",
         "Upload the GS1 export",
-        "Upload the client's video sign-off sheet",
-        "The mapping, file by file",
+        "Upload the video sign-off sheet",
         "Choose the products and save",
         "Data quality",
     ):
         assert title.replace("'", "\\u0027") in html or title in html, title
+    # The row-by-row editor was removed on the operator's word: the mapping is edited in its file.
+    assert "The mapping, file by file" not in html

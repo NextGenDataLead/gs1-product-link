@@ -83,9 +83,10 @@ barcode no export row does. `lib/demo_export.py` is what it is made of, `lib/gds
 header shape, and `tests/lib/test_demo_export.py` checks both against `clients.example.yml` rather
 than restating it. It also writes the videos (`lib/demo_videos.py`): placeholder files, a
 `mapping.yml` in the row-per-line shape the editor accepts, and `test-uploads/video-signoff.xlsx` —
-so the video half of the Data screen rehearses too. Until that sheet is applied, five products are
-held for want of a video; after it, eight publish, and the ninth waits for one of its two Dutch
-videos to be marked `skip`.
+so the video half of the Data screen rehearses too. With `publish_without_video` on (as the example
+sets it), nine of the twelve are eligible and two of those go live without a video somewhere; three
+are not eligible — two for missing data, one for two Dutch videos. Applying the sheet takes the
+missing videos from two to one.
 
 The gates themselves live in **`lib/gates.py`** as data, and `flow-orchestrator/SKILL.md` carries a
 **Gate index** table that `tests/lib/test_gates.py` checks in both directions. Adding a gate to one

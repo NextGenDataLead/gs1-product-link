@@ -187,6 +187,12 @@ body { background: var(--paper) !important; color: var(--ink) !important;
                     align-items: start; }
 .steps-2up > .section { margin-top: var(--space-8); }
 @media (max-width: 60rem) { .steps-2up { grid-template-columns: 1fr; gap: 0; } }
+/* The Data screen's three uploads — list, export, sign-off sheet — in one row: three documents from
+   three places, none waiting on another. Two up on a narrow window would orphan the third. */
+.steps-3up        { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+                    gap: var(--space-8); align-items: start; }
+.steps-3up > .section { margin-top: var(--space-8); }
+@media (max-width: 70rem) { .steps-3up { grid-template-columns: 1fr; gap: 0; } }
 
 /* The way on. The rail is navigation for somebody who knows the shape of the tool; this is for
    somebody following a procedure, who wants to be told where the next thing is. */
@@ -301,6 +307,14 @@ body { background: var(--paper) !important; color: var(--ink) !important;
    padding, so the card's would double it; the body keeps it. */
 .gate-folded  { padding: 0; }
 .gate-folded .q-expansion-item__content { padding: 0 var(--space-4) var(--space-4); }
+
+/* A fold whose arrow sits right after its title, not at the far edge of the row (operator
+   feedback, 2026-10-06): on a wide screen the arrow was a page-width away from the words it opens,
+   and read as belonging to nothing. The header row packs left; the title no longer stretches. */
+.fold-tight > .q-expansion-item__container > .q-item { justify-content: flex-start; }
+.fold-tight > .q-expansion-item__container > .q-item > .q-item__section--main { flex: 0 1 auto; }
+.fold-tight > .q-expansion-item__container > .q-item > .q-item__section--side {
+                    padding-left: var(--space-2); }
 .gate-folded .q-item__label             { font-size: var(--text-lead); font-weight: 620; }
 .gate-folded .q-item__label--caption    { font-family: var(--font-mono);
                                           font-size: var(--text-micro); font-weight: 400;
@@ -494,13 +508,14 @@ def heading(eyebrow: str, title: str, lede: str = "") -> None:
 
 
 @contextmanager
-def section(
+def section(  # noqa: PLR0913 — one keyword per way a section can be shown
     title: str,
     *,
     anchor: str | None = None,
     collapsed: bool = False,
     step: int | None = None,
     explain: str = "",
+    tight: bool = False,
 ) -> Iterator[None]:
     """A titled block of a screen.
 
@@ -515,9 +530,13 @@ def section(
             this one before that one, and it is the cheapest navigation there is.
         explain: The paragraph that would otherwise sit under the heading, moved behind an ⓘ.
             See :func:`explanation` for why anything is hidden at all.
+        tight: With ``collapsed``, put the fold's arrow right after the title (``fold-tight``)
+            rather than at the far edge of the row.
     """
     if collapsed:
         expansion = ui.expansion(title).classes("section w-full").props("dense")
+        if tight:
+            expansion.classes("fold-tight")
         if anchor:
             expansion.props(f"id={anchor}")
         with expansion:
@@ -917,9 +936,9 @@ def action(label: str, on_click: Callable[[], object], *, danger: bool = False) 
     that matters would stop standing out, which is the only job red has here.
 
     Deliberately **not** red, because each is a local file with a way back: the Data screen's save
-    (:func:`onward`, which re-uploading the selection undoes), and both video-mapping writes —
-    *Save the mapping* and filling rows from the client's sign-off sheet — which keep a ``.bak``
-    and are refused outright by ``video_map_edit.write_validated`` if the candidate lost a row.
+    (:func:`onward`, which re-uploading the selection undoes), and the one video-mapping write —
+    filling rows from the client's sign-off sheet — which keeps a ``.bak`` and is refused outright
+    by ``video_map_edit.write_validated`` if the candidate lost a row.
     Red on those, on the same rail as a screen that writes permanent GS1 records, says they are
     the same kind of act. The narrower rule is the point of the colour, and
     ``tests/ui/test_shell_chrome_contract.py`` holds it to these two screens.

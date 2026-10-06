@@ -169,7 +169,7 @@ def waiting_on(product: ProductVideo) -> str:
     """
     parts = []
     if missing := product.languages_in(MISSING):
-        parts.append(f"needs {', '.join(missing)}")
+        parts.append(f"no confirmed video in {', '.join(missing)}")
     parts.extend(f"two videos in {language}" for language in product.languages_in(CLASHING))
     return "; ".join(parts)
 

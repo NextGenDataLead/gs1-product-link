@@ -21,7 +21,7 @@ import pytest
 
 pytest.importorskip("nicegui", reason="the ui extra is not installed here")
 
-from ui.pages.data import (
+from ui.batch_grid import (
     _PICKER_MAX,
     _ROW,
     BLANK_LABEL,

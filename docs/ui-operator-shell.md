@@ -130,9 +130,33 @@ both directions, and the button added next month is the case it would miss.
 ### Data
 
 **The screen is a procedure, so it is numbered.** Four filled numerals: **1** the product selection
-list and **2** the export, **side by side** because bringing both files is one act; **3** the
-client's video sign-off sheet, full width, with the coverage figures under it and the mapping itself
-folded below; **4** choosing and saving. A jump row under the title reaches each.
+list, **2** the export and **3** the video sign-off sheet, **three across** (`steps-3up`) because
+they are three documents from three places and none waits on another — the sheet's review renders
+full width under the row, where its column pickers fit; then the mapping, folded; **Coverage**; and
+**4** choosing and saving. A jump row under the title reaches each. Below 70rem the three stack.
+
+**Coverage is a funnel, in products:** in product list → eligible → selected, with *not eligible*
+(not in the export · held) and *missing video(s)* beside it. It is counted by
+`ui.batch_grid.funnel`, a pure function of the rows, the ticked rows and one
+`lib.eligibility.Eligibility` — which is itself `lib.holds.held_products` (the plan's E23/E24/E22, in
+the plan's order, with the E23 gaps) joined to the video status for words. So a tick box is offered
+on a product exactly when the plan would publish it; `tests/lib/test_eligibility.py` pins that under
+both settings of `media.publish_without_video`.
+
+**Step 4 splits the list four ways, in reading order:** not in the GS1 export · not eligible (with a
+*Why* column) · missing video(s) · eligible. Only the last has tick boxes, and the first three start **folded** with their
+count in the title (operator feedback): they are reference, the eligible table is the work. A save keeps the ticked
+eligible rows **and every row that is not eligible**: nothing can run those, and keeping them is what
+lets the result sheet name them afterwards. Unticks live in a per-client `batch_grid.Ticks` for the
+life of the process, so a mapping write — which can make a product eligible — rebuilds step 4
+without costing a choice. A new list (or Clear all) forgets them, since every row renumbers.
+
+**Clear all — start fresh replaced *Start again from my uploaded file*.** Everything on the screen is
+read from disk, so the operator's question was never "undo my ticks" (re-uploading does that) but
+"how do I begin again". `lib.batch_reset.clear_batch` moves the live selection, the uploaded list,
+the export and `products.json` into `input/{client}/superseded/cleared-{stamp}/` with a note —
+**moved, never deleted**, and every dated archive stays where it is. The video mapping is never part
+of it: it is the client's sign-off and outlives batches.
 
 **The selection list is step 1 because it is the spine.** Everything else on the screen is measured
 against it — the export is joined to it, the video status and the report are scoped to it. The cost
@@ -271,7 +295,9 @@ possible at all, and a selection with no record reads as *not recorded* — a th
 agreement and never as staleness. Every batch saved before this existed is in that state.
 
 **The batch in force is read from disk, on every screen.** `lib/batch.in_force` describes it and
-`ui/batch_view` renders it, on Data, Content, Preflight and Publish. It replaced three booleans held
+`ui/batch_view` renders it, on Content, Preflight and Publish — Data still reads it to decide
+whether there is a batch, but no longer shows the card (operator feedback, 2026-10-06: the uploads
+above it already say which files these are). It replaced three booleans held
 for the life of the process, which gated whether the Data screen showed the selection at all: before
 this, restarting the shell hid the grid while a run went on consuming the file, as the band that
 replaced it said in so many words. A batch that is invisible and live at once is worse than either.
@@ -330,7 +356,7 @@ them and warns. The data-quality report is dated for the same reason — a rebui
 new leaves last week's worklist on screen looking exactly like this week's.
 
 Every in-scope SKU held for want of a confirmed video carries a per-row mark saying what it waits
-on — `needs fr`, `needs nl, fr`, `needs fr; two videos in nl` — from `lib.video_status`, loaded by
+on — `no confirmed video in fr`, `no confirmed video in nl, fr`, `no confirmed video in fr; two videos in nl` — from `lib.video_status`, loaded by
 `lib.preflight.load_video_status` (the report reads the same, so the two say the same words about
 the same product). It used to say "no video yet" for all of them, which on the pilot covered three
 different jobs. Data is the only per-SKU grid in the shell, so it is the only place that fact can
@@ -342,17 +368,14 @@ either, so the gate (`fully_mapped_gtins`) requires **exactly one** per language
 any confirmed row, and a two-video product published with no video in that language, reporting
 success.
 
-**That mark replaced a *Video mapping* section here**, which was two figures and a link. The
-coverage figures now sit under step 3, and a per-row mark says the same thing against the product
-it is about. What a mark cannot carry is the *consequence* — "needs fr" does not tell you the run
-will skip the product and report success — so one line under the table says that, and links up the
-page to the mapping.
+**Under `media.publish_without_video` a missing video is a mark, not a hold.** The product is
+eligible, sits in *Missing video(s)* and in the eligible table with its Video cell filled, and the
+run publishes it without a video there (#134). Two confirmed videos in one language still hold it,
+so it is in *Not eligible* with "two videos in nl — the client must keep one".
 
-**A mapping write re-marks that column in place.** The Data screen redraws from three entry points
-— a list or export arrived (the batch panel, the grid, the report); the mapping was written (the
-coverage, the fold, the Video column, the report); a sign-off sheet arrived (the report only, since
-nothing was applied). The Video column is updated on the rows the grid already holds rather than by
-rebuilding the grid, because rebuilding would cost the operator every unsaved tick.
+**The Data screen redraws from three entry points** — a list or export arrived (step 4, the
+funnel, the report); a sign-off sheet was applied (step 4 — rebuilt, with `Ticks` keeping the
+choices — and the report); a sign-off sheet only arrived (the report, since nothing was applied).
 
 
 ### The videos, on the Data screen
@@ -365,35 +388,26 @@ That is also why it moved: an input that decides a batch's size belongs where th
 
 **`/videos` was deleted, not kept as an unlisted route.** With no screen linking to it, a surviving
 route would have been a second live editor of one client-sign-off file, holding its own copy of the
-text and knowing nothing of the session below. The work lives in two components beside
-`ui/batch_view.py`: `ui/video_signoff_panel.py` (step 3) and `ui/video_map_panel.py` (coverage, and
-the mapping row by row). Both are import-checked as `PANEL_MODULES`, and the AST contracts that
+text and knowing nothing of the session below. What is left lives in two components beside
+`ui/batch_view.py`: `ui/video_signoff_panel.py` (step 3) and `ui/video_map_panel.py` (the session it
+writes through). Both are import-checked as `PANEL_MODULES`, and the AST contracts that
 used to stop at `ui/pages/` read `ui/*.py` too — a rule an extraction could escape by moving a
 handler one folder up is not a rule.
 
-**The mapping is folded, and built the first time it opens.** Two 55vh tables on one screen were
-settled by the fold rather than by negotiating heights. It is built lazily because of what was
-measured first: a `virtual-scroll` table built inside a folded section is measured at zero height
-and opens as a dozen rows over a blank band until something scrolls it; built on first open it
-renders full (`theme.fold`).
+**The mapping is edited in its file, not in the shell (operator decision, 2026-10-06).** The
+row-by-row editor — *The mapping, file by file*, a fold under the uploads with its own coverage
+figures, fuzzy hints and a Save — was removed: what a batch needs to know about videos is already in
+step 4's *Missing video(s)* and report §1, and a second editor of one client-sign-off file invites
+edits nobody signed. The operator adjusts `videos/mapping.yml` by hand (the guide shows the line
+shape) and reloads; `build_video_map --check` and the doctor still report its gaps.
+`MappingSession` survives for the import alone: every write re-reads the file, and a file changed on
+disk since it was read — now the normal case — is re-read before the import is re-planned. Its
+staged-edit machinery and the "save your row edits first" refusals went with the editor.
 
-**Unsaved edits live in a `MappingSession`, outside the page.** The editor used to read the file
-once, when the screen was built, and keep staged edits in a closure — fine on a screen that never
-redraws, wrong on Data, which redraws on every upload. Kept per client at module level, like
-`data._BATCHES`: staged edits survive any redraw; every write re-reads the file, so the two old
-instructions to "reload this page" are gone; a file changed on disk since it was read is re-read
-before a Save rather than silently overwritten, with `write_validated`'s row-loss refusal as the
-backstop. The one refusal kept is the one about the text: an import (or an Apply) rewrites the whole
-file, so it refuses while there are unsaved row edits.
-
-**Neither of its writes is red.** Red is for a write that is hard or impossible to undo — Publish's
-run and production confirmation, Setup's two saves. Both mapping writes keep a `.bak` and are
-refused if the candidate lost a row, and the fold put them on the screen whose own save had been
-taken out of red on purpose. `tests/ui/test_shell_chrome_contract.py` holds red to two screens.
-
-It lists every file per language with its state (unset · confirmed · `skip` · not on disk), offers
-`build_video_map`'s ranked fuzzy hints as *suggestions that fill the box*, and stages edits until
-one Save. Three things it will not do:
+**The import's write is not red.** Red is for a write that is hard or impossible to undo — Publish's
+run and production confirmation, Setup's two saves. The import keeps a `.bak` and is refused if the
+candidate lost a row. `tests/ui/test_shell_chrome_contract.py` holds red to two screens. And it will
+not:
 
 - **Re-draft the file.** Confirmed rows are client sign-off. Drafting stays a terminal job, where
   redirecting the output over the mapping is a deliberate act rather than a click.
