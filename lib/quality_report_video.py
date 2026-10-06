@@ -342,8 +342,8 @@ def _signoff_lines(video: VideoReport) -> list[str]:
         f"Of its {len(plan.rows)} rows: **{n[FILL]}** would fill an empty slot, {n[UNCHANGED]} "
         f"already match, **{n[CONFLICT]}** disagree with what is signed off, **{n[AMBIGUOUS]}** "
         f"would give one product two videos, **{len(rejected)}** cannot be applied, and "
-        f"{len(blank)} are still blank. Fills are applied with one button on the Data screen, so "
-        "they are a count here rather than a list.",
+        f"{len(blank)} are still blank. Fills are applied with one button in the operator "
+        "shell, so they are a count here rather than a list.",
         "",
         "**Needs a person — never applied automatically:**",
         "",

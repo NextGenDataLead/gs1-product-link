@@ -7,6 +7,7 @@ Drives ``main`` in a temp working directory: writes sample ``output/{client}/dat
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +16,9 @@ import openpyxl
 import pytest
 import yaml
 
+from lib import video_signoff_archive
 from lib.config import get_client
+from lib.quality_report_video import SignoffReview
 from lib.records import LocalisedText, ProductRecord
 from scripts import report_quality
 
@@ -424,3 +427,127 @@ def test_a_client_with_no_mapping_still_reads_the_file(
 
     assert "**3**" in text
     assert "stale-0.mpg" in text
+
+
+# --- §1d: the archived sign-off sheet, re-planned on every render --------------------------------
+
+_SIGNOFF_MAPPING = {
+    "nl": [
+        {"file": "one.mpg", "gtin": ""},
+        {"file": "two-a.mpg", "gtin": ""},
+        {"file": "two-b.mpg", "gtin": _HAS_TWO},
+    ]
+}
+
+
+def _sheet(path: Path, header: list[str], rows: list[list[str]]) -> bytes:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(header)
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+    return path.read_bytes()
+
+
+def _signed_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, header: list[str] | None = None
+) -> tuple[dict[str, ProductRecord], Path]:
+    """A client with a mapping, and the sheet the client sent back archived with its columns."""
+    products = _with_videos(tmp_path, monkeypatch, _SIGNOFF_MAPPING)
+    video_map = tmp_path / "videos" / "mapping.yml"
+    chosen = ["language", "file", "current_gtin"]
+    data = _sheet(
+        tmp_path / "upload.xlsx",
+        header or chosen,
+        [["nl", "one.mpg", _HAS_ONE[1:]], ["nl", "two-a.mpg", "8.7132E+12"]],
+    )
+    sheet = video_signoff_archive.archive(video_map, data, stamp="20261006-101500")
+    video_signoff_archive.record(
+        video_map,
+        sheet=sheet,
+        given_name="Videos Noviplast v3.xlsx",
+        at="2026-10-06T10:15:00",
+        rows=2,
+        columns={"language": 0, "file": 1, "gtin": 2},
+        headers=dict(zip(("language", "file", "gtin"), chosen, strict=True)),
+    )
+    return products, video_map
+
+
+def _review(products: dict[str, ProductRecord]) -> SignoffReview | str:
+    return report_quality._signoff_review(report_quality.get_client("noviplast"), products)
+
+
+def _plan_of(products: dict[str, ProductRecord]) -> SignoffReview:
+    review = _review(products)
+    assert isinstance(review, SignoffReview), review
+    return review
+
+
+def test_with_no_sheet_the_review_says_so_in_one_ordinary_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    products = _with_videos(tmp_path, monkeypatch, _SIGNOFF_MAPPING)
+
+    assert _review(products) == "No sign-off sheet from the client yet — nothing to re-plan."
+
+
+def test_an_archived_sheet_is_replanned_against_the_mapping_as_it_is_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    products, _ = _signed_off(tmp_path, monkeypatch)
+
+    review = _plan_of(products)
+
+    assert review.given_name == "Videos Noviplast v3.xlsx"
+    assert review.at == "2026-10-06"
+    plan = review.plan
+    assert [(row.line, row.outcome) for row in plan.rows] == [(2, "fill"), (3, "rejected")]
+    assert plan.of("rejected")[0].given == "8.7132E+12"  # quoted as the sheet carried it
+
+
+def test_a_fill_applied_since_reads_as_already_matching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-planned, not remembered: the counts correct themselves once the mapping moves."""
+    products, video_map = _signed_off(tmp_path, monkeypatch)
+    filled = {
+        "nl": [
+            {"file": "one.mpg", "gtin": _HAS_ONE},
+            {"file": "two-a.mpg", "gtin": ""},
+            {"file": "two-b.mpg", "gtin": _HAS_TWO},
+        ]
+    }
+    video_map.write_text(yaml.safe_dump(filled), encoding="utf-8")
+
+    plan = _plan_of(products).plan
+
+    assert [row.outcome for row in plan.rows] == ["unchanged", "rejected"]
+
+
+def test_a_sheet_edited_since_its_columns_were_chosen_is_refused_not_guessed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Planning against moved columns would read a filename as a barcode."""
+    products, _ = _signed_off(tmp_path, monkeypatch, header=["language", "file", "barcode"])
+
+    review = _review(products)
+
+    assert isinstance(review, str)
+    assert 'gtin column was headed "current_gtin" and is now "barcode"' in review
+
+
+def test_a_newer_sheet_with_no_choice_is_not_answered_with_the_older_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    products, video_map = _signed_off(tmp_path, monkeypatch)
+    older = next((video_map.parent / "signoff").glob("signoff-*.xlsx"))
+    newer = video_signoff_archive.archive(video_map, b"later", stamp="20261007-090000")
+    os.utime(older, (1_000, 1_000))
+    os.utime(newer, (2_000, 2_000))
+
+    review = _review(products)
+
+    assert isinstance(review, str)
+    assert "has not had its columns chosen yet" in review and newer.name in review

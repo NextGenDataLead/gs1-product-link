@@ -30,6 +30,7 @@ from lib.video_signoff import (
     column_options,
     columns,
     is_header,
+    looks_like_an_export,
     plan,
     read_sheet,
 )
@@ -470,3 +471,14 @@ def test_many_files_may_be_skip_without_clashing() -> None:
 
     assert [row.outcome for row in decided.rows] == [FILL, FILL]
     assert len(decided.edits) == 2
+
+
+def test_a_gs1_export_is_recognised_as_one_not_read_as_a_sheet() -> None:
+    """The export's own opening headings, as lib.gdsn_layout writes them for the demo client."""
+    export = Grid(
+        header=["Gtin", "TargetMarketCountryCode", "InformationProviderOfTradeItem"], rows=[]
+    )
+    sheet = Grid(header=["language", "file", "gtin"], rows=[])
+
+    assert looks_like_an_export(export)
+    assert not looks_like_an_export(sheet)  # a "gtin" column alone is an ordinary sign-off sheet

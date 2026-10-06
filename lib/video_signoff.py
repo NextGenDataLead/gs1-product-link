@@ -195,6 +195,21 @@ def read_sheet(source: Path | bytes) -> Grid | None:
     return None
 
 
+#: Two headings every GS1 Data Source export opens with, and no sign-off sheet carries together.
+_EXPORT_HEADINGS: Final = frozenset({"gtin", "targetmarketcountrycode"})
+
+
+def looks_like_an_export(grid: Grid) -> bool:
+    """Whether this "sheet" is really a GS1 Data Source export dropped in the wrong place.
+
+    Worth its own refusal because :func:`read_sheet`'s second pass accepts any row with two filled
+    cells as a header: an export *does* produce a grid, and the plan then rejects every row of it,
+    loudly, about barcodes and filenames — which is the wrong thing to be told. Three identical
+    ``.xlsx`` pickers on one screen make this the likeliest mix-up there is.
+    """
+    return {_norm(cell) for cell in grid.header} >= _EXPORT_HEADINGS
+
+
 def _stream(source: Path | bytes) -> Path | IO[bytes]:
     """A fresh readable for one pass. A path reopens; bytes need wrapping each time."""
     return io.BytesIO(source) if isinstance(source, bytes) else source

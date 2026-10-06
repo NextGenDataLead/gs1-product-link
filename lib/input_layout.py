@@ -8,7 +8,10 @@
                     product-list-{stamp}.xlsx           every list ever uploaded
         selection/  selections.xlsx                     the selection a run reads
                     selection-{stamp}.xlsx              every selection ever saved
-      reference/  test-uploads/  superseded/  videos/   nothing a run reads
+      videos/     mapping.yml                         which video is which product's
+                  signoff/signoff-{stamp}.xlsx        every sign-off sheet the client sent
+                  signoff/signoff.json                which column of the newest is which
+      reference/  test-uploads/  superseded/          nothing a run reads
 
 ``process/`` holds the two halves of one act: **what arrived**, and **what was chosen from it**.
 Each document sits with its own history, so a person looking for "the list I sent in August" opens
@@ -64,6 +67,10 @@ PROCESS_DIR: Final = "process"
 #: The half of ``process/`` holding what arrived, as it arrived.
 UPLOADS_DIR: Final = "uploads"
 
+#: Beside ``mapping.yml``: the client's sign-off sheets, and the note of which column is which.
+SIGNOFF_DIR: Final = "signoff"
+SIGNOFF_INDEX: Final = "signoff.json"
+
 #: The note the tool drops beside the files. Rewritten whenever it changes, so it cannot go stale
 #: against the code that writes the files it describes.
 README_NAME: Final = "README.md"
@@ -115,6 +122,10 @@ upload with. Nothing reads them.
 **`superseded/`** — old inputs set aside before this layout existed, with a note of their own.
 
 **`videos/`** — the video files and `mapping.yml`, at the paths `media.video_folders` names.
+`videos/signoff/` keeps every sign-off sheet the client sent back, dated, and `signoff.json` beside
+them records which column of the newest one is the language, the filename and the barcode — so the
+data-quality report can re-read the sheet against the mapping every time it is made. A run reads
+none of it.
 
 ## The two rules worth knowing
 
@@ -255,6 +266,31 @@ def _dated(folder: Path, pattern: str) -> list[Path]:
         return []
     found = [path for path in folder.glob(pattern) if path.is_file()]
     return sorted(found, key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def signoff_dir(video_map: Path) -> Path:
+    """``videos/signoff/`` — every sign-off sheet the client sent, beside the mapping it is about.
+
+    Derived from ``media.video_map_path``, not from the selection, and **not under ``process/``**:
+    the README states that a run reads exactly two files and names them, and a third document there
+    would make that false. A sheet is about ``mapping.yml``, so it lives next to it.
+    """
+    return video_map.parent / SIGNOFF_DIR
+
+
+def signoff_path(video_map: Path, stamp: str) -> Path:
+    """Where an uploaded sign-off sheet is kept forever, dated: ``signoff/signoff-{stamp}.xlsx``."""
+    return unique(signoff_dir(video_map) / f"signoff-{stamp}.xlsx")
+
+
+def signoff_index(video_map: Path) -> Path:
+    """``signoff/signoff.json`` — which column of the newest sheet is which, and its headings."""
+    return signoff_dir(video_map) / SIGNOFF_INDEX
+
+
+def signoff_archives(video_map: Path) -> list[Path]:
+    """Every archived sign-off sheet, newest by modification time first."""
+    return _dated(signoff_dir(video_map), "signoff-*.xlsx")
 
 
 def unique(candidate: Path) -> Path:

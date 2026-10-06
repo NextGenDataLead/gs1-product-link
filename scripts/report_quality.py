@@ -26,17 +26,20 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
-from lib.config import get_client, resolve_client_id
+from lib import video_signoff, video_signoff_archive
+from lib.config import ClientConfig, get_client, resolve_client_id
 from lib.env import load_env
 from lib.errors import ConfigError, ExportParseError, VideoMapError
 from lib.mandatory import MandatoryGap, missing_mandatory
 from lib.media_video import canon_gtin, check_video_map, files_by_language, load_video_map
 from lib.preflight import in_scope, load_video_status
 from lib.quality_report import MatrixInput, render_quality_report
-from lib.quality_report_video import VideoReport
+from lib.quality_report_video import SignoffReview, VideoReport
 from lib.records import ProductRecord, SourceIssue
 from lib.video_status import HAS_VIDEO
 
@@ -138,7 +141,54 @@ def _video_report(client_id: str, products: dict[str, ProductRecord]) -> VideoRe
     except (ConfigError, ExportParseError):
         return None
     status = load_video_status(cfg, in_scope(cfg, list(products.values())))
-    return VideoReport(status=status) if status is not None else None
+    if status is None:
+        return None
+    review = _signoff_review(cfg, products)
+    if isinstance(review, str):
+        return VideoReport(status=status, signoff_absent=review)
+    return VideoReport(status=status, signoff=review)
+
+
+def _signoff_review(cfg: ClientConfig, products: dict[str, ProductRecord]) -> SignoffReview | str:
+    """The client's newest sign-off sheet re-planned against the mapping as it is now — or why not.
+
+    Re-planned on every render, so §1d is never a record of what the sheet *would have* changed
+    when it arrived: a fill applied since reads as "already match", a row edited by hand since
+    reads as a conflict, and the counts correct themselves.
+
+    **It refuses rather than guess** when the sheet's headings no longer match the ones the column
+    choice was made against: somebody edited the sheet in place and a column moved, and planning
+    against the recorded positions would read one column as another — a filename as a barcode.
+    """
+    media = cfg.media
+    assert media is not None and media.video_map_path  # load_video_status returned a status
+    found = video_signoff_archive.newest(Path(media.video_map_path))
+    if isinstance(found, video_signoff_archive.Absent):
+        return video_signoff_archive.describe(found)
+    sheet, note = found
+    try:
+        grid = video_signoff.read_sheet(sheet)
+        vmap = load_video_map(Path(media.video_map_path))
+    except (OSError, zipfile.BadZipFile, ET.ParseError, VideoMapError) as exc:
+        return f"The newest sign-off sheet ({sheet.name}) could not be read: {exc}"
+    if grid is None:
+        return f"The newest sign-off sheet ({sheet.name}) has no row that could be a header."
+    for name, index in note.columns.items():
+        now = grid.header[index] if index < len(grid.header) else ""
+        if now != note.headers.get(name, ""):
+            return (
+                f"The newest sign-off sheet ({sheet.name}) has changed since its columns were "
+                f'chosen: the {name} column was headed "{note.headers.get(name, "")}" and is '
+                f'now "{now}". Choose the columns again where the sheet is uploaded.'
+            )
+    plan = video_signoff.plan(
+        grid,
+        vmap,
+        exported={product.gtin14 for product in products.values()},
+        languages=cfg.wordpress.languages,
+        where=note.columns,
+    )
+    return SignoffReview(sheet=sheet.name, given_name=note.given_name, at=note.at[:10], plan=plan)
 
 
 def _languages(client_id: str, issues: dict[str, list[SourceIssue]]) -> list[str]:
