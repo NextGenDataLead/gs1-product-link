@@ -89,7 +89,7 @@ one starts, so a misunderstanding surfaces immediately rather than at the first 
 | 30 min | **Clone and install**, on their machine, while you watch. Expect the Windows SmartScreen dialog. | The app window opens and the header reads **PRODUCTION** in red |
 | 15 min | **Put the four files in place** together. Point at `state.json` and say what it is again. | Preflight runs and reports a scope figure |
 | 30 min | **The export.** Have them produce a fresh one from MyGS1 *during the session*, drop it on the Data screen, parse it, and read the data-quality report. | They can name three things that would hold a product |
-| 30 min | **The video mapping.** Open the Video mapping screen. Generate the candidate report. Walk two or three real rows: read the score, the matched value, the field it came from. | They correctly explain why a French field won an English filename |
+| 30 min | **The video mapping.** On the Data screen, open *The mapping, file by file* under step 3. Generate the candidate report. Walk two or three real rows: read the score, the matched value, the field it came from. | They correctly explain why a French field won an English filename |
 | 20 min | **A `pages` run on two products**, end to end, gates and all — then open the two pages in a browser together. | They looked at the page, not at the log |
 
 Leave `links` for the second session. It is the irreversible half, and there is nothing to gain

@@ -298,15 +298,17 @@ They will have sent a spreadsheet or a list, not YAML. The route:
 
 1. **Put the video files in the two folders first.** Everything below is checked against what is
    actually on disk.
-2. **Get every file listed.** Open the app → **Video mapping** (below the line in the left strip)
-   → **Add files that are on disk but not in the mapping**. That appends a row per new file with
+2. **Get every file listed.** Open the app → **Data** → open the fold **The mapping, file by file**
+   (under step 3) → **Add files that are on disk but not in the mapping**. That appends a row per new file with
    an empty barcode, and leaves every existing row alone.
    *Starting completely from scratch instead?* See §10 for the one command that drafts the whole
    file. It **overwrites** `mapping.yml`, so it is only for a first draft — never once real
    answers are in there.
 3. **Fill in the barcodes.** Two ways, and the spreadsheet way is much faster for a long list:
-   - **In the app**, one file at a time: click a row, read the suggestions, type or click a
-     barcode, then **Save the mapping**. It keeps the previous version as `mapping.yml.bak`.
+   - **In the app**, from the client's own spreadsheet: upload it in step 3 of the Data screen,
+     say which column is which, and apply the rows it would fill. Or one file at a time in *The
+     mapping, file by file*: click a row, read the suggestions, type or click a barcode, then
+     **Save the mapping**. It keeps the previous version as `mapping.yml.bak`.
    - **In Excel**, if Noviplast's delivery is already a list of filename + barcode. Put filenames
      in column A and barcodes in column B, and build the lines with a formula:
      ```

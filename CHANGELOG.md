@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The batch is the spine: the video work is part of the Data screen.** Data now reads in the
+  order a batch is assembled — **1** the product selection list, **2** the GS1 export, **3** the
+  client's video sign-off sheet with the coverage figures under it and *The mapping, file by file*
+  folded below, **4** choose and save — with jump links under the title. The mapping fold is built
+  the first time it opens (a virtual-scroll table built while folded opened as a dozen rows over a
+  blank band). Unsaved row edits live in a per-client `MappingSession`, so they survive every redraw,
+  every write re-reads the file, and a mapping edit re-marks the batch's Video column **in place**
+  without costing a single tick. The sign-off upload refuses a GS1 export by name.
+- **§1 of the data-quality report: which selected products are waiting on a video, and on what.**
+  1a every held product with a mark per language and what it waits on; 1b products with two videos
+  confirmed in one language (the tool attaches neither, and the gate still admits them — said, not
+  silently fixed); 1c the files with no barcode yet, the one list not narrowed to the selection, now
+  with the folder gaps the check always found and the report never showed; 1d the client's newest
+  sign-off sheet **re-planned against the mapping on every render**, with rejections listed by the
+  sheet's own row number. The Summary's video counts come from the same join.
+- **Every sign-off sheet is kept**, dated, in `videos/signoff/`, with the column choice and the
+  headings it was made against in `signoff.json` — so the report can re-read it, and refuses in
+  words if the sheet was edited in place since.
+- **`democlient` has videos.** `make_demo_export` also writes placeholder video files, a
+  `mapping.yml` the editor accepts and `test-uploads/video-signoff.xlsx` (barcode column
+  `current_gtin`, one row per import outcome), so the whole Data screen rehearses without a real
+  client.
 - **The example client has an export it can actually parse, so rehearsals stop being run against
   the live one.** `democlient` is defined in `clients.example.yml` and has been since the beginning,
   but it had no workbook — only a stand-in whose `products.json` was seeded directly — so it could
@@ -132,6 +154,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text true every time and needed once, never a warning or a count.
 
 ### Changed
+- **The data-quality report is renumbered, and §6 keeps its number.** One section inserted, one
+  absorbed: §1 Video (new) · §2 copy blocker (was 1) · §3 inferred claims (was 2) · §4 MyGS1 fixes,
+  4a/4b (was 3) · §5 translated (was 4) · §6 Categories (unchanged). The old *§5 Video mapping
+  backlog* is §1c — one document must not carry two video backlogs.
+- **`/videos` is gone**, and with it the rail's *Video mapping* entry: the mapping decides whether a
+  product can be published at all, so it belongs where the batch is chosen. The rail's lower half is
+  Setup and Runs.
+- **The video backlog is recomputed from the mapping on every render**, dated by the mapping's own
+  last change, instead of read from `video_map_issues.json`, which only `build_video_map --check`
+  writes. On the pilot that file said 118; the mapping had 18.
+- **Red buttons are for writes that cannot be undone, and only on Publish and Setup.** *Save the
+  mapping* and the sign-off Apply are blue; both keep a backup and refuse a candidate that lost a row.
 - **`lib/process_list.py` is the only reader of the control file.** `read_process_list` returns the
   whole table as a `ProcessListSheet`; `load_process_list` is that call plus `listed_gtins()`.
   `ProcessListSheet` moved here from `ui/`, unchanged.

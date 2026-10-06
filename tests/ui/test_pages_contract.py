@@ -41,7 +41,18 @@ PAGE_MODULES: Final = (
     "ui.pages.content",
     "ui.pages.publish",
     "ui.pages.runs",
-    "ui.pages.video_map",
+    # ``ui.pages.video_map`` was deleted on purpose, not dropped from a pattern: the video mapping
+    # moved onto the Data screen as two panels (see PANEL_MODULES), and a surviving route would be
+    # a second live editor of one client-sign-off file with no knowledge of the first's session.
+)
+
+#: Every component module — a part of a screen that lives outside ``ui/pages/`` so that more than
+#: one screen, or one long screen, can render it. Listed by hand for the same reason as the
+#: screens; ``ui.batch_view`` was the first and was never import-checked until this list existed.
+PANEL_MODULES: Final = (
+    "ui.batch_view",
+    "ui.video_map_panel",
+    "ui.video_signoff_panel",
 )
 
 #: Routes that are registered but deliberately absent from the rail, with how they are reached.
@@ -50,13 +61,15 @@ PAGE_MODULES: Final = (
 #:
 #: Empty, and kept anyway. ``/videos`` lived here for as long as the rail was a single numbered
 #: list of six — an entry would have numbered a detour as a step of the run. Splitting the rail
-#: into the batch and the tools gave it somewhere honest to sit, so it moved. The next screen that
+#: into the batch and the tools gave it somewhere honest to sit, so it moved; later it folded into
+#: the Data screen and the route went altogether. The next screen that
 #: is genuinely reachable only from another one still needs a home, and it should be this rather
 #: than a quiet exemption.
 UNLISTED_ROUTES: Final[dict[str, str]] = {}
 
-#: NiceGUI's own machinery, not ours.
-_INTERNAL_PREFIXES: Final = ("/_nicegui", "/docs", "/redoc", "/openapi.json")
+#: NiceGUI's own machinery, not ours. ``/favicon.ico`` is registered when the app starts, so it
+#: appears once any test in the session has run the app's lifespan (the Data screen smoke test).
+_INTERNAL_PREFIXES: Final = ("/_nicegui", "/docs", "/redoc", "/openapi.json", "/favicon.ico")
 
 #: A hardcoded step eyebrow — what every screen used to pass to ``theme.heading``.
 _STEP_LITERAL: Final = re.compile(r"Step \d+")
@@ -76,6 +89,12 @@ def _our_routes() -> set[str]:
 @pytest.mark.parametrize("module", PAGE_MODULES)
 def test_every_screen_imports(module: str) -> None:
     """A screen that cannot be imported cannot be opened, and only the terminal would say so."""
+    importlib.import_module(module)
+
+
+@pytest.mark.parametrize("module", PANEL_MODULES)
+def test_every_panel_imports(module: str) -> None:
+    """A panel that cannot be imported takes every screen that renders it down with it."""
     importlib.import_module(module)
 
 
@@ -133,7 +152,7 @@ def test_the_batch_is_the_four_screens_an_operator_repeats() -> None:
     silently and puts a "Step 5" eyebrow on something nobody runs per batch.
     """
     assert [screen.label for screen in theme.WAVE] == ["Data", "Content", "Preflight", "Publish"]
-    assert [screen.label for screen in theme.TOOLS] == ["Setup", "Runs", "Video mapping"]
+    assert [screen.label for screen in theme.TOOLS] == ["Setup", "Runs"]
     assert not any(screen.eyebrow.startswith("Step") for screen in theme.TOOLS)
 
 
@@ -168,3 +187,29 @@ def test_no_screen_spells_its_own_step_number() -> None:
                 "theme.eyebrow('<rail label>') so the rail stays the only place the order "
                 "is written"
             )
+
+
+def _step_numbers(path: Path) -> list[int]:
+    """Every literal ``step=N`` a screen passes — to ``theme.section`` or to a panel that renders
+    its own section, as the Data screen's video sign-off does."""
+    numbers = []
+    for node in ast.walk(ast.parse(path.read_text("utf-8"), filename=str(path))):
+        if not isinstance(node, ast.Call):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "step" and isinstance(keyword.value, ast.Constant):
+                numbers.append(int(keyword.value.value))
+    return numbers
+
+
+@pytest.mark.parametrize("module", PAGE_MODULES)
+def test_a_screens_numbered_steps_run_one_to_n_with_no_gap(module: str) -> None:
+    """``step=4`` is an int, so the check above — which looks for "Step 3" strings — cannot see it.
+
+    The Data screen was renumbered when the selection list became step 1 and the videos step 3;
+    a renumber that skipped a number, or gave two sections the same one, would read to the
+    operator as a missing step. Alternatives for one step (a client with no ``process_list``
+    renders a different section under the same number) count once.
+    """
+    numbers = sorted(set(_step_numbers(_MODULE_PATHS[module])))
+    assert numbers == list(range(1, len(numbers) + 1)), f"{module} numbers its steps {numbers}"

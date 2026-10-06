@@ -16,7 +16,7 @@ from typing import Final
 from nicegui import ui
 
 from ui import theme
-from ui.pages import content, data, preflight, publish, runs, setup, video_map
+from ui.pages import content, data, preflight, publish, runs, setup
 
 #: Loopback only, and a port unlikely to collide with a dev server the operator also runs.
 HOST: Final = "127.0.0.1"
@@ -38,15 +38,6 @@ def _preflight() -> None:
 @ui.page("/data")
 def _data() -> None:
     data.render()
-
-
-# In the rail, under "This machine" rather than among the numbered four — see ``theme.TOOLS``,
-# which is where the split into a numbered batch and unnumbered tools settled what this is: one
-# input file's editor, not a step of the run. It is also reached from the Data screen, by the band
-# that counts how much of the batch this file is holding.
-@ui.page("/videos")
-def _video_map() -> None:
-    video_map.render()
 
 
 @ui.page("/content")

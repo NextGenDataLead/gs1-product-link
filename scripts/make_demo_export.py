@@ -4,7 +4,12 @@ Usage:
     python -m scripts.make_demo_export [CLIENT_ID] [--config PATH] [--dry-run] [--force]
 
 Builds a GDSN datapool workbook and a product scope list from :mod:`lib.demo_export` and writes
-each to the path that client's config declares — ``export.path`` and ``process_list.path``. The
+each to the path that client's config declares — ``export.path`` and ``process_list.path``. With a
+``media`` block it also writes the videos from :mod:`lib.demo_videos`: a placeholder file per
+mapping row into ``media.video_folders``, ``mapping.yml`` at ``media.video_map_path``, and the
+client's sign-off sheet under ``test-uploads/``, where an operator rehearsing the Data screen picks
+it up — so every video state the screen and the report distinguish can be rehearsed without a real
+client. The
 paths come from the config rather than from a flag because that is the only place the rest of the
 tool will look: an export written anywhere else is invisible to it, which is the single most
 common way a run quietly uses the wrong data.
@@ -37,10 +42,11 @@ from pathlib import Path
 
 import openpyxl
 
-from lib import demo_export
+from lib import demo_export, demo_videos
 from lib.config import ClientConfig, get_client
 from lib.env import load_env
 from lib.errors import ConfigError
+from lib.input_layout import client_root
 
 _log = logging.getLogger("scripts.make_demo_export")
 
@@ -72,7 +78,40 @@ def _targets(client: ClientConfig) -> list[tuple[Path, str]]:
     targets = [(Path(client.export.path), "GS1 Data Source export")]
     if client.process_list is not None:
         targets.append((Path(client.process_list.path), "product scope list"))
+    return targets + _video_targets(client)
+
+
+#: Where the demo sign-off sheet goes, under the client folder: the folder ``test-uploads/`` that
+#: the README in it says is "kept on purpose so there is always something safe to practise with".
+_SIGNOFF_SHEET = Path("test-uploads") / "video-signoff.xlsx"
+
+
+def _video_targets(client: ClientConfig) -> list[tuple[Path, str]]:
+    """The mapping, the sign-off sheet and every placeholder video — empty with no media block."""
+    media = client.media
+    if media is None or not media.video_map_path:
+        return []
+    targets = [(Path(media.video_map_path), "video mapping")]
+    root = client_root(Path(client.export.path))
+    if root is not None:
+        targets.append((root / _SIGNOFF_SHEET, "video sign-off sheet"))
+    for language, names in demo_videos.files().items():
+        folder = media.video_folders.get(language)
+        if folder is not None:
+            targets += [(Path(folder) / name, f"{language} video") for name in names]
     return targets
+
+
+def _write_videos(targets: list[tuple[Path, str]]) -> None:
+    """Write each video target by what it is. Only reached once nothing refused."""
+    for path, what in targets:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if what == "video mapping":
+            path.write_text(demo_videos.mapping_text(), encoding="utf-8")
+        elif what == "video sign-off sheet":
+            _write_workbook(path, {"Sign-off": demo_videos.signoff_rows()})
+        else:
+            path.write_bytes(demo_videos.PLACEHOLDER)
 
 
 def _refusals(targets: list[tuple[Path, str]], force: bool) -> list[str]:
@@ -130,18 +169,26 @@ def main(argv: list[str] | None = None) -> int:
     grids = demo_export.sheet_grids()
     scope = demo_export.process_list_rows()
     export_path, _ = targets[0]
+    videos = _video_targets(client)
     if not args.dry_run:
         _write_workbook(export_path, grids)
-        if len(targets) > 1:
-            _write_workbook(targets[1][0], {"Scope": scope})
+        if client.process_list is not None:
+            _write_workbook(Path(client.process_list.path), {"Scope": scope})
+        _write_videos(videos)
 
     verb = "Would write" if args.dry_run else "Wrote"
     print(
         f"{verb} {len(grids)} sheets and {len(demo_export.CATALOGUE)} products to {export_path}",
         file=sys.stderr,
     )
-    if len(targets) > 1:
-        print(f"{verb} {len(scope) - 1} barcodes to {targets[1][0]}", file=sys.stderr)
+    if client.process_list is not None:
+        print(f"{verb} {len(scope) - 1} barcodes to {client.process_list.path}", file=sys.stderr)
+    if videos:
+        print(
+            f"{verb} a video mapping, a sign-off sheet and "
+            f"{sum(len(n) for n in demo_videos.files().values())} placeholder videos",
+            file=sys.stderr,
+        )
     for refusal in refusals:
         print(f"note: {refusal} — a real run would refuse", file=sys.stderr)
     return _EXIT_OK

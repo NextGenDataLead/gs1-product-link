@@ -26,7 +26,7 @@ The tool does both. You work through four screens in order, and each one has a s
 
 | | Screen | Its job |
 |---|---|---|
-| 1 | **Data** | Load the product spreadsheet, and choose which products this batch covers |
+| 1 | **Data** | Bring the batch's files — product list, GS1 export, the client's video sign-off — and choose which products it covers |
 | 2 | **Content** | Get the marketing text for those products, and read it |
 | 3 | **Preflight** | Check everything that can be checked before anything is written |
 | 4 | **Publish** | Do it, one confirmation at a time |
@@ -37,7 +37,7 @@ A **batch** is one pass through those four. You will do it again next time there
 
 ## The window
 
-<img src="images/rail.png" alt="The navigation rail: four numbered steps — Data, Content, Preflight, Publish — then a rule and, under the heading This machine, Setup, Runs and Video mapping." width="240">
+<img src="images/rail.png" alt="The navigation rail: four numbered steps — Data, Content, Preflight, Publish — then a rule and, under the heading This machine, Setup and Runs." width="240">
 
 The strip down the left is how you move around. It has two halves, and the difference matters:
 
@@ -45,9 +45,9 @@ The strip down the left is how you move around. It has two halves, and the diffe
   a small fact about where you stand — how old the spreadsheet is, how many rows are planned. They
   are facts, not ticks: "today" tells you the file is recent, not that it is the right file.
 - **Below the line is everything else.** *Setup* is the site settings, set up once and rarely
-  touched. *Runs* is the record of what happened. *Video mapping* is one file's editor — and where
-  you upload the sign-off sheet when the client sends it back (see **Video mapping** below). None
-  of them is a step; you go there when you need them.
+  touched. *Runs* is the record of what happened. Neither is a step; you go there when you need
+  them. (The video mapping used to live here too. It is part of **Data** now, because it decides
+  whether a product can be published at all.)
 
 At the top it always says which client you are working on and, underneath, the environment:
 **TEST** in grey, or **PRODUCTION** in red. That tag is the single most important thing in the
@@ -65,36 +65,38 @@ and whoever helps you knows exactly what happened.
 
 ## Step 1 — Data
 
-<img src="images/data.png" alt="The Data screen as it opens: two numbered upload steps side by side, a line saying to upload both files before choosing products, a folded Data quality section, and a greyed-out Next button." width="900">
+<img src="images/data.png" alt="The Data screen as it opens: jump links, then steps 1 and 2 side by side — upload the product selection list, upload the GS1 export — a Batch in force card saying neither has been uploaded, and step 3, upload the client's video sign-off sheet, with the coverage figures under it." width="900">
 
-*This is the screen as it opens.* The product table and the quality report appear once **both**
-files are uploaded — see below.
+*This is the screen as it opens.* The product table and the quality report appear once the list
+and the export are both there — see below.
 
-**What this screen is for:** the two spreadsheets a batch is made of, and choosing what goes in it.
+**What this screen is for:** everything a batch is made of, measured against the one thing you
+chose — your list of products. In order: the **product list**, the **GS1 export**, the client's
+**video sign-off sheet**, and then **choosing** which products this batch covers. The links under
+the title jump to each.
 
-Every heading has a small **ⓘ** beside it. Hover it to read what that file is and where it goes;
-press it to keep the text on screen. Nothing you need to act on is hidden behind one — a warning
-always sits on the page in a coloured band.
-
-> **Every batch starts with both files.** Until you have uploaded a GS1 export *and* a product
-> list in this visit, there is no table to choose from, no quality report, and the Next button is
-> greyed out. That is deliberate: a screen that offered you a batch built from whatever was left
-> on the machine would let a run inherit the previous batch's scope without anyone deciding to.
+Every heading has a small **ⓘ** beside it. Press it to read what that file is and where it goes.
+Nothing you need to act on is hidden behind one — a warning always sits on the page in a coloured
+band.
 
 **What you do:**
 
-1. **Upload the GS1 export** — the product *data*. Press the picker and choose the spreadsheet.
-   It is read as soon as it arrives: a spinner runs while that happens, then a line says how many
-   products it found. **If it is not a GS1 export, or something the tool needs is missing, it is
-   put back and nothing changes** — the file you had is still there, and the reason appears on
-   screen. There is no separate "check" or "read" button; uploading is both.
-2. **Upload the product selection list** — which barcodes this batch may touch. Same again: it is read
-   before it replaces anything, so a file that will not open is refused and the list you were
-   using stays put.
+1. **Upload the product selection list** — which barcodes this batch may touch. Press the picker
+   and choose the spreadsheet. It is read before it replaces anything, so a file that will not open
+   is refused and the list you were using stays put. Until the export arrives, the table in step 4
+   is simply your whole list: nothing can be matched yet.
+2. **Upload the GS1 export** — the product *data*. It is read as soon as it arrives: a spinner runs
+   while that happens, then a line says how many products it found. **If it is not a GS1 export,
+   or something the tool needs is missing, it is put back and nothing changes** — the file you had
+   is still there, and the reason appears on screen. Uploading is the check; there is no other
+   button.
 
-   Steps 1 and 2 sit side by side because they are one act: bring both files. Do them in either
-   order.
-3. **Choose the products and save.** Two tables. The top one, *Not in the GS1 export*, lists
+   Steps 1 and 2 sit side by side because they are one act: bring both files. The card under them,
+   **Batch in force**, says which two files the batch is now made of.
+3. **Upload the client's video sign-off sheet** — when the client sends it back. See *Videos*
+   below. If there is no new sheet, skip this step; the figures under it, **Coverage**, still tell
+   you how many products have a confirmed video in every language.
+4. **Choose the products and save.** Two tables. The top one, *Not in the GS1 export*, lists
    barcodes you asked for that the export has no row for — nothing else in the tool will mention
    them again. It has no tick boxes on purpose: there is nothing to choose, because nothing can
    process them. They stay in your list; to drop one, remove it in the spreadsheet and upload
@@ -109,12 +111,17 @@ always sits on the page in a coloured band.
    Use the filter box to find a product; filtering changes only what you can see, never what is
    ticked. The table's own footer says how many are selected.
 
-   Got the ticks wrong? Upload the list again in step 2 — that resets every tick. There is no
-   undo button, because every batch starts with both uploads anyway.
+   The **Video** column says what each held product is still waiting for: *needs fr*, *needs nl,
+   fr*, or *two videos in nl*. Empty means it has what it needs. The band under the table adds them
+   up: *"4 of the 12 ticked product(s) are held … so a run would publish 8."*
+
+   Got the ticks wrong? **Start again from my uploaded file** (under step 1) puts your list back
+   exactly as you sent it.
 
 **Data quality** at the bottom is folded away. It rebuilds every time you open this screen, so
-opening the fold always shows a current report — what is missing or wrong in the spreadsheet
-itself. Those values get fixed in MyGS1, not here.
+opening the fold always shows a current report — what is missing in the spreadsheet itself, and,
+in its first section, which products are waiting on a video and on what. Those values get fixed in
+MyGS1 or by the client, not here. The report is written to be forwarded to the client.
 
 When you are done, press **Next** at the foot of the screen. It does two things: it saves your
 choice of products, and it takes you on to step 2. There is no separate save button.
@@ -127,9 +134,57 @@ as you want it. Pressing then confirms with **Saved**.
 **Done looks like:** both files uploaded without a refusal, nothing unexpected in the *Not in the
 GS1 export* table, and the table footer showing exactly the number of products you mean selected.
 
-**Stop if:** either upload is refused, or a red band says a file cannot be read. Upload it again,
+**Stop if:** an upload is refused, or a red band says a file cannot be read. Upload it again,
 or ask the maintainer for a fresh copy — do not go looking for the file in a folder to replace by
 hand.
+
+### Videos — and the sheet the client sends back
+
+A product is only published once somebody has said which video belongs to it, **in every
+language**. Until then the tool holds that product back: the Video column says what it is waiting
+for, and a run skips it and reports success. That is why a batch of 110 products can publish 62.
+
+Two kinds of waiting look the same in a count and are different jobs. *needs fr* can mean a French
+video exists and nobody has said which product it is — or that no French video has been made yet.
+The data-quality report's first section lists both sides, so you and the client can tell them
+apart.
+
+**Importing the client's sheet.** You do not have to type barcodes in. When the client sends back
+the spreadsheet with the barcodes filled in, upload it in **step 3**.
+
+<img src="images/data-videos.png" alt="Step 3 after a sheet was uploaded: three boxes saying which column is the language, the filename and the barcode; six figures — 1 would be filled, 1 conflict, 0 two-video clashes, 1 rejected, 1 already set, 1 left blank; tables for each; a Fill in button; and the coverage figures." width="760">
+
+- It needs three columns: the language, the video filename, and the barcode. **You say which is
+  which** — the tool reads the sheet's headings, fills the three boxes in with its best guess, and
+  you change any it got wrong. So the columns can be called anything at all, and any other columns
+  are ignored. The table can sit below a title row, on any sheet of the workbook.
+- **Check those three boxes every time, even when they look right.** Reading the wrong column as
+  the barcode is the one mistake here that would put the wrong video on a product.
+- **Uploading changes nothing in the mapping.** It shows you what the sheet would do, row by row,
+  and only then offers a button that does it. The sheet itself is kept, dated, so the data-quality
+  report can always say what it still changes.
+- **A row the client has already signed off is never overwritten.** If the sheet disagrees with a
+  barcode already in the mapping, it is listed as a *conflict* and left exactly as it is. Settle
+  those yourself, in *The mapping, file by file*.
+- Rows it cannot use say why, and name the row number in the spreadsheet so you can point the
+  client at it. The commonest one: a barcode that arrived as **8.7132E+12** because the column was
+  formatted as a number. Ask for that column to be set to text and the file sent again — the digits
+  are genuinely gone from the file, so there is nothing to recover at this end.
+- Dropped a GS1 export in this slot by mistake? It is refused, by name. Nothing is kept.
+
+**The mapping, file by file** is folded under step 3. Open it to see every video file, per
+language, and what it maps to.
+
+<img src="images/data-mapping.png" alt="The mapping, file by file, opened: a table of every video file with its language, state — confirmed, skip or needs a GTIN — its barcode and whether the file is on disk, then Add files that are on disk but not in the mapping, and Save the mapping." width="760">
+
+Click a row and you get a box for the barcode, plus a few suggestions — those are a machine guess
+at which product the filename means, nothing more. Nothing is written until you press *Save the
+mapping*, and the previous version of the file is always kept beside it. Rows you have changed but
+not saved stay changed whatever else you do on the screen — but while there are any, a sheet import
+refuses to run, because it rewrites the whole file and would otherwise throw your edits away.
+
+After a save or an import, everything on the screen that counts from the mapping updates by itself:
+the coverage figures, the Video column, and the report. Your ticks are untouched.
 
 ---
 
@@ -292,44 +347,6 @@ nothing in it can be edited here — it is there to be read, with the reason bes
 
 **Everything on this screen has a consequence written under it.** Read that line before changing a
 field. Switching the GS1 environment to production makes you type the client's name in full first.
-
----
-
-## Video mapping — and the sheet the client sends back
-
-A product is only published once somebody has said which video belongs to it, **in every
-language**. Until then the tool holds that product back: it appears on the Data screen with *no
-video yet* in the Video column, and a run skips it and reports success. That is why a batch of 110
-products can publish 24.
-
-**Video mapping** is where that is settled. It lists every video file, per language, and what it
-maps to. Click a row and you get a box for the barcode, plus a few suggestions — those are a
-machine guess at which product the filename means, nothing more. Nothing is written until you press
-*Save the mapping*, and the previous version of the file is always kept beside it.
-
-### Importing the client's sheet
-
-You do not have to type them in. When the client sends back the spreadsheet with the barcodes
-filled in, upload it under **Import the client's sign-off sheet**.
-
-- It needs three columns: the language, the video filename, and the barcode. **You say which is
-  which** — the tool reads the sheet's headings, fills the three boxes in with its best guess, and
-  you change any it got wrong. So the columns can be called anything at all, and any other columns
-  are ignored. The table can sit below a title row, on any sheet of the workbook.
-- **Check those three boxes every time, even when they look right.** Reading the wrong column as
-  the barcode is the one mistake here that would put the wrong video on a product.
-- **Uploading changes nothing.** It shows you what the sheet would do, row by row, and only then
-  offers a button that does it.
-- **A row the client has already signed off is never overwritten.** If the sheet disagrees with a
-  barcode already in the mapping, it is listed as a *conflict* and left exactly as it is. Settle
-  those yourself, in the table lower down.
-- Rows it cannot use say why, and name the row number in the spreadsheet so you can point the
-  client at it. The commonest one: a barcode that arrived as **8.7132E+12** because the column was
-  formatted as a number. Ask for that column to be set to text and the file sent again — the digits
-  are genuinely gone from the file, so there is nothing to recover at this end.
-
-If you have unsaved row edits further down the screen, the import refuses to run until you save or
-discard them — it rewrites the whole file, and would otherwise throw your edits away.
 
 ---
 

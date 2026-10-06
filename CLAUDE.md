@@ -81,7 +81,10 @@ without `--force`**, because the one thing it could destroy is a client's real e
 products: nine publish, three are held — one by each mandatory rule — and the scope list carries one
 barcode no export row does. `lib/demo_export.py` is what it is made of, `lib/gdsn_layout.py` the
 header shape, and `tests/lib/test_demo_export.py` checks both against `clients.example.yml` rather
-than restating it.
+than restating it. It also writes the videos (`lib/demo_videos.py`): placeholder files, a
+`mapping.yml` in the row-per-line shape the editor accepts, and `test-uploads/video-signoff.xlsx` —
+so the video half of the Data screen rehearses too. Until that sheet is applied, four products are
+held for want of a video; after it, the nine publish again.
 
 The gates themselves live in **`lib/gates.py`** as data, and `flow-orchestrator/SKILL.md` carries a
 **Gate index** table that `tests/lib/test_gates.py` checks in both directions. Adding a gate to one

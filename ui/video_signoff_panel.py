@@ -1,0 +1,379 @@
+"""The client's video sign-off sheet as a panel: upload it, say which column is which, apply.
+
+A component, not a screen — see :mod:`ui.video_map_panel` for why the video work moved onto the
+screen where the batch is chosen. This is the half that reads a document from outside; that one is
+the half that edits ``mapping.yml``. They share one :class:`~ui.video_map_panel.MappingSession`, so
+an import and a row edit can never write over each other.
+"""
+
+from __future__ import annotations
+
+import zipfile
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Final, NamedTuple
+from xml.etree import ElementTree as ET
+
+from nicegui import events, ui
+
+from lib import video_signoff, video_signoff_archive, xlsx
+from lib.config import ClientConfig
+from lib.errors import VideoMapError
+from lib.media_video import load_video_map
+from ui import context, theme
+from ui.video_map_panel import MappingSession
+
+
+def render(  # noqa: PLR0913 — the client, the mapping, what to redraw after, and its place
+    cfg: ClientConfig,
+    cid: str,
+    session: MappingSession,
+    *,
+    applied: Callable[[], None],
+    archived: Callable[[], None],
+    step: int | None = None,
+    below: Callable[[], None] | None = None,
+) -> None:
+    """Take the client's filled-in sheet, show what it would change, and apply only the fills.
+
+    This is the one input the pilot has been waiting on, and until now it arrived as a spreadsheet
+    somebody then re-typed into the rows below. The retyping is the whole cost: 173 rows, and one
+    transposed digit maps a video to the wrong product with nothing downstream to catch it.
+
+    **Nothing is written by the upload.** Reading the sheet produces a plan, the plan is shown, and
+    a second press applies it — the same shape as the row-by-row editor, where edits accumulate and
+    one Save writes them. :mod:`lib.video_signoff` decides; this only renders and asks.
+
+    **Every sheet is kept**, dated, in ``videos/signoff/`` beside the mapping it is about, and the
+    column choice is noted beside it once all three are set (:mod:`lib.video_signoff_archive`).
+    That is what lets the data-quality report re-read the newest sheet against the mapping on every
+    render and say what it *still* changes. Kept only once it has been read as a spreadsheet and is
+    not a GS1 export — an unreadable file or the wrong document filed as "the client's newest
+    sheet" would make the report describe something nobody sent.
+    """
+    with theme.section(
+        "Upload the client's video sign-off sheet",
+        step=step,
+        anchor="video-signoff",
+        explain=(
+            "The spreadsheet the client fills in — `python -m scripts.report_video_candidates` "
+            "writes the one to send them, and this reads it back. Any sheet with a language, a "
+            "filename and a barcode column will do, whatever they are called: the headings are "
+            "read where they are recognised and you can change any of them, so a sheet nobody "
+            "anticipated still works. Every other column is ignored, and the table may sit below "
+            "a title row on any sheet of the workbook. Uploading writes nothing: it shows what "
+            "the sheet would change, and a second press applies it. Only rows that are still "
+            "unset are ever filled — a row already signed off is reported as a conflict and left "
+            "exactly as it is. Each sheet is kept, dated, in videos/signoff/, with the columns "
+            "you chose, so the data-quality report can say what it still changes."
+        ),
+    ):
+
+        async def receive(event: events.UploadEventArguments) -> str:
+            # Refused rather than merged: an import rewrites the whole file, so one on top of
+            # unsaved row edits would write the import and silently drop the edits — one success
+            # message for both. The one refusal the session keeps: it is about the text itself.
+            if session.dirty():
+                theme.notify_problem(
+                    f"Save or discard your {len(session.pending)} unsaved row edit(s) first — an "
+                    "import rewrites the whole file and would drop them."
+                )
+                return "Not read — there are unsaved edits in the mapping."
+
+            data = await event.file.read()
+            try:
+                grid = video_signoff.read_sheet(data)
+            except (OSError, zipfile.BadZipFile, ET.ParseError) as exc:
+                theme.notify_problem(f"That file could not be read as a spreadsheet: {exc}")
+                return "Not read."
+            if grid is None:
+                theme.notify_problem(
+                    "No sheet in that file has a row that could be a header — every row is empty "
+                    "or holds a single cell."
+                )
+                return "Not read — no sheet with a header row in it."
+            if video_signoff.looks_like_an_export(grid):
+                theme.notify_problem(
+                    "That looks like a GS1 Data Source export, not a sign-off sheet — it belongs "
+                    "on the Data screen."
+                )
+                return "Not read — that is a GS1 export."
+            try:
+                stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+                sheet = video_signoff_archive.archive(session.path, data, stamp=stamp)
+            except OSError as exc:
+                theme.notify_problem(f"The sheet could not be kept, so nothing was read: {exc}")
+                return "Not kept."
+
+            exported = {product.gtin14 for product in context.load_products(cid)}
+            plan_box.clear()
+            with plan_box:
+                _columns_then_plan(
+                    grid,
+                    session,
+                    cfg,
+                    applied,
+                    exported,
+                    kept=_Kept(sheet, event.file.name, stamp),
+                )
+            # The sheet is on disk now, so the report has something new to re-plan — even though
+            # nothing has been applied to the mapping.
+            archived()
+            return f"{len(grid.rows)} row(s) read from {event.file.name}, and kept as {sheet.name}."
+
+        theme.upload("Sign-off sheet (.xlsx)", receive, busy="Reading the sheet…")
+        # After the upload it fills: upload, then which column is which, then what it would do.
+        plan_box = ui.column().classes("w-full")
+        if below is not None:
+            below()
+
+
+class _Kept(NamedTuple):
+    """The archived copy of the sheet on screen, and what it was called when it arrived."""
+
+    sheet: Path
+    given_name: str
+    stamp: str
+
+
+def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what it is checked against
+    grid: xlsx.Grid,
+    session: MappingSession,
+    cfg: ClientConfig,
+    applied: Callable[[], None],
+    exported: set[str],
+    *,
+    kept: _Kept,
+) -> None:
+    """Which column is which — always shown, pre-filled from a guess — and the plan below it.
+
+    **The guess is never the last word.** The accepted spellings in :mod:`lib.video_signoff` are a
+    list of names somebody here imagined a client might use, and it was wrong about the only real
+    sheet that exists: it calls the barcode ``current_gtin``, so the import refused the file it was
+    built for. A list like that cannot be finished by thinking harder, so it pre-fills three pickers
+    instead of deciding anything, and the operator — who has the file open in Excel — settles it.
+
+    Shown even when the guess is right, because that is what makes the guess auditable. A column
+    silently read as the barcode is the one mistake here that would publish the wrong video.
+    """
+    detected = video_signoff.columns(grid) or {}
+    options = video_signoff.column_options(grid)
+    chosen: dict[str, Any] = {}
+
+    # A subhead, not a section: this sits inside the upload's own section, and a section inside a
+    # section is the nesting ``theme.subhead`` exists to avoid.
+    theme.subhead("Which column is which")
+    ui.label(
+        "Read from the sheet's own headings where they are recognised. Change any of them — "
+        "nothing is written by looking."
+    ).classes("note")
+    with ui.row().classes("gap-4 flex-wrap mt-2"):
+        for name, label in _COLUMN_LABELS:
+            select = ui.select(
+                options, value=detected.get(name), label=label, clearable=True
+            ).props("dense outlined")
+            select.classes("min-w-56")
+            chosen[name] = select
+    # Below the pickers: you say which column is which, then read what that makes the sheet do.
+    plan_box = ui.column().classes("w-full mt-4")
+
+    def redraw() -> None:
+        where = {
+            name: int(select.value) for name, select in chosen.items() if select.value is not None
+        }
+        plan_box.clear()
+        with plan_box:
+            if len(where) < len(_COLUMN_LABELS):
+                missing = [label for name, label in _COLUMN_LABELS if name not in where]
+                theme.band(
+                    f"Choose a column for: {', '.join(missing).lower()}. Then this will say what "
+                    "the sheet would change.",
+                    "quiet",
+                )
+                return
+            # Noted on every complete choice, so the report re-plans against the columns the
+            # operator settled on last — with the headings they had, so a sheet edited in place
+            # afterwards is refused there rather than read with a column moved.
+            problem = video_signoff_archive.record(
+                session.path,
+                sheet=kept.sheet,
+                given_name=kept.given_name,
+                at=datetime.strptime(kept.stamp, "%Y%m%dT%H%M%S").replace(tzinfo=UTC).isoformat(),
+                rows=len(grid.rows),
+                columns=where,
+                headers={name: grid.header[index] for name, index in where.items()},
+            )
+            if problem is not None:
+                theme.notify_warning(f"The sheet is kept, but {problem}.")
+
+            def replan() -> video_signoff.SignoffPlan:
+                return video_signoff.plan(
+                    grid,
+                    load_video_map(session.path),
+                    exported=exported,
+                    languages=cfg.wordpress.languages,
+                    where=where,
+                )
+
+            def done() -> None:
+                applied()
+                redraw()  # the plan now describes the file after the fills: nothing left to apply
+
+            _plan_view(replan(), session, done, replan)
+
+    for select in chosen.values():
+        select.on_value_change(redraw)
+    redraw()
+
+
+#: The three columns the import needs, labelled as the operator would describe them rather than as
+#: the mapping names them. "Barcode" and not "GTIN": nobody outside this project says GTIN.
+_COLUMN_LABELS: Final = (
+    ("language", "Language"),
+    ("file", "Video filename"),
+    ("gtin", "Barcode"),
+)
+
+
+#: The plan's tables, in the order somebody acts on them: what will happen, then what they have to
+#: decide, then what is wrong with the sheet. ``unchanged`` and ``blank`` get no table — they are
+#: counts, and on a real sheet they are most of it.
+_PLAN_SECTIONS: Final = (
+    (
+        video_signoff.FILL,
+        "Would be filled in ({n})",
+        "These rows are unset in the mapping, and the sheet gives a barcode the export carries.",
+    ),
+    (
+        video_signoff.CONFLICT,
+        "Conflicts ({n}) — nothing here will be touched",
+        "The mapping already carries a different confirmed GTIN for these files. A confirmed row "
+        "is client sign-off, so an import never overwrites one: settle these by hand, in "
+        "The mapping, file by file, below.",
+    ),
+    (
+        video_signoff.AMBIGUOUS,
+        "Two videos for one product ({n}) — nothing here will be applied",
+        "The sheet gives these barcodes a second video in the same language. A product can carry "
+        "only one video per language: applying both would attach neither, and the page would "
+        "publish without a video. Keep one and mark the other `skip` in The mapping, "
+        "file by file, below.",
+    ),
+    (
+        video_signoff.REJECTED,
+        "Could not be used ({n})",
+        "Each of these says what is wrong with it. A barcode problem is fixed in the sheet and the "
+        "file uploaded again; an unknown filename usually means the mapping has no row for that "
+        "video yet — Add files that are on disk, in The mapping, file by file, adds it.",
+    ),
+)
+
+
+def _plan_view(
+    decided: video_signoff.SignoffPlan,
+    session: MappingSession,
+    applied: Callable[[], None],
+    replan: Callable[[], video_signoff.SignoffPlan],
+) -> None:
+    """What the sheet would do, then the button that does it.
+
+    The counts come first and are deliberately not summed: a fill is work the import does, a
+    conflict is work a person has to settle, a rejection is a defect in the sheet, and a blank is a
+    row the client has not reached yet. Added together, the only number anybody could act on would
+    be the one that disappeared.
+    """
+    with ui.row().classes("gap-12 items-end mb-4"):
+        theme.figure(str(len(decided.of(video_signoff.FILL))), "row(s) would be filled")
+        theme.figure(str(len(decided.of(video_signoff.CONFLICT))), "conflict(s)")
+        theme.figure(str(len(decided.of(video_signoff.AMBIGUOUS))), "two-video clash(es)")
+        theme.figure(str(len(decided.of(video_signoff.REJECTED))), "rejected")
+        theme.figure(str(len(decided.of(video_signoff.UNCHANGED))), "already set")
+        theme.figure(str(len(decided.of(video_signoff.BLANK))), "left blank")
+
+    for outcome, title, note in _PLAN_SECTIONS:
+        rows = decided.of(outcome)
+        if rows:
+            _plan_table(title.format(n=len(rows)), note, rows)
+
+    fills = decided.edits
+    if not fills:
+        theme.band("Nothing in that sheet is new, so there is nothing to apply.", "quiet")
+        return
+
+    def apply() -> None:
+        if session.dirty():
+            theme.notify_problem(
+                f"Save or discard your {len(session.pending)} unsaved row edit(s) first — "
+                "applying the sheet rewrites the whole file and would drop them."
+            )
+            return
+        # **Re-planned now**, against the file as it is at this moment — never the fills computed
+        # when the plan was drawn. In between, a row may have been set by hand in the mapping below
+        # (or by another window), and applying the old fills would overwrite it: a confirmed row is
+        # client sign-off, and the import's whole contract is that it never touches one.
+        session.reload()
+        if session.problem is not None:
+            theme.notify_problem(session.problem)
+            return
+        try:
+            now = replan().edits
+        except VideoMapError as exc:
+            theme.notify_problem(str(exc))
+            return
+        if not now:
+            theme.notify_warning(
+                "Nothing left to fill — every row this sheet would fill has been set since it was "
+                "read."
+            )
+            applied()
+            return
+        backup = session.write_edits(now)
+        if backup is None:
+            return
+        changed_since = len(fills) - len(now)
+        # Everything that counts from the mapping recounts — the coverage figures, the mapping
+        # table, the batch's Video column — because the session re-read the file after writing.
+        applied()
+        # A dialog, not a toast: this says how many signed-off rows changed and where the previous
+        # version went, which is more than a toast has time for.
+        theme.announce(
+            f"{len(now)} row(s) filled in",
+            f"The previous version of the mapping is kept beside it as {backup.name}. Everything "
+            "on this screen that counts from the mapping has been recounted."
+            + (
+                f" {changed_since} row(s) the sheet offered had been set since it was read, and "
+                "were left as they are."
+                if changed_since > 0
+                else ""
+            ),
+        )
+
+    theme.action(f"Fill in the {len(fills)} row(s) from this sheet", apply)
+
+
+def _plan_table(title: str, note: str, rows: tuple[video_signoff.SignoffRow, ...]) -> None:
+    """One outcome's rows. The spreadsheet row number comes first: it is the address of the fix."""
+    theme.subhead(title)
+    ui.label(note).classes("note")
+    columns = [
+        {"name": "line", "label": "Row", "field": "line", "align": "left", "sortable": True},
+        {"name": "language", "label": "Lang", "field": "language", "align": "left"},
+        {"name": "file", "label": "File", "field": "file", "align": "left", "sortable": True},
+        {"name": "given", "label": "In the sheet", "field": "given", "align": "left"},
+        {"name": "gtin", "label": "Read as", "field": "gtin", "align": "left"},
+        {"name": "detail", "label": "Why", "field": "detail", "align": "left"},
+    ]
+    data = [
+        {
+            "line": row.line,
+            "language": row.language,
+            "file": row.file,
+            "given": row.given,
+            "gtin": row.gtin or "—",
+            "detail": row.detail,
+        }
+        for row in rows
+    ]
+    table = ui.table(columns=columns, rows=data, row_key="line", pagination=0)
+    table.classes("w-full mt-2").props("dense flat bordered")
