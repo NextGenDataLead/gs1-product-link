@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 
     from lib.config import WordPressConfig
     from lib.gdsn import GdsnSource
+    from lib.media_video import VideoGate
 
 _log = logging.getLogger(__name__)
 
@@ -288,7 +289,32 @@ def _has_no_resolver_link(prior: StateEntry) -> bool:
     return not prior.gs1_link_set_hash
 
 
-def _classify(prior: StateEntry | None, content_hash: str) -> PlanClassification:
+def video_arrived(prior: StateEntry, video_file: str | None) -> bool:
+    """Whether this page now gets a video file other than the one it was published with.
+
+    ``prior.video_file is None`` means the entry predates the field, so there is nothing to compare
+    with and the answer is no — every page published before it was recorded was published under
+    the rule that required a video, so none of them is waiting for one. ``""`` is a recorded "no
+    video", which is what makes a product published without one come back once the client confirms
+    a file: its content hash does not cover the video, so without this it would stay UNCHANGED, and
+    the page would go on serving no video while every count said it had one.
+
+    Only an *arriving* file counts. A confirmed file that disappears from the mapping does not
+    reclassify the page, because the write path cannot take a video off a page — it only sets one —
+    so re-running it would record "no video" over a page that still shows the old one. Nor does a
+    file the last write could not prepare (``prior.video_failed``): retrying it would rewrite the
+    live page on every run and fail the same way.
+    """
+    return (
+        bool(video_file)
+        and prior.video_file is not None
+        and video_file not in {prior.video_file, prior.video_failed}
+    )
+
+
+def _classify(
+    prior: StateEntry | None, content_hash: str, video_file: str | None = None
+) -> PlanClassification:
     """Classify one unit against its prior state entry.
 
     HELD is tested **before** the hash, because a deliberately unpublished product's hash
@@ -312,6 +338,8 @@ def _classify(prior: StateEntry | None, content_hash: str) -> PlanClassification
         return PlanClassification.HELD
     if _has_no_resolver_link(prior):
         return PlanClassification.CHANGED
+    if video_arrived(prior, video_file):
+        return PlanClassification.CHANGED
     if prior.content_hash == content_hash:
         return PlanClassification.UNCHANGED
     return PlanClassification.CHANGED
@@ -322,6 +350,7 @@ def _row_diff(
     classification: PlanClassification,
     title: str,
     target_url: str,
+    video_file: str | None = None,
 ) -> dict[str, tuple[str, str]] | None:
     """The field-level diff for a plan row, or ``None`` when there is nothing to show.
 
@@ -346,6 +375,8 @@ def _row_diff(
         diff["title"] = (prior.title, title)
     if prior.wp_url != target_url:
         diff["target_url"] = (prior.wp_url, target_url)
+    if video_arrived(prior, video_file):
+        diff["video"] = (prior.video_file or "none", video_file or "")
     return diff or None
 
 
@@ -388,6 +419,7 @@ def _plan_unit(  # noqa: PLR0913 — one argument per input the classification i
     patterns: _Patterns,
     hashed: ProductRecord,
     prior: StateEntry | None,
+    video_file: str | None = None,
 ) -> _UnitPlan:
     """Build one unit's slug, target URL, content hash and classification.
 
@@ -411,7 +443,7 @@ def _plan_unit(  # noqa: PLR0913 — one argument per input the classification i
         gtin14=product.gtin14,
     )
     content_hash = compute_content_hash(hashed, language, target_url)
-    return _UnitPlan(slug, target_url, content_hash, _classify(prior, content_hash))
+    return _UnitPlan(slug, target_url, content_hash, _classify(prior, content_hash, video_file))
 
 
 def classify_units(
@@ -419,6 +451,7 @@ def classify_units(
     state: State,
     languages: list[str],
     wordpress: WordPressConfig,
+    video_gate: VideoGate | None = None,
 ) -> dict[tuple[str, str], PlanClassification]:
     """How every ``(GTIN, language)`` would classify — with **no** skip rule applied.
 
@@ -459,7 +492,8 @@ def classify_units(
     for product in products:
         for language in languages:
             prior = state.entries.get(product.gtin, {}).get(language)
-            unit = _plan_unit(product, language, wordpress, patterns, product, prior)
+            video_file = video_gate.file_for(product.gtin, language) if video_gate else None
+            unit = _plan_unit(product, language, wordpress, patterns, product, prior, video_file)
             classified[(product.gtin, language)] = unit.classification
     return classified
 
@@ -489,7 +523,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     require_generated_copy: bool = False,
     require_hero_image: bool = False,
     mandatory_sources: dict[str, GdsnSource] | None = None,
-    video_gtins: frozenset[str] | None = None,
+    video_gate: VideoGate | None = None,
     hash_source: Mapping[str, ProductRecord] | None = None,
 ) -> PlanDiff:
     """Classify each ``(GTIN, language)`` against prior state, building plan rows (§4.8, §8.2).
@@ -545,10 +579,12 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
             success on every surface that counts pages. Named for the question rather than for
             one of the two maps: it took ``gdsn_map`` alone, which made ``required`` on a
             ``gdsn_extras`` entry a silent no-op here while the report was free to honour it.
-        video_gtins: GTIN-14s with a client-confirmed video in every language. When given, a
-            product outside it is held in all languages (E24). Passing the set rather than the
-            video map keeps this function free of file reading, and lets the caller decide what
-            "confirmed" means.
+        video_gate: The client's :class:`~lib.media_video.VideoGate`. When given, a product it
+            does not admit is held in all languages (E24) — no confirmed video in some language
+            (unless ``media.publish_without_video``), or two confirmed files in one. It is also
+            what a published page's recorded video is compared with, so a page that went live
+            without one reclassifies CHANGED once the client confirms a file. Passing a built gate
+            rather than a path keeps this function free of file reading.
         hash_source: The records that *define* the content, keyed by GTIN, when they differ from
             the records being planned — see "What the hash is allowed to notice" above. Must cover
             every planned product: a partial mapping is a caller bug, and raising a ``KeyError``
@@ -584,14 +620,14 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                 for language in languages
             )
             continue
-        if video_gtins is not None and canon_gtin(product.gtin) not in video_gtins:  # E24
+        if video_gate is not None and not video_gate.admits(product.gtin):  # E24
+            detail = (
+                "two confirmed videos in one language (held until the client picks one)"
+                if canon_gtin(product.gtin) in video_gate.clashing
+                else "no client-confirmed video in every language (held)"
+            )
             skipped.extend(
-                _skip(
-                    product.gtin,
-                    language,
-                    SkipReason.NO_CONFIRMED_VIDEO,
-                    "no client-confirmed video in every language (held)",
-                )
+                _skip(product.gtin, language, SkipReason.NO_CONFIRMED_VIDEO, detail)
                 for language in languages
             )
             continue
@@ -620,7 +656,8 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                 continue
             title = product.product_name.values[language]
             prior = state.entries.get(product.gtin, {}).get(language)
-            unit = _plan_unit(product, language, wordpress, patterns, hashed, prior)
+            video_file = video_gate.file_for(product.gtin, language) if video_gate else None
+            unit = _plan_unit(product, language, wordpress, patterns, hashed, prior, video_file)
             tagline = product.generated_tagline
             if (
                 require_generated_copy  # E21
@@ -645,7 +682,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                     slug=unit.slug,
                     content_hash=unit.content_hash,
                     target_url=unit.target_url,
-                    diff=_row_diff(prior, unit.classification, title, unit.target_url),
+                    diff=_row_diff(prior, unit.classification, title, unit.target_url, video_file),
                     product=product,
                 )
             )

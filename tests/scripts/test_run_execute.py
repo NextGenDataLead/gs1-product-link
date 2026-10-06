@@ -972,6 +972,118 @@ def test_a_truncated_upload_fails_the_row_instead_of_publishing(
     assert "1500000 bytes" in outcome["error"]  # says what was stored vs sent
 
 
+def test_state_and_log_record_which_video_each_page_got(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The filename for a page that got one, ``""`` for one that did not — and the two differ.
+
+    ``""`` is what lets a page published without a video come back when the client confirms one;
+    a page recording nothing (``None``) would be indistinguishable from one written before the
+    field existed, and never be reconsidered.
+    """
+    monkeypatch.chdir(tmp_path)
+    mapping = _write_video_map(tmp_path, {"nl": [{"file": "vid_nl.mp4", "gtin": GTIN_A}], "fr": []})
+    cfg = _media_config(
+        video_folders={"nl": str(tmp_path / "vnl"), "fr": str(tmp_path / "vfr")},
+        video_map_path=str(mapping),
+    )
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    entries = load_state("acme").entries[GTIN_A]
+    assert entries["nl"].video_file == "vid_nl.mp4"
+    assert entries["fr"].video_file == ""
+    (log,) = (tmp_path / "output" / "acme" / "runs").glob("*/run.jsonl")
+    logged = {o["language"]: o["video_file"] for o in map(json.loads, log.read_text().splitlines())}
+    assert logged == {"nl": "vid_nl.mp4", "fr": ""}
+
+
+def test_a_live_run_leaves_a_note_naming_the_pages_without_a_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mapping = _write_video_map(tmp_path, {"nl": [{"file": "vid_nl.mp4", "gtin": GTIN_A}], "fr": []})
+    cfg = _media_config(
+        video_folders={"nl": str(tmp_path / "vnl"), "fr": str(tmp_path / "vfr")},
+        video_map_path=str(mapping),
+    )
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    (note,) = (tmp_path / "output" / "acme" / "runs").glob("*/data-quality.md")
+    text = note.read_text()
+    assert f"| {GTIN_A} | fr |" in text
+    assert f"| {GTIN_A} | nl |" not in text
+
+
+def test_a_video_that_will_not_prepare_keeps_the_pages_record_and_is_not_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ACF field is left alone, so the page still shows what it had; state must say so.
+
+    The file is confirmed but absent from its folder, and the transcode step refuses it. Recording
+    ``""`` would list a page that still has its old video as "without a video", and the next plan
+    would retry the same file — rewriting the live page and GS1 record on every run.
+    """
+    monkeypatch.chdir(tmp_path)
+    mapping = _write_video_map(tmp_path, {"nl": [{"file": "gone.mpg", "gtin": GTIN_A}]})
+    cfg = _media_config(
+        video_folders={"nl": str(tmp_path / "vnl")},
+        video_map_path=str(mapping),
+        video_transcode=True,
+    )
+    _install(monkeypatch, cfg)
+    monkeypatch.setattr(run_execute, "prepare_video", lambda *a, **k: None)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    entry = load_state("acme").entries[GTIN_A]["nl"]
+    assert entry.video_failed == "gone.mpg"
+    assert entry.video_file == ""  # a new page: it had no video before either
+    (note,) = (tmp_path / "output" / "acme" / "runs").glob("*/data-quality.md")
+    assert "| gone.mpg |" in note.read_text()
+
+
+def test_a_failed_replacement_keeps_the_video_the_page_already_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ACF field is not cleared, so the page still serves ``old.mp4`` — and state says so."""
+    monkeypatch.chdir(tmp_path)
+    mapping = _write_video_map(tmp_path, {"nl": [{"file": "old.mp4", "gtin": GTIN_A}]})
+    cfg = _media_config(video_folders={"nl": str(tmp_path / "vnl")}, video_map_path=str(mapping))
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl")))
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+    assert load_state("acme").entries[GTIN_A]["nl"].video_file == "old.mp4"  # precondition
+
+    _write_video_map(tmp_path, {"nl": [{"file": "new.mpg", "gtin": GTIN_A}]})
+    monkeypatch.setattr(run_execute, "prepare_video", lambda *a, **k: None)
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    entry = load_state("acme").entries[GTIN_A]["nl"]
+    assert entry.video_file == "old.mp4"
+    assert entry.video_failed == "new.mpg"
+
+
+def test_a_dry_run_leaves_no_data_quality_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing went live, so nothing went live incomplete."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config()
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl")))
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--dry-run"]) == 0
+
+    assert not list((tmp_path / "output" / "acme" / "runs").glob("*/data-quality.md"))
+
+
 def _pilot_map(tmp_path: Path, both: list[str]) -> str:
     """Write a mapping.yml confirming each GTIN in `both` in both nl and fr; return its path."""
     entries = {
@@ -1027,6 +1139,46 @@ def test_pilot_restrict_all_blocked_writes_nothing(
     assert run_execute.main(["acme", "--plan", str(plan)]) == 0
 
     assert rec.wp == []  # nothing published
+
+
+def test_publish_without_video_writes_the_unmapped_gtin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config(
+        video_map_path=_pilot_map(tmp_path, [GTIN_A]),
+        restrict_to_mapped_gtins=True,
+        publish_without_video=True,
+    )
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_B, "nl")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    assert {kw["meta"]["gtin"] for kw in rec.wp} == {GTIN_A, GTIN_B}
+
+
+def test_two_videos_in_one_language_stay_blocked_when_publishing_without_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hard allowlist agrees with the plan: even a hand-made ``--plan`` cannot publish it."""
+    monkeypatch.chdir(tmp_path)
+    mapping = _write_video_map(
+        tmp_path,
+        {
+            "nl": [{"file": "a.mp4", "gtin": GTIN_A}, {"file": "a.mpg", "gtin": GTIN_A}],
+            "fr": [{"file": "a_fr.mp4", "gtin": GTIN_A}],
+        },
+    )
+    cfg = _media_config(
+        video_map_path=str(mapping), restrict_to_mapped_gtins=True, publish_without_video=True
+    )
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_B, "nl")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    assert {kw["meta"]["gtin"] for kw in rec.wp} == {GTIN_B}
 
 
 def test_a_mapping_that_will_not_load_blocks_every_gtin(

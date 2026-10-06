@@ -60,12 +60,18 @@ _MAP = VideoMap(
 _ALL = [_BOTH, _NL_ONLY, _NOTHING, _CLASH, _CLASH_ONLY]
 
 
-def _status(files: dict[str, list[str]] | None = None) -> VideoStatus:
+def _status(
+    files: dict[str, list[str]] | None = None, *, publish_without_video: bool = False
+) -> VideoStatus:
     on_disk = files
     if on_disk is None:
         on_disk = {lang: [e.file for e in entries] for lang, entries in _MAP.by_language.items()}
     return video_status(
-        _MAP, [_product(g) for g in _ALL], languages=_LANGUAGES, files_by_language=on_disk
+        _MAP,
+        [_product(g) for g in _ALL],
+        languages=_LANGUAGES,
+        files_by_language=on_disk,
+        publish_without_video=publish_without_video,
     )
 
 
@@ -345,3 +351,17 @@ def test_the_summary_counts_the_sheet_rows_that_need_a_person() -> None:
 
 def test_a_review_renders_deterministically() -> None:
     assert _render(VideoReport(_status(), _review())) == _render(VideoReport(_status(), _review()))
+
+
+def test_publishing_without_video_lists_the_bare_products_and_holds_only_the_clashes() -> None:
+    section = _section(_render(VideoReport(_status(publish_without_video=True))))
+
+    assert "### 1a. Published without a video in some language" in section
+    assert "**2** publish with no video in at least one language" in section
+    assert "**2** are held because two videos are confirmed for one language" in section
+    one_a = section.split("### 1a.")[1].split("### 1b.")[0]
+    assert _NL_ONLY in one_a
+    assert _NOTHING in one_a
+    assert _CLASH not in one_a
+    assert _CLASH_ONLY not in one_a
+    assert "it is in 1a too" not in section

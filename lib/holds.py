@@ -16,7 +16,7 @@ on products nobody is publishing, and a content-review gate three times larger t
 which is the surest way to make a review gate go unread.
 
 **Every predicate here is the plan's own.** :func:`lib.mandatory.missing_mandatory` over
-:attr:`~lib.config.ExportConfig.all_sources` for E23, :func:`lib.media_video.fully_mapped_gtins`
+:attr:`~lib.config.ExportConfig.all_sources` for E23, :class:`lib.media_video.VideoGate`
 for E24, and the same blank-``image_url`` test for E22. A hand-rolled second opinion about what
 ``required`` means is exactly how "E23 means blank dimensions" came to be believed, and E23 decides
 whether a SKU may publish at all. :func:`lib.state.diff_against_state` still *applies* these rules;
@@ -45,9 +45,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from lib.errors import VideoMapError
 from lib.generator import generation_context, translation_gaps
 from lib.mandatory import missing_mandatory
-from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
+from lib.media_video import load_video_map, video_gate
 from lib.records import SkipReason
 
 if TYPE_CHECKING:
@@ -55,23 +56,38 @@ if TYPE_CHECKING:
     from lib.gdsn import GdsnSource
     from lib.generator import GenerationContext
     from lib.mandatory import MandatoryGap
+    from lib.media_video import VideoGate
     from lib.records import ProductRecord
 
 
-def confirmed_video_gtins(cfg: ClientConfig) -> frozenset[str] | None:
-    """GTINs with a client-confirmed video in every language, or ``None`` when unrestricted.
+def video_gate_for(cfg: ClientConfig) -> VideoGate | None:
+    """The client's :class:`~lib.media_video.VideoGate`, or ``None`` when it has no video mapping.
 
-    ``None`` disables the E24 hold entirely, which is what a client without
-    ``media.restrict_to_mapped_gtins`` wants — not an empty set, which would hold everything.
+    Without ``media.restrict_to_mapped_gtins`` the gate is built **unenforced**: it holds nothing
+    (not a closed gate, which would hold everything) but still answers which file each page gets,
+    which is how a page published without a video gets one later.
 
     Raises:
-        VideoMapError: If the configured video map cannot be read. ``run_plan`` lets that stop the
-            run; a caller that must not fail over a diagnostic — the doctor — catches it.
+        VideoMapError: If the configured video map cannot be read **and** the rule is enforced.
+            ``run_plan`` lets that stop the run; a caller that must not fail over a diagnostic — the
+            doctor — catches it. Unenforced, an unreadable map yields ``None``: it decides nothing
+            about what may publish, so it must not start failing runs it never failed before.
     """
     media = cfg.media
-    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
+    if media is None or not media.video_map_path:
         return None
-    return fully_mapped_gtins(load_video_map(Path(media.video_map_path)), cfg.wordpress.languages)
+    try:
+        vmap = load_video_map(Path(media.video_map_path))
+    except VideoMapError:
+        if media.restrict_to_mapped_gtins:
+            raise
+        return None
+    return video_gate(
+        vmap,
+        cfg.wordpress.languages,
+        publish_without_video=media.publish_without_video,
+        enforced=media.restrict_to_mapped_gtins,
+    )
 
 
 def held_units(
@@ -96,9 +112,9 @@ def held_units(
         product failing two is attributed the way the plan will attribute it.
 
     Raises:
-        VideoMapError: See :func:`confirmed_video_gtins`.
+        VideoMapError: See :func:`video_gate_for`.
     """
-    video = confirmed_video_gtins(cfg)
+    video = video_gate_for(cfg)
     sources = cfg.export.all_sources
     languages = cfg.wordpress.languages
     require_hero = cfg.media is not None and cfg.media.require_hero_image
@@ -123,7 +139,7 @@ def held_units(
     for product in products:
         if _unfillable_gaps(product, sources, languages, context):  # E23
             reason = SkipReason.MISSING_MANDATORY_FIELD
-        elif video is not None and canon_gtin(product.gtin) not in video:  # E24
+        elif video is not None and not video.admits(product.gtin):  # E24
             reason = SkipReason.NO_CONFIRMED_VIDEO
         elif require_hero and not (product.image_url or "").strip():  # E22
             reason = SkipReason.BLANK_HERO_IMAGE

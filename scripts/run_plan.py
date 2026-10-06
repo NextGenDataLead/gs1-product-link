@@ -52,8 +52,8 @@ from lib.config import ClientConfig, get_client
 from lib.env import load_env
 from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError, VideoMapError
 from lib.generator import generation_context, load_results, merge_generated
-from lib.holds import confirmed_video_gtins
-from lib.media_video import canon_gtin
+from lib.holds import video_gate_for
+from lib.media_video import VideoGate, canon_gtin
 from lib.process_list import load_process_list
 from lib.records import (
     Plan,
@@ -64,7 +64,7 @@ from lib.records import (
     SourceIssue,
     State,
 )
-from lib.state import diff_against_state, load_state
+from lib.state import diff_against_state, load_state, video_arrived
 
 _log = logging.getLogger("scripts.run_plan")
 
@@ -120,10 +120,10 @@ def _gate(
 
 
 def _pilot_gate(
-    cfg: ClientConfig,
     products: list[ProductRecord],
     state: State,
     excluded: dict[str, int],
+    gate: VideoGate | None,
     *,
     include_published: bool = False,
 ) -> tuple[list[ProductRecord], dict[str, int]]:
@@ -141,9 +141,10 @@ def _pilot_gate(
     of rewriting live pages, which the operator must choose rather than inherit — and every
     surface that reports a plan says the flag was used (see :class:`~lib.records.PlanSummary`).
 
-    A no-op unless ``media.restrict_to_mapped_gtins``. Extends the tally with ``already_present``
-    (published *and* resolvable). ``run_execute`` hard-enforces the mapped-only rule independently,
-    so a ``--plan`` slice can still update an already-present pilot GTIN.
+    A no-op unless ``media.restrict_to_mapped_gtins`` (``gate`` is ``None`` otherwise). Extends
+    the tally with ``already_present`` (published *and* resolvable, *and* not waiting for a video
+    the client has since confirmed — see below). ``run_execute`` hard-enforces the video rule
+    independently, so a ``--plan`` slice can still update an already-present pilot GTIN.
 
     **It no longer drops GTINs that lack a confirmed video.** That was a silent exclusion: the
     product vanished before classification, so it appeared in no plan, no skip list and no report —
@@ -162,18 +163,26 @@ def _pilot_gate(
     every subsequent plan and the two-step flow could not complete. Requiring a link-set hash in
     every language keeps a half-published GTIN in the queue until its resolver record exists.
     Entries written before ``--only`` existed all carry a real hash, so no prior state reclassifies.
+
+    **Nor does it mean "has every video it is going to get".** Under ``media.publish_without_video``
+    a product goes live with no video in a language, and when the client later confirms one, this
+    gate is the first thing that would hide it: dropped as present, it never reaches the
+    classification that would notice the arrival (:func:`lib.state.video_arrived`), and the page
+    serves no video forever while every run reports nothing to do. So a GTIN with an arriving video
+    stays in, and the classification decides — CHANGED for that language only.
     """
     excluded = {**excluded, "already_present": 0}
-    if include_published:
-        return products, excluded
-    media = cfg.media
-    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
+    if include_published or gate is None or not gate.enforced:
         return products, excluded
 
     present = {
         canon_gtin(gtin)
         for gtin, entries in state.entries.items()
         if all(entry.gs1_link_set_hash for entry in entries.values())
+        and not any(
+            video_arrived(entry, gate.file_for(gtin, language))
+            for language, entry in entries.items()
+        )
     }
     kept: list[ProductRecord] = []
     for product in products:
@@ -297,8 +306,9 @@ def _build_plan(
         candidates, excluded = products, {"not_listed": 0}
 
     state = load_state(cfg.client_id)
+    gate = video_gate_for(cfg)
     candidates, excluded = _pilot_gate(
-        cfg, candidates, state, excluded, include_published=include_published
+        candidates, state, excluded, gate, include_published=include_published
     )
 
     candidates, category_issues = _assign_categories(cfg, candidates)
@@ -316,7 +326,7 @@ def _build_plan(
         require_generated_copy=cfg.generator is not None,
         require_hero_image=cfg.media is not None and cfg.media.require_hero_image,
         mandatory_sources=cfg.export.all_sources,
-        video_gtins=confirmed_video_gtins(cfg),
+        video_gate=gate,
         hash_source=feed_view,
     )
     counts = {c: sum(1 for row in rows if row.classification is c) for c in PlanClassification}

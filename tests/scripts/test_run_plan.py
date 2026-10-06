@@ -207,7 +207,7 @@ def _write_video_map(tmp_path: Path, both: list[str], nl_only: list[str] | None 
     return str(path)
 
 
-def _present_state(*gtins: str, content_hash: str = "h") -> None:
+def _present_state(*gtins: str, content_hash: str = "h", video_file: str | None = None) -> None:
     entry = StateEntry(
         wp_page_id=1,
         wp_url="https://wp.test/x",
@@ -215,6 +215,7 @@ def _present_state(*gtins: str, content_hash: str = "h") -> None:
         content_hash=content_hash,
         gs1_link_set_hash="h",
         last_run=datetime(2026, 1, 1, tzinfo=UTC),
+        video_file=video_file,
     )
     save_state(State(client_id="acme", entries={g: {"nl": entry} for g in gtins}))
 
@@ -310,6 +311,70 @@ def test_pilot_gate_drops_gtin_once_resolver_link_exists(
     _write_products(products, [_product(GTIN_A)])
 
     assert run_plan.main(["acme", "--products", str(products)]) == 0
+    assert _read_plan().rows == []
+
+
+def test_publish_without_video_plans_the_gtin_missing_a_french_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A], nl_only=[GTIN_B])
+    media = MediaConfig(
+        restrict_to_mapped_gtins=True, publish_without_video=True, video_map_path=vmap
+    )
+    _patch_client(monkeypatch, _bilingual_config(media))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(g) for g in (GTIN_A, GTIN_B)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+
+    plan = _read_plan()
+    assert {r.gtin for r in plan.rows} == {GTIN_A, GTIN_B}
+    assert not [s for s in plan.skipped if s.reason is SkipReason.NO_CONFIRMED_VIDEO]
+
+
+def test_a_live_gtin_whose_video_has_since_arrived_comes_back_into_the_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dropped as "already present", it would never reach the classification that sees the video.
+
+    It went live with no nl video (``video_file=""``); the client has since confirmed one. Without
+    the arrival check the pilot gate removes it before classification and the page serves no video
+    on every later run, while each run reports nothing to do.
+    """
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    media = MediaConfig(
+        restrict_to_mapped_gtins=True, publish_without_video=True, video_map_path=vmap
+    )
+    _patch_client(monkeypatch, _bilingual_config(media))
+    _present_state(GTIN_A, video_file="")
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+
+    rows = {r.language: r for r in _read_plan().rows if r.gtin == GTIN_A}
+    assert rows["nl"].classification is PlanClassification.CHANGED
+    assert rows["nl"].diff is not None
+    assert rows["nl"].diff["video"] == ("none", f"{GTIN_A}_nl.mp4")
+
+
+def test_a_live_gtin_with_its_video_recorded_stays_out_of_the_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    media = MediaConfig(
+        restrict_to_mapped_gtins=True, publish_without_video=True, video_map_path=vmap
+    )
+    _patch_client(monkeypatch, _bilingual_config(media))
+    _present_state(GTIN_A, video_file=f"{GTIN_A}_nl.mp4")
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+
     assert _read_plan().rows == []
 
 
@@ -444,6 +509,22 @@ def test_pilot_gate_noop_when_flag_off(tmp_path: Path, monkeypatch: pytest.Monke
 
     assert run_plan.main(["acme", "--products", str(products)]) == 0
     assert {r.gtin for r in _read_plan().rows} == {GTIN_A, GTIN_B}  # unrestricted
+
+
+def test_an_unrestricted_client_with_a_mapping_does_not_drop_live_gtins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate it now gets for arrivals is unenforced; "already present" is a pilot-only drop."""
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=False, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    _present_state(GTIN_A)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    assert GTIN_A in {r.gtin for r in _read_plan().rows}
 
 
 # --- Process-list gate --------------------------------------------------------

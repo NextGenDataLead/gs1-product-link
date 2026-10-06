@@ -58,6 +58,7 @@ from lib.preflight import (
     check_video_coverage,
     check_wordpress,
     in_scope,
+    load_video_status,
     run_checks,
     units_needing_copy,
     worst_status,
@@ -383,6 +384,43 @@ def test_an_unreadable_video_map_does_not_become_a_hold_count_of_zero(tmp_path: 
 
     assert "held for want" not in detail
     assert "so a run would publish" not in detail
+
+
+def test_publishing_without_video_says_how_many_go_live_without_one(tmp_path: Path) -> None:
+    """Nothing is held for a missing video, and the sentence says so — and counts what is bare."""
+    cfg = _make_config(
+        process_list=_write_process_list(tmp_path, [GTIN_A, GTIN_B]),
+        media=MediaConfig(
+            restrict_to_mapped_gtins=True,
+            publish_without_video=True,
+            video_map_path=_write_video_map(tmp_path, [GTIN_A], ["nl"]),
+        ),
+    )
+
+    detail = check_scope(cfg, [_product(GTIN_A), _product(GTIN_B)]).detail
+
+    assert "held" not in detail
+    assert "1 would publish with no video in at least one language" in detail
+
+
+def test_the_shared_video_join_carries_the_publish_without_video_setting(tmp_path: Path) -> None:
+    """The report and the Data screen both read this loader; it must not drop the setting.
+
+    Without it both would call 46 publishable products "held" while the run published them.
+    """
+    vmap = _write_video_map(tmp_path, [GTIN_B], ["nl"])  # GTIN_A has no video at all
+    for setting in (False, True):
+        cfg = _make_config(
+            media=MediaConfig(
+                restrict_to_mapped_gtins=True, publish_without_video=setting, video_map_path=vmap
+            )
+        )
+
+        status = load_video_status(cfg, [_product(GTIN_A)])
+
+        assert status is not None
+        assert [p.gtin for p in status.held] == ([] if setting else [GTIN_A])
+        assert [p.gtin for p in status.without_video] == ([GTIN_A] if setting else [])
 
 
 def test_scope_of_nothing_is_a_failure_not_a_quiet_pass(tmp_path: Path) -> None:

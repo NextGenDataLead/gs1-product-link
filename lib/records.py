@@ -335,6 +335,12 @@ class RunOutcome(BaseModel):
     failure is a call (a template error, a blocked sibling). ``None`` means "not recorded", and
     readers omit it rather than guessing — the same back-compat move :class:`StateEntry` makes
     with ``title``.
+
+    ``video_file`` is what the page was given this run: the mapping filename, ``""`` for none, and
+    ``None`` when the row wrote no page or the client attaches no videos. It is what the run's
+    data-quality note lists as "live without a video" — read from what was written, not from what
+    the mapping said beforehand. ``video_failed`` names a confirmed file this run could not prepare,
+    which the note lists separately: it is the operator's job (the file), not the client's.
     """
 
     gtin: str
@@ -348,6 +354,8 @@ class RunOutcome(BaseModel):
     qr_paths: list[str] = Field(default_factory=list)
     error: str | None = None
     failed_call: str | None = None
+    video_file: str | None = None
+    video_failed: str | None = None
 
 
 class SourceIssue(BaseModel):
@@ -424,6 +432,15 @@ class StateEntry(BaseModel):
     mirroring ``gs1_link_set_hash``, which is already duplicated across an entry's
     languages for exactly that reason.
 
+    ``video_file`` is the mapping filename the page was given, ``""`` for a page published with
+    no video, and ``None`` for an entry written before it was recorded. The content hash does not
+    cover the video, so this is the only thing that lets a page published without one come back
+    when the client confirms a file — ``lib.state._video_arrived`` reads it. ``None`` and ``""``
+    are different answers on purpose, the same distinction ``title`` draws. ``video_failed`` is a
+    confirmed file the last write could not prepare (absent from its folder, or refused by ffmpeg):
+    the page kept whatever video it had, and that file is not retried until the mapping names a
+    different one — otherwise every run would rewrite the live page and its GS1 record trying.
+
     An **empty** ``gs1_link_set_hash`` means "page published, resolver link never written"
     — what ``run_execute --only pages`` leaves behind. It is a real value, not a missing
     one: ``lib.state._classify`` reads it and reports the row CHANGED so the links half can
@@ -440,6 +457,8 @@ class StateEntry(BaseModel):
     title: str | None = None
     wp_status: str = "publish"
     retracted: bool = False
+    video_file: str | None = None
+    video_failed: str | None = None
 
     @model_validator(mode="before")
     @classmethod

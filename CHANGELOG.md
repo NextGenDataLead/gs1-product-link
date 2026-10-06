@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`media.publish_without_video` — a missing video no longer has to hold a product.** Off by
+  default, so nothing changes until a client sets it. With it on (and `restrict_to_mapped_gtins`), a
+  product with no confirmed video in some language publishes without one there; a product with
+  **two** confirmed videos in one language is still held, because the tool will not pick one for
+  the client. The plan, `run_execute`'s hard allowlist, the doctor and the report's §1 all read
+  one `lib.media_video.VideoGate`, so they cannot disagree. On noviplast: held 53 → 14,
+  publishable-and-not-live 44 → 83, 46 of them without a video somewhere.
+- **A page remembers which video it got (`StateEntry.video_file`), so a video confirmed later is
+  added.** The content hash does not cover the video, so a page published without one would have
+  classified UNCHANGED forever — and the "already present" drop would have hidden it before
+  classification anyway. Both now let it through: the language whose video arrived plans CHANGED
+  with a `video` diff. Entries written before the field (`None`) are never reclassified by it.
+  A confirmed file that will not prepare is recorded as `video_failed` and not retried until the
+  mapping names another, so it cannot make a live page republish on every run.
+- **Every live run writes `runs/{stamp}/data-quality.md`** listing the pages it published with no
+  video — read from what the run wrote (`RunOutcome.video_file`), not from the mapping afterwards, and
+  any confirmed file that could not be prepared.
 - **The batch is the spine: the video work is part of the Data screen.** Data now reads in the
   order a batch is assembled — **1** the product selection list, **2** the GS1 export, **3** the
   client's video sign-off sheet with the coverage figures under it and *The mapping, file by file*

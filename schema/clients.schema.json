@@ -476,6 +476,10 @@
           "type": "boolean",
           "description": "When true, run_plan/run_execute process only GTINs with a client-confirmed video in every language; every other GTIN is blocked."
         },
+        "publish_without_video": {
+          "type": "boolean",
+          "description": "Only with restrict_to_mapped_gtins. When true, a GTIN with no confirmed video in some language publishes without one there and is listed as missing it; a GTIN confirmed to two files in one language is still held."
+        },
         "require_hero_image": {
           "type": "boolean",
           "description": "When true, a GTIN whose source image_url is blank is held out of the plan (E22) — a hero image is treated as required. Off by default. A runtime image fetch failure still degrades gracefully (E7)."

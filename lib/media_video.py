@@ -278,6 +278,82 @@ def fully_mapped_gtins(vmap: VideoMap, languages: list[str]) -> frozenset[str]:
     return frozenset(set.intersection(*per_language))
 
 
+def clashing_gtins(vmap: VideoMap, languages: list[str]) -> frozenset[str]:
+    """Canonical GTIN-14s confirmed to two or more files in at least one of ``languages``.
+
+    The complement, within the confirmed cells, of what :func:`_confirmed_gtins` counts: these are
+    the products :meth:`VideoMap.resolve` attaches nothing to in that language because it cannot
+    tell which file is meant.
+    """
+    clashing: set[str] = set()
+    for language in languages:
+        entries = vmap.by_language.get(language, [])
+        counts = Counter(canon_gtin(e.gtin) for e in entries if state_of(e.gtin) == CONFIRMED)
+        clashing.update(gtin for gtin, count in counts.items() if count > 1)
+    return frozenset(clashing)
+
+
+@dataclass(frozen=True)
+class VideoGate:
+    """What the video rule lets publish, decided once from the mapping for every caller.
+
+    There is one rule and four places that apply it — the plan (E24), ``run_execute``'s hard
+    allowlist, the doctor and the Data screen — so it is an object they share rather than a set
+    each of them interprets. The set it replaced, :func:`fully_mapped_gtins`, could only say "these
+    may run"; once a product with *no* video may run, the allowed set is "everything except the
+    clashes", which no finite set of the mapping's GTINs can spell.
+
+    Attributes:
+        confirmed: GTINs with exactly one confirmed file in every language.
+        clashing: GTINs confirmed to two files in some language — held either way, because a page
+            cannot show two videos and the tool will not pick one for the client.
+        publish_without_video: ``media.publish_without_video``. When true, a product missing a
+            video in some language publishes without one there; when false it is held (the pilot
+            rule, unchanged).
+        vmap: The mapping itself, so a caller can ask which file a page gets
+            (:meth:`file_for`) through the same :meth:`VideoMap.resolve` ``run_execute`` attaches.
+        enforced: ``media.restrict_to_mapped_gtins``. When false the gate holds nothing and exists
+            only for :meth:`file_for` — a page published without a video still has to get it when
+            one is confirmed, whether or not the client restricts runs to mapped products.
+    """
+
+    confirmed: frozenset[str]
+    clashing: frozenset[str]
+    publish_without_video: bool
+    vmap: VideoMap
+    enforced: bool = True
+
+    def admits(self, gtin: str) -> bool:
+        """Whether a product may publish as far as videos are concerned."""
+        if not self.enforced:
+            return True
+        canonical = canon_gtin(gtin)
+        if canonical in self.clashing:
+            return False
+        return self.publish_without_video or canonical in self.confirmed
+
+    def file_for(self, gtin: str, language: str) -> str | None:
+        """The file this ``(gtin, language)`` page gets, or ``None`` when it gets none."""
+        return self.vmap.resolve(gtin, language)
+
+
+def video_gate(
+    vmap: VideoMap, languages: list[str], *, publish_without_video: bool, enforced: bool = True
+) -> VideoGate:
+    """Build the :class:`VideoGate` for ``vmap`` over ``languages``."""
+    return VideoGate(
+        confirmed=fully_mapped_gtins(vmap, languages),
+        clashing=clashing_gtins(vmap, languages),
+        publish_without_video=publish_without_video,
+        vmap=vmap,
+        enforced=enforced,
+    )
+
+
+#: Admits nothing. What a caller that must fail safe uses when the mapping will not load.
+CLOSED_GATE: Final = VideoGate(frozenset(), frozenset(), False, VideoMap(by_language={}))
+
+
 def load_video_map(path: Path) -> VideoMap:
     """Load and validate the confirmed mapping YAML (``{lang: [{file, gtin}]}``).
 
