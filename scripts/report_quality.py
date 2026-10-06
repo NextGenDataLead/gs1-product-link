@@ -31,12 +31,13 @@ from pathlib import Path
 
 from lib.config import get_client, resolve_client_id
 from lib.env import load_env
-from lib.errors import ConfigError, ExportParseError, VideoMapError
+from lib.errors import ConfigError, ExportParseError
 from lib.mandatory import MandatoryGap, missing_mandatory
-from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
-from lib.preflight import in_scope
+from lib.media_video import canon_gtin
+from lib.preflight import in_scope, load_video_status
 from lib.quality_report import MatrixInput, render_quality_report
 from lib.records import ProductRecord, SourceIssue
+from lib.video_status import HAS_VIDEO
 
 _EXIT_OK = 0
 _EXIT_CONFIG_ERROR = 2
@@ -115,17 +116,14 @@ def _publish_blocks(
         if (found := missing_mandatory(product, cfg.export.all_sources, languages))
     }
 
-    media = cfg.media
-    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
+    if cfg.media is None or not cfg.media.restrict_to_mapped_gtins:
         return gaps, []
-    try:
-        confirmed = fully_mapped_gtins(load_video_map(Path(media.video_map_path)), languages)
-    except VideoMapError:
-        return gaps, []  # the video-map section reports this; do not fail twice over it
+    status = load_video_status(cfg, scoped)
+    if status is None:
+        return gaps, []  # the video-map section reports why; do not fail twice over it
     # Products already held by E23 are not listed again here: E23 runs first, so naming the same
     # SKU twice would imply two independent blocks where the first already stops the run.
-    held = [p.gtin14 for p in scoped if p.gtin14 not in gaps and p.gtin14 not in confirmed]
-    return gaps, sorted(held)
+    return gaps, sorted(p.gtin for p in status.held if p.gtin not in gaps)
 
 
 def _languages(client_id: str, issues: dict[str, list[SourceIssue]]) -> list[str]:
@@ -187,22 +185,21 @@ def _matrix_input(client_id: str, products: dict[str, ProductRecord]) -> MatrixI
         return None
 
     languages = cfg.wordpress.languages
-    confirmed: dict[str, set[str]] = {lang: set() for lang in languages}
-    media = cfg.media
-    if media is not None and media.video_map_path:
-        try:
-            vmap = load_video_map(Path(media.video_map_path))
-        except VideoMapError:
-            pass  # the video-map section reports this; an empty set reads as "not confirmed"
-        else:
-            for lang in languages:
-                confirmed[lang] = {
-                    canon_gtin(entry.gtin)
-                    for entry in vmap.by_language.get(lang, [])
-                    if entry.gtin and entry.gtin.lower() != "skip"
-                }
+    scoped = in_scope(cfg, list(products.values()))
+    # ● means the page gets a video in that language — what ``VideoMap.resolve`` attaches, not
+    # merely "some row names this GTIN". A GTIN confirmed to two files is therefore ○: the page
+    # gets neither. With no readable mapping every cell is ○, which is what "not confirmed" means.
+    status = load_video_status(cfg, scoped)
+    confirmed: dict[str, set[str]] = {
+        lang: {
+            p.gtin
+            for p in (status.products if status else ())
+            if p.by_language.get(lang) == HAS_VIDEO
+        }
+        for lang in languages
+    }
     return MatrixInput(
-        products=in_scope(cfg, list(products.values())),
+        products=scoped,
         gdsn_map=cfg.export.gdsn_map,
         gdsn_extras=cfg.export.gdsn_extras,
         video_confirmed=confirmed,

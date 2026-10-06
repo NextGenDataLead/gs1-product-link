@@ -262,3 +262,96 @@ def test_generated_at_is_local_time_with_a_named_zone() -> None:
     # "2026-08-13 22:02 CEST" — date, time, then a zone abbreviation.
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+", stamp), stamp
     assert stamp.startswith(datetime.now().astimezone().strftime("%Y-%m-%d"))
+
+
+# --- the video join: the matrix and the hold read lib.video_status --------------------------------
+
+_HAS_ONE = "08713195000011"
+_HAS_TWO = "08713195000028"
+_HAS_NONE = "08713195000035"
+
+
+def _with_videos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mapping: dict[str, object] | str
+) -> dict[str, ProductRecord]:
+    """The test config plus a `media` block, a mapping, its folder, and three in-scope products."""
+    _write_clients_yml(tmp_path, monkeypatch)
+    config_path = tmp_path / "clients.yml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    videos = tmp_path / "videos"
+    (videos / "NL").mkdir(parents=True)
+    for name in ("one.mpg", "two-a.mpg", "two-b.mpg"):
+        (videos / "NL" / name).write_bytes(b"x")
+    map_path = videos / "mapping.yml"
+    map_path.write_text(
+        mapping if isinstance(mapping, str) else yaml.safe_dump(mapping), encoding="utf-8"
+    )
+    config["clients"]["noviplast"]["media"] = {
+        "video_folders": {"nl": str(videos / "NL")},
+        "video_map_path": str(map_path),
+        "restrict_to_mapped_gtins": True,
+    }
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    gtins = [_HAS_ONE, _HAS_TWO, _HAS_NONE]
+    _write_process_list(tmp_path, gtins)
+    # Complete copy, so E23 holds none of them and only the video rule is under test.
+    records = [
+        ProductRecord(
+            gtin=g,
+            brand="Noviplast",
+            product_name=LocalisedText(values={"nl": "x"}),
+            description_short=LocalisedText(values={"nl": "y"}),
+        )
+        for g in gtins
+    ]
+    return {p.gtin14: p for p in records}
+
+
+_MAPPING = {
+    "nl": [
+        {"file": "one.mpg", "gtin": _HAS_ONE},
+        {"file": "two-a.mpg", "gtin": _HAS_TWO},
+        {"file": "two-b.mpg", "gtin": _HAS_TWO[1:]},  # the same barcode, 13-digit
+    ]
+}
+
+
+def test_the_matrix_marks_a_video_only_where_the_page_gets_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two files confirmed to one product is ○: ``resolve`` attaches neither.
+
+    The matrix used to count any non-blank, non-`skip` cell, so it showed ● for a product whose
+    page gets no video — and a whitespace-only cell became the all-zero GTIN.
+    """
+    products = _with_videos(tmp_path, monkeypatch, _MAPPING)
+
+    matrix = report_quality._matrix_input("noviplast", products)
+
+    assert matrix is not None
+    assert matrix.video_confirmed == {"nl": {_HAS_ONE}}
+
+
+def test_the_hold_is_what_the_gate_holds_and_two_videos_is_not_a_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate admits a GTIN confirmed to two files, so the report must not call it held."""
+    products = _with_videos(tmp_path, monkeypatch, _MAPPING)
+
+    _, held = report_quality._publish_blocks("noviplast", products)
+
+    assert held == [_HAS_NONE]
+
+
+def test_an_unreadable_mapping_marks_nothing_and_holds_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The video-map section reports a broken file; the matrix and the hold do not fail over it."""
+    products = _with_videos(tmp_path, monkeypatch, "nl: [unclosed")
+
+    matrix = report_quality._matrix_input("noviplast", products)
+    _, held = report_quality._publish_blocks("noviplast", products)
+
+    assert matrix is not None
+    assert matrix.video_confirmed == {"nl": set()}
+    assert held == []

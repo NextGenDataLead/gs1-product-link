@@ -43,7 +43,7 @@ def _row(gtin: str, *, held: bool) -> dict[str, object]:
     The mark is the string the column renders, because that is what the count reads: the band and
     the column must never be able to disagree about which rows are held.
     """
-    return {_GTIN: gtin, _HELD: "no video yet" if held else ""}
+    return {_GTIN: gtin, _HELD: "needs fr" if held else ""}
 
 
 def test_a_held_batch_says_how_many_and_what_a_run_would_publish() -> None:

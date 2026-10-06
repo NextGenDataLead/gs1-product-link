@@ -72,6 +72,7 @@ from lib.process_list import load_process_list
 from lib.provenance import history_path, read
 from lib.records import ProductRecord, SkipReason
 from lib.state import WILL_BE_WRITTEN, classify_units, peek_state
+from lib.video_status import VideoStatus, video_status
 from lib.wp_client import WordPressClient, WordPressIdentity
 
 if TYPE_CHECKING:
@@ -298,6 +299,33 @@ def held_for_video(cfg: ClientConfig, scoped: list[ProductRecord]) -> list[Produ
         return []
     allowed = fully_mapped_gtins(vmap, list(cfg.wordpress.languages))
     return [product for product in scoped if canon_gtin(product.gtin) not in allowed]
+
+
+def load_video_status(cfg: ClientConfig, scoped: list[ProductRecord]) -> VideoStatus | None:
+    """``scoped`` joined to the client's video mapping and folders — or ``None`` with no mapping.
+
+    ``None`` for no ``media`` block, no ``video_map_path``, or a mapping that will not load: the
+    three cases every surface already treats as "nothing to say about video here", and
+    :func:`check_video_coverage` is where an unreadable mapping is reported. The join itself is
+    :func:`lib.video_status.video_status`, which is pure; this is only its loader, shared by the
+    report and the Data screen so neither re-decides what the mapping says.
+
+    :func:`held_for_video` is deliberately left as it was: ``report_live_copy`` and
+    :mod:`lib.live_copy` depend on its signature, and it is the doctor's vocabulary.
+    """
+    media = cfg.media
+    if media is None or not media.video_map_path:
+        return None
+    try:
+        vmap = load_video_map(Path(media.video_map_path))
+    except VideoMapError:
+        return None
+    return video_status(
+        vmap,
+        scoped,
+        languages=cfg.wordpress.languages,
+        files_by_language=files_by_language(media.video_folders),
+    )
 
 
 def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
