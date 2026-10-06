@@ -44,6 +44,15 @@ PAGE_MODULES: Final = (
     "ui.pages.video_map",
 )
 
+#: Every component module — a part of a screen that lives outside ``ui/pages/`` so that more than
+#: one screen, or one long screen, can render it. Listed by hand for the same reason as the
+#: screens; ``ui.batch_view`` was the first and was never import-checked until this list existed.
+PANEL_MODULES: Final = (
+    "ui.batch_view",
+    "ui.video_map_panel",
+    "ui.video_signoff_panel",
+)
+
 #: Routes that are registered but deliberately absent from the rail, with how they are reached.
 #: A screen added without either an entry here or a rail entry is unreachable, which is the point
 #: of checking both directions.
@@ -76,6 +85,12 @@ def _our_routes() -> set[str]:
 @pytest.mark.parametrize("module", PAGE_MODULES)
 def test_every_screen_imports(module: str) -> None:
     """A screen that cannot be imported cannot be opened, and only the terminal would say so."""
+    importlib.import_module(module)
+
+
+@pytest.mark.parametrize("module", PANEL_MODULES)
+def test_every_panel_imports(module: str) -> None:
+    """A panel that cannot be imported takes every screen that renders it down with it."""
     importlib.import_module(module)
 
 
