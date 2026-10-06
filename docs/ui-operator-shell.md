@@ -315,14 +315,20 @@ without pressing Parse and last quarter's count sits under today's date, so the 
 them and warns. The data-quality report is dated for the same reason — a rebuild that wrote nothing
 new leaves last week's worklist on screen looking exactly like this week's.
 
-Every in-scope SKU held for want of a confirmed video carries a per-row mark, from
-`lib.preflight.held_for_video`. Data is the only per-SKU grid in the shell, so it is the only place
-that fact can live per row; on the pilot, 19 of the 37 are held and the screen used to show none of
-it.
+Every in-scope SKU held for want of a confirmed video carries a per-row mark saying what it waits
+on — `needs fr`, `needs nl, fr`, `needs fr; two videos in nl` — from `lib.video_status`, loaded by
+`lib.preflight.load_video_status` (the report reads the same, so the two say the same words about
+the same product). It used to say "no video yet" for all of them, which on the pilot covered three
+different jobs. Data is the only per-SKU grid in the shell, so it is the only place that fact can
+live per row; on the pilot, 19 of the 37 were held and the screen used to show none of it.
+
+**Only a held product gets a mark**, because the line under the table counts marks as holds. A
+product whose only problem is two videos in one language passes the gate and publishes without
+that video; the report names it, and this column deliberately does not.
 
 **That mark replaced the whole *Video mapping* section**, which was two figures and a link. The
 Video mapping screen already shows those figures, and a per-row mark says the same thing against
-the product it is about. What a mark cannot carry is the *consequence* — "no video yet" does not
+the product it is about. What a mark cannot carry is the *consequence* — "needs fr" does not
 tell you the run will skip the product and report success — so one line under the table says that,
 and links onward.
 
@@ -682,7 +688,7 @@ The recipe, all of it outside the repository:
    Leave `input_fingerprint` **null** on each result item: it is optional, and any other value
    fails the doctor's staleness check.
 5. Add `videos/mapping.yml` in `{language: [{file, gtin}]}` shape with matching files on disk,
-   leaving some GTINs unmapped so the per-row "no video yet" mark appears.
+   leaving some GTINs unmapped so the per-row "needs …" mark appears.
 6. Run `python -m scripts.run_plan {client}` there so the plan and the rail facts agree, then
    serve it with `ui.run(..., native=False, show=False)` on a spare port and drive Playwright
    at 1280x860.

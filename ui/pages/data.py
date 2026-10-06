@@ -38,10 +38,13 @@ from typing import Any
 from nicegui import events, ui
 
 from lib import input_layout, provenance
+from lib.config import ClientConfig
 from lib.errors import ProcessListError
 from lib.input_layout import export_archive_path, write_readme
-from lib.preflight import held_for_video, in_scope
+from lib.preflight import in_scope, load_video_status
 from lib.process_list import rows_in_export
+from lib.records import ProductRecord
+from lib.video_status import waiting_on
 from ui import REPO_ROOT, batch_view, context, process_list_edit, runner, theme
 
 
@@ -403,7 +406,7 @@ def _scope_grid(
     # ``lib.preflight.in_scope`` joins on. A third opinion about what makes two barcodes equal
     # would report every good product as missing, and read as bad data rather than as a bug.
     matched, unmatched = rows_in_export(sheet, {product.gtin14 for product in products})
-    held = {product.gtin14 for product in held_for_video(cfg, in_scope(cfg, products))}
+    held = _held_for_video(cfg, products)
 
     if not products:
         # Nothing has been read, so the join is not a finding — it is the absence of one. Every
@@ -435,7 +438,7 @@ def _scope_grid(
             _ROW: index,
             **cells,
             _GTIN: gtin,
-            _HELD: "no video yet" if gtin in held else "",
+            _HELD: held.get(gtin, "") if gtin else "",
         }
 
     with theme.section(
@@ -532,6 +535,26 @@ def _save_line(keep: int, total: int) -> str:
     if not dropped:
         return f"Next saves all {total} row(s) and goes on to the copy."
     return f"Next saves {keep} of {total} row(s) — {dropped} dropped — and goes on to the copy."
+
+
+def _held_for_video(cfg: ClientConfig, products: list[ProductRecord]) -> dict[str, str]:
+    """``{gtin14: what it waits on}`` for every in-scope product a run will hold for want of video.
+
+    The cell used to say "no video yet" for all of them, which on the pilot covered three different
+    jobs: 26 products waiting on a French video, 20 on both, and 2 that also have two videos
+    competing for the Dutch slot. The words are :func:`lib.video_status.waiting_on`'s, so the report
+    says the same thing about the same product.
+
+    **Only held products get text**, because :func:`_video_counts` counts a non-empty cell as a
+    hold. A product whose sole problem is two videos in one language passes the gate and publishes
+    (without that video) — the report names it; this column must not call it held.
+    """
+    if cfg.media is None or not cfg.media.restrict_to_mapped_gtins:
+        return {}
+    status = load_video_status(cfg, in_scope(cfg, products))
+    if status is None:
+        return {}
+    return {product.gtin: waiting_on(product) for product in status.held}
 
 
 def _video_counts(ticked: list[dict[str, Any]]) -> tuple[int, int]:

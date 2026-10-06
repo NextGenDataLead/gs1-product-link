@@ -24,17 +24,18 @@ from __future__ import annotations
 
 import zipfile
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 from xml.etree import ElementTree as ET
 
 from nicegui import events, ui
 
-from lib import video_signoff, xlsx
+from lib import video_signoff, video_signoff_archive, xlsx
 from lib.config import ClientConfig
 from lib.errors import VideoMapError
 from lib.media_video import (
-    list_video_files,
+    files_by_language,
     load_video_map,
     normalize_video_name,
     rank_candidates,
@@ -201,10 +202,12 @@ def _signoff(  # noqa: PLR0913 — the sheet, the mapping, and what to do once i
     a second press applies it — the same shape as the row-by-row editor, where edits accumulate and
     one Save writes them. :mod:`lib.video_signoff` decides; this only renders and asks.
 
-    **The sheet is read and not kept.** Where operator inputs are filed is an open question in this
-    project, and an upload here that invented a folder of its own would be answering it by
-    accident. What changed is recoverable from the mapping's dated backup, which is what somebody
-    would actually go looking for.
+    **Every sheet is kept**, dated, in ``videos/signoff/`` beside the mapping it is about, and the
+    column choice is noted beside it once all three are set (:mod:`lib.video_signoff_archive`).
+    That is what lets the data-quality report re-read the newest sheet against the mapping on every
+    render and say what it *still* changes. Kept only once it has been read as a spreadsheet and is
+    not a GS1 export — an unreadable file or the wrong document filed as "the client's newest
+    sheet" would make the report describe something nobody sent.
     """
     with theme.section(
         "Import the client's sign-off sheet",
@@ -217,7 +220,8 @@ def _signoff(  # noqa: PLR0913 — the sheet, the mapping, and what to do once i
             "a title row on any sheet of the workbook. Uploading writes nothing: it shows what "
             "the sheet would change, and a second press applies it. Only rows that are still "
             "unset are ever filled — a row already signed off is reported as a conflict and left "
-            "exactly as it is."
+            "exactly as it is. Each sheet is kept, dated, in videos/signoff/, with the columns "
+            "you chose, so the data-quality report can say what it still changes."
         ),
     ):
         plan_box = ui.column().classes("w-full")
@@ -245,14 +249,43 @@ def _signoff(  # noqa: PLR0913 — the sheet, the mapping, and what to do once i
                     "or holds a single cell."
                 )
                 return "Not read — no sheet with a header row in it."
+            if video_signoff.looks_like_an_export(grid):
+                theme.notify_problem(
+                    "That looks like a GS1 Data Source export, not a sign-off sheet — it belongs "
+                    "on the Data screen."
+                )
+                return "Not read — that is a GS1 export."
+            try:
+                stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+                sheet = video_signoff_archive.archive(path, data, stamp=stamp)
+            except OSError as exc:
+                theme.notify_problem(f"The sheet could not be kept, so nothing was read: {exc}")
+                return "Not kept."
 
             exported = {product.gtin14 for product in context.load_products(cid)}
             plan_box.clear()
             with plan_box:
-                _columns_then_plan(grid, path, cid, cfg, pending, applied, exported)
-            return f"{len(grid.rows)} row(s) read from {event.file.name}."
+                _columns_then_plan(
+                    grid,
+                    path,
+                    cid,
+                    cfg,
+                    pending,
+                    applied,
+                    exported,
+                    kept=_Kept(sheet, event.file.name, stamp),
+                )
+            return f"{len(grid.rows)} row(s) read from {event.file.name}, and kept as {sheet.name}."
 
         theme.upload("Sign-off sheet (.xlsx)", receive, busy="Reading the sheet…")
+
+
+class _Kept(NamedTuple):
+    """The archived copy of the sheet on screen, and what it was called when it arrived."""
+
+    sheet: Path
+    given_name: str
+    stamp: str
 
 
 def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what it is checked against
@@ -263,6 +296,8 @@ def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what 
     pending: dict[tuple[str, str], str],
     applied: Callable[[], None],
     exported: set[str],
+    *,
+    kept: _Kept,
 ) -> None:
     """Which column is which — always shown, pre-filled from a guess — and the plan below it.
 
@@ -307,6 +342,20 @@ def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what 
                     "quiet",
                 )
                 return
+            # Noted on every complete choice, so the report re-plans against the columns the
+            # operator settled on last — with the headings they had, so a sheet edited in place
+            # afterwards is refused there rather than read with a column moved.
+            problem = video_signoff_archive.record(
+                path,
+                sheet=kept.sheet,
+                given_name=kept.given_name,
+                at=datetime.strptime(kept.stamp, "%Y%m%dT%H%M%S").replace(tzinfo=UTC).isoformat(),
+                rows=len(grid.rows),
+                columns=where,
+                headers={name: grid.header[index] for name, index in where.items()},
+            )
+            if problem is not None:
+                theme.notify_warning(f"The sheet is kept, but {problem}.")
             decided = video_signoff.plan(
                 grid,
                 load_video_map(path),
@@ -559,10 +608,7 @@ def _coverage(container: ui.column, cfg: ClientConfig, path: Path, cid: str) -> 
 def _files_on_disk(cfg: ClientConfig) -> dict[str, list[str]]:
     if cfg.media is None:
         return {}
-    return {
-        language: [p.name for p in list_video_files(Path(folder))]
-        for language, folder in cfg.media.video_folders.items()
-    }
+    return files_by_language(cfg.media.video_folders)
 
 
 def _check(cid: str) -> None:

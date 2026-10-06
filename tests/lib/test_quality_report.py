@@ -10,7 +10,9 @@ import re
 
 from lib.gdsn import GdsnSource
 from lib.mandatory import MandatoryGap
-from lib.quality_report import _VIDEO_SAMPLE, MatrixInput, render_quality_report
+from lib.quality_report import MatrixInput, render_quality_report
+from lib.quality_report_video import TITLE as _VIDEO_TITLE
+from lib.quality_report_video import VIDEO_SAMPLE as _VIDEO_SAMPLE
 from lib.records import LocalisedText, ProductRecord, SourceIssue
 
 _FRESH = {
@@ -60,11 +62,12 @@ _COPY = "Blocks publish — no marketing message"
 _CLAIMS = "Review before publish — inferred claims"
 _MYGS1 = "Source-data fixes in MyGS1"
 _TRANSLATED = "Translated to fill a language gap"
-_VIDEO = "Video mapping backlog"
+_VIDEO = _VIDEO_TITLE
 _CATEGORIES = "Categories"
 
-#: The numbered sections in the order a reader meets them, §0 aside.
-_ORDER = (_COPY, _CLAIMS, _MYGS1, _TRANSLATED, _VIDEO, _CATEGORIES)
+#: The numbered sections in the order a reader meets them, §0 aside. Video is first: a product held
+#: for want of one is not published at all, and on the pilot that is 48 of 110.
+_ORDER = (_VIDEO, _COPY, _CLAIMS, _MYGS1, _TRANSLATED, _CATEGORIES)
 
 _NUMBERED = re.compile(r"^## (\d+)\. (.*)$", re.MULTILINE)
 
@@ -147,7 +150,7 @@ def test_blank_title_is_a_blocker_not_a_source_fix() -> None:
 
     §1d said what §0's `product·3301` column and the Summary row already said, and named one GTIN
     neither did — an out-of-scope one, which is a whole-catalogue finding leaking into a scoped
-    report. Dropping the section must not quietly demote the finding to §3's "does not block"
+    report. Dropping the section must not quietly demote the finding to §4's "does not block"
     list, which is the one way this change could go wrong.
     """
     src = [
@@ -264,7 +267,7 @@ def test_categories_clean_line_when_no_issues() -> None:
     assert "No unmapped GPC bricks" in _render()
 
 
-# --- §4 translated values ------------------------------------------------------
+# --- §5 translated values ------------------------------------------------------
 
 
 def _translated(gtin: str, field: str, value: str, source: str, detail: str = "d") -> SourceIssue:
@@ -281,7 +284,7 @@ def _translated(gtin: str, field: str, value: str, source: str, detail: str = "d
 def test_translated_values_are_listed_with_the_text_to_paste() -> None:
     """The value is the deliverable here, not evidence for a count.
 
-    §2 deliberately became a pointer rather than a per-row dump, because nobody acts on generated
+    §3 deliberately became a pointer rather than a per-row dump, because nobody acts on generated
     copy row by row. This section is the opposite: each row is one paste into MyGS1, so the text
     has to be in the table.
     """
@@ -343,7 +346,7 @@ def test_every_filled_value_is_one_row_and_the_summary_says_the_same_number() ->
 
 
 def test_a_translated_value_lands_after_the_other_mygs1_fixes_not_among_the_blockers() -> None:
-    # It is MyGS1 work that does not hold the GTIN — §3's neighbourhood, not §1's.
+    # It is MyGS1 work that does not hold the GTIN — §4's neighbourhood, not §2's.
     md = _render(
         generated_issues=[
             _translated(
@@ -956,7 +959,7 @@ def test_a_field_marked_out_of_the_matrix_gets_no_column() -> None:
     assert "material" in header  # the neighbouring optional column is untouched
 
 
-# --- §1: one section, saying what it lists (R-b, R-c, and the §1c rewrite) ----
+# --- §2, the copy blocker: one section, saying what it lists (R-b, R-c, and the §1c rewrite) ----
 #
 # §1 used to hold four subsections. §1a (E23) and §1b (E24) repeated what §0's matrix already
 # shows; §1d repeated the matrix's `product·3301` / `image·2485` columns and leaked a
@@ -1065,7 +1068,7 @@ def test_the_copy_blocker_lists_what_the_requirement_holds_not_every_blank_1083(
     under a heading its own cells disproved.
 
     Such a unit is now reported nowhere, and that is a deliberate consequence of two decisions
-    taken together: §0 shows the requirement rather than its members, and §3 no longer lists
+    taken together: §0 shows the requirement rather than its members, and §4 no longer lists
     blank fields because the matrix does. It costs a finding no in-scope product has ever had —
     1083 is the primary copy source and 1067 the fallback, so carrying only the fallback is the
     unusual direction. Worth revisiting if a product ever turns up in that state.
@@ -1104,7 +1107,7 @@ def test_held_gtins_are_named_under_a_heading_that_says_they_block() -> None:
 
 
 def test_a_sku_held_for_something_else_is_not_listed_as_a_copy_block() -> None:
-    """§1 answers for one requirement, so it filters the gaps to that requirement.
+    """§2 answers for one requirement, so it filters the gaps to that requirement.
 
     Two in-scope SKUs are held for `image_url` alone. Taking every gap on the product would put
     them in this grid with all four copy slots ○ and a consequence claiming the copy is what
@@ -1121,7 +1124,7 @@ def test_a_sku_held_for_something_else_is_not_listed_as_a_copy_block() -> None:
 
 
 def test_a_held_unit_is_not_also_listed_as_a_non_blocking_source_fix() -> None:
-    """§1 and §3 must not claim the same unit: one says it blocks, the other says it does not."""
+    """§2 and §4 must not claim the same unit: one says it blocks, the other says it does not."""
     md = _render(
         generated_issues=[_blank_1083("08713195000001", "nl")],
         products=_products("08713195000001"),
@@ -1192,7 +1195,7 @@ def test_a_claim_in_one_language_only_leaves_the_other_cell_empty() -> None:
 
 
 def test_the_translation_section_keeps_one_row_per_field_and_a_column_per_language() -> None:
-    """§4's stable key is (GTIN, field); the language is the axis that multiplies.
+    """§5's stable key is (GTIN, field); the language is the axis that multiplies.
 
     Every translation is French today, so this collapses nothing — the point is that it does not
     *grow* when a language is added. `material` and `product_name` stay separate rows because the
@@ -1223,7 +1226,7 @@ def test_both_sections_widen_with_the_configured_languages() -> None:
     """The reason for the whole change, and the only part today's export cannot show.
 
     Columns come from `wordpress.languages`, so adding German widens the tables and changes no
-    code. As rows, a third language would have taken §2 from 39 to ~59 and §4 from 21 to ~41.
+    code. As rows, a third language would have taken §3 from 39 to ~59 and §5 from 21 to ~41.
     """
     md = _render(
         languages=["nl", "fr", "de"],
@@ -1247,10 +1250,10 @@ def test_both_sections_widen_with_the_configured_languages() -> None:
 def test_the_video_backlog_carries_no_html_and_is_bounded() -> None:
     """The report is read as raw markdown, so `<details>` neither folds nor hides anything.
 
-    §5 wrapped 118 filenames in `<details><summary>` to keep the document short. That works on a
-    rendering surface and does nothing on the one the operator actually reads: the tags show as
-    text and every filename is expanded inline. Same two-surfaces problem as the `<br>` labels,
-    pointing the other way — so the section is short by *being* short.
+    The old §5 wrapped 118 filenames in `<details><summary>` to keep the document short. That
+    works on a rendering surface and does nothing on the one the operator actually reads: the tags
+    show as text and every filename is expanded inline. Same two-surfaces problem as the `<br>`
+    labels, pointing the other way — so the section is short by *being* short.
     """
     issues = [
         _issue("", "video_unconfirmed", field="video.nl", value=f"clip{n}.mpg") for n in range(30)
@@ -1275,7 +1278,7 @@ def test_a_short_video_backlog_is_listed_in_full() -> None:
 
 
 def test_the_claims_section_says_where_on_the_page_the_claim_appears() -> None:
-    """A business user reads §2 without knowing what `generated_description` is.
+    """A business user reads §3 without knowing what `generated_description` is.
 
     The claim is real and the row names the product, but nothing said *where* on the page the
     text sits — so verifying it meant guessing between the title, the summary line and the spec

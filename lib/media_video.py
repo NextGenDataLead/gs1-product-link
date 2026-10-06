@@ -23,6 +23,7 @@ import logging
 import re
 import subprocess  # noqa: S404 — ffmpeg is invoked with a fixed, non-shell argv
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -124,6 +125,20 @@ def list_video_files(folder: Path) -> list[Path]:
         and p.parent.name not in _IGNORE_DIRS
         and p.suffix.lower() in _VIDEO_EXTS
     )
+
+
+def files_by_language(folders: Mapping[str, str]) -> dict[str, list[str]]:
+    """``{language: [filename]}`` for each configured video folder (``media.video_folders``).
+
+    Spelled once. The preflight, two scripts, the report and the shell each listed the folders with
+    the same comprehension, and the gap checks they feed compare these names against the mapping —
+    so one listing that differed (a case fold, a recursive walk) would invent or hide gaps on one
+    surface only.
+    """
+    return {
+        language: [p.name for p in list_video_files(Path(folder))]
+        for language, folder in folders.items()
+    }
 
 
 class VideoCandidate(NamedTuple):

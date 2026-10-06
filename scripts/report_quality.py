@@ -26,17 +26,22 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
-from lib.config import get_client, resolve_client_id
+from lib import video_signoff, video_signoff_archive
+from lib.config import ClientConfig, get_client, resolve_client_id
 from lib.env import load_env
 from lib.errors import ConfigError, ExportParseError, VideoMapError
 from lib.mandatory import MandatoryGap, missing_mandatory
-from lib.media_video import canon_gtin, fully_mapped_gtins, load_video_map
-from lib.preflight import in_scope
+from lib.media_video import canon_gtin, check_video_map, files_by_language, load_video_map
+from lib.preflight import in_scope, load_video_status
 from lib.quality_report import MatrixInput, render_quality_report
+from lib.quality_report_video import SignoffReview, VideoReport
 from lib.records import ProductRecord, SourceIssue
+from lib.video_status import HAS_VIDEO
 
 _EXIT_OK = 0
 _EXIT_CONFIG_ERROR = 2
@@ -115,17 +120,75 @@ def _publish_blocks(
         if (found := missing_mandatory(product, cfg.export.all_sources, languages))
     }
 
-    media = cfg.media
-    if media is None or not media.restrict_to_mapped_gtins or not media.video_map_path:
+    if cfg.media is None or not cfg.media.restrict_to_mapped_gtins:
         return gaps, []
-    try:
-        confirmed = fully_mapped_gtins(load_video_map(Path(media.video_map_path)), languages)
-    except VideoMapError:
-        return gaps, []  # the video-map section reports this; do not fail twice over it
+    status = load_video_status(cfg, scoped)
+    if status is None:
+        return gaps, []  # the video-map section reports why; do not fail twice over it
     # Products already held by E23 are not listed again here: E23 runs first, so naming the same
     # SKU twice would imply two independent blocks where the first already stops the run.
-    held = [p.gtin14 for p in scoped if p.gtin14 not in gaps and p.gtin14 not in confirmed]
-    return gaps, sorted(held)
+    return gaps, sorted(p.gtin for p in status.held if p.gtin not in gaps)
+
+
+def _video_report(client_id: str, products: dict[str, ProductRecord]) -> VideoReport | None:
+    """§1's inputs: the selection joined to the video mapping. ``None`` with no readable mapping.
+
+    Follows :func:`_publish_blocks`' rule — every failure is an absent section, never a traceback;
+    ``doctor`` is where a broken config is reported.
+    """
+    try:
+        cfg = get_client(client_id)
+    except (ConfigError, ExportParseError):
+        return None
+    status = load_video_status(cfg, in_scope(cfg, list(products.values())))
+    if status is None:
+        return None
+    review = _signoff_review(cfg, products)
+    if isinstance(review, str):
+        return VideoReport(status=status, signoff_absent=review)
+    return VideoReport(status=status, signoff=review)
+
+
+def _signoff_review(cfg: ClientConfig, products: dict[str, ProductRecord]) -> SignoffReview | str:
+    """The client's newest sign-off sheet re-planned against the mapping as it is now — or why not.
+
+    Re-planned on every render, so §1d is never a record of what the sheet *would have* changed
+    when it arrived: a fill applied since reads as "already match", a row edited by hand since
+    reads as a conflict, and the counts correct themselves.
+
+    **It refuses rather than guess** when the sheet's headings no longer match the ones the column
+    choice was made against: somebody edited the sheet in place and a column moved, and planning
+    against the recorded positions would read one column as another — a filename as a barcode.
+    """
+    media = cfg.media
+    assert media is not None and media.video_map_path  # load_video_status returned a status
+    found = video_signoff_archive.newest(Path(media.video_map_path))
+    if isinstance(found, video_signoff_archive.Absent):
+        return video_signoff_archive.describe(found)
+    sheet, note = found
+    try:
+        grid = video_signoff.read_sheet(sheet)
+        vmap = load_video_map(Path(media.video_map_path))
+    except (OSError, zipfile.BadZipFile, ET.ParseError, VideoMapError) as exc:
+        return f"The newest sign-off sheet ({sheet.name}) could not be read: {exc}"
+    if grid is None:
+        return f"The newest sign-off sheet ({sheet.name}) has no row that could be a header."
+    for name, index in note.columns.items():
+        now = grid.header[index] if index < len(grid.header) else ""
+        if now != note.headers.get(name, ""):
+            return (
+                f"The newest sign-off sheet ({sheet.name}) has changed since its columns were "
+                f'chosen: the {name} column was headed "{note.headers.get(name, "")}" and is '
+                f'now "{now}". Choose the columns again where the sheet is uploaded.'
+            )
+    plan = video_signoff.plan(
+        grid,
+        vmap,
+        exported={product.gtin14 for product in products.values()},
+        languages=cfg.wordpress.languages,
+        where=note.columns,
+    )
+    return SignoffReview(sheet=sheet.name, given_name=note.given_name, at=note.at[:10], plan=plan)
 
 
 def _languages(client_id: str, issues: dict[str, list[SourceIssue]]) -> list[str]:
@@ -187,26 +250,54 @@ def _matrix_input(client_id: str, products: dict[str, ProductRecord]) -> MatrixI
         return None
 
     languages = cfg.wordpress.languages
-    confirmed: dict[str, set[str]] = {lang: set() for lang in languages}
-    media = cfg.media
-    if media is not None and media.video_map_path:
-        try:
-            vmap = load_video_map(Path(media.video_map_path))
-        except VideoMapError:
-            pass  # the video-map section reports this; an empty set reads as "not confirmed"
-        else:
-            for lang in languages:
-                confirmed[lang] = {
-                    canon_gtin(entry.gtin)
-                    for entry in vmap.by_language.get(lang, [])
-                    if entry.gtin and entry.gtin.lower() != "skip"
-                }
+    scoped = in_scope(cfg, list(products.values()))
+    # ● means the page gets a video in that language — what ``VideoMap.resolve`` attaches, not
+    # merely "some row names this GTIN". A GTIN confirmed to two files is therefore ○: the page
+    # gets neither. With no readable mapping every cell is ○, which is what "not confirmed" means.
+    status = load_video_status(cfg, scoped)
+    confirmed: dict[str, set[str]] = {
+        lang: {
+            p.gtin
+            for p in (status.products if status else ())
+            if p.by_language.get(lang) == HAS_VIDEO
+        }
+        for lang in languages
+    }
     return MatrixInput(
-        products=in_scope(cfg, list(products.values())),
+        products=scoped,
         gdsn_map=cfg.export.gdsn_map,
         gdsn_extras=cfg.export.gdsn_extras,
         video_confirmed=confirmed,
     )
+
+
+def _live_video_issues(client_id: str) -> tuple[list[SourceIssue], str] | None:
+    """The mapping's gaps as they stand now, dated by the mapping itself — or ``None``.
+
+    ``video_map_issues.json`` is written only by ``build_video_map --check``, which nothing on the
+    Data screen runs; this report only ever *read* it. On the pilot it was seven weeks old and said
+    118 files had no barcode while the mapping itself had 18 — in the same document whose other
+    sections are recomputed on every render. So the gaps are recomputed here with the same
+    :func:`lib.media_video.check_video_map` that writes the file, and the date shown beside them is
+    the mapping's own last change rather than the last time somebody ran a command.
+
+    ``None`` — read the file as before — when there is no ``media`` block, no mapping path, or a
+    mapping that will not load. Not a convenience: a client that attaches no videos has no mapping
+    to recompute from, and the file is then the only record there is.
+    """
+    try:
+        cfg = get_client(client_id)
+    except (ConfigError, ExportParseError):
+        return None
+    media = cfg.media
+    if media is None or not media.video_map_path:
+        return None
+    path = Path(media.video_map_path)
+    try:
+        vmap = load_video_map(path)
+    except VideoMapError:
+        return None
+    return check_video_map(vmap, files_by_language(media.video_folders)), _mtime(path)
 
 
 def _load_observations(path: Path) -> list[str]:
@@ -262,11 +353,14 @@ def main(argv: list[str] | None = None) -> int:
         path = data_dir / filename
         issues[key] = _load_issues(path)
         freshness[key] = _mtime(path)
+    if (live := _live_video_issues(client_id)) is not None:
+        issues["video_map"], freshness["video_map"] = live
 
     products = _load_products(data_dir / "products.json")
     issues = {key: _scoped_issues(client_id, products, found) for key, found in issues.items()}
     mandatory_gaps, video_held = _publish_blocks(client_id, products)
     matrix = _matrix_input(client_id, products)
+    video = _video_report(client_id, products)
 
     markdown = render_quality_report(
         client_id=client_id,
@@ -282,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         mandatory_gaps=mandatory_gaps,
         video_held=video_held,
         matrix=matrix,
+        video=video,
     )
 
     out = Path(args.out) if args.out else Path("output") / client_id / "data-quality-report.md"

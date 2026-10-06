@@ -7,6 +7,7 @@ Drives ``main`` in a temp working directory: writes sample ``output/{client}/dat
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +16,9 @@ import openpyxl
 import pytest
 import yaml
 
+from lib import video_signoff_archive
 from lib.config import get_client
+from lib.quality_report_video import SignoffReview
 from lib.records import LocalisedText, ProductRecord
 from scripts import report_quality
 
@@ -262,3 +265,289 @@ def test_generated_at_is_local_time_with_a_named_zone() -> None:
     # "2026-08-13 22:02 CEST" — date, time, then a zone abbreviation.
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+", stamp), stamp
     assert stamp.startswith(datetime.now().astimezone().strftime("%Y-%m-%d"))
+
+
+# --- the video join: the matrix and the hold read lib.video_status --------------------------------
+
+_HAS_ONE = "08713195000011"
+_HAS_TWO = "08713195000028"
+_HAS_NONE = "08713195000035"
+
+
+def _with_videos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mapping: dict[str, object] | str
+) -> dict[str, ProductRecord]:
+    """The test config plus a `media` block, a mapping, its folder, and three in-scope products."""
+    _write_clients_yml(tmp_path, monkeypatch)
+    config_path = tmp_path / "clients.yml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    videos = tmp_path / "videos"
+    (videos / "NL").mkdir(parents=True)
+    for name in ("one.mpg", "two-a.mpg", "two-b.mpg"):
+        (videos / "NL" / name).write_bytes(b"x")
+    map_path = videos / "mapping.yml"
+    map_path.write_text(
+        mapping if isinstance(mapping, str) else yaml.safe_dump(mapping), encoding="utf-8"
+    )
+    config["clients"]["noviplast"]["media"] = {
+        "video_folders": {"nl": str(videos / "NL")},
+        "video_map_path": str(map_path),
+        "restrict_to_mapped_gtins": True,
+    }
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    gtins = [_HAS_ONE, _HAS_TWO, _HAS_NONE]
+    _write_process_list(tmp_path, gtins)
+    # Complete copy, so E23 holds none of them and only the video rule is under test.
+    records = [
+        ProductRecord(
+            gtin=g,
+            brand="Noviplast",
+            product_name=LocalisedText(values={"nl": "x"}),
+            description_short=LocalisedText(values={"nl": "y"}),
+        )
+        for g in gtins
+    ]
+    return {p.gtin14: p for p in records}
+
+
+_MAPPING = {
+    "nl": [
+        {"file": "one.mpg", "gtin": _HAS_ONE},
+        {"file": "two-a.mpg", "gtin": _HAS_TWO},
+        {"file": "two-b.mpg", "gtin": _HAS_TWO[1:]},  # the same barcode, 13-digit
+    ]
+}
+
+
+def test_the_matrix_marks_a_video_only_where_the_page_gets_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two files confirmed to one product is ○: ``resolve`` attaches neither.
+
+    The matrix used to count any non-blank, non-`skip` cell, so it showed ● for a product whose
+    page gets no video — and a whitespace-only cell became the all-zero GTIN.
+    """
+    products = _with_videos(tmp_path, monkeypatch, _MAPPING)
+
+    matrix = report_quality._matrix_input("noviplast", products)
+
+    assert matrix is not None
+    assert matrix.video_confirmed == {"nl": {_HAS_ONE}}
+
+
+def test_the_hold_is_what_the_gate_holds_and_two_videos_is_not_a_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate admits a GTIN confirmed to two files, so the report must not call it held."""
+    products = _with_videos(tmp_path, monkeypatch, _MAPPING)
+
+    _, held = report_quality._publish_blocks("noviplast", products)
+
+    assert held == [_HAS_NONE]
+
+
+def test_an_unreadable_mapping_marks_nothing_and_holds_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The video-map section reports a broken file; the matrix and the hold do not fail over it."""
+    products = _with_videos(tmp_path, monkeypatch, "nl: [unclosed")
+
+    matrix = report_quality._matrix_input("noviplast", products)
+    _, held = report_quality._publish_blocks("noviplast", products)
+
+    assert matrix is not None
+    assert matrix.video_confirmed == {"nl": set()}
+    assert held == []
+
+
+# --- the video backlog is recomputed from the mapping, not read from a file nobody refreshes ------
+
+
+def _stale_backlog(data: Path, count: int) -> None:
+    """`video_map_issues.json` as `build_video_map --check` left it, weeks ago."""
+    _write(
+        data / "video_map_issues.json",
+        [
+            {
+                "gtin": "",
+                "field": "video.nl",
+                "source": "operator video folder",
+                "issue": "video_unconfirmed",
+                "value": f"stale-{n}.mpg",
+                "detail": "no GTIN filled in yet",
+            }
+            for n in range(count)
+        ],
+    )
+
+
+def _report(tmp_path: Path) -> str:
+    assert report_quality.main(["noviplast"]) == 0
+    return (tmp_path / "output" / "noviplast" / "data-quality-report.md").read_text()
+
+
+def test_the_video_backlog_counts_the_mapping_as_it_is_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pilot's file said 118 unassigned while the mapping had 18; the report believed the file.
+
+    Only `build_video_map --check` rewrites that file and the Data screen never runs it, so the
+    backlog was the one part of the report that did not move when the mapping did.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stale_backlog(_seed(tmp_path), 118)
+    _with_videos(
+        tmp_path,
+        monkeypatch,
+        {
+            "nl": [
+                {"file": "one.mpg", "gtin": ""},
+                {"file": "two-a.mpg", "gtin": "   "},
+                {"file": "two-b.mpg", "gtin": _HAS_TWO},
+            ]
+        },
+    )
+
+    text = _report(tmp_path)
+
+    assert "**2**" in text
+    assert "one.mpg" in text and "two-a.mpg" in text
+    assert "stale-" not in text
+
+
+def test_a_client_with_no_mapping_still_reads_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No `media` block means nothing to recompute from, so the file is the only record there is."""
+    monkeypatch.chdir(tmp_path)
+    _stale_backlog(_seed(tmp_path), 3)
+    _write_clients_yml(tmp_path, monkeypatch)
+
+    text = _report(tmp_path)
+
+    assert "**3**" in text
+    assert "stale-0.mpg" in text
+
+
+# --- §1d: the archived sign-off sheet, re-planned on every render --------------------------------
+
+_SIGNOFF_MAPPING = {
+    "nl": [
+        {"file": "one.mpg", "gtin": ""},
+        {"file": "two-a.mpg", "gtin": ""},
+        {"file": "two-b.mpg", "gtin": _HAS_TWO},
+    ]
+}
+
+
+def _sheet(path: Path, header: list[str], rows: list[list[str]]) -> bytes:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(header)
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+    return path.read_bytes()
+
+
+def _signed_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, header: list[str] | None = None
+) -> tuple[dict[str, ProductRecord], Path]:
+    """A client with a mapping, and the sheet the client sent back archived with its columns."""
+    products = _with_videos(tmp_path, monkeypatch, _SIGNOFF_MAPPING)
+    video_map = tmp_path / "videos" / "mapping.yml"
+    chosen = ["language", "file", "current_gtin"]
+    data = _sheet(
+        tmp_path / "upload.xlsx",
+        header or chosen,
+        [["nl", "one.mpg", _HAS_ONE[1:]], ["nl", "two-a.mpg", "8.7132E+12"]],
+    )
+    sheet = video_signoff_archive.archive(video_map, data, stamp="20261006-101500")
+    video_signoff_archive.record(
+        video_map,
+        sheet=sheet,
+        given_name="Videos Noviplast v3.xlsx",
+        at="2026-10-06T10:15:00",
+        rows=2,
+        columns={"language": 0, "file": 1, "gtin": 2},
+        headers=dict(zip(("language", "file", "gtin"), chosen, strict=True)),
+    )
+    return products, video_map
+
+
+def _review(products: dict[str, ProductRecord]) -> SignoffReview | str:
+    return report_quality._signoff_review(report_quality.get_client("noviplast"), products)
+
+
+def _plan_of(products: dict[str, ProductRecord]) -> SignoffReview:
+    review = _review(products)
+    assert isinstance(review, SignoffReview), review
+    return review
+
+
+def test_with_no_sheet_the_review_says_so_in_one_ordinary_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    products = _with_videos(tmp_path, monkeypatch, _SIGNOFF_MAPPING)
+
+    assert _review(products) == "No sign-off sheet from the client yet — nothing to re-plan."
+
+
+def test_an_archived_sheet_is_replanned_against_the_mapping_as_it_is_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    products, _ = _signed_off(tmp_path, monkeypatch)
+
+    review = _plan_of(products)
+
+    assert review.given_name == "Videos Noviplast v3.xlsx"
+    assert review.at == "2026-10-06"
+    plan = review.plan
+    assert [(row.line, row.outcome) for row in plan.rows] == [(2, "fill"), (3, "rejected")]
+    assert plan.of("rejected")[0].given == "8.7132E+12"  # quoted as the sheet carried it
+
+
+def test_a_fill_applied_since_reads_as_already_matching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-planned, not remembered: the counts correct themselves once the mapping moves."""
+    products, video_map = _signed_off(tmp_path, monkeypatch)
+    filled = {
+        "nl": [
+            {"file": "one.mpg", "gtin": _HAS_ONE},
+            {"file": "two-a.mpg", "gtin": ""},
+            {"file": "two-b.mpg", "gtin": _HAS_TWO},
+        ]
+    }
+    video_map.write_text(yaml.safe_dump(filled), encoding="utf-8")
+
+    plan = _plan_of(products).plan
+
+    assert [row.outcome for row in plan.rows] == ["unchanged", "rejected"]
+
+
+def test_a_sheet_edited_since_its_columns_were_chosen_is_refused_not_guessed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Planning against moved columns would read a filename as a barcode."""
+    products, _ = _signed_off(tmp_path, monkeypatch, header=["language", "file", "barcode"])
+
+    review = _review(products)
+
+    assert isinstance(review, str)
+    assert 'gtin column was headed "current_gtin" and is now "barcode"' in review
+
+
+def test_a_newer_sheet_with_no_choice_is_not_answered_with_the_older_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    products, video_map = _signed_off(tmp_path, monkeypatch)
+    older = next((video_map.parent / "signoff").glob("signoff-*.xlsx"))
+    newer = video_signoff_archive.archive(video_map, b"later", stamp="20261007-090000")
+    os.utime(older, (1_000, 1_000))
+    os.utime(newer, (2_000, 2_000))
+
+    review = _review(products)
+
+    assert isinstance(review, str)
+    assert "has not had its columns chosen yet" in review and newer.name in review
