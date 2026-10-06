@@ -65,58 +65,72 @@ and whoever helps you knows exactly what happened.
 
 ## Step 1 — Data
 
-<img src="images/data.png" alt="The Data screen as it opens: jump links, then steps 1 and 2 side by side — upload the product selection list, upload the GS1 export — a Batch in force card saying neither has been uploaded, and step 3, upload the client's video sign-off sheet, with the coverage figures under it." width="900">
+<img src="images/data.png" alt="The Data screen as it opens: jump links, then three uploads side by side — the product selection list, the GS1 export and the video sign-off sheet — a Clear all — start fresh button, the folded mapping, and a band asking for the list and the export." width="900">
 
-*This is the screen as it opens.* The product table and the quality report appear once the list
-and the export are both there — see below.
+*This is the screen as it opens.* Coverage, the product tables and the quality report appear once
+the list and the export are both there — see below.
 
 **What this screen is for:** everything a batch is made of, measured against the one thing you
-chose — your list of products. In order: the **product list**, the **GS1 export**, the client's
-**video sign-off sheet**, and then **choosing** which products this batch covers. The links under
-the title jump to each.
+chose — your list of products. Three files, then **choosing** which products this batch covers. The
+links under the title jump to each part.
 
 Every heading has a small **ⓘ** beside it. Press it to read what that file is and where it goes.
 Nothing you need to act on is hidden behind one — a warning always sits on the page in a coloured
 band.
 
+**Everything is remembered.** Close the app, open it tomorrow, and your files and your saved choice
+are still here. To begin a new batch from nothing, press **Clear all — start fresh** under the
+uploads. It asks first, then moves the list, your saved choice and the export out of the way —
+nothing is deleted, and the client's video sign-offs are not touched.
+
 **What you do:**
 
 1. **Upload the product selection list** — which barcodes this batch may touch. Press the picker
    and choose the spreadsheet. It is read before it replaces anything, so a file that will not open
-   is refused and the list you were using stays put. Until the export arrives, the table in step 4
-   is simply your whole list: nothing can be matched yet.
+   is refused and the list you were using stays put.
 2. **Upload the GS1 export** — the product *data*. It is read as soon as it arrives: a spinner runs
    while that happens, then a line says how many products it found. **If it is not a GS1 export,
    or something the tool needs is missing, it is put back and nothing changes** — the file you had
    is still there, and the reason appears on screen. Uploading is the check; there is no other
    button.
+3. **Upload the video sign-off sheet** — when the client sends it back. See *Videos* below. If
+   there is no new sheet, skip this step.
 
-   Steps 1 and 2 sit side by side because they are one act: bring both files. The card under them,
-   **Batch in force**, says which two files the batch is now made of.
-3. **Upload the client's video sign-off sheet** — when the client sends it back. See *Videos*
-   below. If there is no new sheet, skip this step; the figures under it, **Coverage**, still tell
-   you how many products have a confirmed video in every language.
-4. **Choose the products and save.** Two tables. The top one, *Not in the GS1 export*, lists
-   barcodes you asked for that the export has no row for — nothing else in the tool will mention
-   them again. It has no tick boxes on purpose: there is nothing to choose, because nothing can
-   process them. They stay in your list; to drop one, remove it in the spreadsheet and upload
-   again.
+   The three sit side by side because none of them waits on another: bring whichever you have.
 
-   The bottom table is the batch. Every row arrives ticked.
+<img src="images/data-choose.png" alt="Coverage figures — 13 in product list, 9 eligible, 9 selected, 4 not eligible, 2 missing videos — then step 4: a table of barcodes not in the GS1 export, a table of products that are not eligible with the reason, a table of products missing a video, and the eligible products with tick boxes." width="900">
+
+**Coverage** counts your batch, in products, from left to right: how many are **in your product
+list**, how many of those are **eligible** (the export has them and nothing stops them being
+published), and how many are **selected** (eligible and ticked — what the next run will publish).
+The two figures on the right say why the others fell out, and how many eligible products will go
+live **without a video**. The figures change as you tick.
+
+4. **Choose the products and save.** Your list, split four ways, in this order:
+
+   - **Not in the GS1 export** — barcodes you asked for that the export has no row for. Nothing
+     else in the tool will mention them again. Either the product is missing from the export (fix
+     it in MyGS1) or the barcode is wrong.
+   - **Not eligible** — the export has them, but a run will not publish them. The **Why** column
+     says what is wrong: a mandatory value that is blank (fixed in MyGS1, never here), or two
+     videos confirmed for one language (the client has to keep one).
+   - **Missing video(s)** — eligible, and they *will* be published, but without a video in the
+     language named. Listed so nobody mistakes the live page for finished. When the client confirms
+     a video, the next run adds it to the page.
+   - **Eligible — tick the ones to publish.** The only table with tick boxes, because it is the
+     only one where the choice is yours. Every row arrives ticked; the **Video** column repeats
+     which languages a product goes live without a video in.
+
+   The first two tables have no tick boxes on purpose: nothing can publish those products, so there
+   is nothing to choose. They stay in your list either way.
 
    > ⚠️ **A tick means keep.** Untick a product to leave it out. If you used an earlier version of
    > this app, the button under the table said *Remove selected rows* and meant the opposite — it
    > is gone.
 
-   Use the filter box to find a product; filtering changes only what you can see, never what is
-   ticked. The table's own footer says how many are selected.
-
-   The **Video** column says what each held product is still waiting for: *needs fr*, *needs nl,
-   fr*, or *two videos in nl*. Empty means it has what it needs. The band under the table adds them
-   up: *"4 of the 12 ticked product(s) are held … so a run would publish 8."*
-
-   Got the ticks wrong? **Start again from my uploaded file** (under step 1) puts your list back
-   exactly as you sent it.
+   Use the filters to find products; filtering changes only what you can see, never what is
+   ticked. Your ticks also survive the client's sign-off sheet being applied — a video arriving can
+   move a product into the eligible table without undoing anything you chose.
 
 **Data quality** at the bottom is folded away. It rebuilds every time you open this screen, so
 opening the fold always shows a current report — what is missing in the spreadsheet itself, and,
@@ -126,13 +140,13 @@ MyGS1 or by the client, not here. The report is written to be forwarded to the c
 When you are done, press **Next** at the foot of the screen. It does two things: it saves your
 choice of products, and it takes you on to step 2. There is no separate save button.
 
-**The line above the button says what it will do** — *"Next saves 35 of 37 row(s) — 2 dropped —
-and goes on to the copy"* — and it updates as you tick. Read that before you press, not after: it
-is the one thing that will tell you if you ticked the wrong way round, and it is there for as long
-as you want it. Pressing then confirms with **Saved**.
+**The line above the button says what it will do** — *"Next saves 8 of 9 eligible row(s) — 1
+unticked — and goes on to the copy"* — and it updates as you tick. Read that before you press, not
+after: it is the one thing that will tell you if you ticked the wrong way round. Pressing then
+confirms with **Saved**.
 
-**Done looks like:** both files uploaded without a refusal, nothing unexpected in the *Not in the
-GS1 export* table, and the table footer showing exactly the number of products you mean selected.
+**Done looks like:** both files uploaded without a refusal, nothing unexpected in the first two
+tables, and *selected* in Coverage showing exactly the number of products you mean.
 
 **Stop if:** an upload is refused, or a red band says a file cannot be read. Upload it again,
 or ask the maintainer for a fresh copy — do not go looking for the file in a folder to replace by
@@ -140,9 +154,13 @@ hand.
 
 ### Videos — and the sheet the client sends back
 
-A product is only published once somebody has said which video belongs to it, **in every
-language**. Until then the tool holds that product back: the Video column says what it is waiting
-for, and a run skips it and reports success. That is why a batch of 110 products can publish 62.
+A product without a confirmed video in a language is **still published** — just without a video
+there. The *Missing video(s)* table and the Video column say which, and after every live run the
+tool writes a short data-quality note listing the pages that went live without one. When the client
+confirms the video, the next run adds it to the page that is already live.
+
+One case *does* hold a product back: **two videos confirmed for the same language**. The tool will
+not pick one for the client, so the product sits in *Not eligible* until one is marked *skip*.
 
 Two kinds of waiting look the same in a count and are different jobs. *needs fr* can mean a French
 video exists and nobody has said which product it is — or that no French video has been made yet.
@@ -152,7 +170,7 @@ apart.
 **Importing the client's sheet.** You do not have to type barcodes in. When the client sends back
 the spreadsheet with the barcodes filled in, upload it in **step 3**.
 
-<img src="images/data-videos.png" alt="Step 3 after a sheet was uploaded: three boxes saying which column is the language, the filename and the barcode; six figures — 1 would be filled, 1 conflict, 0 two-video clashes, 1 rejected, 1 already set, 1 left blank; tables for each; a Fill in button; and the coverage figures." width="760">
+<img src="images/data-videos.png" alt="After a sign-off sheet was uploaded in step 3: under the three uploads, three boxes saying which column is the language, the filename and the barcode; six figures — 1 would be filled, 1 conflict, 0 two-video clashes, 1 rejected, 1 already set, 1 left blank; tables for each; and a Fill in button." width="760">
 
 - It needs three columns: the language, the video filename, and the barcode. **You say which is
   which** — the tool reads the sheet's headings, fills the three boxes in with its best guess, and
@@ -172,7 +190,7 @@ the spreadsheet with the barcodes filled in, upload it in **step 3**.
   are genuinely gone from the file, so there is nothing to recover at this end.
 - Dropped a GS1 export in this slot by mistake? It is refused, by name. Nothing is kept.
 
-**The mapping, file by file** is folded under step 3. Open it to see every video file, per
+**The mapping, file by file** is folded under the uploads. Open it to see every video file, per
 language, and what it maps to.
 
 <img src="images/data-mapping.png" alt="The mapping, file by file, opened: a table of every video file with its language, state — confirmed, skip or needs a GTIN — its barcode and whether the file is on disk, then Add files that are on disk but not in the mapping, and Save the mapping." width="760">

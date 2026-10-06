@@ -34,6 +34,7 @@ def render(  # noqa: PLR0913 — the client, the mapping, what to redraw after, 
     archived: Callable[[], None],
     step: int | None = None,
     below: Callable[[], None] | None = None,
+    plan_into: list[ui.column] | None = None,
 ) -> None:
     """Take the client's filled-in sheet, show what it would change, and apply only the fills.
 
@@ -51,9 +52,14 @@ def render(  # noqa: PLR0913 — the client, the mapping, what to redraw after, 
     render and say what it *still* changes. Kept only once it has been read as a spreadsheet and is
     not a GS1 export — an unreadable file or the wrong document filed as "the client's newest
     sheet" would make the report describe something nobody sent.
+
+    ``plan_into`` lets the caller put the review somewhere wider than this section: the Data screen
+    sets the upload in a row of three, where the column pickers and the plan would not fit. It is a
+    list the caller fills *after* this returns — the container has to be created below the row —
+    and the upload reads it only when a sheet arrives.
     """
     with theme.section(
-        "Upload the client's video sign-off sheet",
+        "Upload the video sign-off sheet",
         step=step,
         anchor="video-signoff",
         explain=(
@@ -107,8 +113,9 @@ def render(  # noqa: PLR0913 — the client, the mapping, what to redraw after, 
                 return "Not kept."
 
             exported = {product.gtin14 for product in context.load_products(cid)}
-            plan_box.clear()
-            with plan_box:
+            box = plan_into[0] if plan_into else plan_box
+            box.clear()
+            with box:
                 _columns_then_plan(
                     grid,
                     session,

@@ -130,9 +130,32 @@ both directions, and the button added next month is the case it would miss.
 ### Data
 
 **The screen is a procedure, so it is numbered.** Four filled numerals: **1** the product selection
-list and **2** the export, **side by side** because bringing both files is one act; **3** the
-client's video sign-off sheet, full width, with the coverage figures under it and the mapping itself
-folded below; **4** choosing and saving. A jump row under the title reaches each.
+list, **2** the export and **3** the video sign-off sheet, **three across** (`steps-3up`) because
+they are three documents from three places and none waits on another — the sheet's review renders
+full width under the row, where its column pickers fit; then the mapping, folded; **Coverage**; and
+**4** choosing and saving. A jump row under the title reaches each. Below 70rem the three stack.
+
+**Coverage is a funnel, in products:** in product list → eligible → selected, with *not eligible*
+(not in the export · held) and *missing video(s)* beside it. It is counted by
+`ui.batch_grid.funnel`, a pure function of the rows, the ticked rows and one
+`lib.eligibility.Eligibility` — which is itself `lib.holds.held_products` (the plan's E23/E24/E22, in
+the plan's order, with the E23 gaps) joined to the video status for words. So a tick box is offered
+on a product exactly when the plan would publish it; `tests/lib/test_eligibility.py` pins that under
+both settings of `media.publish_without_video`.
+
+**Step 4 splits the list four ways, in reading order:** not in the GS1 export · not eligible (with a
+*Why* column) · missing video(s) · eligible. Only the last has tick boxes. A save keeps the ticked
+eligible rows **and every row that is not eligible**: nothing can run those, and keeping them is what
+lets the result sheet name them afterwards. Unticks live in a per-client `batch_grid.Ticks` for the
+life of the process, so a mapping write — which can make a product eligible — rebuilds step 4
+without costing a choice. A new list (or Clear all) forgets them, since every row renumbers.
+
+**Clear all — start fresh replaced *Start again from my uploaded file*.** Everything on the screen is
+read from disk, so the operator's question was never "undo my ticks" (re-uploading does that) but
+"how do I begin again". `lib.batch_reset.clear_batch` moves the live selection, the uploaded list,
+the export and `products.json` into `input/{client}/superseded/cleared-{stamp}/` with a note —
+**moved, never deleted**, and every dated archive stays where it is. The video mapping is never part
+of it: it is the client's sign-off and outlives batches.
 
 **The selection list is step 1 because it is the spine.** Everything else on the screen is measured
 against it — the export is joined to it, the video status and the report are scoped to it. The cost
@@ -271,7 +294,9 @@ possible at all, and a selection with no record reads as *not recorded* — a th
 agreement and never as staleness. Every batch saved before this existed is in that state.
 
 **The batch in force is read from disk, on every screen.** `lib/batch.in_force` describes it and
-`ui/batch_view` renders it, on Data, Content, Preflight and Publish. It replaced three booleans held
+`ui/batch_view` renders it, on Content, Preflight and Publish — Data still reads it to decide
+whether there is a batch, but no longer shows the card (operator feedback, 2026-10-06: the uploads
+above it already say which files these are). It replaced three booleans held
 for the life of the process, which gated whether the Data screen showed the selection at all: before
 this, restarting the shell hid the grid while a run went on consuming the file, as the band that
 replaced it said in so many words. A batch that is invisible and live at once is worse than either.
@@ -342,17 +367,16 @@ either, so the gate (`fully_mapped_gtins`) requires **exactly one** per language
 any confirmed row, and a two-video product published with no video in that language, reporting
 success.
 
-**That mark replaced a *Video mapping* section here**, which was two figures and a link. The
-coverage figures now sit under step 3, and a per-row mark says the same thing against the product
-it is about. What a mark cannot carry is the *consequence* — "needs fr" does not tell you the run
-will skip the product and report success — so one line under the table says that, and links up the
-page to the mapping.
+**Under `media.publish_without_video` a missing video is a mark, not a hold.** The product is
+eligible, sits in *Missing video(s)* and in the eligible table with its Video cell filled, and the
+run publishes it without a video there (#134). Two confirmed videos in one language still hold it,
+so it is in *Not eligible* with "two videos in nl — the client must keep one".
 
-**A mapping write re-marks that column in place.** The Data screen redraws from three entry points
-— a list or export arrived (the batch panel, the grid, the report); the mapping was written (the
-coverage, the fold, the Video column, the report); a sign-off sheet arrived (the report only, since
-nothing was applied). The Video column is updated on the rows the grid already holds rather than by
-rebuilding the grid, because rebuilding would cost the operator every unsaved tick.
+**The Data screen redraws from three entry points** — a list or export arrived (step 4, the
+funnel, the report); the mapping was written (the fold, step 4 — rebuilt, with `Ticks` keeping the
+choices — and the report); a sign-off sheet arrived (the report only, since nothing was applied).
+The mapping's own figures (publishable GTINs, rows needing a GTIN, files on disk, the coverage
+check) moved inside its fold: the funnel answers the batch's question, they answer the file's.
 
 
 ### The videos, on the Data screen

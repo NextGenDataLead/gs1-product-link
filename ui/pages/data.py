@@ -6,35 +6,32 @@ order an operator assembles a batch:
 1. the **product selection list** — which barcodes this batch may touch;
 2. the **GS1 Data Source export** — the product data, parsed into ``products.json``;
 3. the client's **video sign-off sheet** — which video is which product's, applied to
-   ``mapping.yml`` — with the mapping itself, file by file, folded below it;
-4. **choose and save** — the list joined against the export, each product marked with what video
-   it is still waiting on.
+   ``mapping.yml``;
 
-A run reads the first two. The third decides whether a product can be published at all (with
-``media.restrict_to_mapped_gtins`` on, one without a confirmed video in every language is held), so
-it belongs here rather than on a screen of its own filed beside Setup and Runs, where it was.
+side by side, because they are three documents arriving from three places and none waits on
+another. Under them: what the sign-off sheet would change, the mapping file by file (folded), the
+**coverage** funnel — in product list → eligible → selected — and
+
+4. **choose and save** — the list split into not in the export, not eligible (and why), missing
+   video(s), and the eligible products, the only ones with a tick box (:mod:`ui.batch_grid`).
 
 They are different documents from different places, and confusing them is the most expensive
-mistake available here, so each has its own section, its own upload and its own name — and the
-sign-off upload refuses a GS1 export outright. The config
-key is still ``process_list``: it appears in ``clients.yml``, the schema, the doctor payload and
-five call sites, and renaming it would break every install. Only what the operator reads changed.
+mistake available here, so each has its own upload and its own name — and the sign-off upload
+refuses a GS1 export outright. The config key is still ``process_list``: it appears in
+``clients.yml``, the schema, the doctor payload and five call sites, and renaming it would break
+every install. Only what the operator reads changed.
 
-Three deliberate constraints:
+**Both batch uploads go to the configured path, never to a new one.** Neither ``parse_export`` nor
+the list reader has an input-path override, so a file dropped anywhere else is invisible to the
+tool. Writing to the configured path is what makes an upload mean anything.
 
-**Both uploads go to the configured path, never to a new one.** Neither ``parse_export`` nor the
-scope-list reader has an input-path override, so a file dropped anywhere else is invisible to the
-tool — the single most common novice failure. Writing to the configured path is what makes an
-upload mean anything, and it is also what gate 0's cross-check is guarding.
+**Everything is remembered between sittings** — the batch is read from disk — so the way to start
+over is *Clear all — start fresh*, which sets this batch's live inputs aside
+(:mod:`lib.batch_reset`). The client's video mapping is never part of that: it outlives batches.
 
-**The scope list is joined against the export before it is shown.** A barcode that is on the list
-and carried by no export row produces no error, no plan row and no count anywhere else in the
-tool; the operator's only evidence is a number one smaller than they expected. It gets its own
-table, above the rest, with its own count.
-
-**A row is selected to keep it.** The previous version of this screen had the opposite verb — a
-tick meant *remove this* — so no control here may carry the old wording, the save reports the
-delta rather than the end state, and a mis-tick is undone by uploading the list again.
+**A row is ticked to keep it.** The previous version of this screen had the opposite verb — a tick
+meant *remove this* — so no control here may carry the old wording, and the caption above Next
+says what the save will do before it is pressed.
 """
 
 from __future__ import annotations
@@ -47,17 +44,15 @@ from typing import Any
 
 from nicegui import events, ui
 
-from lib import input_layout, provenance
+from lib import batch_reset, input_layout, provenance
 from lib.config import ClientConfig
+from lib.eligibility import eligibility
 from lib.errors import ProcessListError
 from lib.input_layout import export_archive_path, write_readme
-from lib.preflight import in_scope, load_video_status
-from lib.process_list import rows_in_export
-from lib.records import ProductRecord
-from lib.video_status import waiting_on
+from lib.process_list import ProcessListSheet
 from ui import (
     REPO_ROOT,
-    batch_view,
+    batch_grid,
     context,
     process_list_edit,
     runner,
@@ -92,6 +87,14 @@ class _Session:
 #: One per client, for the life of the process. See :class:`_Session`.
 _BATCHES: dict[str, _Session] = {}
 
+#: The rows unticked in step 4, per client, for the life of the process — see :mod:`ui.batch_grid`.
+_TICKS: dict[str, batch_grid.Ticks] = {}
+
+#: How long the success message stands before the screen changes under it. A notification does not
+#: survive a page change, so this — not ``theme.notify_ok``'s own timeout — is how long it is
+#: actually on screen. The message is one word and the wait is four seconds, so the two agree.
+_TOAST_BEAT = 4.0
+
 
 def _resolve(path: str) -> Path:
     """A configured path, against the repository root — every path in clients.yml is relative."""
@@ -99,7 +102,13 @@ def _resolve(path: str) -> Path:
     return resolved if resolved.is_absolute() else REPO_ROOT / resolved
 
 
-def render() -> None:  # noqa: PLR0915 — the wiring: three redraws share one set of containers
+def _resolve(path: str) -> Path:
+    """A configured path, against the repository root — every path in clients.yml is relative."""
+    resolved = Path(path)
+    return resolved if resolved.is_absolute() else REPO_ROOT / resolved
+
+
+def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one set of containers
     cid = context.client_id()
     cfg = context.client_config(cid)
 
@@ -123,63 +132,41 @@ def render() -> None:  # noqa: PLR0915 — the wiring: three redraws share one s
             return
 
         session = _BATCHES.setdefault(cid, _Session())
+        ticks = _TICKS.setdefault(cid, batch_grid.Ticks())
         mapping = video_map_panel.session_for(cid, cfg)
-        #: The grid's save, hoisted so the Next button can call it. ``None`` until there is a grid.
+        #: The grid's save, hoisted so the Next button can call it. Empty until there is a grid.
         commit: dict[str, Callable[[], bool]] = {}
-        #: The grid's way to re-mark its Video column in place, so a mapping edit does not cost the
-        #: operator their unsaved ticks. Empty until there is a grid.
-        revideo: list[Callable[[], None]] = []
         ready = False
 
         theme.jumps(
             [
-                ("Selection list", "selection-list"),
-                ("Export", "export"),
-                ("Videos", "video-signoff"),
+                ("Uploads", "uploads"),
+                ("Video mapping", "video-mapping"),
+                ("Coverage", "coverage"),
                 ("Choose", "choose"),
                 ("Data quality", "data-quality"),
             ]
         )
 
-        # Three ways in, because the dependencies forked when the videos moved here. Each redraws
-        # exactly what depends on what changed, and nothing refuses to redraw for want of a
-        # session — the mapping's lives outside these containers.
+        def batch_changed(which: str) -> None:
+            """A list or an export arrived, or the batch was cleared: redraw from **disk**.
 
-        def batch_changed(_which: str) -> None:
-            """A list or an export arrived: redraw the panel, the grid and the report from **disk**.
-
-            ``_which`` is kept because the upload handlers pass it and it reads as documentation of
-            what just happened; nothing branches on it any more. What decides whether there is a
-            batch is whether both files are there and the selection reads — ``Batch.ready``.
+            A new list (or none) renumbers every row, so the remembered unticks go with it.
             """
             nonlocal ready
+            if which in {"list", "cleared"}:
+                ticks.unticked.clear()
             in_force = context.batch_in_force(cfg)
             ready = in_force is not None and in_force.ready
-            panel.clear()
-            selection.clear()
-            commit.clear()
-            revideo.clear()
-            with panel:
-                batch_view.render(in_force)
-            with selection:
-                if ready:
-                    _scope_grid(cfg, cid, commit, caption, session, revideo)
-                else:
-                    theme.band(
-                        "Upload the selection list and the export (steps 1 and 2) to choose the "
-                        "products for this run.",
-                        "quiet",
-                    )
-            if not ready:
-                caption.text = ""
+            draw_choose()
             onward.set_enabled(ready)
             report_changed()
 
         def mapping_changed() -> None:
-            """The mapping was written: recount coverage, the fold, the Video column, the report."""
+            """The mapping was written: the fold, eligibility (a video can unblock a product), the
+            report. Ticks survive — :class:`ui.batch_grid.Ticks` outlives the rebuild."""
             redraw_videos()
-            for hook in revideo:
-                hook()
+            draw_choose()
             report_changed()
 
         def report_changed() -> None:
@@ -189,17 +176,31 @@ def render() -> None:  # noqa: PLR0915 — the wiring: three redraws share one s
                 with quality:
                     _quality(cid)
 
-        with ui.element("div").classes("steps-2up"):
+        def draw_choose() -> None:
+            selection.clear()
+            commit.clear()
+            coverage.clear()
+            with selection:
+                if ready:
+                    _choose(cfg, cid, commit, caption, ticks, coverage)
+                else:
+                    caption.text = ""
+                    theme.band(
+                        "Upload the selection list and the export (steps 1 and 2) to choose the "
+                        "products for this run.",
+                        "quiet",
+                    )
+
+        signoff_area: list[ui.column] = []
+        with ui.element("div").classes("steps-3up").props("id=uploads"):
             _scope_list(cfg, session, batch_changed)
             _export(cfg, cid, batch_changed)
+            _signoff(cfg, cid, mapping, mapping_changed, report_changed, signoff_area)
+        _clear_all(cfg, cid, session, batch_changed)
+        signoff_area.append(ui.column().classes("w-full mt-8"))
+        redraw_videos = _mapping_fold(cfg, cid, mapping, mapping_changed)
 
-        # Bound after the row so they render below it, and before ``batch_changed`` is ever called.
-        # The panel sits straight under the two uploads it describes — which files this batch is
-        # comes before the videos and the grid that are measured against them.
-        panel = ui.column().classes("w-full gap-0")
-
-        redraw_videos = _videos(cfg, cid, mapping, changed=mapping_changed, archived=report_changed)
-
+        coverage = ui.element("section").classes("section").props("id=coverage")
         selection = ui.column().classes("w-full gap-0")
         quality = ui.column().classes("w-full gap-0")
 
@@ -209,13 +210,8 @@ def render() -> None:  # noqa: PLR0915 — the wiring: three redraws share one s
             save = commit.get("save")
             if save is not None and not save():
                 return  # refused, and it said why — stay put rather than carry the refusal away
-            # A beat before leaving, because the save reports the **delta** — "2 dropped" — and
-            # that sentence is the one thing on this screen that contradicts an operator who still
-            # thinks a tick means *remove*. Navigating on the same frame clips the toast, which
-            # would leave the write silent on a screen whose tick box means the opposite of what
-            # it used to. Notifications do not survive a page change, so the beat is the fix.
-            # Disabled for the wait: four seconds of an enabled button that does nothing visible
-            # is four seconds in which it gets pressed again.
+            # A beat before leaving, so the one-word receipt is read: notifications do not survive
+            # a page change. Disabled for the wait, so it is not pressed again meanwhile.
             onward.disable()
             ui.timer(_TOAST_BEAT, lambda: ui.navigate.to("/content"), once=True)
 
@@ -223,56 +219,113 @@ def render() -> None:  # noqa: PLR0915 — the wiring: three redraws share one s
         batch_changed("")
 
 
+# --- Step 4 and the funnel ---------------------------------------------------------
+
+
+def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, the funnel's box
+    cfg: ClientConfig,
+    cid: str,
+    commit: dict[str, Callable[[], bool]],
+    caption: ui.label,
+    ticks: batch_grid.Ticks,
+    coverage: ui.element,
+) -> None:
+    """Read the list and the export, decide eligibility once, and build step 4 under it."""
+    assert cfg.process_list is not None  # a batch is only ready with a list
+    try:
+        sheet = process_list_edit.read_sheet(cfg.process_list)
+    except ProcessListError as exc:
+        theme.band(str(exc), "danger")
+        return
+    products = context.load_products(cid)
+    named = {sheet.gtin14_at(index) for index in range(len(sheet.rows))}
+    # Eligibility over the products *this list* names — the same set ``in_scope`` would give once
+    # the list is saved, read from the sheet on screen so a fresh upload is judged at once.
+    verdict = eligibility(cfg, [product for product in products if product.gtin14 in named])
+
+    def record(saved: Path, chosen: ProcessListSheet) -> None:
+        # Which export these ticks were made against — so a run can say what it was chosen from.
+        export = _resolve(cfg.export.path)
+        assert cfg.process_list is not None
+        provenance.record_selection(
+            provenance.history_path(export),
+            _resolve(str(saved)),
+            product_list=input_layout.archive_path(_resolve(cfg.process_list.path)),
+            export=export,
+            rows=len(chosen.rows),
+        )
+
+    with theme.section(
+        "Choose the products and save",
+        step=4,
+        anchor="choose",
+        explain=(
+            "Your list, split the way a run will treat it: not in the export, not eligible (and "
+            "why), missing a video, and the eligible products — the only ones you choose between. "
+            "Every eligible row arrives ticked; untick a product to leave it out of this batch. "
+            "Next saves your choice and moves on, keeping every row that is not eligible in the "
+            "file as it was. Every save is kept, dated, under process/selection/. Nothing is "
+            "published here."
+        ),
+    ):
+        batch_grid.choose(
+            sheet,
+            products,
+            verdict,
+            record=record,
+            commit=commit,
+            caption=caption,
+            ticks=ticks,
+            counted=lambda counts: batch_grid.draw_funnel(coverage, counts),
+        )
+
+
 # --- Step 3: the videos ------------------------------------------------------------
 
 
-def _videos(
+def _signoff(  # noqa: PLR0913 — the client, the mapping, what to redraw, and where the review goes
     cfg: ClientConfig,
     cid: str,
     mapping: video_map_panel.MappingSession | None,
-    *,
     changed: Callable[[], None],
     archived: Callable[[], None],
-) -> Callable[[], None]:
-    """Step 3, the sign-off sheet with the coverage figures under it, and the mapping folded below.
-
-    Returns the redraw for both, which :func:`render` calls after every write to the mapping.
-
-    The coverage figures sit under the upload, not in the fold: they answer "did that sheet help?",
-    and they are what Apply changes. Full width rather than in ``steps-2up`` — three column pickers
-    need the room, and a three-up row would make all three too narrow.
-
-    **The mapping is folded and built on first open.** Two tall tables on one screen were settled by
-    the fold rather than by negotiating heights, and building it lazily is what makes its first
-    open render full (see :func:`ui.theme.fold`).
-    """
+    plan_into: list[ui.column],
+) -> None:
+    """Step 3, the upload only — its review renders full width below the row (``plan_into``)."""
     if mapping is None:
         with theme.section("The client's video sign-off sheet", step=3, anchor="video-signoff"):
             ui.label(
                 "No `media.video_map_path` in clients.yml — this client attaches no videos, so "
                 "there is nothing to sign off."
             ).classes("note")
+        return
+    video_signoff_panel.render(
+        cfg, cid, mapping, applied=changed, archived=archived, step=3, plan_into=plan_into
+    )
+
+
+def _mapping_fold(
+    cfg: ClientConfig,
+    cid: str,
+    mapping: video_map_panel.MappingSession | None,
+    changed: Callable[[], None],
+) -> Callable[[], None]:
+    """The mapping, file by file, folded and built on first open — with its own figures on top.
+
+    **Built lazily.** Two tall tables on one screen were settled by the fold rather than by
+    negotiating heights, and building it on first open is what makes it render full (see
+    :func:`ui.theme.fold`). Returns its refresh, which :func:`render` calls after every write.
+    """
+    if mapping is None:
         return lambda: None
 
-    coverage: list[ui.column] = []
+    def build() -> None:
+        video_map_panel.coverage(cfg, cid, mapping)
+        video_map_panel.rows(cfg, cid, mapping, changed)
 
-    def draw_coverage() -> None:
-        box = coverage[0]
-        box.clear()
-        with box:
-            theme.subhead("Coverage")
-            video_map_panel.coverage(cfg, cid, mapping)
-
-    def place_coverage() -> None:
-        coverage.append(ui.column().classes("w-full gap-0 mt-6"))
-        draw_coverage()
-
-    video_signoff_panel.render(
-        cfg, cid, mapping, applied=changed, archived=archived, step=3, below=place_coverage
-    )
-    mapping_fold = theme.fold(
+    folded = theme.fold(
         "The mapping, file by file",
-        lambda: video_map_panel.rows(cfg, cid, mapping, changed),
+        build,
         anchor="video-mapping",
         explain=(
             "Every video file and the product it maps to, one row each. Pick a row to read its "
@@ -280,12 +333,68 @@ def _videos(
             "previous file as a backup. Staged rows survive anything else you do on this screen."
         ),
     )
+    return folded.refresh
 
-    def redraw() -> None:
-        draw_coverage()
-        mapping_fold.refresh()
 
-    return redraw
+# --- Clear all ---------------------------------------------------------------------
+
+
+def _clear_all(
+    cfg: ClientConfig, cid: str, session: _Session, cleared: Callable[[str], None]
+) -> None:
+    """*Clear all — start fresh*, behind a confirmation that says exactly what moves.
+
+    Everything on this screen is remembered between sittings, because it is read from disk — so
+    starting over needs a way to set the batch aside. This moves the live list, selection, export
+    and parsed products into ``superseded/cleared-{stamp}/`` (:mod:`lib.batch_reset`); nothing is
+    deleted, and the client's video mapping is never touched.
+    """
+    if cfg.process_list is None:
+        return
+    process_list = cfg.process_list
+
+    def clear() -> None:
+        dialog.close()
+        try:
+            moved = batch_reset.clear_batch(
+                export=_resolve(cfg.export.path),
+                selection=_resolve(process_list.path),
+                products=REPO_ROOT / "output" / cid / "data" / "products.json",
+                stamp=datetime.now(UTC).strftime("%Y%m%dT%H%M%S"),
+            )
+        except (OSError, ValueError) as exc:
+            theme.notify_problem(f"Nothing was cleared: {exc}")
+            return
+        session.saved = False
+        cleared("cleared")
+        if not moved:
+            theme.notify_ok("There was nothing to clear.")
+            return
+        theme.announce(
+            "Cleared — start fresh",
+            f"{len(moved)} file(s) set aside in {moved[0].parent.relative_to(REPO_ROOT)}. Upload "
+            "the selection list and the export to begin a new batch. The video mapping is as it "
+            "was.",
+        )
+
+    with ui.dialog() as dialog, ui.element("div").classes("card dialog-card"):
+        ui.label("Clear this batch and start fresh?").classes("section-head")
+        ui.label(
+            "The selection list, the saved selection, the GS1 export and the products read from "
+            "it are moved to input/…/superseded/cleared-<date>/ — nothing is deleted, and every "
+            "dated copy stays where it is. The video mapping, the client's sign-off sheets, "
+            "generated copy, run history and everything live are not touched."
+        ).classes("note mt-2")
+        with ui.row().classes("gap-3 mt-4"):
+            theme.quiet_action("Cancel", dialog.close)
+            theme.action("Clear all", clear)
+
+    with ui.row().classes("items-center gap-3 mt-4"):
+        theme.quiet_action("Clear all — start fresh", dialog.open)
+        ui.label(
+            "Everything here is remembered between sittings. This sets the batch aside so the "
+            "screen is empty again."
+        ).classes("note")
 
 
 # --- Step 2: the export -------------------------------------------------------
@@ -399,37 +508,10 @@ def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
         )
 
 
-# --- Product scope list ---------------------------------------------------------
+# --- Step 1: the selection list --------------------------------------------------
 #
-# Named "Process list" on screen until two renames ago, which is the config key; then "product
-# list", which is one word away from "the product data" in step 1 — the exact confusion this
-# screen is built to prevent. It is a **selection**: which of the exported products this batch
-# touches. The config key `process_list` stays (it is in clients.yml, the schema, the doctor
-# payload and five call sites); only what the operator reads changes.
-
-#: The row key: a row's position in the sheet as first read. Fixed when the grid is built and
-#: never renumbered — see ``ProcessListSheet.keeping`` for what accumulating edits does instead.
-_ROW = "_row"
-
-#: The per-row hold mark. A synthetic column, so it is prefixed like the row key to keep it out of
-#: the namespace the operator's own headers live in.
-_HELD = "_held"
-
-#: The row's barcode, canonicalised the way the export join reads it. Carried on the row and not
-#: rendered — the table shows the operator's own barcode column, this is for counting *products*.
-#: The pilot's own list names one barcode on two rows, so a count of rows is not a count of things
-#: a run would publish, and the band below says what a run would publish.
-_GTIN = "_gtin"
-
-#: How long the success message stands before the screen changes under it. A notification does not
-#: survive a page change, so this — not ``theme.notify_ok``'s own timeout — is how long it is
-#: actually on screen. It was 1.6s, chosen to make the toast *appear*; nobody checked it was long
-#: enough to *read*, and it was not. The message is one word now and the wait is four seconds, so
-#: the two agree. What the save will do is said before the click, in the button's caption.
-_TOAST_BEAT = 4.0
-
-#: Height of the matched table. Long enough to work in, short enough that Save stays on screen.
-_TABLE_HEIGHT = "55vh"
+# Named "Process list" on screen until two renames ago, which is the config key. It is a
+# **selection**: which of the exported products this batch touches.
 
 
 def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> None:
@@ -455,8 +537,8 @@ def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> 
             "file into its own folder, which is what lets the result sheet afterwards name the "
             "rows you dropped as dropped rather than leaving them out. "
             "That path is fixed in clients.yml and has no command-line override, so a list saved "
-            "anywhere else is invisible to the tool. Until the export (step 2) arrives, the table "
-            "in step 4 is simply the whole list: nothing can be matched yet."
+            "anywhere else is invisible to the tool. Until the export (step 2) arrives, nothing "
+            "can be matched, so step 4 waits for both."
         ),
     ):
         # Async because NiceGUI 3 reads an upload through awaitable methods on ``event.file`` —
@@ -489,560 +571,6 @@ def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> 
             return f"Installed. Your upload is kept as {kept.name}."
 
         theme.upload("Product selection list (.xlsx)", receive, busy="Checking the list…")
-
-        def restore() -> None:
-            """Put the operator's own upload back as the list, ticks and all."""
-            try:
-                rows = process_list_edit.restore_from_upload(cfg.process_list)
-            except ProcessListError as exc:
-                theme.announce("Nothing to restore", str(exc), kind="warn")
-                return
-            session.saved = False
-            arrived("list")
-            theme.announce(
-                "Back to your original list",
-                f"All {rows} row(s) from the file you uploaded are back and ticked. Every "
-                f"selection you saved is still dated beside it under process/selection/.",
-            )
-
-        theme.quiet_action("Start again from my uploaded file", restore)
-        ui.label(
-            "Ticked too many rows off? This puts your own upload back exactly as you sent it — "
-            "no need to find the file again."
-        ).classes("note mt-2")
-
-
-def _scope_grid(  # noqa: PLR0913 — the batch, its save, its caption, and its video hook
-    cfg: Any,
-    cid: str,
-    commit: dict[str, Callable[[], bool]],
-    caption: ui.label,
-    session: _Session,
-    revideo: list[Callable[[], None]],
-) -> None:
-    """The list joined against the export: what is missing above, what will run below."""
-    try:
-        sheet = process_list_edit.read_sheet(cfg.process_list)
-    except ProcessListError as exc:
-        theme.band(str(exc), "danger")
-        return
-
-    products = context.load_products(cid)
-    # ``product.gtin14`` against the sheet's own normalisation, which is the exact pair
-    # ``lib.preflight.in_scope`` joins on. A third opinion about what makes two barcodes equal
-    # would report every good product as missing, and read as bad data rather than as a bug.
-    matched, unmatched = rows_in_export(sheet, {product.gtin14 for product in products})
-    held = _held_for_video(cfg, products)
-
-    if not products:
-        # Nothing has been read, so the join is not a finding — it is the absence of one. Every
-        # row would land in "not in the export", which is both useless and would leave the screen
-        # with no checkboxes at all: the operator could no longer choose a batch before the export
-        # arrives, which they have always been able to do.
-        #
-        # "read", not "parsed". The word left the screen with the two buttons; a band is the worst
-        # place for the one survivor, since it is read by somebody who has just hit a problem.
-        theme.band(
-            "No GS1 export has been read yet, so no row can be matched against one. Upload it in "
-            "step 2; until then this is simply the whole list.",
-            "warn",
-        )
-        matched, unmatched = list(range(len(sheet.rows))), []
-
-    columns = [
-        # Positional field names. The operator's headers are their own text: two may be the same
-        # word and one may be blank, and either collapses a keyed-by-label row into fewer cells
-        # than the file has.
-        {"name": f"c{n}", "label": name or "—", "field": f"c{n}", "align": "left", "sortable": True}
-        for n, name in enumerate(sheet.header)
-    ]
-
-    def row_of(index: int) -> dict[str, Any]:
-        cells = {f"c{n}": value for n, value in enumerate(sheet.rows[index])}
-        gtin = sheet.gtin14_at(index)
-        return {
-            _ROW: index,
-            **cells,
-            _GTIN: gtin,
-            _HELD: held.get(gtin, "") if gtin else "",
-        }
-
-    with theme.section(
-        "Choose the products and save",
-        step=4,
-        anchor="choose",
-        explain=(
-            "Every row arrives ticked, and a run processes the ticked ones. Untick a product to "
-            "leave it out of this batch. Next saves your choice and moves on — there is no "
-            "separate save button. The filter changes only what you can see, "
-            "never what is ticked, so you can search, untick, clear the filter, and nothing you "
-            "did is lost. A column that is empty on some rows offers (blank) as something to "
-            "filter for, which is how you find the ones nobody has done yet. "
-            "Every save is kept, dated, under process/selection/, so nothing you "
-            "ever chose is overwritten — and if the ticks come out wrong, Start again from my "
-            "uploaded file above puts the whole list back. Nothing is "
-            "published here; this only settles which products are in the batch. A product with no "
-            "client-confirmed video in every language is marked in the Video column and a run "
-            "skips it, reporting success (media.restrict_to_mapped_gtins)."
-        ),
-    ):
-        missing_rows = [row_of(n) for n in unmatched]
-        _missing_table(columns, missing_rows)
-        matched_rows = [row_of(n) for n in matched]
-        below = _scope_table(columns, matched_rows)
-        band, video = _hold_band(cfg)
-
-        def describe() -> None:
-            ticked = below.selected
-            caption.text = _save_line(len(ticked) + len(unmatched), len(sheet.rows))
-            band.set_visibility(any(row[_HELD] for row in matched_rows))
-            if video is not None:
-                video.text = _video_line(*_video_counts(ticked))
-
-        below.on_select(describe)
-        describe()
-
-        def mark_videos() -> None:
-            """Re-mark the Video column after a mapping write — in place, keeping every tick."""
-            fresh = _held_for_video(cfg, products)
-            for row in (*matched_rows, *missing_rows):
-                row[_HELD] = fresh.get(row[_GTIN], "") if row[_GTIN] else ""
-            below.redraw()
-            describe()
-
-        revideo.append(mark_videos)
-
-        def save() -> bool:
-            # The rows the export has nothing for are kept, always, and are not counted as chosen.
-            # They carry no checkbox because the only question this screen asks is "does this
-            # run?", and for them the answer is no whatever anyone ticks.
-            keep = {int(row[_ROW]) for row in below.selected} | set(unmatched)
-            chosen = sheet.keeping(keep)
-            try:
-                saved = process_list_edit.save_sheet(chosen)
-            except ProcessListError as exc:
-                theme.notify_problem(str(exc))
-                return False
-            # Which export these ticks were made against. Recorded here rather than inside
-            # ``save_sheet`` because this is the layer that knows the whole batch; that one knows
-            # only the sheet it was handed.
-            # Every path here goes through ``_resolve``, including the one ``save_sheet`` just
-            # returned. ``start.command`` cds to the repository so the two spellings are the same
-            # file, but anchoring some of them and not others would put the ledger in one place and
-            # the files it describes in another the first time that stopped being true. Resolved,
-            # the worst case is a record that is not written — ``describe`` returns None for a file
-            # it cannot read — rather than a ledger split across two trees.
-            export = _resolve(cfg.export.path)
-            provenance.record_selection(
-                provenance.history_path(export),
-                _resolve(str(saved)),
-                product_list=input_layout.archive_path(_resolve(cfg.process_list.path)),
-                export=export,
-                rows=len(chosen.rows),
-            )
-            # One word. The numbers are in the caption above the button, where the operator read
-            # them *before* pressing it — a receipt racing a page change is the wrong place for a
-            # fact somebody has to act on, and the long version of this sentence was unreadable in
-            # the time it had. The backup path is not lost: it is in the ⓘ on this step.
-            session.saved = True
-            theme.notify_ok("Saved")
-            return True
-
-        commit["save"] = save
-
-
-def _hold_band(cfg: ClientConfig) -> tuple[ui.element, ui.label | None]:
-    """The line counting the video holds, and the element to show or hide it by.
-
-    Shown only while the rule is actually holding something. "None of these are held" on a client
-    that attaches no videos is a sentence about a mechanism that is not running, and a band that is
-    right every time is how a screen teaches an operator to skim past its bands. Built whenever the
-    rule is on, though, and hidden rather than absent: a mapping write re-marks the rows in place,
-    and can make a batch with no holds have some.
-    """
-    band = ui.element("div").classes("w-full")
-    with band:
-        if not (cfg.media and cfg.media.restrict_to_mapped_gtins):
-            return band, None
-        label = theme.routed_band(
-            "", link_label="Go to the video mapping ↑", route="#video-mapping", kind="warn"
-        )
-    return band, label
-
-
-def _save_line(keep: int, total: int) -> str:
-    """What Next will do, said before it is pressed.
-
-    This is the mitigation that survives. The tick box inverted its meaning one release ago — a
-    tick used to mean *remove this row* — and an operator with that habit unticks the rows they
-    want gone and saves exactly those. "2 dropped" is the sentence that contradicts them, and it
-    has to be legible *while they can still change their mind*, not afterwards in a toast that a
-    page change is about to destroy.
-
-    Counted the way the save counts: the ticked rows plus the ones the export has nothing for,
-    which are kept regardless and carry no checkbox.
-    """
-    dropped = total - keep
-    if not dropped:
-        return f"Next saves all {total} row(s) and goes on to the copy."
-    return f"Next saves {keep} of {total} row(s) — {dropped} dropped — and goes on to the copy."
-
-
-def _held_for_video(cfg: ClientConfig, products: list[ProductRecord]) -> dict[str, str]:
-    """``{gtin14: what it waits on}`` for every in-scope product a run will hold for want of video.
-
-    The cell used to say "no video yet" for all of them, which on the pilot covered three different
-    jobs: 26 products waiting on a French video, 20 on both, and 2 that also have two videos
-    competing for the Dutch slot. The words are :func:`lib.video_status.waiting_on`'s, so the report
-    says the same thing about the same product.
-
-    **Only held products get text**, because :func:`_video_counts` counts a non-empty cell as a
-    hold. Two videos in one language is a hold like none (the page could not get either), so it
-    reads "two videos in nl" here and in the report.
-    """
-    if cfg.media is None or not cfg.media.restrict_to_mapped_gtins:
-        return {}
-    status = load_video_status(cfg, in_scope(cfg, products))
-    if status is None:
-        return {}
-    return {product.gtin: waiting_on(product) for product in status.held}
-
-
-def _video_counts(ticked: list[dict[str, Any]]) -> tuple[int, int]:
-    """``(held, ticked)`` for :func:`_video_line`, counted in **products** — distinct barcodes.
-
-    Two rows naming one barcode publish one page, so a count of rows is not a count of what a run
-    would do. The caption under Next counts rows, because a save writes rows; each sentence names
-    its own unit rather than borrowing the other's number.
-
-    The hold is read off the mark the Video column already shows, not by asking
-    :func:`lib.preflight.held_for_video` again. A second opinion about a hold the row already
-    carries would disagree with the column the moment either changed — and the column is what the
-    operator is looking at while they read this.
-    """
-    chosen = {row[_GTIN] for row in ticked if row[_GTIN]}
-    held = {row[_GTIN] for row in ticked if row[_HELD] and row[_GTIN]}
-    return len(held), len(chosen)
-
-
-def _video_line(held: int, ticked: int) -> str:
-    """What the video rule costs this batch, said where the batch is chosen.
-
-    The Video column marked the rows and the screen said nothing more: no total, no consequence,
-    and no way to the one file that decides it. On the pilot it marks 87 of the 111 matched rows —
-    so the caption's "Next saves all 118 row(s)" was true at the same moment a run would publish
-    24, and the two sentences read as agreement.
-
-    Counted over the **ticked** rows, not from :func:`lib.preflight.in_scope`, which reads the
-    selection as last *saved*. Here the batch is what the operator has ticked a moment ago, and
-    unticking a held product is one of the things they came to this screen to do. The two agree
-    again as soon as Next writes the selection; Preflight is the surface that speaks for the file.
-
-    In **products**, and the caller counts them by barcode for that reason. The pilot's own list
-    carries ``08713195008486`` on two rows, so its 111 matched rows are 110 products — and a run
-    publishes products. Counting rows here read "a run would publish 24" only because that
-    duplicate happens to be held: the day it is not, the row count claims a page that no run
-    creates, which is the overclaim this line exists to retire.
-
-    The vocabulary is the doctor's — "held", "a confirmed video in every language", "a run would
-    publish N" — because an operator who reads this line and then reads ``check_scope`` is reading
-    about one rule, and two spellings of it would read as two.
-    """
-    if not ticked:
-        return "Nothing is ticked, so a run would publish nothing."
-    if not held:
-        return f"All {ticked} ticked product(s) have a confirmed video in every language."
-    return (
-        f"{held} of the {ticked} ticked product(s) are held for want of a confirmed video in "
-        f"every language, so a run would publish {ticked - held}."
-    )
-
-
-def _missing_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
-    """The rows the export has nothing for. Read-only, deliberately — there is no choice to make.
-
-    They are shown *above* the rest and not merely counted, because this is the one fact about a
-    scope list that nothing else in the tool reports: a barcode that is listed and not exported
-    produces no error, no plan row and no count.
-
-    **No checkboxes.** They had them, and it was wrong twice over. The tick would have meant "keep
-    this row in the file" while the identical tick below means "keep it *and* run it" — one control
-    answering two questions, in two tables, a few pixels apart. And it made the count beside the
-    table read "38 of 38 row(s) will be processed" when 37 was the most any run could touch.
-
-    So these rows are simply kept, every time. Unticking one would not stop it being processed —
-    nothing was going to process it — it would only delete the evidence that a barcode on the list
-    has no product behind it. That evidence is the whole point of the table.
-    """
-    if not rows:
-        return
-
-    theme.subhead(
-        f"Not in the GS1 export ({len(rows)})",
-        explain=(
-            "The export carries no row for these barcodes, so a run will publish nothing for them "
-            "and say nothing about them. Either the product is missing from the export — fix it in "
-            "MyGS1 and export again — or the barcode is wrong. They stay in your list either way, "
-            "and have no tick box because there is nothing to choose: nothing can process them. To "
-            "drop one, remove it in the spreadsheet and upload the list again."
-        ),
-    )
-
-    table = ui.table(columns=columns, rows=rows, row_key=_ROW, pagination=0).classes("w-full mt-2")
-    table.props("dense flat bordered")
-
-
-class _Selection:
-    """The ticked rows, as a set of row keys that filtering never touches.
-
-    **This is the Google Sheets model, not the Excel one.** A tick is a property of a *row*, not of
-    what happens to be on screen. Filtering changes the view and nothing else; a bulk tick or
-    untick applies to the rows the filter is showing; the running total counts the whole file,
-    visible or not. So: 100 ticked, filter to 30, untick those → 70. Or nothing ticked, filter to
-    20, tick all → 20.
-
-    Held in Python rather than read off ``table.selected``, because that list only ever holds rows
-    the table is currently rendering. Filter a ticked row out of view and it drops out of
-    ``selected``; save then, and the operator loses rows they never touched — silently, since the
-    count would agree with itself the whole way down.
-    """
-
-    def __init__(self, keys: set[int]) -> None:
-        self.keys = keys
-
-    def sync_from(self, visible: list[dict[str, Any]], selected: list[dict[str, Any]]) -> None:
-        """Fold a table event back in: only the visible rows can have changed."""
-        shown = {int(row[_ROW]) for row in visible}
-        self.keys = (self.keys - shown) | {int(row[_ROW]) for row in selected}
-
-    def add(self, rows: list[dict[str, Any]]) -> None:
-        self.keys |= {int(row[_ROW]) for row in rows}
-
-    def remove(self, rows: list[dict[str, Any]]) -> None:
-        self.keys -= {int(row[_ROW]) for row in rows}
-
-
-#: How many distinct values a column may hold before its filter becomes free text. Below this a
-#: picker is better — the operator sees what the column *contains*, which is most of why they
-#: filter; above it, a list of 300 barcodes is a worse way to find one than typing four digits.
-_PICKER_MAX = 12
-
-#: What a blank cell is called in a filter, in both controls. A column in the operator's own file
-#: is routinely part empty, and those rows are usually the point — "not on the website yet" is a
-#: blank, not a word.
-BLANK_LABEL = "(blank)"
-
-
-def _scope_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> Any:
-    """The rows a run will act on, all ticked, filterable per column.
-
-    One box matching every column was the whole filter. It is still here — it is the fastest way
-    to find one barcode and nothing per-column replaces it — but it could not answer the question
-    the operator actually has, which is "show me the rows where *this* column says *that*".
-    """
-    theme.subhead(
-        f"In the GS1 export ({len(rows)}) — tick the ones to process",
-        explain=(
-            "Every row arrives ticked. Untick a product to leave it out of this batch. Filters "
-            "change only what you can see, never what is ticked, and the tick buttons act on the "
-            "rows the filters are showing — so you can filter to twenty rows, untick all twenty, "
-            "clear the filters, and the other eighty are exactly as you left them."
-        ),
-    )
-    selection = _Selection({int(row[_ROW]) for row in rows})
-    # Created before the table so they render above it. You filter, then look — controls under the
-    # thing they control are read as a footer, and on a table this tall they are off screen.
-    filters = ui.row().classes("items-end gap-3 w-full flex-wrap mt-3")
-    bulk = ui.row().classes("items-center gap-3 mt-2 mb-1 flex-wrap")
-    held_column = {
-        "name": _HELD,
-        "label": "Video",
-        "field": _HELD,
-        "align": "left",
-        "sortable": True,
-    }
-    all_columns = [*columns, held_column]
-    table = ui.table(
-        columns=all_columns,
-        rows=list(rows),
-        row_key=_ROW,
-        selection="multiple",
-        # Mandatory, not cosmetic: with pagination on, the header checkbox selects *this page*,
-        # and a save would then quietly drop every row the operator never scrolled to.
-        pagination=0,
-    ).classes("w-full mt-2")
-    table.props(f'dense flat bordered virtual-scroll style="height: {_TABLE_HEIGHT}"')
-
-    #: Column field -> the operator's filter for it. Read on every redraw; empty means "no filter".
-    per_column: dict[str, Any] = {}
-    search: Any = None
-    listeners: list[Callable[[], None]] = []
-
-    def visible() -> list[dict[str, Any]]:
-        """The rows every active filter admits — all of them, ANDed."""
-        text = str(getattr(search, "value", "") or "").strip().lower()
-        kept = []
-        for row in rows:
-            if text and not any(text in str(value).lower() for value in row.values()):
-                continue
-            if all(_admits(per_column.get(field), row.get(field)) for field in per_column):
-                kept.append(row)
-        return kept
-
-    def redraw() -> None:
-        shown = visible()
-        table.rows = shown
-        # Rebuilt from the selection, never from what the table was showing a moment ago: the two
-        # disagree the instant a filter hides a ticked row, and the table's copy is the lossy one.
-        table.selected = [row for row in shown if int(row[_ROW]) in selection.keys]
-        table.update()
-        for listen in listeners:
-            listen()
-
-    def on_table_select() -> None:
-        selection.sync_from(visible(), list(table.selected))
-        for listen in listeners:
-            listen()
-
-    table.on_select(on_table_select)
-
-    with filters:
-        search = (
-            ui.input(placeholder="Find in any column")
-            .props("dense clearable")
-            .classes("w-full max-w-xs")
-        )
-        search.on_value_change(redraw)
-        for column in all_columns:
-            per_column[column["field"]] = _column_filter(column, rows, redraw)
-
-    with bulk:
-        tick = ui.button("Tick all shown", on_click=lambda: (selection.add(visible()), redraw()))
-        untick = ui.button(
-            "Untick all shown", on_click=lambda: (selection.remove(visible()), redraw())
-        )
-        for button in (tick, untick):
-            button.props("flat dense no-caps")
-        shown_label = ui.label("").classes("note")
-
-    def describe_shown() -> None:
-        count = len(visible())
-        ticked = sum(1 for row in visible() if int(row[_ROW]) in selection.keys)
-        shown_label.text = (
-            f"{count} of {len(rows)} row(s) shown; {ticked} of those ticked."
-            if count != len(rows)
-            else f"All {len(rows)} row(s) shown; {ticked} ticked."
-        )
-
-    listeners.append(describe_shown)
-    redraw()
-    return _Grid(selection, rows, listeners, redraw)
-
-
-class _Grid:
-    """What the save and the caption need from the table, without reaching into the widget."""
-
-    def __init__(
-        self,
-        selection: _Selection,
-        rows: list[dict[str, Any]],
-        listeners: list[Callable[[], None]],
-        redraw: Callable[[], None],
-    ) -> None:
-        self._selection = selection
-        self._rows = rows
-        self._listeners = listeners
-        #: Re-render the rows from the selection — after a cell changed under it, say.
-        self.redraw = redraw
-
-    @property
-    def selected(self) -> list[dict[str, Any]]:
-        """Every ticked row in the file — not merely the ticked rows on screen."""
-        return [row for row in self._rows if int(row[_ROW]) in self._selection.keys]
-
-    def on_select(self, handler: Callable[[], None]) -> None:
-        self._listeners.append(handler)
-        handler()
-
-
-def _column_filter(column: dict[str, Any], rows: list[dict[str, Any]], redraw: Any) -> Any:
-    """One column's filter: a value picker when it has few values, free text when it has many.
-
-    A picker is what the operator means by "filter on column D" — they want to see what D
-    contains. It stops being that the moment the column is a barcode or a description, where the
-    list is as long as the file and typing four characters is faster than finding one entry in
-    three hundred.
-
-    **An empty cell is one of the things a column contains**, and both controls can ask for it
-    under the same name. This shipped building the picker's options from the column's values *minus*
-    the empty one, which made blanks the single thing in a column that could not be filtered for —
-    on the pilot's own list that is 52 rows of "Momenteel op Website", 16 of "Al in Gs1" and 81 of
-    "Link naar site", and "show me the ones nobody has done yet" is how a batch gets prepared.
-    """
-    field = column["field"]
-    label = str(column["label"])
-    options = _picker_options(rows, field)
-    if options is not None:
-        control = (
-            ui.select(options, multiple=True, label=label, clearable=True)
-            .props("dense outlined use-chips")
-            .classes("min-w-40")
-        )
-    else:
-        control = ui.input(placeholder=label).props("dense clearable outlined").classes("w-40")
-        if any(not cell for cell in _cells(rows, field)):
-            # Typing cannot express "empty" — every string is a substring of nothing — so this
-            # control takes the picker's word for it. On hover, because a column this wide has no
-            # room to say it and the sentence belongs with the control rather than in a paragraph.
-            control.tooltip(f"Type {BLANK_LABEL} to show only the rows where this column is empty")
-    control.on_value_change(redraw)
-    return control
-
-
-def _cells(rows: list[dict[str, Any]], field: str) -> list[str]:
-    """One column's cells as the filters compare them: text, stripped, blank for absent."""
-    return [str(row.get(field) or "").strip() for row in rows]
-
-
-def _picker_options(rows: list[dict[str, Any]], field: str) -> dict[str, str] | None:
-    """A column's picker options, or ``None`` when it has too many values to enumerate.
-
-    Pure, and separate from the widget, so the decision and the options are testable without a
-    browser — which is what the blank option needed, since getting it wrong is invisible: a filter
-    that silently matches nothing looks exactly like a column with nothing in it.
-
-    Keyed by the cell value and labelled for a person. The blank option's value is the **empty
-    string** — what a blank cell compares equal to — so :func:`_admits` needs no case of its own.
-    Quasar round-trips it as ``[""]``, measured in a browser rather than assumed, because an option
-    the widget quietly dropped would filter to nothing while looking selected.
-    """
-    cells = _cells(rows, field)
-    values = sorted(set(cells) - {""})
-    if len(values) > _PICKER_MAX:
-        return None
-    # No blank option for a column that has none: an option matching nothing can only mislead.
-    options = {"": BLANK_LABEL} if "" in cells else {}
-    options.update({value: value for value in values})
-    return options
-
-
-def _admits(control: Any, value: Any) -> bool:
-    """Whether one column's filter lets a cell through. No filter admits everything."""
-    chosen = getattr(control, "value", None)
-    if not chosen:
-        return True
-    cell = str(value or "").strip()
-    if isinstance(chosen, list):
-        # The picker's blank option carries the empty string, which is exactly what a blank cell
-        # reads as — so asking for blanks is the ordinary path here, not a special case.
-        return cell in chosen
-    needle = str(chosen).strip()
-    if needle == BLANK_LABEL:
-        # The one typed string that is not a substring search. A column whose cells literally read
-        # "(blank)" would be unsearchable for that word, which is a trade worth making: the word is
-        # the picker's own, so the two controls cannot mean different things by it.
-        return not cell
-    return needle.lower() in cell.lower()
 
 
 # --- Quality ------------------------------------------------------------------

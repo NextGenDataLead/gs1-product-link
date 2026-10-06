@@ -99,7 +99,7 @@ def test_the_data_screen_builds_with_four_steps_and_both_folds(
     for title in (
         "Upload the product selection list",
         "Upload the GS1 export",
-        "Upload the client's video sign-off sheet",
+        "Upload the video sign-off sheet",
         "The mapping, file by file",
         "Choose the products and save",
         "Data quality",

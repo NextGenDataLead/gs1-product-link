@@ -187,6 +187,12 @@ body { background: var(--paper) !important; color: var(--ink) !important;
                     align-items: start; }
 .steps-2up > .section { margin-top: var(--space-8); }
 @media (max-width: 60rem) { .steps-2up { grid-template-columns: 1fr; gap: 0; } }
+/* The Data screen's three uploads — list, export, sign-off sheet — in one row: three documents from
+   three places, none waiting on another. Two up on a narrow window would orphan the third. */
+.steps-3up        { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+                    gap: var(--space-8); align-items: start; }
+.steps-3up > .section { margin-top: var(--space-8); }
+@media (max-width: 70rem) { .steps-3up { grid-template-columns: 1fr; gap: 0; } }
 
 /* The way on. The rail is navigation for somebody who knows the shape of the tool; this is for
    somebody following a procedure, who wants to be told where the next thing is. */

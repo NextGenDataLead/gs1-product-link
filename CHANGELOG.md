@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The Data screen is a funnel: in product list → eligible → selected** (operator feedback,
+  2026-10-06). The three uploads — selection list, GS1 export, video sign-off sheet — sit side by
+  side, with the sheet's review full width under them. **Coverage** counts the batch in products,
+  with *not eligible* and *missing video(s)* beside it, live as you tick. Step 4 splits the list into
+  not in the export · not eligible (with a *Why*) · missing video(s) · eligible, and only the eligible
+  table has tick boxes. Eligibility is `lib.eligibility`, a join of the plan's own holds
+  (`lib.holds.held_products`, new) and the video status, so a tick box is offered exactly on what
+  the plan would publish. Unticks survive a mapping write.
+- **Clear all — start fresh** (`lib.batch_reset`): sets the live selection, uploaded list, export and
+  `products.json` aside in `input/{client}/superseded/cleared-{stamp}/`, behind a confirmation.
+  Moved, never deleted; the video mapping is untouched.
 - **`media.publish_without_video` — a missing video no longer has to hold a product.** Off by
   default, so nothing changes until a client sets it. With it on (and `restrict_to_mapped_gtins`), a
   product with no confirmed video in some language publishes without one there; a product with
@@ -170,6 +181,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text true every time and needed once, never a warning or a count.
 
 ### Changed
+- **Data no longer shows the Batch in force card, and *Start again from my uploaded file* is gone**
+  (replaced by Clear all; re-uploading the list remains the undo for ticks). The mapping's own
+  figures moved inside *The mapping, file by file*. Step 3 is titled *Upload the video sign-off
+  sheet*. `ui/pages/data.py` 1096 → ~625 lines; the table moved to `ui/batch_grid.py`.
+- **`democlient` publishes without a video** (`publish_without_video: true` in
+  `clients.example.yml`), mirroring the setting noviplast is moving to.
 - **A product with two videos confirmed in one language is held, like one with none.** The video
   gate counted any confirmed row, so a GTIN confirmed to two files passed — and since a page can
   carry only one video per language, the run attached *neither* and published without one,
