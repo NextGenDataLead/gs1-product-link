@@ -15,8 +15,12 @@ The fix is in two places because the defect was:
   before it — including the one saying the command is running — then reaches the browser with
   nothing left to report, and the screen looks identical from click to result.
 
-Neither half works alone, which is why both are checked here. AST-only, so this needs no NiceGUI
-and runs in the required CI job rather than the optional one.
+Neither half works alone, which is why both are checked here. The handler rule reads the component
+modules beside ``ui/pages/`` as well as the pages themselves: a panel's button is a screen's button,
+and a rule that stopped at ``pages/`` would be escaped by the first extraction that moved a handler
+out of a page — ``ui/batch_view.py`` is the precedent, and the video panels follow it.
+
+AST-only, so this needs no NiceGUI and runs in the required CI job rather than the optional one.
 """
 
 from __future__ import annotations
@@ -27,7 +31,8 @@ from typing import Final
 
 _ROOT: Final = Path(__file__).resolve().parent.parent.parent
 _THEME: Final = _ROOT / "ui" / "theme.py"
-_PAGES_DIR: Final = _ROOT / "ui" / "pages"
+_UI_DIR: Final = _ROOT / "ui"
+_PAGES_DIR: Final = _UI_DIR / "pages"
 
 #: The two helpers every screen builds its buttons with.
 _BUTTONS: Final = frozenset({"action", "quiet_action"})
@@ -35,6 +40,11 @@ _BUTTONS: Final = frozenset({"action", "quiet_action"})
 #: The runner calls that hold the event loop. Their off-the-loop twins are
 #: ``run_off_the_loop`` and ``run_json_off_the_loop``.
 _BLOCKING: Final = frozenset({"run", "run_json"})
+
+
+def _shell_modules() -> list[Path]:
+    """Every module that draws part of a screen: the pages and the components beside them."""
+    return sorted([*_UI_DIR.glob("*.py"), *_PAGES_DIR.glob("*.py")])
 
 
 def _tree(path: Path) -> ast.Module:
@@ -97,7 +107,7 @@ def test_no_click_handler_blocks_the_event_loop() -> None:
     a button added next month is precisely the case it would miss.
     """
     offenders = []
-    for path in sorted(_PAGES_DIR.glob("*.py")):
+    for path in _shell_modules():
         tree = _tree(path)
         functions = _functions(tree)
         for name in sorted(_click_handlers(tree)):
@@ -105,7 +115,7 @@ def test_no_click_handler_blocks_the_event_loop() -> None:
                 if _BLOCKING & _called_names(handler) and not isinstance(
                     handler, ast.AsyncFunctionDef
                 ):
-                    offenders.append(f"{path.name}:{handler.lineno} {name}")
+                    offenders.append(f"{path.relative_to(_UI_DIR)}:{handler.lineno} {name}")
 
     assert not offenders, (
         f"these click handlers block the event loop: {offenders}. Make each one `async def` and "
