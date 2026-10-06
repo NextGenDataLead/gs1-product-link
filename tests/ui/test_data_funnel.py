@@ -24,7 +24,9 @@ def _rows(*gtins: str | None) -> list[dict[str, Any]]:
 
 
 #: A eligible with a video · B eligible, missing fr · C held for data · D not in the export · E ok
-_VERDICT = Eligibility(not_eligible={_C: "missing data: x"}, missing_video={_B: "needs fr"})
+_VERDICT = Eligibility(
+    not_eligible={_C: "missing data: x"}, missing_video={_B: "no confirmed video in fr"}
+)
 _EXPORTED = {_A, _B, _C, _E}
 
 

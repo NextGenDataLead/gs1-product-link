@@ -356,7 +356,7 @@ them and warns. The data-quality report is dated for the same reason — a rebui
 new leaves last week's worklist on screen looking exactly like this week's.
 
 Every in-scope SKU held for want of a confirmed video carries a per-row mark saying what it waits
-on — `needs fr`, `needs nl, fr`, `needs fr; two videos in nl` — from `lib.video_status`, loaded by
+on — `no confirmed video in fr`, `no confirmed video in nl, fr`, `no confirmed video in fr; two videos in nl` — from `lib.video_status`, loaded by
 `lib.preflight.load_video_status` (the report reads the same, so the two say the same words about
 the same product). It used to say "no video yet" for all of them, which on the pilot covered three
 different jobs. Data is the only per-SKU grid in the shell, so it is the only place that fact can

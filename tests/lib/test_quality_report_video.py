@@ -26,8 +26,8 @@ from lib.video_status import VideoStatus, video_status
 
 _LANGUAGES = ["nl", "fr"]
 _BOTH = "08713195000011"  # a video in nl and fr — publishes
-_NL_ONLY = "08713195000028"  # needs fr
-_NOTHING = "08713195000035"  # needs nl, fr
+_NL_ONLY = "08713195000028"  # no confirmed video in fr
+_NOTHING = "08713195000035"  # no confirmed video in nl, fr
 _CLASH = "08713195000042"  # two videos in nl, none in fr — held
 _CLASH_ONLY = "08713195000059"  # two videos in nl, one in fr — NOT held, attaches no nl video
 
@@ -184,9 +184,9 @@ def test_held_lists_every_held_product_with_a_mark_per_language_and_what_it_wait
     }
 
     assert set(rows) == {_NL_ONLY, _NOTHING, _CLASH, _CLASH_ONLY}
-    assert rows[_NL_ONLY][2:] == ["●", "○", "needs fr"]
-    assert rows[_NOTHING][2:] == ["○", "○", "needs nl, fr"]
-    assert rows[_CLASH][2:] == ["2", "○", "needs fr; two videos in nl"]
+    assert rows[_NL_ONLY][2:] == ["●", "○", "no confirmed video in fr"]
+    assert rows[_NOTHING][2:] == ["○", "○", "no confirmed video in nl, fr"]
+    assert rows[_CLASH][2:] == ["2", "○", "no confirmed video in fr; two videos in nl"]
     assert rows[_CLASH_ONLY][2:] == ["2", "●", "two videos in nl"]  # held for the clash alone
 
 

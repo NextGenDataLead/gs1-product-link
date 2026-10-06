@@ -163,8 +163,9 @@ confirms the video, the next run adds it to the page that is already live.
 One case *does* hold a product back: **two videos confirmed for the same language**. The tool will
 not pick one for the client, so the product sits in *Not eligible* until one is marked *skip*.
 
-Two kinds of waiting look the same in a count and are different jobs. *needs fr* can mean a French
-video exists and nobody has said which product it is — or that no French video has been made yet.
+Two kinds of waiting look the same in a count and are different jobs. *no confirmed video in fr*
+can mean a French video exists and nobody has said which product it is — or that no French video
+has been made yet.
 The data-quality report's first section lists both sides, so you and the client can tell them
 apart.
 

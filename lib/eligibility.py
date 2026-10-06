@@ -9,7 +9,7 @@ somewhere. Each already has exactly one producer, and this module only joins the
   cannot close. A screen that re-derived "eligible" would sooner or later offer a tick box on a
   product the plan then drops in silence;
 * **the video words** are :func:`lib.video_status.waiting_on`, so the screen and report §1 say the
-  same thing about the same product ("needs fr", "two videos in nl").
+  same thing about the same product ("no confirmed video in fr", "two videos in nl").
 
 A barcode on the list that the export does not carry is not a question for this module: it has no
 record to ask about. The screen lists those itself, first.
@@ -91,8 +91,8 @@ def eligibility(cfg: ClientConfig, products: list[ProductRecord]) -> Eligibility
 def _held_for(product: ProductVideo, publish_without_video: bool) -> str:
     """Why the video gate holds ``product``, naming only what actually holds it.
 
-    Under ``media.publish_without_video`` a missing language holds nothing, so "needs fr; two
-    videos in nl" would send the reader after a video that would not unblock it.
+    Under ``media.publish_without_video`` a missing language holds nothing, so "no confirmed video
+    in fr; two videos in nl" would send the reader after a video that would not unblock it.
     """
     if not publish_without_video:
         return waiting_on(product)

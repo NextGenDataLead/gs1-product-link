@@ -117,7 +117,7 @@ def test_eligible_is_exactly_what_the_plan_does_not_hold(tmp_path: Path, setting
 def test_publishing_without_video_marks_rather_than_holds(tmp_path: Path) -> None:
     verdict = eligibility(_config(_media(tmp_path, publish_without_video=True)), _products())
 
-    assert verdict.missing_video == {_B: "needs fr"}
+    assert verdict.missing_video == {_B: "no confirmed video in fr"}
     assert verdict.not_eligible[_C] == "two videos in nl — the client must keep one"
     assert verdict.not_eligible[_D].startswith("missing data: net_content")
 
@@ -125,7 +125,7 @@ def test_publishing_without_video_marks_rather_than_holds(tmp_path: Path) -> Non
 def test_with_the_pilot_rule_a_missing_video_is_the_reason(tmp_path: Path) -> None:
     verdict = eligibility(_config(_media(tmp_path, publish_without_video=False)), _products())
 
-    assert verdict.not_eligible[_B] == "needs fr"
+    assert verdict.not_eligible[_B] == "no confirmed video in fr"
     assert verdict.missing_video == {}
 
 
