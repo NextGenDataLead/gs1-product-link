@@ -1,12 +1,22 @@
-"""Screen 2 — the two files a batch is made of, and what the data quality report says.
+"""The batch: what it is made of, what each product still needs, and which products are in it.
 
-A run reads **two** operator files, and this screen is where both arrive:
+**The selection list is the spine.** Everything else on this screen is measured against it, in the
+order an operator assembles a batch:
 
-* the **GS1 Data Source export** — the product data, parsed into ``products.json``;
-* the **product selection list** — which barcodes this run may touch.
+1. the **product selection list** — which barcodes this batch may touch;
+2. the **GS1 Data Source export** — the product data, parsed into ``products.json``;
+3. the client's **video sign-off sheet** — which video is which product's, applied to
+   ``mapping.yml`` — with the mapping itself, file by file, folded below it;
+4. **choose and save** — the list joined against the export, each product marked with what video
+   it is still waiting on.
+
+A run reads the first two. The third decides whether a product can be published at all (with
+``media.restrict_to_mapped_gtins`` on, one without a confirmed video in every language is held), so
+it belongs here rather than on a screen of its own filed beside Setup and Runs, where it was.
 
 They are different documents from different places, and confusing them is the most expensive
-mistake available here, so each has its own section, its own upload and its own name. The config
+mistake available here, so each has its own section, its own upload and its own name — and the
+sign-off upload refuses a GS1 export outright. The config
 key is still ``process_list``: it appears in ``clients.yml``, the schema, the doctor payload and
 five call sites, and renaming it would break every install. Only what the operator reads changed.
 
@@ -45,7 +55,16 @@ from lib.preflight import in_scope, load_video_status
 from lib.process_list import rows_in_export
 from lib.records import ProductRecord
 from lib.video_status import waiting_on
-from ui import REPO_ROOT, batch_view, context, process_list_edit, runner, theme
+from ui import (
+    REPO_ROOT,
+    batch_view,
+    context,
+    process_list_edit,
+    runner,
+    theme,
+    video_map_panel,
+    video_signoff_panel,
+)
 
 
 @dataclass
@@ -80,7 +99,7 @@ def _resolve(path: str) -> Path:
     return resolved if resolved.is_absolute() else REPO_ROOT / resolved
 
 
-def render() -> None:
+def render() -> None:  # noqa: PLR0915 — the wiring: three redraws share one set of containers
     cid = context.client_id()
     cfg = context.client_config(cid)
 
@@ -93,7 +112,7 @@ def render() -> None:
         theme.heading(
             theme.eyebrow("Data"),
             "Data",
-            "The two files a batch is made of, and which products you want in it.",
+            "What a batch is made of, what each product still needs, and which ones are in it.",
         )
         if cfg is None or cid is None:
             theme.blocked(
@@ -104,45 +123,83 @@ def render() -> None:
             return
 
         session = _BATCHES.setdefault(cid, _Session())
+        mapping = video_map_panel.session_for(cid, cfg)
         #: The grid's save, hoisted so the Next button can call it. ``None`` until there is a grid.
         commit: dict[str, Callable[[], bool]] = {}
+        #: The grid's way to re-mark its Video column in place, so a mapping edit does not cost the
+        #: operator their unsaved ticks. Empty until there is a grid.
+        revideo: list[Callable[[], None]] = []
+        ready = False
 
-        def refresh(_which: str) -> None:
-            """Redraw from **disk**, not from what arrived this visit.
+        theme.jumps(
+            [
+                ("Selection list", "selection-list"),
+                ("Export", "export"),
+                ("Videos", "video-signoff"),
+                ("Choose", "choose"),
+                ("Data quality", "data-quality"),
+            ]
+        )
+
+        # Three ways in, because the dependencies forked when the videos moved here. Each redraws
+        # exactly what depends on what changed, and nothing refuses to redraw for want of a
+        # session — the mapping's lives outside these containers.
+
+        def batch_changed(_which: str) -> None:
+            """A list or an export arrived: redraw the panel, the grid and the report from **disk**.
 
             ``_which`` is kept because the upload handlers pass it and it reads as documentation of
             what just happened; nothing branches on it any more. What decides whether there is a
             batch is whether both files are there and the selection reads — ``Batch.ready``.
             """
+            nonlocal ready
             in_force = context.batch_in_force(cfg)
             ready = in_force is not None and in_force.ready
             panel.clear()
             selection.clear()
-            quality.clear()
             commit.clear()
+            revideo.clear()
             with panel:
                 batch_view.render(in_force)
             with selection:
                 if ready:
-                    _scope_grid(cfg, cid, commit, caption, session)
+                    _scope_grid(cfg, cid, commit, caption, session, revideo)
                 else:
                     theme.band(
-                        "Upload both files above to choose the products for this run.", "quiet"
+                        "Upload the selection list and the export (steps 1 and 2) to choose the "
+                        "products for this run.",
+                        "quiet",
                     )
+            if not ready:
+                caption.text = ""
+            onward.set_enabled(ready)
+            report_changed()
+
+        def mapping_changed() -> None:
+            """The mapping was written: recount coverage, the fold, the Video column, the report."""
+            redraw_videos()
+            for hook in revideo:
+                hook()
+            report_changed()
+
+        def report_changed() -> None:
+            """Rebuild the report — also when a sheet only *arrived*, which changes §1d alone."""
+            quality.clear()
             if ready:
                 with quality:
                     _quality(cid)
-            else:
-                caption.text = ""
-            onward.set_enabled(ready)
 
         with ui.element("div").classes("steps-2up"):
-            _export(cfg, cid, refresh)
-            _scope_list(cfg, session, refresh)
+            _scope_list(cfg, session, batch_changed)
+            _export(cfg, cid, batch_changed)
 
-        # Bound after the row so they render below it, and before ``refresh`` is ever called. The
-        # panel sits above the grid: which files this is about comes before what is in them.
+        # Bound after the row so they render below it, and before ``batch_changed`` is ever called.
+        # The panel sits straight under the two uploads it describes — which files this batch is
+        # comes before the videos and the grid that are measured against them.
         panel = ui.column().classes("w-full gap-0")
+
+        redraw_videos = _videos(cfg, cid, mapping, changed=mapping_changed, archived=report_changed)
+
         selection = ui.column().classes("w-full gap-0")
         quality = ui.column().classes("w-full gap-0")
 
@@ -163,10 +220,75 @@ def render() -> None:
             ui.timer(_TOAST_BEAT, lambda: ui.navigate.to("/content"), once=True)
 
         onward, caption = theme.onward("Next", save_and_go)
-        refresh("")
+        batch_changed("")
 
 
-# --- Step 1: the export -------------------------------------------------------
+# --- Step 3: the videos ------------------------------------------------------------
+
+
+def _videos(
+    cfg: ClientConfig,
+    cid: str,
+    mapping: video_map_panel.MappingSession | None,
+    *,
+    changed: Callable[[], None],
+    archived: Callable[[], None],
+) -> Callable[[], None]:
+    """Step 3, the sign-off sheet with the coverage figures under it, and the mapping folded below.
+
+    Returns the redraw for both, which :func:`render` calls after every write to the mapping.
+
+    The coverage figures sit under the upload, not in the fold: they answer "did that sheet help?",
+    and they are what Apply changes. Full width rather than in ``steps-2up`` — three column pickers
+    need the room, and a three-up row would make all three too narrow.
+
+    **The mapping is folded and built on first open.** Two tall tables on one screen were settled by
+    the fold rather than by negotiating heights, and building it lazily is what makes its first
+    open render full (see :func:`ui.theme.fold`).
+    """
+    if mapping is None:
+        with theme.section("The client's video sign-off sheet", step=3, anchor="video-signoff"):
+            ui.label(
+                "No `media.video_map_path` in clients.yml — this client attaches no videos, so "
+                "there is nothing to sign off."
+            ).classes("note")
+        return lambda: None
+
+    coverage: list[ui.column] = []
+
+    def draw_coverage() -> None:
+        box = coverage[0]
+        box.clear()
+        with box:
+            theme.subhead("Coverage")
+            video_map_panel.coverage(cfg, cid, mapping)
+
+    def place_coverage() -> None:
+        coverage.append(ui.column().classes("w-full gap-0 mt-6"))
+        draw_coverage()
+
+    video_signoff_panel.render(
+        cfg, cid, mapping, applied=changed, archived=archived, step=3, below=place_coverage
+    )
+    mapping_fold = theme.fold(
+        "The mapping, file by file",
+        lambda: video_map_panel.rows(cfg, cid, mapping, changed),
+        anchor="video-mapping",
+        explain=(
+            "Every video file and the product it maps to, one row each. Pick a row to read its "
+            "suggestions and stage a barcode; Save writes every staged row at once and keeps the "
+            "previous file as a backup. Staged rows survive anything else you do on this screen."
+        ),
+    )
+
+    def redraw() -> None:
+        draw_coverage()
+        mapping_fold.refresh()
+
+    return redraw
+
+
+# --- Step 2: the export -------------------------------------------------------
 
 
 def _keep_upload(target: Path, data: bytes) -> Path | None:
@@ -204,7 +326,8 @@ def _export(cfg: Any, cid: str, arrived: Callable[[str], None]) -> None:
 
     with theme.section(
         "Upload the GS1 export",
-        step=1,
+        step=2,
+        anchor="export",
         explain=(
             f"The product data itself, straight from GS1 Data Source. Uploading replaces "
             f"{cfg.export.path} in place and keeps the previous file beside it. That path is fixed "
@@ -311,7 +434,7 @@ _TABLE_HEIGHT = "55vh"
 
 def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> None:
     if cfg.process_list is None:
-        with theme.section("Choose the products for this batch", step=2):
+        with theme.section("Choose the products for this batch", step=1, anchor="selection-list"):
             ui.label(
                 "No `process_list` block in clients.yml — every product in the export is planned."
             ).classes("note")
@@ -321,7 +444,8 @@ def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> 
 
     with theme.section(
         "Upload the product selection list",
-        step=2,
+        step=1,
+        anchor="selection-list",
         explain=(
             "A spreadsheet of the barcodes this batch may touch. Being on the list is the whole "
             "meaning — the tool reads no other column and interprets no cell value — so you "
@@ -331,7 +455,8 @@ def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> 
             "file into its own folder, which is what lets the result sheet afterwards name the "
             "rows you dropped as dropped rather than leaving them out. "
             "That path is fixed in clients.yml and has no command-line override, so a list saved "
-            "anywhere else is invisible to the tool."
+            "anywhere else is invisible to the tool. Until the export (step 2) arrives, the table "
+            "in step 4 is simply the whole list: nothing can be matched yet."
         ),
     ):
         # Async because NiceGUI 3 reads an upload through awaitable methods on ``event.file`` —
@@ -387,12 +512,13 @@ def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> 
         ).classes("note mt-2")
 
 
-def _scope_grid(
+def _scope_grid(  # noqa: PLR0913 — the batch, its save, its caption, and its video hook
     cfg: Any,
     cid: str,
     commit: dict[str, Callable[[], bool]],
     caption: ui.label,
     session: _Session,
+    revideo: list[Callable[[], None]],
 ) -> None:
     """The list joined against the export: what is missing above, what will run below."""
     try:
@@ -418,7 +544,7 @@ def _scope_grid(
         # place for the one survivor, since it is read by somebody who has just hit a problem.
         theme.band(
             "No GS1 export has been read yet, so no row can be matched against one. Upload it in "
-            "step 1; until then this is simply the whole list.",
+            "step 2; until then this is simply the whole list.",
             "warn",
         )
         matched, unmatched = list(range(len(sheet.rows))), []
@@ -443,7 +569,8 @@ def _scope_grid(
 
     with theme.section(
         "Choose the products and save",
-        step=3,
+        step=4,
+        anchor="choose",
         explain=(
             "Every row arrives ticked, and a run processes the ticked ones. Untick a product to "
             "leave it out of this batch. Next saves your choice and moves on — there is no "
@@ -459,14 +586,17 @@ def _scope_grid(
             "skips it, reporting success (media.restrict_to_mapped_gtins)."
         ),
     ):
-        _missing_table(columns, [row_of(n) for n in unmatched])
+        missing_rows = [row_of(n) for n in unmatched]
+        _missing_table(columns, missing_rows)
         matched_rows = [row_of(n) for n in matched]
         below = _scope_table(columns, matched_rows)
         # Only on a batch this rule is actually holding something in. "None of these are held" on a
         # client that attaches no videos is a sentence about a mechanism that is not running, and a
         # band that is right every time is how a screen teaches an operator to skim past its bands.
         video = (
-            theme.routed_band("", link_label="Open Video mapping →", route="/videos", kind="warn")
+            theme.routed_band(
+                "", link_label="Go to the video mapping ↑", route="#video-mapping", kind="warn"
+            )
             if any(row[_HELD] for row in matched_rows)
             else None
         )
@@ -479,6 +609,16 @@ def _scope_grid(
 
         below.on_select(describe)
         describe()
+
+        def mark_videos() -> None:
+            """Re-mark the Video column after a mapping write — in place, keeping every tick."""
+            fresh = _held_for_video(cfg, products)
+            for row in (*matched_rows, *missing_rows):
+                row[_HELD] = fresh.get(row[_GTIN], "") if row[_GTIN] else ""
+            below.redraw()
+            describe()
+
+        revideo.append(mark_videos)
 
         def save() -> bool:
             # The rows the export has nothing for are kept, always, and are not counted as chosen.
@@ -785,18 +925,24 @@ def _scope_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> A
 
     listeners.append(describe_shown)
     redraw()
-    return _Grid(selection, rows, listeners)
+    return _Grid(selection, rows, listeners, redraw)
 
 
 class _Grid:
     """What the save and the caption need from the table, without reaching into the widget."""
 
     def __init__(
-        self, selection: _Selection, rows: list[dict[str, Any]], listeners: list[Callable[[], None]]
+        self,
+        selection: _Selection,
+        rows: list[dict[str, Any]],
+        listeners: list[Callable[[], None]],
+        redraw: Callable[[], None],
     ) -> None:
         self._selection = selection
         self._rows = rows
         self._listeners = listeners
+        #: Re-render the rows from the selection — after a cell changed under it, say.
+        self.redraw = redraw
 
     @property
     def selected(self) -> list[dict[str, Any]]:
@@ -908,6 +1054,7 @@ def _quality(cid: str) -> None:
     with theme.section(
         "Data quality",
         collapsed=True,
+        anchor="data-quality",
         explain=(
             "What is blank or wrong in the export itself. Those values get fixed in MyGS1, at the "
             "source — never invented here — so this report is the work list to send upstream. It "

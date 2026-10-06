@@ -68,7 +68,6 @@ def render(  # noqa: PLR0913 — the client, the mapping, what to redraw after, 
             "you chose, so the data-quality report can say what it still changes."
         ),
     ):
-        plan_box = ui.column().classes("w-full")
 
         async def receive(event: events.UploadEventArguments) -> str:
             # Refused rather than merged: an import rewrites the whole file, so one on top of
@@ -123,6 +122,8 @@ def render(  # noqa: PLR0913 — the client, the mapping, what to redraw after, 
             return f"{len(grid.rows)} row(s) read from {event.file.name}, and kept as {sheet.name}."
 
         theme.upload("Sign-off sheet (.xlsx)", receive, busy="Reading the sheet…")
+        # After the upload it fills: upload, then which column is which, then what it would do.
+        plan_box = ui.column().classes("w-full")
         if below is not None:
             below()
 
@@ -158,7 +159,6 @@ def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what 
     detected = video_signoff.columns(grid) or {}
     options = video_signoff.column_options(grid)
     chosen: dict[str, Any] = {}
-    plan_box = ui.column().classes("w-full")
 
     # A subhead, not a section: this sits inside the upload's own section, and a section inside a
     # section is the nesting ``theme.subhead`` exists to avoid.
@@ -174,6 +174,8 @@ def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what 
             ).props("dense outlined")
             select.classes("min-w-56")
             chosen[name] = select
+    # Below the pickers: you say which column is which, then read what that makes the sheet do.
+    plan_box = ui.column().classes("w-full mt-4")
 
     def redraw() -> None:
         where = {
@@ -239,22 +241,23 @@ _PLAN_SECTIONS: Final = (
         video_signoff.CONFLICT,
         "Conflicts ({n}) — nothing here will be touched",
         "The mapping already carries a different confirmed GTIN for these files. A confirmed row "
-        "is client sign-off, so an import never overwrites one: settle these by hand, in the "
-        "row-by-row table below.",
+        "is client sign-off, so an import never overwrites one: settle these by hand, in "
+        "The mapping, file by file, below.",
     ),
     (
         video_signoff.AMBIGUOUS,
         "Two videos for one product ({n}) — nothing here will be applied",
         "The sheet gives these barcodes a second video in the same language. A product can carry "
         "only one video per language: applying both would attach neither, and the page would "
-        "publish without a video. Keep one and mark the other `skip` in the table below.",
+        "publish without a video. Keep one and mark the other `skip` in The mapping, "
+        "file by file, below.",
     ),
     (
         video_signoff.REJECTED,
         "Could not be used ({n})",
         "Each of these says what is wrong with it. A barcode problem is fixed in the sheet and the "
         "file uploaded again; an unknown filename usually means the mapping has no row for that "
-        "video yet, which the button below this table adds.",
+        "video yet — Add files that are on disk, in The mapping, file by file, adds it.",
     ),
 )
 

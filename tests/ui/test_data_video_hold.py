@@ -33,8 +33,9 @@ _ROOT: Final = Path(__file__).resolve().parent.parent.parent
 _DATA: Final = _ROOT / "ui" / "pages" / "data.py"
 _PREFLIGHT: Final = _ROOT / "lib" / "preflight.py"
 
-#: The route the mapping editor is registered at, named once here so a rename fails loudly.
-_VIDEO_ROUTE = "/videos"
+#: Where the mapping is, named once here so a rename fails loudly. An in-page anchor since the
+#: video mapping folded into the Data screen: the band now points down the same page.
+_VIDEO_ANCHOR = "video-mapping"
 
 
 def _row(gtin: str, *, held: bool) -> dict[str, object]:
@@ -131,21 +132,24 @@ def test_the_data_screen_offers_a_route_to_the_mapping() -> None:
     grid, which needs an export, a selection list and a client on disk. What must not regress is
     cheaper than that: the screen names the route.
     """
-    routes = {
+    assert f"#{_VIDEO_ANCHOR}" in _strings(), (
+        f"ui/pages/data.py no longer links to #{_VIDEO_ANCHOR} — a product held for want of a "
+        "video is then marked on this screen with no way to reach the file that lifts the hold"
+    )
+
+
+def test_that_anchor_is_one_the_screen_defines() -> None:
+    """The other direction: a link to an anchor nothing carries is a dead link.
+
+    Pinned separately so a renamed anchor fails as a rename rather than as a missing link.
+    """
+    assert _VIDEO_ANCHOR in _strings()
+    assert "/videos" not in {screen.route for screen in theme.NAV}  # the route went with the screen
+
+
+def _strings() -> set[str]:
+    return {
         node.value
         for node in ast.walk(ast.parse(_DATA.read_text(encoding="utf-8")))
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
-    assert _VIDEO_ROUTE in routes, (
-        f"ui/pages/data.py no longer links to {_VIDEO_ROUTE} — a product held for want of a video "
-        "is then marked on this screen with no way to reach the file that lifts the hold"
-    )
-
-
-def test_that_route_is_one_the_rail_registers() -> None:
-    """The other direction: a link to a route nothing serves is a dead link.
-
-    Pinned separately from the check above so a renamed route fails as a rename rather than as a
-    missing link on the Data screen.
-    """
-    assert _VIDEO_ROUTE in {screen.route for screen in theme.NAV}

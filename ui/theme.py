@@ -273,7 +273,7 @@ body { background: var(--paper) !important; color: var(--ink) !important;
    this it costs a glance. Sized down deliberately — it must not compete with the control it is
    explaining, which is the thing on the screen that actually does something. */
 
-/* A row of jumps to the sections below it. Only the Setup screen has enough of them to need it. */
+/* A row of jumps to the sections below it, for the two screens long enough to need it. */
 .jumps        { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4);
                 margin-top: var(--space-6); font-size: var(--text-small); }
 .jumps a      { color: var(--ink-soft); text-underline-offset: 0.2em; }
@@ -348,15 +348,17 @@ WAVE: Final = (
     Screen("Publish", "/publish", "Step 4"),
 )
 
-#: **Not the batch.** Setup is configured once and then left alone, Runs is read afterwards, and
-#: the video mapping is one input file's editor. Numbering these 1-6 alongside the four above
-#: said they were one sequence, which buried the work an operator actually repeats between
-#: machine configuration at one end and history at the other. They keep a permanent place in the
-#: rail — a click away, never behind one — because a tool nobody can find is a tool nobody uses.
+#: **Not the batch.** Setup is configured once and then left alone, and Runs is read afterwards.
+#: Numbering them alongside the four above said they were one sequence, which buried the work an
+#: operator actually repeats between machine configuration at one end and history at the other.
+#: They keep a permanent place in the rail — a click away, never behind one — because a tool
+#: nobody can find is a tool nobody uses.
+#:
+#: The video mapping sat here too, as "one input file's editor". It is not: it decides whether a
+#: product can be published at all, so it moved onto the Data screen, where the batch is chosen.
 TOOLS: Final = (
     Screen("Setup", "/", "This machine"),
     Screen("Runs", "/runs", "History"),
-    Screen("Video mapping", "/videos", "Video mapping"),
 )
 
 #: Every screen the rail reaches. The contract test checks this against the registered routes in
@@ -531,6 +533,50 @@ def section(
     with element:
         subhead(title, step=step, explain=explain)
         yield
+
+
+class Fold:
+    """A folded section whose contents are built the first time it opens. See :func:`fold`."""
+
+    def __init__(self, body: ui.column, build: Callable[[], None]) -> None:
+        self._body = body
+        self._build = build
+        self._built = False
+
+    def open(self) -> None:
+        if not self._built:
+            self._built = True
+            with self._body:
+                self._build()
+
+    def refresh(self) -> None:
+        """Rebuild the contents if they have been built; otherwise the first open builds them."""
+        if self._built:
+            self._body.clear()
+            with self._body:
+                self._build()
+
+
+def fold(
+    title: str, build: Callable[[], None], *, anchor: str | None = None, explain: str = ""
+) -> Fold:
+    """A :func:`section` that starts folded **and builds its contents on first open**.
+
+    Lazily, because of what was measured before this existed: a ``virtual-scroll`` table built
+    inside a folded section is measured at zero height, and on the first open it shows a dozen rows
+    above a blank band until something scrolls it. Built on first open, it renders full. It is also
+    cheaper — the work is not done on a screen nobody opened the fold of.
+    """
+    expansion = ui.expansion(title).classes("section w-full").props("dense")
+    if anchor:
+        expansion.props(f"id={anchor}")
+    with expansion:
+        if explain:
+            ui.label(explain).classes("explain")
+        body = ui.column().classes("w-full gap-0")
+    folded = Fold(body, build)
+    expansion.on_value_change(lambda event: folded.open() if event.value else None)
+    return folded
 
 
 def subhead(title: str, *, step: int | None = None, explain: str = "") -> None:
