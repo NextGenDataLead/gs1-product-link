@@ -63,8 +63,8 @@ from lib.media_video import (
     VideoMapSummary,
     canon_gtin,
     check_video_map,
+    files_by_language,
     fully_mapped_gtins,
-    list_video_files,
     load_video_map,
     summarize_video_map,
 )
@@ -753,10 +753,7 @@ def check_video_coverage(cfg: ClientConfig) -> CheckResult:
             remedy="A missing file is a path problem — check media.video_map_path in clients.yml. "
             "A syntax error is an edit: the position above is where to look.",
         )
-    files = {
-        language: [p.name for p in list_video_files(Path(folder))]
-        for language, folder in media.video_folders.items()
-    }
+    files = files_by_language(media.video_folders)
     summary = summarize_video_map(vmap, files, cfg.wordpress.languages)
     data: dict[str, object] = {
         "confirmed_gtins": summary.confirmed_gtins,

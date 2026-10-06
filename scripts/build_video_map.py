@@ -35,6 +35,7 @@ from lib.env import load_env
 from lib.errors import ConfigError, VideoMapError
 from lib.media_video import (
     check_video_map,
+    files_by_language,
     list_video_files,
     load_video_map,
     normalize_video_name,
@@ -69,10 +70,7 @@ def _load_products(path: Path) -> list[ProductRecord]:
 def _folder_files(cfg: ClientConfig) -> dict[str, list[str]]:
     """Return ``{language: [filename]}`` for each configured video folder."""
     assert cfg.media is not None  # guarded by the caller
-    return {
-        language: [p.name for p in list_video_files(Path(folder))]
-        for language, folder in cfg.media.video_folders.items()
-    }
+    return files_by_language(cfg.media.video_folders)
 
 
 def _print_draft(cfg: ClientConfig, products: list[ProductRecord]) -> None:

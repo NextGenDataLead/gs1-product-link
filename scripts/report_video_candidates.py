@@ -43,7 +43,7 @@ from openpyxl.utils import get_column_letter
 from lib.config import ClientConfig, get_client
 from lib.env import load_env
 from lib.errors import ConfigError, VideoMapError
-from lib.media_video import VideoMap, list_video_files, load_video_map, summarize_video_map
+from lib.media_video import VideoMap, files_by_language, load_video_map, summarize_video_map
 from lib.records import ProductRecord
 from lib.video_candidates import CandidateRow, Cell, build_rows, cells, header
 
@@ -79,10 +79,7 @@ def _load_products(path: Path) -> list[ProductRecord]:
 def _folder_files(cfg: ClientConfig) -> dict[str, list[str]]:
     """Return ``{language: [filename]}`` for each configured video folder."""
     assert cfg.media is not None  # guarded by the caller
-    return {
-        language: [p.name for p in list_video_files(Path(folder))]
-        for language, folder in cfg.media.video_folders.items()
-    }
+    return files_by_language(cfg.media.video_folders)
 
 
 def _write_csv(path: Path, columns: list[str], rows: list[list[Cell]]) -> None:

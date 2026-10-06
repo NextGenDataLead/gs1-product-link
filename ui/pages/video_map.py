@@ -34,7 +34,7 @@ from lib import video_signoff, xlsx
 from lib.config import ClientConfig
 from lib.errors import VideoMapError
 from lib.media_video import (
-    list_video_files,
+    files_by_language,
     load_video_map,
     normalize_video_name,
     rank_candidates,
@@ -559,10 +559,7 @@ def _coverage(container: ui.column, cfg: ClientConfig, path: Path, cid: str) -> 
 def _files_on_disk(cfg: ClientConfig) -> dict[str, list[str]]:
     if cfg.media is None:
         return {}
-    return {
-        language: [p.name for p in list_video_files(Path(folder))]
-        for language, folder in cfg.media.video_folders.items()
-    }
+    return files_by_language(cfg.media.video_folders)
 
 
 def _check(cid: str) -> None:

@@ -13,6 +13,7 @@ from lib.media_video import (
     VideoMapEntry,
     canon_gtin,
     check_video_map,
+    files_by_language,
     fully_mapped_gtins,
     list_video_files,
     load_video_map,
@@ -80,6 +81,18 @@ def test_list_video_files_skips_system_dirs_and_dotfiles(tmp_path: Path) -> None
     files = list_video_files(tmp_path)
     names = sorted(p.name for p in files)
     assert names == ["A_NL.mpeg", "B.mpg"]
+
+
+def test_files_by_language_lists_each_folder_by_name_and_tolerates_an_absent_one(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "NL").mkdir()
+    (tmp_path / "NL" / "b.mpg").write_bytes(b"x")
+    (tmp_path / "NL" / "a.mp4").write_bytes(b"x")
+
+    files = files_by_language({"nl": str(tmp_path / "NL"), "fr": str(tmp_path / "FR")})
+
+    assert files == {"nl": ["a.mp4", "b.mpg"], "fr": []}
 
 
 # --- rank_candidates (hints only) --------------------------------------------
