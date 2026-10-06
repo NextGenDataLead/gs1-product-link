@@ -335,15 +335,15 @@ def test_the_matrix_marks_a_video_only_where_the_page_gets_one(
     assert matrix.video_confirmed == {"nl": {_HAS_ONE}}
 
 
-def test_the_hold_is_what_the_gate_holds_and_two_videos_is_not_a_hold(
+def test_two_videos_in_one_language_is_a_hold_like_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The gate admits a GTIN confirmed to two files, so the report must not call it held."""
+    """A GTIN confirmed to two files gets neither video, so the gate holds it and so does this."""
     products = _with_videos(tmp_path, monkeypatch, _MAPPING)
 
     _, held = report_quality._publish_blocks("noviplast", products)
 
-    assert held == [_HAS_NONE]
+    assert held == [_HAS_TWO, _HAS_NONE]
 
 
 def test_an_unreadable_mapping_marks_nothing_and_holds_nothing(

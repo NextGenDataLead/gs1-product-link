@@ -15,14 +15,12 @@ returns a file for it — the method ``run_execute`` calls to attach one. :data:
 video on the page" cannot drift apart, because the first is defined by the second.
 
 **Held is the gate's word, and only the gate's.** :func:`lib.media_video.fully_mapped_gtins`
-decides what may publish: a product with at least one confirmed row in every language. So
-:attr:`VideoStatus.held` is the products with a :data:`MISSING` language — which is that rule
-exactly, pinned by a test against it. The gate admits a GTIN confirmed to two files in one
-language, and ``resolve`` then attaches nothing for it: such a product is not held, it is
-:attr:`VideoStatus.clashing`, and it would publish with no video in that language. This module
-names that case and deliberately does not change what publishes — a different decision, needing
-its own measurement. Callers that show a hold (the Data screen counts its Video column as one)
-must read :attr:`~VideoStatus.held`, not :attr:`ProductVideo.attaches_a_video`.
+decides what may publish: a product with exactly one confirmed video in every language. So
+:attr:`VideoStatus.held` is the products that do not attach a video everywhere — :data:`MISSING`
+*or* :data:`CLASHING` in some language — which is that rule exactly, pinned by a test against it.
+The gate used to admit a GTIN confirmed to two files in one language, which then published with no
+video there; it holds one now, and :attr:`VideoStatus.clashing` is the subset the report names
+with both filenames, so one can be marked ``skip``.
 
 Pure: no config, no file I/O, no clock. The caller loads the mapping and lists the folders.
 """
@@ -100,12 +98,8 @@ class VideoStatus:
 
     @property
     def held(self) -> tuple[ProductVideo, ...]:
-        """The products a run holds (E24): some language has no confirmed video at all.
-
-        Not "does not get a video everywhere" — a product whose only problem is two videos in one
-        language passes the gate and publishes. That one is in :attr:`clashing`.
-        """
-        return tuple(product for product in self.products if product.languages_in(MISSING))
+        """The products a run holds (E24): some language has no video, or two competing for it."""
+        return tuple(product for product in self.products if not product.attaches_a_video)
 
     @property
     def clashing(self) -> tuple[ProductVideo, ...]:

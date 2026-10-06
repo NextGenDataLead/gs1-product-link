@@ -83,8 +83,9 @@ barcode no export row does. `lib/demo_export.py` is what it is made of, `lib/gds
 header shape, and `tests/lib/test_demo_export.py` checks both against `clients.example.yml` rather
 than restating it. It also writes the videos (`lib/demo_videos.py`): placeholder files, a
 `mapping.yml` in the row-per-line shape the editor accepts, and `test-uploads/video-signoff.xlsx` —
-so the video half of the Data screen rehearses too. Until that sheet is applied, four products are
-held for want of a video; after it, the nine publish again.
+so the video half of the Data screen rehearses too. Until that sheet is applied, five products are
+held for want of a video; after it, eight publish, and the ninth waits for one of its two Dutch
+videos to be marked `skip`.
 
 The gates themselves live in **`lib/gates.py`** as data, and `flow-orchestrator/SKILL.md` carries a
 **Gate index** table that `tests/lib/test_gates.py` checks in both directions. Adding a gate to one

@@ -294,8 +294,8 @@ def _mark_ambiguous(decided: Sequence[SignoffRow], vmap: VideoMap) -> tuple[Sign
 
     **One video per product per language, or none at all.** :meth:`VideoMap.resolve` returns
     ``None`` when a GTIN is confirmed to more than one file in a language, so applying such a pair
-    does not attach two videos — it attaches *neither*, to a product that still counts as mapped.
-    The page then publishes without a video and nothing says why.
+    does not attach two videos — it attaches *neither*. The product is then held (the gate requires
+    exactly one per language), and the report's §1b names both files.
 
     This is not hypothetical and it is not the sheet being careless. The pilot's own sign-off sheet
     names `Roll Light Summer.mpg` and `Roll Light Winter.mpg` for one GTIN — two genuine videos of

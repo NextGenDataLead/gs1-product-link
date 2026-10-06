@@ -697,8 +697,8 @@ def _held_for_video(cfg: ClientConfig, products: list[ProductRecord]) -> dict[st
     says the same thing about the same product.
 
     **Only held products get text**, because :func:`_video_counts` counts a non-empty cell as a
-    hold. A product whose sole problem is two videos in one language passes the gate and publishes
-    (without that video) — the report names it; this column must not call it held.
+    hold. Two videos in one language is a hold like none (the page could not get either), so it
+    reads "two videos in nl" here and in the report.
     """
     if cfg.media is None or not cfg.media.restrict_to_mapped_gtins:
         return {}
