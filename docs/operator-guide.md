@@ -65,7 +65,7 @@ and whoever helps you knows exactly what happened.
 
 ## Step 1 — Data
 
-<img src="images/data.png" alt="The Data screen as it opens: jump links, then three uploads side by side — the product selection list, the GS1 export and the video sign-off sheet — a Clear all — start fresh button, the folded mapping, and a band asking for the list and the export." width="900">
+<img src="images/data.png" alt="The Data screen as it opens: jump links, then three uploads side by side — the product selection list, the GS1 export and the video sign-off sheet — a Clear all — start fresh button, and a band asking for the list and the export." width="900">
 
 *This is the screen as it opens.* Coverage, the product tables and the quality report appear once
 the list and the export are both there — see below.
