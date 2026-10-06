@@ -6,6 +6,8 @@ No I/O, no clock (the snapshot date is injected), so the same inputs render byte
 
 from __future__ import annotations
 
+import re
+
 from lib.gdsn import GdsnSource
 from lib.mandatory import MandatoryGap
 from lib.quality_report import _VIDEO_SAMPLE, MatrixInput, render_quality_report
@@ -47,6 +49,42 @@ def _products(*gtins: str) -> dict[str, ProductRecord]:
         )
         out[p.gtin14] = p
     return out
+
+
+# Sections are found by the words of their heading, never by their number. The numbers move — a
+# section inserted early renumbers every one after it — and twenty assertions spelling `"## 3."`
+# would each have to move with them, or would silently start reading the wrong section. A number
+# is asserted in exactly three tests, each a claim about the numbering itself: the order, the
+# contiguity, and a subsection carrying its parent's number.
+_COPY = "Blocks publish — no marketing message"
+_CLAIMS = "Review before publish — inferred claims"
+_MYGS1 = "Source-data fixes in MyGS1"
+_TRANSLATED = "Translated to fill a language gap"
+_VIDEO = "Video mapping backlog"
+_CATEGORIES = "Categories"
+
+#: The numbered sections in the order a reader meets them, §0 aside.
+_ORDER = (_COPY, _CLAIMS, _MYGS1, _TRANSLATED, _VIDEO, _CATEGORIES)
+
+_NUMBERED = re.compile(r"^## (\d+)\. (.*)$", re.MULTILINE)
+
+
+def _heading(md: str, title: str) -> str:
+    """The one ``## N. …`` line whose text starts with ``title``. Fails on none or several."""
+    found = [m.group(0) for m in _NUMBERED.finditer(md) if m.group(2).startswith(title)]
+    assert len(found) == 1, f"expected one section headed {title!r}, found {found}"
+    return found[0]
+
+
+def _section(md: str, title: str) -> str:
+    """That section, from its heading line up to the next ``## `` heading (``###`` stays in)."""
+    start = md.index(_heading(md, title))
+    following = re.search(r"^## ", md[start + 1 :], re.MULTILINE)
+    return md[start : start + 1 + following.start()] if following else md[start:]
+
+
+def _subheads(md: str, title: str) -> list[str]:
+    return [line for line in _section(md, title).splitlines() if line.startswith("### ")]
 
 
 def _render(**over: object) -> str:
@@ -123,8 +161,7 @@ def test_blank_title_is_a_blocker_not_a_source_fix() -> None:
     md = _render(source_issues=src, products=_products("08713195007649"))
 
     assert "Blank title / image" in md  # summary row, still marked a blocker
-    _, _, source_fixes = md.partition("## 3.")
-    assert "08713195007649" not in source_fixes  # never demoted to "do not block publish"
+    assert "08713195007649" not in _section(md, _MYGS1)  # never demoted to "do not block publish"
 
 
 def test_a_blank_non_critical_field_is_counted_but_not_listed_again() -> None:
@@ -146,12 +183,16 @@ def test_a_blank_non_critical_field_is_counted_but_not_listed_again() -> None:
     md = _render(source_issues=src, products=_products("08713195000794"))
 
     assert "Blank non-critical fields" in md  # the Summary row survives
-    assert "Blank non-critical fields" not in md.partition("## 3.")[2]  # the section does not
-    assert "08713195000794" not in md.partition("## 3.")[2]
+    assert "Blank non-critical fields" not in _section(md, _MYGS1)  # the section does not
+    assert "08713195000794" not in _section(md, _MYGS1)
 
 
-def test_section_three_subsections_are_renumbered_after_the_blanks_go() -> None:
-    """A dangling `3b.` under a `3.` with no `3a.` is the drift this report keeps being read for."""
+def test_a_subsection_carries_its_parents_number_with_no_gap() -> None:
+    """A dangling `3b.` under a `3.` with no `3a.` is the drift this report keeps being read for.
+
+    One of the three tests that assert a number: whatever the MyGS1 section is numbered, its
+    subsections are that number with `a`, `b`, and nothing after.
+    """
     md = _render(
         source_issues=[
             _issue("08713195000001", "value_inconsistent_across_markets", field="product_name.nl"),
@@ -160,9 +201,13 @@ def test_section_three_subsections_are_renumbered_after_the_blanks_go() -> None:
         products=_products("08713195000001", "08713195000002"),
     )
 
-    assert "### 3a. Values inconsistent across markets" in md
-    assert "### 3b. Possible wrong-language values" in md
-    assert "### 3c." not in md
+    parent = _NUMBERED.match(_heading(md, _MYGS1))
+    assert parent is not None
+    number = parent.group(1)
+    assert _subheads(md, _MYGS1) == [
+        f"### {number}a. Values inconsistent across markets",
+        f"### {number}b. Possible wrong-language values (worth a glance)",
+    ]
 
 
 def test_cross_market_values_shown_side_by_side() -> None:
@@ -193,8 +238,8 @@ def test_wrong_language_values_are_listed() -> None:
     ]
     md = _render(source_issues=src, products=_products("08713195000527"))
 
-    assert "Possible wrong-language values" in md  # summary + §3b heading
-    assert "3b." in md
+    assert "Possible wrong-language values" in md  # the Summary row
+    assert any("Possible wrong-language values" in line for line in _subheads(md, _MYGS1))
     assert "Schoonmaakdoek" in md
 
 
@@ -250,7 +295,7 @@ def test_translated_values_are_listed_with_the_text_to_paste() -> None:
     ]
     md = _render(generated_issues=gen, products=_products("08713195000001"))
 
-    assert "## 4. Translated to fill a language gap" in md
+    assert _heading(md, _TRANSLATED)
     assert "Pic d'arrosage" in md
     assert "TradeItemDescription attr 3301" in md
     assert "fr" in md
@@ -275,7 +320,7 @@ def test_every_filled_value_is_one_row_and_the_summary_says_the_same_number() ->
         products=_products("08713195007649"),
     )
 
-    section = md.partition("## 4.")[2].partition("## 5.")[0]
+    section = _section(md, _TRANSLATED)
     assert "câble magnétique" in section
     assert "Magnetkabel" in section
     rows = [line for line in section.splitlines() if line.startswith("| `0871")]
@@ -308,23 +353,39 @@ def test_a_translated_value_lands_after_the_other_mygs1_fixes_not_among_the_bloc
         products=_products("08713195000001"),
     )
 
-    before, _, after = md.partition("## 3.")
-    assert "Translated to fill a language gap" in after
-    assert "Translated to fill a language gap" not in before
+    assert md.index(_heading(md, _TRANSLATED)) > md.index(_heading(md, _MYGS1))
+    assert "08713195000001" not in _section(md, _COPY)
 
 
-def test_the_video_and_category_sections_move_down_to_make_room() -> None:
-    md = _render()
+def test_the_sections_come_in_the_order_a_reader_needs_them() -> None:
+    """The order, by name: what blocks publishing first, the backlog and the categories last.
 
-    assert "## 5. Video mapping backlog" in md
-    assert "## 6. Categories" in md
+    One of the three tests that assert where a section sits. Pinned once, here, so moving a
+    section is one edit to `_ORDER` rather than a hunt through every test that knew its number.
+    """
+    titles = [m.group(2) for m in _NUMBERED.finditer(_render()) if m.group(1) != "0"]
+
+    assert [next(t for t in _ORDER if title.startswith(t)) for title in titles] == list(_ORDER)
+
+
+def test_the_sections_are_numbered_contiguously_with_no_gap_or_repeat() -> None:
+    """§0 when there is a matrix, then 1, 2, 3 … unbroken.
+
+    One of the three tests that assert a number. A section dropped or inserted without renumbering
+    the rest leaves a hole or a duplicate, which a reader of the forwarded report takes for a
+    missing page.
+    """
+    without = [int(m.group(1)) for m in _NUMBERED.finditer(_render())]
+    with_matrix = [int(m.group(1)) for m in _NUMBERED.finditer(_render(matrix=_matrix()))]
+
+    assert without == list(range(1, len(_ORDER) + 1))  # no matrix, no §0
+    assert with_matrix == list(range(0, len(_ORDER) + 1))
 
 
 def test_an_empty_translation_section_says_none_rather_than_a_headerless_table() -> None:
     md = _render()
 
-    section = md.partition("## 4.")[2]
-    assert "_None._" in section
+    assert "_None._" in _section(md, _TRANSLATED)
 
 
 def test_the_summary_counts_translated_values_as_non_blocking_mygs1_work() -> None:
@@ -397,7 +458,7 @@ def test_generated_copy_is_a_pointer_not_a_per_row_dump() -> None:
     assert "2 generated-copy row(s) written this run are reviewed" in md  # count-based pointer
     assert "generation_results.json" in md
     assert "src" not in md and "txt" not in md  # no per-row source dump
-    assert "2b." not in md  # the old subsection is gone
+    assert not _subheads(md, _CLAIMS)  # the old subsection is gone
 
 
 # --- §0 coverage matrix -------------------------------------------------------
@@ -917,14 +978,12 @@ def test_the_redundant_subsections_are_gone() -> None:
         products=_products(*[f"0871319500000{n}" for n in range(1, 5)]),
     )
 
-    assert "### 1a." not in md
-    assert "### 1b." not in md
-    assert "### 1c." not in md  # collapsed into §1 itself, not renamed
-    assert "### 1d." not in md
-    assert md.count("## 1. ") == 1
+    # Collapsed into the section itself, not renamed: no subsection of any letter survives, and
+    # `_heading` fails unless the section appears exactly once.
+    assert not _subheads(md, _COPY)
 
 
-def test_section_one_says_what_it_actually_lists() -> None:
+def test_the_copy_blocker_says_what_it_actually_lists() -> None:
     """It is a source-data finding about attr 1083, not a report on whether generation ran.
 
     The old wording sent an operator to re-run generation for a gap re-running cannot close, and
@@ -955,7 +1014,7 @@ def _blocked(gtin: str, gaps: list[MandatoryGap], **over: object) -> str:
     )
 
 
-def test_section_one_shows_every_slot_of_the_requirement_on_one_row() -> None:
+def test_the_copy_blocker_shows_every_slot_of_the_requirement_on_one_row() -> None:
     """One row per SKU, one column per (attribute, language) — the cell to fill, named.
 
     It used to be one row per *language* with an identical consequence in each, and §0 no longer
@@ -964,7 +1023,7 @@ def test_section_one_shows_every_slot_of_the_requirement_on_one_row() -> None:
     say which of the four slots to fill, and it now says it.
     """
     md = _blocked("08713195000001", _group_gap("nl", "fr"))
-    section = md.partition("## 1.")[2].partition("## 2.")[0]
+    section = _section(md, _COPY)
     header = next(line for line in section.splitlines() if line.startswith("| GTIN |"))
 
     assert [c.strip() for c in header.split("|")[1:-1]] == [
@@ -990,16 +1049,14 @@ def test_the_grid_shows_which_slot_the_feed_does_carry() -> None:
         description_short=LocalisedText(values={"nl": "Kort en krachtig"}),
     )
     row = next(
-        line
-        for line in md.partition("## 1.")[2].splitlines()
-        if line.startswith("| `08713195000001`")
+        line for line in _section(md, _COPY).splitlines() if line.startswith("| `08713195000001`")
     )
 
     assert [c.strip() for c in row.split("|")[2:-2]] == ["●", "○", "○", "○"]
     assert "fr" in row.split("|")[-2]
 
 
-def test_section_one_lists_what_the_requirement_holds_not_every_blank_1083() -> None:
+def test_the_copy_blocker_lists_what_the_requirement_holds_not_every_blank_1083() -> None:
     """The title says "blocks publish", so the rows have to be the ones that block.
 
     It listed every unit with a blank attr 1083 — including those whose 1067 carries the copy,
@@ -1025,7 +1082,7 @@ def test_section_one_lists_what_the_requirement_holds_not_every_blank_1083() -> 
         matrix=_matrix(products=[_p("08713195000001")], gdsn_map=_GROUP_MAP),
     )
 
-    assert "08713195000001" not in md.partition("## 1.")[2].partition("## 2.")[0]
+    assert "08713195000001" not in _section(md, _COPY)
 
 
 def test_held_gtins_are_named_under_a_heading_that_says_they_block() -> None:
@@ -1060,7 +1117,7 @@ def test_a_sku_held_for_something_else_is_not_listed_as_a_copy_block() -> None:
         matrix=_matrix(products=[product], gdsn_map=_GROUP_MAP),
     )
 
-    assert "08713195007922" not in md.partition("## 1.")[2].partition("## 2.")[0]
+    assert "08713195007922" not in _section(md, _COPY)
 
 
 def test_a_held_unit_is_not_also_listed_as_a_non_blocking_source_fix() -> None:
@@ -1072,14 +1129,14 @@ def test_a_held_unit_is_not_also_listed_as_a_non_blocking_source_fix() -> None:
         matrix=_matrix(products=[_p("08713195000001")], gdsn_map=_GROUP_MAP),
     )
 
-    assert "08713195000001" in md.partition("## 1.")[2].partition("## 2.")[0]
-    assert "08713195000001" not in md.partition("## 3.")[2].partition("## 4.")[0]
+    assert "08713195000001" in _section(md, _COPY)
+    assert "08713195000001" not in _section(md, _MYGS1)
 
 
-def test_section_one_names_both_attributes_of_the_requirement() -> None:
+def test_the_copy_blocker_names_both_attributes_of_the_requirement() -> None:
     """Naming only 1083 said the requirement was 1083, which is the misreading this fixes."""
     md = _blocked("08713195000001", _group_gap("nl", "fr"))
-    heading = next(line for line in md.splitlines() if line.startswith("## 1."))
+    heading = _heading(md, _COPY)
 
     assert "1083" in heading and "1067" in heading
 
@@ -1090,7 +1147,7 @@ def _inference(gtin: str, language: str, claim: str) -> SourceIssue:
     )
 
 
-def test_section_two_puts_each_language_in_its_own_column() -> None:
+def test_the_claims_section_puts_each_language_in_its_own_column() -> None:
     """One row per product, a column per configured language.
 
     A row per (GTIN, language) put the two claims for one product on adjacent rows, to be read as
@@ -1106,7 +1163,7 @@ def test_section_two_puts_each_language_in_its_own_column() -> None:
         ],
         products=_products("08713195000001"),
     )
-    section = md.partition("## 2.")[2].partition("## 3.")[0]
+    section = _section(md, _CLAIMS)
     header = next(line for line in section.splitlines() if line.startswith("| GTIN |"))
 
     assert [c.strip() for c in header.split("|")[1:-1]] == [
@@ -1129,12 +1186,12 @@ def test_a_claim_in_one_language_only_leaves_the_other_cell_empty() -> None:
         generated_issues=[_inference("08713195000001", "nl", "alleen Nederlands")],
         products=_products("08713195000001"),
     )
-    row = next(line for line in md.partition("## 2.")[2].splitlines() if line.startswith("| `0871"))
+    row = next(line for line in _section(md, _CLAIMS).splitlines() if line.startswith("| `0871"))
 
     assert [c.strip() for c in row.split("|")[1:-1]][1:] == ["alleen Nederlands", ""]
 
 
-def test_section_four_keeps_one_row_per_field_and_a_column_per_language() -> None:
+def test_the_translation_section_keeps_one_row_per_field_and_a_column_per_language() -> None:
     """§4's stable key is (GTIN, field); the language is the axis that multiplies.
 
     Every translation is French today, so this collapses nothing — the point is that it does not
@@ -1148,7 +1205,7 @@ def test_section_four_keeps_one_row_per_field_and_a_column_per_language() -> Non
         ],
         products=_products("08713195000001"),
     )
-    section = md.partition("## 4.")[2].partition("## 5.")[0]
+    section = _section(md, _TRANSLATED)
     header = next(line for line in section.splitlines() if line.startswith("| GTIN |"))
 
     assert [c.strip() for c in header.split("|")[1:-1]] == [
@@ -1177,9 +1234,9 @@ def test_both_sections_widen_with_the_configured_languages() -> None:
         products=_products("08713195000001"),
     )
 
-    for section, label in (("## 2.", "Claim to verify"), ("## 4.", "Value to paste")):
+    for section, label in ((_CLAIMS, "Claim to verify"), (_TRANSLATED, "Value to paste")):
         header = next(
-            line for line in md.partition(section)[2].splitlines() if line.startswith("| GTIN |")
+            line for line in _section(md, section).splitlines() if line.startswith("| GTIN |")
         )
         assert f"{label} (de)" in header, section
         assert [c for c in header.split("|") if "(nl)" in c or "(fr)" in c or "(de)" in c] != []
@@ -1199,7 +1256,7 @@ def test_the_video_backlog_carries_no_html_and_is_bounded() -> None:
         _issue("", "video_unconfirmed", field="video.nl", value=f"clip{n}.mpg") for n in range(30)
     ]
     md = _render(video_map_issues=issues)
-    section = md.partition("## 5.")[2].partition("## 6.")[0]
+    section = _section(md, _VIDEO)
 
     assert "<details>" not in md and "<summary>" not in md
     assert "**30**" in section  # the count is the headline
@@ -1211,13 +1268,13 @@ def test_the_video_backlog_carries_no_html_and_is_bounded() -> None:
 def test_a_short_video_backlog_is_listed_in_full() -> None:
     """Below the sample size there is no remainder to announce."""
     issues = [_issue("", "video_unconfirmed", field="video.nl", value="clip.mpg")]
-    section = _render(video_map_issues=issues).partition("## 5.")[2]
+    section = _section(_render(video_map_issues=issues), _VIDEO)
 
     assert len([line for line in section.splitlines() if line.startswith("- `")]) == 1
-    assert "more" not in section.partition("## 6.")[0]
+    assert "more" not in section
 
 
-def test_section_two_says_where_on_the_page_the_claim_appears() -> None:
+def test_the_claims_section_says_where_on_the_page_the_claim_appears() -> None:
     """A business user reads §2 without knowing what `generated_description` is.
 
     The claim is real and the row names the product, but nothing said *where* on the page the
@@ -1228,7 +1285,7 @@ def test_section_two_says_where_on_the_page_the_claim_appears() -> None:
         generated_issues=[_inference("08713195000001", "nl", "afgeleid")],
         products=_products("08713195000001"),
     )
-    section = md.partition("## 2.")[2].partition("## 3.")[0]
+    section = _section(md, _CLAIMS)
 
     assert "description" in section.lower()
     assert "product page" in section.lower()
