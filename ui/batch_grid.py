@@ -290,7 +290,7 @@ def _readonly(
     if not rows:
         return
     if collapsed:
-        fold = ui.expansion(title).classes("section w-full mb-4").props("dense")
+        fold = ui.expansion(title).classes("section fold-tight w-full mb-4").props("dense")
         with fold:
             ui.label(explain).classes("explain")
             _table(columns, rows)

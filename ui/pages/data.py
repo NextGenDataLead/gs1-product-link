@@ -558,6 +558,7 @@ def _quality(cid: str) -> None:
     with theme.section(
         "Data quality",
         collapsed=True,
+        tight=True,
         anchor="data-quality",
         explain=(
             "What is blank or wrong in the export itself. Those values get fixed in MyGS1, at the "
