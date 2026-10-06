@@ -289,6 +289,12 @@ _ROW = "_row"
 #: the namespace the operator's own headers live in.
 _HELD = "_held"
 
+#: The row's barcode, canonicalised the way the export join reads it. Carried on the row and not
+#: rendered — the table shows the operator's own barcode column, this is for counting *products*.
+#: The pilot's own list names one barcode on two rows, so a count of rows is not a count of things
+#: a run would publish, and the band below says what a run would publish.
+_GTIN = "_gtin"
+
 #: How long the success message stands before the screen changes under it. A notification does not
 #: survive a page change, so this — not ``theme.notify_ok``'s own timeout — is how long it is
 #: actually on screen. It was 1.6s, chosen to make the toast *appear*; nobody checked it was long
@@ -425,7 +431,12 @@ def _scope_grid(
     def row_of(index: int) -> dict[str, Any]:
         cells = {f"c{n}": value for n, value in enumerate(sheet.rows[index])}
         gtin = sheet.gtin14_at(index)
-        return {_ROW: index, **cells, _HELD: "no video yet" if gtin in held else ""}
+        return {
+            _ROW: index,
+            **cells,
+            _GTIN: gtin,
+            _HELD: "no video yet" if gtin in held else "",
+        }
 
     with theme.section(
         "Choose the products and save",
@@ -446,10 +457,22 @@ def _scope_grid(
         ),
     ):
         _missing_table(columns, [row_of(n) for n in unmatched])
-        below = _scope_table(columns, [row_of(n) for n in matched])
+        matched_rows = [row_of(n) for n in matched]
+        below = _scope_table(columns, matched_rows)
+        # Only on a batch this rule is actually holding something in. "None of these are held" on a
+        # client that attaches no videos is a sentence about a mechanism that is not running, and a
+        # band that is right every time is how a screen teaches an operator to skim past its bands.
+        video = (
+            theme.routed_band("", link_label="Open Video mapping →", route="/videos", kind="warn")
+            if any(row[_HELD] for row in matched_rows)
+            else None
+        )
 
         def describe() -> None:
-            caption.text = _save_line(len(below.selected) + len(unmatched), len(sheet.rows))
+            ticked = below.selected
+            caption.text = _save_line(len(ticked) + len(unmatched), len(sheet.rows))
+            if video is not None:
+                video.text = _video_line(*_video_counts(ticked))
 
         below.on_select(describe)
         describe()
@@ -509,6 +532,56 @@ def _save_line(keep: int, total: int) -> str:
     if not dropped:
         return f"Next saves all {total} row(s) and goes on to the copy."
     return f"Next saves {keep} of {total} row(s) — {dropped} dropped — and goes on to the copy."
+
+
+def _video_counts(ticked: list[dict[str, Any]]) -> tuple[int, int]:
+    """``(held, ticked)`` for :func:`_video_line`, counted in **products** — distinct barcodes.
+
+    Two rows naming one barcode publish one page, so a count of rows is not a count of what a run
+    would do. The caption under Next counts rows, because a save writes rows; each sentence names
+    its own unit rather than borrowing the other's number.
+
+    The hold is read off the mark the Video column already shows, not by asking
+    :func:`lib.preflight.held_for_video` again. A second opinion about a hold the row already
+    carries would disagree with the column the moment either changed — and the column is what the
+    operator is looking at while they read this.
+    """
+    chosen = {row[_GTIN] for row in ticked if row[_GTIN]}
+    held = {row[_GTIN] for row in ticked if row[_HELD] and row[_GTIN]}
+    return len(held), len(chosen)
+
+
+def _video_line(held: int, ticked: int) -> str:
+    """What the video rule costs this batch, said where the batch is chosen.
+
+    The Video column marked the rows and the screen said nothing more: no total, no consequence,
+    and no way to the one file that decides it. On the pilot it marks 87 of the 111 matched rows —
+    so the caption's "Next saves all 118 row(s)" was true at the same moment a run would publish
+    24, and the two sentences read as agreement.
+
+    Counted over the **ticked** rows, not from :func:`lib.preflight.in_scope`, which reads the
+    selection as last *saved*. Here the batch is what the operator has ticked a moment ago, and
+    unticking a held product is one of the things they came to this screen to do. The two agree
+    again as soon as Next writes the selection; Preflight is the surface that speaks for the file.
+
+    In **products**, and the caller counts them by barcode for that reason. The pilot's own list
+    carries ``08713195008486`` on two rows, so its 111 matched rows are 110 products — and a run
+    publishes products. Counting rows here read "a run would publish 24" only because that
+    duplicate happens to be held: the day it is not, the row count claims a page that no run
+    creates, which is the overclaim this line exists to retire.
+
+    The vocabulary is the doctor's — "held", "a confirmed video in every language", "a run would
+    publish N" — because an operator who reads this line and then reads ``check_scope`` is reading
+    about one rule, and two spellings of it would read as two.
+    """
+    if not ticked:
+        return "Nothing is ticked, so a run would publish nothing."
+    if not held:
+        return f"All {ticked} ticked product(s) have a confirmed video in every language."
+    return (
+        f"{held} of the {ticked} ticked product(s) are held for want of a confirmed video in "
+        f"every language, so a run would publish {ticked - held}."
+    )
 
 
 def _missing_table(columns: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
