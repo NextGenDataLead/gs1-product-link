@@ -590,20 +590,12 @@ def _scope_grid(  # noqa: PLR0913 — the batch, its save, its caption, and its 
         _missing_table(columns, missing_rows)
         matched_rows = [row_of(n) for n in matched]
         below = _scope_table(columns, matched_rows)
-        # Only on a batch this rule is actually holding something in. "None of these are held" on a
-        # client that attaches no videos is a sentence about a mechanism that is not running, and a
-        # band that is right every time is how a screen teaches an operator to skim past its bands.
-        video = (
-            theme.routed_band(
-                "", link_label="Go to the video mapping ↑", route="#video-mapping", kind="warn"
-            )
-            if any(row[_HELD] for row in matched_rows)
-            else None
-        )
+        band, video = _hold_band(cfg)
 
         def describe() -> None:
             ticked = below.selected
             caption.text = _save_line(len(ticked) + len(unmatched), len(sheet.rows))
+            band.set_visibility(any(row[_HELD] for row in matched_rows))
             if video is not None:
                 video.text = _video_line(*_video_counts(ticked))
 
@@ -657,6 +649,25 @@ def _scope_grid(  # noqa: PLR0913 — the batch, its save, its caption, and its 
             return True
 
         commit["save"] = save
+
+
+def _hold_band(cfg: ClientConfig) -> tuple[ui.element, ui.label | None]:
+    """The line counting the video holds, and the element to show or hide it by.
+
+    Shown only while the rule is actually holding something. "None of these are held" on a client
+    that attaches no videos is a sentence about a mechanism that is not running, and a band that is
+    right every time is how a screen teaches an operator to skim past its bands. Built whenever the
+    rule is on, though, and hidden rather than absent: a mapping write re-marks the rows in place,
+    and can make a batch with no holds have some.
+    """
+    band = ui.element("div").classes("w-full")
+    with band:
+        if not (cfg.media and cfg.media.restrict_to_mapped_gtins):
+            return band, None
+        label = theme.routed_band(
+            "", link_label="Go to the video mapping ↑", route="#video-mapping", kind="warn"
+        )
+    return band, label
 
 
 def _save_line(keep: int, total: int) -> str:

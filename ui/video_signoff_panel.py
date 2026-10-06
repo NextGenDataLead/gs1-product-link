@@ -19,8 +19,9 @@ from nicegui import events, ui
 
 from lib import video_signoff, video_signoff_archive, xlsx
 from lib.config import ClientConfig
+from lib.errors import VideoMapError
 from lib.media_video import load_video_map
-from ui import context, theme, video_map_edit
+from ui import context, theme
 from ui.video_map_panel import MappingSession
 
 
@@ -205,14 +206,21 @@ def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what 
             )
             if problem is not None:
                 theme.notify_warning(f"The sheet is kept, but {problem}.")
-            decided = video_signoff.plan(
-                grid,
-                load_video_map(session.path),
-                exported=exported,
-                languages=cfg.wordpress.languages,
-                where=where,
-            )
-            _plan_view(decided, session, applied)
+
+            def replan() -> video_signoff.SignoffPlan:
+                return video_signoff.plan(
+                    grid,
+                    load_video_map(session.path),
+                    exported=exported,
+                    languages=cfg.wordpress.languages,
+                    where=where,
+                )
+
+            def done() -> None:
+                applied()
+                redraw()  # the plan now describes the file after the fills: nothing left to apply
+
+            _plan_view(replan(), session, done, replan)
 
     for select in chosen.values():
         select.on_value_change(redraw)
@@ -266,6 +274,7 @@ def _plan_view(
     decided: video_signoff.SignoffPlan,
     session: MappingSession,
     applied: Callable[[], None],
+    replan: Callable[[], video_signoff.SignoffPlan],
 ) -> None:
     """What the sheet would do, then the button that does it.
 
@@ -299,23 +308,45 @@ def _plan_view(
                 "applying the sheet rewrites the whole file and would drop them."
             )
             return
-        # Applied to the file as it is now, not as it was when the sheet was read.
+        # **Re-planned now**, against the file as it is at this moment — never the fills computed
+        # when the plan was drawn. In between, a row may have been set by hand in the mapping below
+        # (or by another window), and applying the old fills would overwrite it: a confirmed row is
+        # client sign-off, and the import's whole contract is that it never touches one.
         session.reload()
         if session.problem is not None:
             theme.notify_problem(session.problem)
             return
-        backup = session.write(video_map_edit.apply_edits(session.text, fills))
+        try:
+            now = replan().edits
+        except VideoMapError as exc:
+            theme.notify_problem(str(exc))
+            return
+        if not now:
+            theme.notify_warning(
+                "Nothing left to fill — every row this sheet would fill has been set since it was "
+                "read."
+            )
+            applied()
+            return
+        backup = session.write_edits(now)
         if backup is None:
             return
+        changed_since = len(fills) - len(now)
         # Everything that counts from the mapping recounts — the coverage figures, the mapping
         # table, the batch's Video column — because the session re-read the file after writing.
         applied()
         # A dialog, not a toast: this says how many signed-off rows changed and where the previous
         # version went, which is more than a toast has time for.
         theme.announce(
-            f"{len(fills)} row(s) filled in",
+            f"{len(now)} row(s) filled in",
             f"The previous version of the mapping is kept beside it as {backup.name}. Everything "
-            "on this screen that counts from the mapping has been recounted.",
+            "on this screen that counts from the mapping has been recounted."
+            + (
+                f" {changed_since} row(s) the sheet offered had been set since it was read, and "
+                "were left as they are."
+                if changed_since > 0
+                else ""
+            ),
         )
 
     theme.action(f"Fill in the {len(fills)} row(s) from this sheet", apply)

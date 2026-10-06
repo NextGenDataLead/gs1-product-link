@@ -542,19 +542,29 @@ class Fold:
         self._body = body
         self._build = build
         self._built = False
+        self._open = False
 
-    def open(self) -> None:
-        if not self._built:
+    def toggled(self, is_open: bool) -> None:
+        self._open = is_open
+        if is_open and not self._built:
             self._built = True
             with self._body:
                 self._build()
 
     def refresh(self) -> None:
-        """Rebuild the contents if they have been built; otherwise the first open builds them."""
-        if self._built:
-            self._body.clear()
+        """Rebuild the contents now if the fold is open; if it is shut, on its next open.
+
+        Never while shut: a table rebuilt inside a folded section is measured at zero height,
+        which is the very thing building lazily avoids.
+        """
+        if not self._built:
+            return
+        self._body.clear()
+        if self._open:
             with self._body:
                 self._build()
+        else:
+            self._built = False
 
 
 def fold(
@@ -575,7 +585,7 @@ def fold(
             ui.label(explain).classes("explain")
         body = ui.column().classes("w-full gap-0")
     folded = Fold(body, build)
-    expansion.on_value_change(lambda event: folded.open() if event.value else None)
+    expansion.on_value_change(lambda event: folded.toggled(bool(event.value)))
     return folded
 
 

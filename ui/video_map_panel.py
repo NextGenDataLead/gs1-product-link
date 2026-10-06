@@ -105,6 +105,19 @@ class MappingSession:
         self.reload()
         return backup
 
+    def write_edits(self, edits: dict[tuple[str, str], str]) -> Path | None:
+        """Apply ``edits`` to the text as last read, then :meth:`write`. ``None`` if refused.
+
+        Applying is inside the refusal too: an edit naming a row the file no longer has (it was
+        edited by hand since) raises, and a click handler must say so rather than raise.
+        """
+        try:
+            candidate = video_map_edit.apply_edits(self.text, edits)
+        except VideoMapError as exc:
+            theme.notify_problem(str(exc))
+            return None
+        return self.write(candidate)
+
 
 def _stat(path: Path) -> tuple[float, int] | None:
     try:
@@ -237,7 +250,7 @@ def rows(cfg: ClientConfig, cid: str, session: MappingSession, changed: Callable
             session.reload()
             theme.notify_warning("The mapping changed on disk; your edits go onto the new version.")
         saved = len(session.pending)
-        backup = session.write(video_map_edit.apply_edits(session.text, session.pending))
+        backup = session.write_edits(session.pending)
         if backup is None:
             return
         session.pending.clear()
