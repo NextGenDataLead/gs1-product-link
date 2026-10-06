@@ -36,6 +36,7 @@ from lib.mandatory import MandatoryGap, missing_mandatory
 from lib.media_video import canon_gtin, check_video_map, files_by_language, load_video_map
 from lib.preflight import in_scope, load_video_status
 from lib.quality_report import MatrixInput, render_quality_report
+from lib.quality_report_video import VideoReport
 from lib.records import ProductRecord, SourceIssue
 from lib.video_status import HAS_VIDEO
 
@@ -124,6 +125,20 @@ def _publish_blocks(
     # Products already held by E23 are not listed again here: E23 runs first, so naming the same
     # SKU twice would imply two independent blocks where the first already stops the run.
     return gaps, sorted(p.gtin for p in status.held if p.gtin not in gaps)
+
+
+def _video_report(client_id: str, products: dict[str, ProductRecord]) -> VideoReport | None:
+    """§1's inputs: the selection joined to the video mapping. ``None`` with no readable mapping.
+
+    Follows :func:`_publish_blocks`' rule — every failure is an absent section, never a traceback;
+    ``doctor`` is where a broken config is reported.
+    """
+    try:
+        cfg = get_client(client_id)
+    except (ConfigError, ExportParseError):
+        return None
+    status = load_video_status(cfg, in_scope(cfg, list(products.values())))
+    return VideoReport(status=status) if status is not None else None
 
 
 def _languages(client_id: str, issues: dict[str, list[SourceIssue]]) -> list[str]:
@@ -295,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
     issues = {key: _scoped_issues(client_id, products, found) for key, found in issues.items()}
     mandatory_gaps, video_held = _publish_blocks(client_id, products)
     matrix = _matrix_input(client_id, products)
+    video = _video_report(client_id, products)
 
     markdown = render_quality_report(
         client_id=client_id,
@@ -310,6 +326,7 @@ def main(argv: list[str] | None = None) -> int:
         mandatory_gaps=mandatory_gaps,
         video_held=video_held,
         matrix=matrix,
+        video=video,
     )
 
     out = Path(args.out) if args.out else Path("output") / client_id / "data-quality-report.md"

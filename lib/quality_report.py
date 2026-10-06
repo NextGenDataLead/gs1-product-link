@@ -21,7 +21,10 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from lib.gdsn import is_mandatory
 from lib.mandatory import MandatoryGap, value_for
+from lib.quality_report_video import VideoReport, held_count, summary_rows, video_lines
 from lib.records import ProductRecord, SourceIssue
+from lib.report_markdown import cell as _cell
+from lib.report_markdown import table as _table
 
 if TYPE_CHECKING:
     from lib.gdsn import GdsnSource
@@ -30,7 +33,7 @@ if TYPE_CHECKING:
 _HELD = "missing_generation_input"
 _INFERENCE = "generation_inference"
 _GENERATED = "content_generated"
-#: A value the generator rendered into a language the feed lacked — §4's MyGS1 work queue.
+#: A value the generator rendered into a language the feed lacked — §5's MyGS1 work queue.
 _TRANSLATED = "value_translated"
 #: Issue kinds emitted by the export parser (``source_issues.json``).
 _BLANK = "value_blank"
@@ -54,13 +57,6 @@ _ABSENT = "○"
 
 #: Column header for the video pair — not a ``gdsn_map`` field, but the same kind of fact.
 _VIDEO_COLUMN = "video"
-
-#: How many unassigned video files the backlog names before falling back to a count. It was sized
-#: when the report said 118 — a figure from a ``video_map_issues.json`` seven weeks stale; the
-#: mapping itself then had 18, and the report now recomputes it live. `mapping.yml` is both the
-#: authoritative list and where the work is done, so the report shows enough to recognise what is
-#: outstanding rather than reproducing the file.
-_VIDEO_SAMPLE = 10
 
 #: Suffix marking a column whose gap only thins the page. A word, not a symbol: this report is read
 #: both rendered and as raw markdown, so anything HTML shows as a tag in the second — and a bare
@@ -324,11 +320,6 @@ def _short(gtin: str) -> str:
     return "…" + gtin[-4:] if gtin else "(unassigned)"
 
 
-def _cell(text: str) -> str:
-    """Escape a value for a single markdown table cell (pipes would split the column)."""
-    return text.replace("|", "\\|")
-
-
 def _lang(field: str) -> str:
     """The language suffix of a dotted field like ``generated_description.nl`` (else empty)."""
     return field.rsplit(".", 1)[-1] if "." in field else ""
@@ -338,15 +329,6 @@ def _label(products: dict[str, ProductRecord], gtin: str) -> str:
     """A ``\\`gtin\\` (…1234) — Name`` cell, name omitted when unknown."""
     name = _name(products, gtin)
     return f"`{gtin}` ({_short(gtin)})" + (f" — {name}" if name else "")
-
-
-def _table(header: list[str], rows: list[list[str]]) -> list[str]:
-    """A markdown table, or a single ``_None._`` line when there are no rows."""
-    if not rows:
-        return ["_None._"]
-    out = ["| " + " | ".join(header) + " |", "|" + "|".join(["---"] * len(header)) + "|"]
-    out += ["| " + " | ".join(cells) + " |" for cells in rows]
-    return out
 
 
 def _header_lines(client_id: str, snapshot: str, freshness: dict[str, str]) -> list[str]:
@@ -391,6 +373,7 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
     category_issues: list[SourceIssue],
     mandatory_gaps: dict[str, list[MandatoryGap]],
     video_held: list[str],
+    video: VideoReport | None,
 ) -> list[str]:
     by_kind = Counter(i.issue for i in generated_issues)
     held = {i.gtin for i in generated_issues if i.issue == _HELD}
@@ -409,7 +392,7 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
         [
             "Media",
             "**No confirmed video (E24)**",
-            f"{len(video_held)} GTINs",
+            held_count(video, video_held, mandatory_gaps),
             "Client",
             "**Yes — whole SKU**",
         ],
@@ -418,7 +401,7 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
             "No marketing message (1083)",
             f"{by_kind[_HELD]} rows / {len(held)} GTINs",
             "Client (MyGS1)",
-            # Not a flat "Yes": a unit whose 1067 carries copy publishes from it. §1 marks which
+            # Not a flat "Yes": a unit whose 1067 carries copy publishes from it. §2 marks which
             # rows are which, and an unqualified blocker count that includes non-blockers is how
             # the real ones stop being urgent.
             "**Yes** — where 1067 is blank too",
@@ -463,15 +446,9 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
             "Values translated to fill a language gap",
             str(len([i for i in generated_issues if i.issue == _TRANSLATED])),
             "Client (MyGS1)",
-            "No — §4 to paste back",
+            "No — §5 to paste back",
         ],
-        [
-            "Media",
-            "Videos not yet mapped to a GTIN",
-            str(len(video_map_issues)),
-            "Client",
-            "For those GTINs",
-        ],
+        *summary_rows(video, video_map_issues),
         [
             "Category",
             "Unmapped GPC bricks",
@@ -579,7 +556,7 @@ def _has_feature_benefit(products: dict[str, ProductRecord], gtin: str, language
 
 
 class _Requirement(NamedTuple):
-    """One either-or requirement, as §1 needs it: the group's name, its column, and its sources."""
+    """One either-or requirement, as §2 needs it: the group's name, its column, and its sources."""
 
     group: str
     column: FieldColumn
@@ -630,19 +607,20 @@ def _blocking_lines(
     matrix: MatrixInput | None,
     languages: list[str],
 ) -> list[str]:
-    """§1 — the SKUs an either-or source requirement holds, and which slot would release them.
+    """§2 — the SKUs an either-or source requirement holds, and which slot would release them.
 
-    This was §1c, under a §1 that also held three subsections repeating §0's matrix: E23's
-    mandatory gaps (§1a), E24's missing videos (§1b), and the blank title/image findings (§1d),
-    whose only GTIN beyond the matrix was out of scope entirely — a whole-catalogue finding leaking
-    into a scoped report. All three are gone, and with one subsection left there is no subsection.
+    It was §1 until the video section went in ahead of it, and before that §1c, under a §1 that
+    also held three subsections repeating §0's matrix: E23's mandatory gaps (§1a), E24's missing
+    videos (§1b), and the blank title/image findings (§1d), whose only GTIN beyond the matrix was
+    out of scope entirely — a whole-catalogue finding leaking into a scoped report. All three went,
+    and with one subsection left there is no subsection.
 
     **It listed the wrong population.** The rows came from ``missing_generation_input``, which
     fires on a blank attr 1083 — but 1083 is half of a ``required_group``, so a unit whose 1067
     carries the copy publishes perfectly well. Under a heading reading *"Blocks publish"* that was
     accurate only by luck: no in-scope unit is in that state, so the non-blocking row never
     appeared. It lists what the requirement actually holds now, and a blank 1083 the feed rescues
-    is a datapool gap in §3 instead.
+    is a datapool gap in §4 instead.
 
     **The grid is here because §0 stopped saying it.** #103 collapsed the members into one
     ``marketing·copy`` column, since neither is individually mandatory — so this is the only place
@@ -659,7 +637,7 @@ def _blocking_lines(
         )
         tables += [*_table(header, rows), ""]
     return [
-        f"## 1. Blocks publish — no marketing message in the feed ({' or '.join(attributes)})",
+        f"## 2. Blocks publish — no marketing message in the feed ({' or '.join(attributes)})",
         "",
         "A page's copy is written from these attributes, and the requirement is satisfied by "
         "**either** of them. A SKU carrying neither, in any one configured language, has nothing "
@@ -717,7 +695,7 @@ def _by_language(
         languages: The configured site languages, in order — the column set.
         value_header: Column title; each language gets ``"{value_header} ({lang})"``.
         extra_key: Extra row-key parts beyond the GTIN, for a subject that is not the product
-            alone — §4 keys on the field too, because the paste target differs per field.
+            alone — §5 keys on the field too, because the paste target differs per field.
 
     Returns:
         ``(header, rows)`` ready for :func:`_table`, rows in first-seen order so two runs over the
@@ -755,7 +733,7 @@ def _review_lines(
 ) -> list[str]:
     header, inf_rows = _by_language(inferences, products, languages, "Claim to verify")
     return [
-        "## 2. Review before publish — inferred claims",
+        "## 3. Review before publish — inferred claims",
         "",
         "Claims the copy makes that go **beyond the literal feed text** (plausible, but derived). "
         "Confirm each holds for the real product before it goes live — this is the actionable "
@@ -785,7 +763,7 @@ def _source_lines(
     wrong_lang: list[SourceIssue],
     products: dict[str, ProductRecord],
 ) -> list[str]:
-    """§3 — source findings that are worth fixing but hold nothing.
+    """§4 — source findings that are worth fixing but hold nothing.
 
     **There is no blank-fields subsection.** It listed every non-blocking blank with its source
     attribute, which is what §0's matrix already shows: a blank ``net_content`` is the ○ under
@@ -800,9 +778,9 @@ def _source_lines(
     inc_rows = [[_label(products, i.gtin), i.field, _market_cell(i)] for i in inconsistent]
     lang_rows = [[_label(products, i.gtin), i.field, _cell(i.value)] for i in wrong_lang]
     return [
-        "## 3. Source-data fixes in MyGS1 (do not block publish)",
+        "## 4. Source-data fixes in MyGS1 (do not block publish)",
         "",
-        "### 3a. Values inconsistent across markets",
+        "### 4a. Values inconsistent across markets",
         "",
         "The same field carries different text across GS1 target markets (priority "
         "`528 > 056 > 276 > 442`); the tool used the highest-ranked (marked ✓). Both/all market "
@@ -810,7 +788,7 @@ def _source_lines(
         "",
         *_table(["GTIN", "Field", "Value per market (✓ = used)"], inc_rows),
         "",
-        "### 3b. Possible wrong-language values (worth a glance)",
+        "### 4b. Possible wrong-language values (worth a glance)",
         "",
         "Heuristic: a localised value carrying letter patterns that belong to the *other* language "
         "(e.g. a French title still reading `Schoonmaakdoek`). Not a blocker — skim and fix the "
@@ -824,10 +802,10 @@ def _source_lines(
 def _translated_lines(
     translated: list[SourceIssue], products: dict[str, ProductRecord], languages: list[str]
 ) -> list[str]:
-    """§4 — the values the tool rendered into a language the feed did not carry them in.
+    """§5 — the values the tool rendered into a language the feed did not carry them in.
 
     A work queue, not a confession: each row is one paste into MyGS1, after which the next export
-    carries the value for real and the tool stops writing it. So unlike §2 — which is a count and
+    carries the value for real and the tool stops writing it. So unlike §3 — which is a count and
     a pointer, because nobody acts on generated copy row by row — the text belongs in the table.
 
     Rows whose attribute has no per-language slot in GS1 (attr 4.012 Material) say so instead of
@@ -847,7 +825,7 @@ def _translated_lines(
         extra_key=_ExtraKey(lambda issue: (_cell(issue.source),), ("Source attribute",)),
     )
     return [
-        "## 4. Translated to fill a language gap — paste these into MyGS1",
+        "## 5. Translated to fill a language gap — paste these into MyGS1",
         "",
         "The feed carries each of these in another language but not in this one, so the tool "
         "**translated it** and the page shows LLM-written text where it should show the client's. "
@@ -861,40 +839,6 @@ def _translated_lines(
         *_table(header, rows),
         "",
     ]
-
-
-def _video_lines(video_map_issues: list[SourceIssue], client_id: str) -> list[str]:
-    """§5 — the video files still waiting for a GTIN.
-
-    **A sample, not the whole backlog.** This used to list all of them inside
-    ``<details><summary>`` to keep the document short, which works on a rendering surface and
-    does nothing on the one this report is read on: as raw markdown the tags are text and all 118
-    filenames (the stale count of the day) sit inline. The same two-surfaces problem as the header
-    labels, pointing the other way — so the section is short by *being* short rather than by
-    folding.
-
-    The remainder is counted rather than dropped, and ``mapping.yml`` holds every one of them: it
-    is the file the work is done in, so it is the authoritative list and this is a status line.
-    """
-    remaining = len(video_map_issues) - _VIDEO_SAMPLE
-    lines = [
-        "## 5. Video mapping backlog",
-        "",
-        f"**{len(video_map_issues)}** video files have no GTIN assigned yet. Client to map each "
-        f"filename → GTIN in `input/{client_id}/videos/mapping.yml` (or mark `skip`), then "
-        f"`build_video_map {client_id} --check`. A GTIN only becomes publishable once it has a "
-        "confirmed video in **every** language.",
-        "",
-    ]
-    if video_map_issues:
-        lines += [f"- `{i.field}` — {_cell(i.value)}" for i in video_map_issues[:_VIDEO_SAMPLE]]
-        if remaining > 0:
-            lines.append(
-                f"- _…and {remaining} more — every unassigned file is in "
-                f"`input/{client_id}/videos/mapping.yml`, which is where they are assigned._"
-            )
-        lines.append("")
-    return lines
 
 
 def _category_lines(category_issues: list[SourceIssue]) -> list[str]:
@@ -944,6 +888,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     mandatory_gaps: dict[str, list[MandatoryGap]] | None = None,
     video_held: list[str] | None = None,
     matrix: MatrixInput | None = None,
+    video: VideoReport | None = None,
 ) -> str:
     """Render the consolidated data-quality report as markdown.
 
@@ -958,7 +903,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
         freshness: Last-updated date per source, keyed ``generated``/``source``/``video_map``/
             ``category`` — each source has its own producer run, so they can differ.
         languages: The client's configured site languages, in order. **One list for the whole
-            document**: §0's per-language marks, §2's claim columns and §4's paste columns are all
+            document**: §0's per-language marks, §3's claim columns and §5's paste columns are all
             derived from it, and two sources for it could disagree about how many columns a table
             has. It is the column set, not the languages the current export happens to have filled
             — a configured language with nothing in it renders as an empty cell, which is itself
@@ -972,6 +917,9 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
         matrix: In-scope products plus the field definitions and video confirmations behind the
             §0 coverage matrix. ``None`` omits the section — a report for a client with no
             ``gdsn_map`` has nothing to tabulate.
+        video: The in-scope products joined to the video mapping, and the client's sign-off sheet
+            re-planned — §1. ``None`` still renders §1, as one line, so every later section keeps
+            its number whether or not the client attaches videos.
 
     Returns:
         The full markdown document.
@@ -994,6 +942,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
             category_issues,
             mandatory_gaps or {},
             video_held or [],
+            video,
         ),
         *_observations_lines(observations or []),
         *(
@@ -1008,11 +957,17 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
             if matrix is not None
             else []
         ),
+        *video_lines(
+            video,
+            video_map_issues,
+            client_id=client_id,
+            languages=languages,
+            also_held=frozenset(mandatory_gaps or {}),
+        ),
         *_blocking_lines(mandatory_gaps or {}, products, matrix, languages),
         *_review_lines(inferences, generated_count, products, client_id, languages),
         *_source_lines(inconsistent, wrong_lang, products),
         *_translated_lines(translated, products, languages),
-        *_video_lines(video_map_issues, client_id),
         *_category_lines(category_issues),
     ]
     return "\n".join(lines)
