@@ -115,3 +115,30 @@ def test_an_unknown_client_is_a_config_error(capsys: pytest.CaptureFixture[str])
     assert _run("nosuchclient") == 2
     assert "config error" in capsys.readouterr().err
     assert not _EXPORT.exists()
+
+
+_MEDIA = _DEMO.media
+
+
+def test_it_writes_the_videos_the_mapping_and_the_sign_off_sheet() -> None:
+    """What makes the Data screen's video half rehearsable on democlient at all."""
+    assert _MEDIA is not None and _MEDIA.video_map_path
+    assert _run() == 0
+
+    assert Path(_MEDIA.video_map_path).read_text(encoding="utf-8").startswith("nl:\n- {file: ")
+    assert (_EXPORT.parents[3] / "test-uploads" / "video-signoff.xlsx").is_file()
+    for language, folder in _MEDIA.video_folders.items():
+        assert sorted(p.name for p in Path(folder).iterdir()), language
+
+
+def test_an_existing_mapping_refuses_the_whole_run(capsys: pytest.CaptureFixture[str]) -> None:
+    """A mapping is client sign-off. Writing a demo one over a real one is the damage to refuse."""
+    assert _MEDIA is not None and _MEDIA.video_map_path
+    mapping = Path(_MEDIA.video_map_path)
+    mapping.parent.mkdir(parents=True, exist_ok=True)
+    mapping.write_text("nl:\n- {file: real.mp4, gtin: '08713195000011'}\n", encoding="utf-8")
+
+    assert _run() == 1
+    assert "real.mp4" in mapping.read_text(encoding="utf-8")
+    assert not _EXPORT.exists()
+    assert str(mapping) in capsys.readouterr().err
