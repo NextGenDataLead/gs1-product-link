@@ -31,9 +31,9 @@ from pathlib import Path
 
 from lib.config import get_client, resolve_client_id
 from lib.env import load_env
-from lib.errors import ConfigError, ExportParseError
+from lib.errors import ConfigError, ExportParseError, VideoMapError
 from lib.mandatory import MandatoryGap, missing_mandatory
-from lib.media_video import canon_gtin
+from lib.media_video import canon_gtin, check_video_map, files_by_language, load_video_map
 from lib.preflight import in_scope, load_video_status
 from lib.quality_report import MatrixInput, render_quality_report
 from lib.records import ProductRecord, SourceIssue
@@ -206,6 +206,35 @@ def _matrix_input(client_id: str, products: dict[str, ProductRecord]) -> MatrixI
     )
 
 
+def _live_video_issues(client_id: str) -> tuple[list[SourceIssue], str] | None:
+    """The mapping's gaps as they stand now, dated by the mapping itself — or ``None``.
+
+    ``video_map_issues.json`` is written only by ``build_video_map --check``, which nothing on the
+    Data screen runs; this report only ever *read* it. On the pilot it was seven weeks old and said
+    118 files had no barcode while the mapping itself had 18 — in the same document whose other
+    sections are recomputed on every render. So the gaps are recomputed here with the same
+    :func:`lib.media_video.check_video_map` that writes the file, and the date shown beside them is
+    the mapping's own last change rather than the last time somebody ran a command.
+
+    ``None`` — read the file as before — when there is no ``media`` block, no mapping path, or a
+    mapping that will not load. Not a convenience: a client that attaches no videos has no mapping
+    to recompute from, and the file is then the only record there is.
+    """
+    try:
+        cfg = get_client(client_id)
+    except (ConfigError, ExportParseError):
+        return None
+    media = cfg.media
+    if media is None or not media.video_map_path:
+        return None
+    path = Path(media.video_map_path)
+    try:
+        vmap = load_video_map(path)
+    except VideoMapError:
+        return None
+    return check_video_map(vmap, files_by_language(media.video_folders)), _mtime(path)
+
+
 def _load_observations(path: Path) -> list[str]:
     """Read the in-session review notes (``observations.json``); absent yields ``[]``.
 
@@ -259,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
         path = data_dir / filename
         issues[key] = _load_issues(path)
         freshness[key] = _mtime(path)
+    if (live := _live_video_issues(client_id)) is not None:
+        issues["video_map"], freshness["video_map"] = live
 
     products = _load_products(data_dir / "products.json")
     issues = {key: _scoped_issues(client_id, products, found) for key, found in issues.items()}

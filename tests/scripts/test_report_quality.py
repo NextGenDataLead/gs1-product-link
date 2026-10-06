@@ -355,3 +355,72 @@ def test_an_unreadable_mapping_marks_nothing_and_holds_nothing(
     assert matrix is not None
     assert matrix.video_confirmed == {"nl": set()}
     assert held == []
+
+
+# --- the video backlog is recomputed from the mapping, not read from a file nobody refreshes ------
+
+
+def _stale_backlog(data: Path, count: int) -> None:
+    """`video_map_issues.json` as `build_video_map --check` left it, weeks ago."""
+    _write(
+        data / "video_map_issues.json",
+        [
+            {
+                "gtin": "",
+                "field": "video.nl",
+                "source": "operator video folder",
+                "issue": "video_unconfirmed",
+                "value": f"stale-{n}.mpg",
+                "detail": "no GTIN filled in yet",
+            }
+            for n in range(count)
+        ],
+    )
+
+
+def _report(tmp_path: Path) -> str:
+    assert report_quality.main(["noviplast"]) == 0
+    return (tmp_path / "output" / "noviplast" / "data-quality-report.md").read_text()
+
+
+def test_the_video_backlog_counts_the_mapping_as_it_is_now(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pilot's file said 118 unassigned while the mapping had 18; the report believed the file.
+
+    Only `build_video_map --check` rewrites that file and the Data screen never runs it, so the
+    backlog was the one part of the report that did not move when the mapping did.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stale_backlog(_seed(tmp_path), 118)
+    _with_videos(
+        tmp_path,
+        monkeypatch,
+        {
+            "nl": [
+                {"file": "one.mpg", "gtin": ""},
+                {"file": "two-a.mpg", "gtin": "   "},
+                {"file": "two-b.mpg", "gtin": _HAS_TWO},
+            ]
+        },
+    )
+
+    text = _report(tmp_path)
+
+    assert "**2**" in text
+    assert "one.mpg" in text and "two-a.mpg" in text
+    assert "stale-" not in text
+
+
+def test_a_client_with_no_mapping_still_reads_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No `media` block means nothing to recompute from, so the file is the only record there is."""
+    monkeypatch.chdir(tmp_path)
+    _stale_backlog(_seed(tmp_path), 3)
+    _write_clients_yml(tmp_path, monkeypatch)
+
+    text = _report(tmp_path)
+
+    assert "**3**" in text
+    assert "stale-0.mpg" in text

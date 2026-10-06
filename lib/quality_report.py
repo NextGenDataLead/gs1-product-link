@@ -55,9 +55,11 @@ _ABSENT = "○"
 #: Column header for the video pair — not a ``gdsn_map`` field, but the same kind of fact.
 _VIDEO_COLUMN = "video"
 
-#: How many unassigned video files §5 names before falling back to a count. The backlog runs to
-#: ~118 and `mapping.yml` is both the authoritative list and where the work is done, so the report
-#: shows enough to recognise what is outstanding rather than reproducing the file.
+#: How many unassigned video files the backlog names before falling back to a count. It was sized
+#: when the report said 118 — a figure from a ``video_map_issues.json`` seven weeks stale; the
+#: mapping itself then had 18, and the report now recomputes it live. `mapping.yml` is both the
+#: authoritative list and where the work is done, so the report shows enough to recognise what is
+#: outstanding rather than reproducing the file.
 _VIDEO_SAMPLE = 10
 
 #: Suffix marking a column whose gap only thins the page. A word, not a symbol: this report is read
@@ -867,8 +869,9 @@ def _video_lines(video_map_issues: list[SourceIssue], client_id: str) -> list[st
     **A sample, not the whole backlog.** This used to list all of them inside
     ``<details><summary>`` to keep the document short, which works on a rendering surface and
     does nothing on the one this report is read on: as raw markdown the tags are text and all 118
-    filenames sit inline. The same two-surfaces problem as the header labels, pointing the other
-    way — so the section is short by *being* short rather than by folding.
+    filenames (the stale count of the day) sit inline. The same two-surfaces problem as the header
+    labels, pointing the other way — so the section is short by *being* short rather than by
+    folding.
 
     The remainder is counted rather than dropped, and ``mapping.yml`` holds every one of them: it
     is the file the work is done in, so it is the authoritative list and this is a status line.
