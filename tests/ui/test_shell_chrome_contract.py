@@ -38,6 +38,10 @@ _THEME: Final = _ROOT / "ui" / "theme.py"
 #: property of the outcome rather than of whoever wrote the call.
 _NOTIFY_HELPERS: Final = frozenset({"notify_ok", "notify_warning", "notify_problem"})
 
+#: The screens allowed a red button. Publish writes permanent GS1 records; Setup's two saves decide
+#: where and with what credentials every later run writes. Everything else has a way back.
+_RED_SCREENS: Final = frozenset({"publish.py", "setup.py"})
+
 
 def _shell_modules() -> list[Path]:
     """Every module that draws part of a screen: the pages and the components beside them."""
@@ -200,3 +204,32 @@ def test_the_info_dot_reveals_on_press_only() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
     assert "tooltip" not in called, "the ⓘ grew a tooltip again — that is the hover half"
+
+
+def _is_false(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value is False
+
+
+def test_red_buttons_are_only_on_the_screens_that_write_what_cannot_be_undone() -> None:
+    """``theme.action(..., danger=True)`` outside Publish and Setup is a colour that stops meaning.
+
+    The docstring on :func:`ui.theme.action` said "nothing else, ever" while three other buttons
+    were red, and the video panels were about to bring two more onto the Data screen — whose own
+    save was deliberately taken *out* of red. A rule kept only in prose had already drifted once.
+    Any ``danger=`` that is not literally ``False`` counts: Publish passes an expression, and an
+    expression can be true.
+    """
+    offenders = [
+        f"{path.relative_to(_UI_DIR)}:{call.lineno}"
+        for path in _shell_modules()
+        if path.name not in _RED_SCREENS
+        for call in _calls(_tree(path))
+        if _attribute_call(call) == ("theme", "action")
+        for keyword in call.keywords
+        if keyword.arg == "danger" and not _is_false(keyword.value)
+    ]
+    assert not offenders, (
+        f"red button at {offenders} — red is for writes that are hard or impossible to undo, which "
+        f"only {sorted(_RED_SCREENS)} make. A local file with a .bak or an undo stays blue; see "
+        "the docstring on ui.theme.action"
+    )

@@ -180,7 +180,7 @@ def _rows_section(  # noqa: PLR0913 — the file, what is in it, what is on disk
 
         with ui.row().classes("gap-3 mt-4 items-center"):
             theme.quiet_action("Add files that are on disk but not in the mapping", add_missing)
-            theme.action("Save the mapping", save, danger=True)
+            theme.action("Save the mapping", save)
         refresh_status()
 
 
@@ -418,7 +418,7 @@ def _plan_view(
             "what the file said before, so reload this page to work in it.",
         )
 
-    theme.action(f"Fill in the {len(fills)} row(s) from this sheet", apply, danger=True)
+    theme.action(f"Fill in the {len(fills)} row(s) from this sheet", apply)
 
 
 def _plan_table(title: str, note: str, rows: tuple[video_signoff.SignoffRow, ...]) -> None:
