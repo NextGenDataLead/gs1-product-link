@@ -72,16 +72,23 @@ def eligibility(cfg: ClientConfig, products: list[ProductRecord]) -> Eligibility
         else {}
     )
     by_gtin = {product.gtin: product.gtin14 for product in products}
+    # The video gate only holds anything when the rule is on; otherwise its words are not a reason.
+    enforced = cfg.media is not None and cfg.media.restrict_to_mapped_gtins
 
     not_eligible: dict[str, str] = {}
     for gtin, hold in holds.items():
         gtin14 = by_gtin[gtin]
+        video = words.get(gtin14, "") if enforced else ""
         if hold.reason is SkipReason.MISSING_MANDATORY_FIELD:
-            not_eligible[gtin14] = "missing data: " + ", ".join(gap.label for gap in hold.gaps)
+            reasons = ["missing data: " + ", ".join(gap.label for gap in hold.gaps), video]
         elif hold.reason is SkipReason.NO_CONFIRMED_VIDEO:
-            not_eligible[gtin14] = words.get(gtin14) or "no confirmed video"
+            reasons = [video or "no confirmed video"]
         else:
-            not_eligible[gtin14] = NO_IMAGE
+            reasons = [NO_IMAGE, video]
+        # Every reason, not only the first rule that fires: the plan attributes a hold to one rule,
+        # but the operator has to fix all of them before the product is eligible — and report §1b
+        # lists a two-video product whatever else holds it, so the screen must too.
+        not_eligible[gtin14] = "; ".join(reason for reason in reasons if reason)
 
     bare = status.without_video if status is not None else ()
     missing_video = {p.gtin: waiting_on(p) for p in bare if p.gtin not in not_eligible}

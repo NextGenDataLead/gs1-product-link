@@ -137,6 +137,27 @@ def test_missing_data_outranks_the_video_as_the_plan_attributes_it(tmp_path: Pat
     assert _D not in verdict.missing_video
 
 
+def test_a_product_held_for_data_also_names_its_two_videos(tmp_path: Path) -> None:
+    """Insectenval, on the pilot: image_url blank *and* two nl videos. Both need fixing."""
+    cfg = _config(_media(tmp_path, publish_without_video=True))
+
+    verdict = eligibility(cfg, [_product(_C, net_content=None)])
+
+    assert verdict.not_eligible[_C] == (
+        "missing data: net_content (attr 3510); two videos in nl — the client must keep one"
+    )
+
+
+def test_without_the_video_rule_no_video_words_are_a_reason(tmp_path: Path) -> None:
+    media = _media(tmp_path, publish_without_video=False).model_copy(
+        update={"restrict_to_mapped_gtins": False}
+    )
+
+    verdict = eligibility(_config(media), [_product(_D, net_content=None)])
+
+    assert verdict.not_eligible[_D] == "missing data: net_content (attr 3510)"
+
+
 def test_a_blank_source_image_is_named(tmp_path: Path) -> None:
     cfg = _config(_media(tmp_path, publish_without_video=True))
 
