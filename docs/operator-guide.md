@@ -45,8 +45,9 @@ The strip down the left is how you move around. It has two halves, and the diffe
   a small fact about where you stand — how old the spreadsheet is, how many rows are planned. They
   are facts, not ticks: "today" tells you the file is recent, not that it is the right file.
 - **Below the line is everything else.** *Setup* is the site settings, set up once and rarely
-  touched. *Runs* is the record of what happened. *Video mapping* is one file's editor. None of
-  them is a step; you go there when you need them.
+  touched. *Runs* is the record of what happened. *Video mapping* is one file's editor — and where
+  you upload the sign-off sheet when the client sends it back (see **Video mapping** below). None
+  of them is a step; you go there when you need them.
 
 At the top it always says which client you are working on and, underneath, the environment:
 **TEST** in grey, or **PRODUCTION** in red. That tag is the single most important thing in the
@@ -291,6 +292,44 @@ nothing in it can be edited here — it is there to be read, with the reason bes
 
 **Everything on this screen has a consequence written under it.** Read that line before changing a
 field. Switching the GS1 environment to production makes you type the client's name in full first.
+
+---
+
+## Video mapping — and the sheet the client sends back
+
+A product is only published once somebody has said which video belongs to it, **in every
+language**. Until then the tool holds that product back: it appears on the Data screen with *no
+video yet* in the Video column, and a run skips it and reports success. That is why a batch of 110
+products can publish 24.
+
+**Video mapping** is where that is settled. It lists every video file, per language, and what it
+maps to. Click a row and you get a box for the barcode, plus a few suggestions — those are a
+machine guess at which product the filename means, nothing more. Nothing is written until you press
+*Save the mapping*, and the previous version of the file is always kept beside it.
+
+### Importing the client's sheet
+
+You do not have to type them in. When the client sends back the spreadsheet with the barcodes
+filled in, upload it under **Import the client's sign-off sheet**.
+
+- It needs three columns: the language, the video filename, and the barcode. **You say which is
+  which** — the tool reads the sheet's headings, fills the three boxes in with its best guess, and
+  you change any it got wrong. So the columns can be called anything at all, and any other columns
+  are ignored. The table can sit below a title row, on any sheet of the workbook.
+- **Check those three boxes every time, even when they look right.** Reading the wrong column as
+  the barcode is the one mistake here that would put the wrong video on a product.
+- **Uploading changes nothing.** It shows you what the sheet would do, row by row, and only then
+  offers a button that does it.
+- **A row the client has already signed off is never overwritten.** If the sheet disagrees with a
+  barcode already in the mapping, it is listed as a *conflict* and left exactly as it is. Settle
+  those yourself, in the table lower down.
+- Rows it cannot use say why, and name the row number in the spreadsheet so you can point the
+  client at it. The commonest one: a barcode that arrived as **8.7132E+12** because the column was
+  formatted as a number. Ask for that column to be set to text and the file sent again — the digits
+  are genuinely gone from the file, so there is nothing to recover at this end.
+
+If you have unsaved row edits further down the screen, the import refuses to run until you save or
+discard them — it rewrites the whole file, and would otherwise throw your edits away.
 
 ---
 

@@ -407,7 +407,13 @@ def check_video_map(vmap: VideoMap, files_by_language: dict[str, list[str]]) -> 
                 )
 
         real = [e for e in entries if state_of(e.gtin) == CONFIRMED]
-        for gtin, count in Counter(e.gtin for e in real).items():
+        # Counted **canonically**, because that is how :meth:`VideoMap.resolve` decides. Counting
+        # the raw cells let a GTIN written 13-digit on one row and 14-digit on another map to two
+        # files and go unreported: `resolve` canonicalises, finds two and returns ``None``, so the
+        # product silently gets no video while the mapping looks complete. Found on the pilot when
+        # an import wrote 14-digit values beside hand-typed 13-digit ones — ``Super Trap.mp4`` and
+        # ``Super Trap.mpg``, the same GTIN in two spellings, both confirmed, neither reported.
+        for gtin, count in Counter(canon_gtin(e.gtin) for e in real).items():
             if count > 1:
                 issues.append(
                     SourceIssue(
@@ -415,7 +421,7 @@ def check_video_map(vmap: VideoMap, files_by_language: dict[str, list[str]]) -> 
                         field=f"video.{language}",
                         source="operator video folder",
                         issue="video_ambiguous",
-                        value=", ".join(sorted(e.file for e in real if e.gtin == gtin)),
+                        value=", ".join(sorted(e.file for e in real if canon_gtin(e.gtin) == gtin)),
                         detail=f"GTIN mapped to {count} files in {language}; keep one.",
                     )
                 )

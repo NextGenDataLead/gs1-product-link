@@ -22,11 +22,15 @@ What this screen will not do, and why:
 
 from __future__ import annotations
 
+import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
+from xml.etree import ElementTree as ET
 
-from nicegui import ui
+from nicegui import events, ui
 
+from lib import video_signoff, xlsx
 from lib.config import ClientConfig
 from lib.errors import VideoMapError
 from lib.media_video import (
@@ -99,8 +103,31 @@ def _editor(cfg: ClientConfig, cid: str, map_path: Path) -> None:
     pending: dict[tuple[str, str], str] = {}
 
     coverage = ui.column().classes("w-full")
-    _coverage(coverage, cfg, path, cid)
 
+    def refresh_coverage() -> None:
+        """Recount from the file. Cheap, and these are the figures an edit is actually about."""
+        _coverage(coverage, cfg, path, cid)
+
+    refresh_coverage()
+    _signoff(cfg, cid, path, pending, refresh_coverage)
+    _rows_section(path, text, rows, files, products, pending, refresh_coverage)
+
+
+def _rows_section(  # noqa: PLR0913 — the file, what is in it, what is on disk, and the counts
+    path: Path,
+    text: str,
+    rows: list[video_map_edit.VideoRow],
+    files: dict[str, list[str]],
+    products: list[ProductRecord],
+    pending: dict[tuple[str, str], str],
+    applied: Callable[[], None],
+) -> None:
+    """The mapping row by row: pick a row, read its hints, stage a GTIN, save them all at once.
+
+    Lifted out of :func:`_editor` when the sign-off import arrived beside it. Unchanged, and it
+    keeps the property that matters: ``text`` is the file as it was read when the screen was built,
+    so one Save produces one backup and the edits land on the bytes the operator was looking at.
+    """
     with theme.section("Every file, and what it maps to"):
         ui.label(
             "A product needs a confirmed video in every language before it can be published at "
@@ -132,7 +159,7 @@ def _editor(cfg: ClientConfig, cid: str, map_path: Path) -> None:
             theme.notify_ok(f"Saved {len(pending)} row(s). Previous version kept at {backup.name}")
             pending.clear()
             refresh_status()
-            _coverage(coverage, cfg, path, cid)
+            applied()
 
         def add_missing() -> None:
             absent = video_map_edit.files_missing_from_map(text, files)
@@ -155,6 +182,270 @@ def _editor(cfg: ClientConfig, cid: str, map_path: Path) -> None:
             theme.quiet_action("Add files that are on disk but not in the mapping", add_missing)
             theme.action("Save the mapping", save, danger=True)
         refresh_status()
+
+
+def _signoff(  # noqa: PLR0913 — the sheet, the mapping, and what to do once it is applied
+    cfg: ClientConfig,
+    cid: str,
+    path: Path,
+    pending: dict[tuple[str, str], str],
+    applied: Callable[[], None],
+) -> None:
+    """Take the client's filled-in sheet, show what it would change, and apply only the fills.
+
+    This is the one input the pilot has been waiting on, and until now it arrived as a spreadsheet
+    somebody then re-typed into the rows below. The retyping is the whole cost: 173 rows, and one
+    transposed digit maps a video to the wrong product with nothing downstream to catch it.
+
+    **Nothing is written by the upload.** Reading the sheet produces a plan, the plan is shown, and
+    a second press applies it — the same shape as the row-by-row editor, where edits accumulate and
+    one Save writes them. :mod:`lib.video_signoff` decides; this only renders and asks.
+
+    **The sheet is read and not kept.** Where operator inputs are filed is an open question in this
+    project, and an upload here that invented a folder of its own would be answering it by
+    accident. What changed is recoverable from the mapping's dated backup, which is what somebody
+    would actually go looking for.
+    """
+    with theme.section(
+        "Import the client's sign-off sheet",
+        explain=(
+            "The spreadsheet the client fills in — `python -m scripts.report_video_candidates` "
+            "writes the one to send them, and this reads it back. Any sheet with a language, a "
+            "filename and a barcode column will do, whatever they are called: the headings are "
+            "read where they are recognised and you can change any of them, so a sheet nobody "
+            "anticipated still works. Every other column is ignored, and the table may sit below "
+            "a title row on any sheet of the workbook. Uploading writes nothing: it shows what "
+            "the sheet would change, and a second press applies it. Only rows that are still "
+            "unset are ever filled — a row already signed off is reported as a conflict and left "
+            "exactly as it is."
+        ),
+    ):
+        plan_box = ui.column().classes("w-full")
+
+        async def receive(event: events.UploadEventArguments) -> str:
+            # Refused rather than merged: `apply_edits` rewrites the file text as it was read when
+            # this screen was built, so an import on top of unsaved row edits would write the
+            # import and silently drop the edits — one success message for both.
+            if pending:
+                theme.notify_problem(
+                    f"Save or discard your {len(pending)} unsaved row edit(s) first — an import "
+                    "rewrites the whole file and would drop them."
+                )
+                return "Not read — there are unsaved edits below."
+
+            data = await event.file.read()
+            try:
+                grid = video_signoff.read_sheet(data)
+            except (OSError, zipfile.BadZipFile, ET.ParseError) as exc:
+                theme.notify_problem(f"That file could not be read as a spreadsheet: {exc}")
+                return "Not read."
+            if grid is None:
+                theme.notify_problem(
+                    "No sheet in that file has a row that could be a header — every row is empty "
+                    "or holds a single cell."
+                )
+                return "Not read — no sheet with a header row in it."
+
+            exported = {product.gtin14 for product in context.load_products(cid)}
+            plan_box.clear()
+            with plan_box:
+                _columns_then_plan(grid, path, cid, cfg, pending, applied, exported)
+            return f"{len(grid.rows)} row(s) read from {event.file.name}."
+
+        theme.upload("Sign-off sheet (.xlsx)", receive, busy="Reading the sheet…")
+
+
+def _columns_then_plan(  # noqa: PLR0913 — the sheet, where it goes, and what it is checked against
+    grid: xlsx.Grid,
+    path: Path,
+    cid: str,
+    cfg: ClientConfig,
+    pending: dict[tuple[str, str], str],
+    applied: Callable[[], None],
+    exported: set[str],
+) -> None:
+    """Which column is which — always shown, pre-filled from a guess — and the plan below it.
+
+    **The guess is never the last word.** The accepted spellings in :mod:`lib.video_signoff` are a
+    list of names somebody here imagined a client might use, and it was wrong about the only real
+    sheet that exists: it calls the barcode ``current_gtin``, so the import refused the file it was
+    built for. A list like that cannot be finished by thinking harder, so it pre-fills three pickers
+    instead of deciding anything, and the operator — who has the file open in Excel — settles it.
+
+    Shown even when the guess is right, because that is what makes the guess auditable. A column
+    silently read as the barcode is the one mistake here that would publish the wrong video.
+    """
+    detected = video_signoff.columns(grid) or {}
+    options = video_signoff.column_options(grid)
+    chosen: dict[str, Any] = {}
+    plan_box = ui.column().classes("w-full")
+
+    with theme.section("Which column is which"):
+        ui.label(
+            "Read from the sheet's own headings where they are recognised. Change any of them — "
+            "nothing is written by looking."
+        ).classes("note")
+        with ui.row().classes("gap-4 flex-wrap mt-2"):
+            for name, label in _COLUMN_LABELS:
+                select = ui.select(
+                    options, value=detected.get(name), label=label, clearable=True
+                ).props("dense outlined")
+                select.classes("min-w-56")
+                chosen[name] = select
+
+    def redraw() -> None:
+        where = {
+            name: int(select.value) for name, select in chosen.items() if select.value is not None
+        }
+        plan_box.clear()
+        with plan_box:
+            if len(where) < len(_COLUMN_LABELS):
+                missing = [label for name, label in _COLUMN_LABELS if name not in where]
+                theme.band(
+                    f"Choose a column for: {', '.join(missing).lower()}. Then this will say what "
+                    "the sheet would change.",
+                    "quiet",
+                )
+                return
+            decided = video_signoff.plan(
+                grid,
+                load_video_map(path),
+                exported=exported,
+                languages=cfg.wordpress.languages,
+                where=where,
+            )
+            _plan_view(decided, path, pending, applied)
+
+    for select in chosen.values():
+        select.on_value_change(redraw)
+    redraw()
+
+
+#: The three columns the import needs, labelled as the operator would describe them rather than as
+#: the mapping names them. "Barcode" and not "GTIN": nobody outside this project says GTIN.
+_COLUMN_LABELS: Final = (
+    ("language", "Language"),
+    ("file", "Video filename"),
+    ("gtin", "Barcode"),
+)
+
+
+#: The plan's tables, in the order somebody acts on them: what will happen, then what they have to
+#: decide, then what is wrong with the sheet. ``unchanged`` and ``blank`` get no table — they are
+#: counts, and on a real sheet they are most of it.
+_PLAN_SECTIONS: Final = (
+    (
+        video_signoff.FILL,
+        "Would be filled in ({n})",
+        "These rows are unset in the mapping, and the sheet gives a barcode the export carries.",
+    ),
+    (
+        video_signoff.CONFLICT,
+        "Conflicts ({n}) — nothing here will be touched",
+        "The mapping already carries a different confirmed GTIN for these files. A confirmed row "
+        "is client sign-off, so an import never overwrites one: settle these by hand, in the "
+        "row-by-row table below.",
+    ),
+    (
+        video_signoff.AMBIGUOUS,
+        "Two videos for one product ({n}) — nothing here will be applied",
+        "The sheet gives these barcodes a second video in the same language. A product can carry "
+        "only one video per language: applying both would attach neither, and the page would "
+        "publish without a video. Keep one and mark the other `skip` in the table below.",
+    ),
+    (
+        video_signoff.REJECTED,
+        "Could not be used ({n})",
+        "Each of these says what is wrong with it. A barcode problem is fixed in the sheet and the "
+        "file uploaded again; an unknown filename usually means the mapping has no row for that "
+        "video yet, which the button below this table adds.",
+    ),
+)
+
+
+def _plan_view(
+    decided: video_signoff.SignoffPlan,
+    path: Path,
+    pending: dict[tuple[str, str], str],
+    applied: Callable[[], None],
+) -> None:
+    """What the sheet would do, then the button that does it.
+
+    The counts come first and are deliberately not summed: a fill is work the import does, a
+    conflict is work a person has to settle, a rejection is a defect in the sheet, and a blank is a
+    row the client has not reached yet. Added together, the only number anybody could act on would
+    be the one that disappeared.
+    """
+    with ui.row().classes("gap-12 items-end mb-4"):
+        theme.figure(str(len(decided.of(video_signoff.FILL))), "row(s) would be filled")
+        theme.figure(str(len(decided.of(video_signoff.CONFLICT))), "conflict(s)")
+        theme.figure(str(len(decided.of(video_signoff.AMBIGUOUS))), "two-video clash(es)")
+        theme.figure(str(len(decided.of(video_signoff.REJECTED))), "rejected")
+        theme.figure(str(len(decided.of(video_signoff.UNCHANGED))), "already set")
+        theme.figure(str(len(decided.of(video_signoff.BLANK))), "left blank")
+
+    for outcome, title, note in _PLAN_SECTIONS:
+        rows = decided.of(outcome)
+        if rows:
+            _plan_table(title.format(n=len(rows)), note, rows)
+
+    fills = decided.edits
+    if not fills:
+        theme.band("Nothing in that sheet is new, so there is nothing to apply.", "quiet")
+        return
+
+    def apply() -> None:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            theme.notify_problem(str(exc))
+            return
+        backup = _write(path, video_map_edit.apply_edits(text, fills))
+        if backup is None:
+            return
+        pending.clear()
+        # The coverage figures above are recounted from the file, because they are the answer to
+        # "did that help?" — and they are what Preflight will say about this client next.
+        applied()
+        # A dialog, not a toast, and **no reload**: this says how many signed-off rows changed and
+        # where the previous version went, which is more than a toast has time for. Reloading the
+        # page under it would destroy it unread — the same race the Data screen's four-second beat
+        # exists for. So the operator closes it, and it says what on this screen is now stale.
+        theme.announce(
+            f"{len(fills)} row(s) filled in",
+            f"The previous version of the mapping is kept beside it as {backup.name}. The "
+            "coverage figures above have been recounted; the row-by-row table below still shows "
+            "what the file said before, so reload this page to work in it.",
+        )
+
+    theme.action(f"Fill in the {len(fills)} row(s) from this sheet", apply, danger=True)
+
+
+def _plan_table(title: str, note: str, rows: tuple[video_signoff.SignoffRow, ...]) -> None:
+    """One outcome's rows. The spreadsheet row number comes first: it is the address of the fix."""
+    theme.subhead(title)
+    ui.label(note).classes("note")
+    columns = [
+        {"name": "line", "label": "Row", "field": "line", "align": "left", "sortable": True},
+        {"name": "language", "label": "Lang", "field": "language", "align": "left"},
+        {"name": "file", "label": "File", "field": "file", "align": "left", "sortable": True},
+        {"name": "given", "label": "In the sheet", "field": "given", "align": "left"},
+        {"name": "gtin", "label": "Read as", "field": "gtin", "align": "left"},
+        {"name": "detail", "label": "Why", "field": "detail", "align": "left"},
+    ]
+    data = [
+        {
+            "line": row.line,
+            "language": row.language,
+            "file": row.file,
+            "given": row.given,
+            "gtin": row.gtin or "—",
+            "detail": row.detail,
+        }
+        for row in rows
+    ]
+    table = ui.table(columns=columns, rows=data, row_key="line", pagination=0)
+    table.classes("w-full mt-2").props("dense flat bordered")
 
 
 def _row_editor(

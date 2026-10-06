@@ -18,14 +18,13 @@ So the judgement moved to the person who has it. **The operator prepares the fil
 deleting every row that should not be processed**, by whatever rule their business uses.
 The tool no longer guesses what a column means, because it no longer reads one.
 
-The file is read with a small, namespace-agnostic XML reader rather than ``openpyxl``,
-because the real operator export is irregular in ways ``openpyxl`` does not handle: it is
-saved as **Strict Open XML** (``openpyxl`` reads zero sheets from those), the data table
-starts several rows down (a report title or pivot sits above it), and the data lives on a
-named sheet alongside a pivot summary. So the reader scans every worksheet for the first
-row containing the configured GTIN column (the header), reads the rows below it, and
-ignores everything else. GTINs are normalised to 14 digits so a 13-digit barcode joins to
-a 14-digit :attr:`lib.records.ProductRecord.gtin14`.
+The file is read by :mod:`lib.xlsx` rather than ``openpyxl``, for reasons that are all
+properties of the files real clients send — Strict Open XML, a table that does not start at
+A1, a sheet that is not the first one. That reader lived here until the client's video
+sign-off sheet needed the same treatment; its docstring carries the full account. What stays
+here is what is specific to *this* file: the header is found by the configured GTIN column,
+and GTINs are normalised to 14 digits so a 13-digit barcode joins to a 14-digit
+:attr:`lib.records.ProductRecord.gtin14`.
 
 There is one reader, not two. :func:`read_process_list` returns the whole table as a
 :class:`ProcessListSheet` — the shape an editing surface needs — and
@@ -44,6 +43,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
+from lib import xlsx
 from lib.errors import ProcessListError
 
 if TYPE_CHECKING:
@@ -182,21 +182,17 @@ def read_process_list(config: ProcessListConfig) -> ProcessListSheet:
     """
     path = Path(config.path)
     try:
-        with zipfile.ZipFile(path) as zf:
-            shared = _read_shared_strings(zf)
-            for sheet_path in _worksheet_paths(zf):
-                rows = _read_sheet(zf, sheet_path, shared)
-                header = _find_header(rows, config.gtin_column)
-                if header is None:
-                    continue
-                header_index, header_cells = header
-                return _grid(path, rows, header_index, header_cells, config.gtin_column)
+        # Exact, not normalised: the column is named in clients.yml, where a mismatch is the
+        # operator's to fix and a silent near-match would hide it.
+        grid = xlsx.read_grid(path, header_row=lambda texts: config.gtin_column in texts)
     except (OSError, zipfile.BadZipFile, ET.ParseError) as exc:
         raise ProcessListError(f"cannot read process list at {config.path}: {exc}") from exc
 
-    raise ProcessListError(
-        f"process list at {config.path} has no sheet with a {config.gtin_column!r} column"
-    )
+    if grid is None:
+        raise ProcessListError(
+            f"process list at {config.path} has no sheet with a {config.gtin_column!r} column"
+        )
+    return ProcessListSheet(path, grid.header, grid.rows, grid.header.index(config.gtin_column))
 
 
 def load_process_list(config: ProcessListConfig) -> frozenset[str]:
@@ -225,126 +221,3 @@ def load_process_list(config: ProcessListConfig) -> frozenset[str]:
         )
     _log.info("Loaded %d GTIN(s) to process from %s", len(gtins), config.path)
     return gtins
-
-
-def _local(tag: str) -> str:
-    """Return an XML tag's local name, dropping any ``{namespace}`` prefix."""
-    return tag.rsplit("}", 1)[-1]
-
-
-def _read_shared_strings(zf: zipfile.ZipFile) -> list[str]:
-    """Return the workbook's shared-string table (empty when absent)."""
-    try:
-        root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
-    except KeyError:
-        return []
-    return [
-        "".join(t.text or "" for t in si.iter() if _local(t.tag) == "t")
-        for si in root
-        if _local(si.tag) == "si"
-    ]
-
-
-def _worksheet_paths(zf: zipfile.ZipFile) -> list[str]:
-    """Return the archive paths of each worksheet, in workbook (sheet) order."""
-    rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
-    rid_to_target = {rel.get("Id"): rel.get("Target") or "" for rel in rels}
-    workbook = ET.fromstring(zf.read("xl/workbook.xml"))
-    paths: list[str] = []
-    for el in workbook.iter():
-        if _local(el.tag) != "sheet":
-            continue
-        rid = next((v for k, v in el.attrib.items() if _local(k) == "id"), None)
-        target = rid_to_target.get(rid)
-        if not target:
-            continue
-        normalised = target.lstrip("/")
-        paths.append(normalised if normalised.startswith("xl/") else f"xl/{normalised}")
-    return paths
-
-
-def _col_letters(ref: str) -> str:
-    """Return the column letters of a cell reference (``"C4"`` → ``"C"``)."""
-    return "".join(ch for ch in ref if ch.isalpha())
-
-
-def _column_number(letters: str) -> int:
-    """Return a column letter's 1-based position (``"A"`` → 1, ``"Z"`` → 26, ``"AA"`` → 27).
-
-    Sorting the letters as *strings* is the bug this exists to avoid: ``["A", "Z", "AA"]``
-    sorts to ``A, AA, Z``, which silently reorders the grid past column Z and leaves
-    ``gtin_index`` pointing at some other column. A 28-column operator file is ordinary.
-    """
-    number = 0
-    for char in letters:
-        number = number * 26 + (ord(char.upper()) - ord("A") + 1)
-    return number
-
-
-def _read_sheet(zf: zipfile.ZipFile, path: str, shared: list[str]) -> list[dict[str, str]]:
-    """Read a worksheet into a list of ``{column-letter: text}`` rows, in order."""
-    root = ET.fromstring(zf.read(path))
-    rows: list[dict[str, str]] = []
-    for row in root.iter():
-        if _local(row.tag) != "row":
-            continue
-        cells: dict[str, str] = {}
-        for cell in row:
-            if _local(cell.tag) != "c":
-                continue
-            column = _col_letters(cell.get("r") or "")
-            text = _cell_text(cell, shared)
-            if column and text is not None:
-                cells[column] = text
-        rows.append(cells)
-    return rows
-
-
-def _cell_text(cell: ET.Element, shared: list[str]) -> str | None:
-    """Return a cell's text, resolving shared and inline strings."""
-    cell_type = cell.get("t")
-    if cell_type == "inlineStr":
-        return "".join(t.text or "" for t in cell.iter() if _local(t.tag) == "t")
-    value = next((c for c in cell if _local(c.tag) == "v"), None)
-    if value is None or value.text is None:
-        return None
-    if cell_type == "s":
-        index = int(value.text)
-        return shared[index] if 0 <= index < len(shared) else None
-    return value.text
-
-
-def _find_header(rows: list[dict[str, str]], gtin_column: str) -> tuple[int, dict[str, str]] | None:
-    """Find the first row containing ``gtin_column``; return its index and every cell in it.
-
-    Returns ``None`` when no row in the sheet holds the column, so the caller tries the
-    next sheet.
-    """
-    for index, cells in enumerate(rows):
-        if any(text.strip() == gtin_column for text in cells.values()):
-            return index, cells
-    return None
-
-
-def _grid(
-    path: Path,
-    rows: list[dict[str, str]],
-    header_index: int,
-    header_cells: dict[str, str],
-    gtin_column: str,
-) -> ProcessListSheet:
-    """Assemble the rows below the header into a rectangular grid, in spreadsheet order.
-
-    Columns are the **union** of the header row's letters and every data row's letters. The
-    union is what keeps a column whose header cell is blank: it is still the operator's
-    column, a save rewrites what this returns, and dropping it here would delete it from
-    their file under a message saying the other columns were kept.
-    """
-    data = rows[header_index + 1 :]
-    letters = sorted(
-        {*header_cells, *(letter for cells in data for letter in cells)}, key=_column_number
-    )
-    header = [header_cells.get(letter, "").strip() for letter in letters]
-    grid = [[cells.get(letter, "").strip() for letter in letters] for cells in data]
-    filled = [row for row in grid if any(row)]
-    return ProcessListSheet(path, header, filled, header.index(gtin_column))

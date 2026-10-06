@@ -17,7 +17,9 @@ from pathlib import Path
 import pytest
 
 from lib.errors import VideoMapError
-from lib.media_video import load_video_map
+from lib.media_video import load_video_map, state_of
+from lib.video_signoff import FILL, plan
+from lib.xlsx import Grid
 from ui import video_map_edit
 
 _MAPPING = """\
@@ -236,3 +238,39 @@ def test_a_candidate_that_lost_a_row_is_refused(tmp_path: Path) -> None:
 
     assert "nl/Bulbman.mpg" in str(caught.value)
     assert path.read_text(encoding="utf-8") == _MAPPING
+
+
+def test_an_imported_signoff_plan_applies_through_this_module(tmp_path: Path) -> None:
+    """The contract between the two halves of the sign-off import, which nothing else checks.
+
+    :mod:`lib.video_signoff` decides and :func:`ui.video_map_edit.apply_edits` writes, and the only
+    thing passing between them is ``SignoffPlan.edits``. They are in different layers and neither
+    imports the other, so a change to that key — ``(language, file)``, the same pair the per-row
+    editor stages under — would break the import silently: ``apply_edits`` leaves a row it cannot
+    find alone, so the file would be rewritten, validated, backed up, and unchanged.
+    """
+    path = tmp_path / "mapping.yml"
+    path.write_text(_MAPPING, encoding="utf-8")
+    grid = Grid(
+        ["language", "file", "gtin"],
+        [
+            ["nl", "4-in-1 Lamp.mpg", "8713195000893"],
+            ["nl", "Bulbman.mpg", "7391905003191"],
+        ],
+    )
+
+    decided = plan(
+        grid,
+        load_video_map(path),
+        exported={"08713195000893", "07391905003191"},
+        languages=("nl", "fr"),
+    )
+    video_map_edit.write_validated(
+        path, video_map_edit.apply_edits(path.read_text("utf-8"), decided.edits)
+    )
+    after = {entry.file: entry.gtin for entry in load_video_map(path).by_language["nl"]}
+
+    assert len(decided.of(FILL)) == 1, "only the unset row may fill"
+    assert after["4-in-1 Lamp.mpg"] == "08713195000893", "the unset row took the sheet's barcode"
+    assert after["Bulbman.mpg"] == "8713195007434", "client sign-off survived a disagreeing sheet"
+    assert state_of(after["Trailer.mpg"]) == "skip", "a row the sheet never mentioned is untouched"

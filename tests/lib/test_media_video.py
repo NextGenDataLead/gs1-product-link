@@ -10,6 +10,7 @@ import pytest
 from lib.errors import VideoMapError
 from lib.media_video import (
     VideoMap,
+    VideoMapEntry,
     canon_gtin,
     check_video_map,
     fully_mapped_gtins,
@@ -447,3 +448,27 @@ def test_prepare_video_ffmpeg_failure_returns_none(
 
     monkeypatch.setattr(subprocess, "run", fail)
     assert prepare_video(src, tmp_path / "out", transcode=True) is None
+
+
+def test_an_ambiguous_mapping_is_found_across_barcode_widths() -> None:
+    """``resolve`` canonicalises, so the duplicate check has to as well.
+
+    Counting the raw cells, a GTIN written 13-digit on one row and 14-digit on another is two
+    different GTINs and the mapping looks clean — while ``resolve`` finds two files and returns
+    ``None``, so the product gets no video and nothing reports why. Found on the pilot the day an
+    import wrote 14-digit values beside hand-typed 13-digit ones.
+    """
+    vmap = VideoMap(
+        by_language={
+            "nl": [
+                VideoMapEntry(file="Super Trap.mp4", gtin="8713195007922"),
+                VideoMapEntry(file="Super Trap.mpg", gtin="08713195007922"),
+            ]
+        }
+    )
+
+    issues = check_video_map(vmap, {"nl": ["Super Trap.mp4", "Super Trap.mpg"]})
+
+    assert [issue.issue for issue in issues] == ["video_ambiguous"]
+    assert issues[0].gtin == "08713195007922"
+    assert vmap.resolve("8713195007922", "nl") is None, "which is why it must be reported"

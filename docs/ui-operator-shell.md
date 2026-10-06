@@ -597,6 +597,44 @@ one Save. Three things it will not do:
 - **Write a file that lost a row.** Nothing here deletes one, so a row that has disappeared is a
   fault in the tool, and the file is left alone.
 
+It also **imports the client's filled-in sign-off sheet**, which is the one input this pilot has
+been waiting on and which used to be re-typed into the rows by hand — 173 of them, where one
+transposed digit maps a video to the wrong product with nothing downstream to catch it.
+`scripts/report_video_candidates` writes the sheet to send; this reads it back. Four decisions in
+it, each of them a refusal:
+
+- **A confirmed row is never overwritten.** Only rows that are still unset can be filled. A sheet
+  that disagrees with existing sign-off produces a *conflict*, reported and left alone — the sheet
+  that arrives may be stale, partly filled, or last round's copy, and `lib/video_signoff.py` has no
+  flag that turns this off.
+- **The upload writes nothing.** It produces a plan, the plan is shown per row, and a second press
+  applies it — the shape the row editor beside it already has. The apply then recounts the coverage
+  figures and says what is now stale, rather than reloading the page out from under its own dialog.
+- **A barcode is validated against the export, not against a check digit.** A transposed digit
+  usually yields a barcode no product has, which is catchable; a check digit stays silent on the
+  case that matters, a typo that happens to be another real product. Scientific notation
+  (`8.7132E+12`) gets a message of its own, because it is the commonest way a barcode arrives
+  broken and the least obvious to whoever sent it.
+- **The sheet is read and not kept.** Where operator inputs are filed is an open question here, and
+  an upload that invented a folder of its own would be answering it by accident. The mapping's own
+  dated backup is what somebody would go looking for anyway.
+- **The operator says which column is which; the recognised names only pre-fill the pickers.** The
+  list of accepted spellings is a guess about somebody else's spreadsheet, and it was wrong about
+  the only real sign-off sheet there is — it calls the barcode `current_gtin`, so the import refused
+  the file it was built for. Adding that name fixes today and not the next sheet. The pickers show
+  even when the guess is right, because that is what makes the guess auditable: a column silently
+  read as the barcode is the one mistake on this screen that would publish the wrong video. It is
+  also why `read_sheet` has a second pass that finds a header row by *shape* — a sheet we cannot
+  recognise must still arrive with its headings listed, since "rename your columns to match a list
+  we never show you" is not a fix.
+
+The workbook reader behind it is `lib/xlsx.py` — `lib.process_list`'s, lifted out when this became
+its second caller. Both read files whose table starts below a title row, on a sheet that is not the
+first, in Strict Open XML that `openpyxl` reads **zero sheets** from. Normalising the barcode is
+deliberately *not* shared: `process_list` zero-pads without stripping punctuation and
+`lib.media_video.canon_gtin` strips then pads, so the import normalises on the mapping's own rule,
+because that is what will compare its value against products forever.
+
 ## Where the safety actually lives
 
 | Guard | Where |
