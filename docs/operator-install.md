@@ -59,7 +59,7 @@ shell dead, the last three fail in three different and much quieter ways.
 | `.env` | top level, `chmod 600` | the credentials | every live check fails; nothing runs |
 | `input/{client}/process/selection/selections.xlsx` | the path in `process_list.path` | the barcodes this run may touch | Data shows a red band. It has an upload — see below |
 | `output/{client}/state.json` | exactly there — the path is not configurable | **the ledger of what is already published** | **see the warning below. This is the expensive one.** |
-| `input/{client}/videos/mapping.yml` | the path in `media.video_map_path` | which video belongs to which product | the preflight **fails** (`cannot read …`); the machine cannot reach a runnable state |
+| `input/{client}/videos/mapping.yml` | the path in `media.video_map_path` | which video belongs to which product — edited on the Data screen afterwards | the preflight **fails** (`cannot read …`); the machine cannot reach a runnable state |
 
 > **`state.json` is the one to get right.** It records every `(GTIN, language)` this tool has
 > already published. Without it, a run classifies **every already-published GTIN as NEW** — a

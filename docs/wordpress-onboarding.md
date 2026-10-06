@@ -237,7 +237,8 @@ sits in the *French* slots, so a 0.83 will often land beside a name that is not 
 `marketing_name` / `logistics_name` columns are what identify a product — `product_name` is the
 short generic one (`siliconenbak`, `bezem`).
 
-**Filling it in has a screen** — the operator shell's **Video mapping**, linked from Data. It lists
+**Filling it in happens on the Data screen** — step 3 takes the client's sign-off sheet, and *The
+mapping, file by file* folded beneath it is the row-by-row editor. It lists
 every file per language with its state, offers the same fuzzy hints as suggestions, and writes the
 file a row at a time so the comments and the confirmed rows survive. Drafting stays here, in the
 terminal: re-drafting discards client sign-off, and redirecting output over the file should be a

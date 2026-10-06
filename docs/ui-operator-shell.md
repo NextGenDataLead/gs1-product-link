@@ -58,18 +58,17 @@ through `flow-orchestrator`. The shell is a second surface over the same gates, 
 
 ## The screens
 
-Seven screens, in two groups. **The rail is the argument**: the numbered four are the loop an
+Six screens, in two groups. **The rail is the argument**: the numbered four are the loop an
 operator repeats per batch, and everything else is deliberately not numbered.
 
 | # | Screen | What it is for |
 |---|---|---|
-| 1 | **Data** | Upload the export and the scope list, choose the batch, read the data-quality report. |
+| 1 | **Data** | Upload the selection list, the export and the client's video sign-off sheet; edit the video mapping; choose the batch; read the data-quality report. |
 | 2 | **Content** | Generate or import `generation_results.json`, check its coverage, read the copy. |
 | 3 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
 | 4 | **Publish** | The nine gates, one at a time. |
 | — | **Setup** | The operator-facing half of `clients.yml` and `.env`, as a form, with live Test buttons. |
 | — | **Runs** | Every row of every run, as it was recorded at the time, and whether the site agrees. |
-| — | **Video mapping** | Which video file belongs to which product, per language. |
 
 Load this batch's inputs · review its copy · check *this batch* · publish it.
 
@@ -79,6 +78,11 @@ one sequence, so the work an operator actually repeats was buried between machin
 one end and history at the other. They keep a permanent place in the rail — below a rule, under
 *This machine* — because a tool nobody can find is a tool nobody uses; only below 55rem, where the
 rail used to stack as a full-width block with no way past it, does anything fold behind a `☰`.
+
+**There were seven, and the seventh was filed in the wrong place.** *Video mapping* sat under *This
+machine* beside Setup and Runs, as "one input file's editor". It is not that: the mapping decides
+whether a product can be published at all, so it was the input deciding a batch's size, filed with
+the things touched once. It is part of Data now — see *The videos, on the Data screen* below.
 
 **And Preflight used to sit at 2.** Four of the doctor's checks have the remedy "Run `parse_export`
 first" — which is the Data screen — so it told an operator to go and do a later step and come back,
@@ -125,9 +129,16 @@ both directions, and the button added next month is the case it would miss.
 
 ### Data
 
-**The screen is a procedure, so it is numbered.** Three filled numerals — the two uploads **side by
-side**, because bringing both files is one act and their order does not matter, then choosing and
-saving below them. The explanation of what a file *is* sits behind an **ⓘ** on the heading rather
+**The screen is a procedure, so it is numbered.** Four filled numerals: **1** the product selection
+list and **2** the export, **side by side** because bringing both files is one act; **3** the
+client's video sign-off sheet, full width, with the coverage figures under it and the mapping itself
+folded below; **4** choosing and saving. A jump row under the title reaches each.
+
+**The selection list is step 1 because it is the spine.** Everything else on the screen is measured
+against it — the export is joined to it, the video status and the report are scoped to it. The cost
+is that the list is a *join* against the export, so with the list alone the grid is the whole list
+and its "not in the export" table is empty; step 1's ⓘ and the warning band both say so and name
+step 2. The previous order never showed that state, and it is the honest one. The explanation of what a file *is* sits behind an **ⓘ** on the heading rather
 than in a paragraph under it. Below 60rem the two stack, where a column would be narrower than a
 picker and its label.
 
@@ -209,9 +220,12 @@ files with two modification times, either of which can be the stale one — whic
 staleness band exists to catch. There is no standing tally of what was loaded last time: the upload says what it read, on
 the line beneath it, and that line is about the upload that just happened.
 
-**Two files, two sections, two uploads.** The export is product *data*; the scope list is *which
-products*. They come from different places and confusing them is the most expensive mistake this
-screen affords, so each has its own name, its own section and its own upload. The config key stays
+**Three documents, three sections, three uploads.** The export is product *data*; the selection
+list is *which products*; the sign-off sheet is *which video is which product's*. They come from
+different places and confusing them is the most expensive mistake this screen affords, so each has
+its own name, its own section and its own upload — and the sign-off upload refuses a workbook headed
+`Gtin` + `TargetMarketCountryCode` by name, because `read_sheet`'s second pass would otherwise turn
+an export into a grid and reject every row of it about the wrong thing. The config key stays
 `process_list` — it is in `clients.yml`, `schema/clients.schema.json`, `ProcessListConfig`, the
 doctor payload and five call sites, and renaming it would break every install. Only the words the
 operator reads changed.
@@ -326,11 +340,114 @@ live per row; on the pilot, 19 of the 37 were held and the screen used to show n
 product whose only problem is two videos in one language passes the gate and publishes without
 that video; the report names it, and this column deliberately does not.
 
-**That mark replaced the whole *Video mapping* section**, which was two figures and a link. The
-Video mapping screen already shows those figures, and a per-row mark says the same thing against
-the product it is about. What a mark cannot carry is the *consequence* — "needs fr" does not
-tell you the run will skip the product and report success — so one line under the table says that,
-and links onward.
+**That mark replaced a *Video mapping* section here**, which was two figures and a link. The
+coverage figures now sit under step 3, and a per-row mark says the same thing against the product
+it is about. What a mark cannot carry is the *consequence* — "needs fr" does not tell you the run
+will skip the product and report success — so one line under the table says that, and links up the
+page to the mapping.
+
+**A mapping write re-marks that column in place.** The Data screen redraws from three entry points
+— a list or export arrived (the batch panel, the grid, the report); the mapping was written (the
+coverage, the fold, the Video column, the report); a sign-off sheet arrived (the report only, since
+nothing was applied). The Video column is updated on the rows the grid already holds rather than by
+rebuilding the grid, because rebuilding would cost the operator every unsaved tick.
+
+
+### The videos, on the Data screen
+
+This was a screen of its own, `/videos`, under *This machine*. It exists because the mapping decides
+whether a product can be published at all — with `media.restrict_to_mapped_gtins` on, a product
+without a confirmed video in **every** language never reaches the plan, so an operator could
+complete every screen and still produce an empty plan with the fix available only in a text editor.
+That is also why it moved: an input that decides a batch's size belongs where the batch is chosen.
+
+**`/videos` was deleted, not kept as an unlisted route.** With no screen linking to it, a surviving
+route would have been a second live editor of one client-sign-off file, holding its own copy of the
+text and knowing nothing of the session below. The work lives in two components beside
+`ui/batch_view.py`: `ui/video_signoff_panel.py` (step 3) and `ui/video_map_panel.py` (coverage, and
+the mapping row by row). Both are import-checked as `PANEL_MODULES`, and the AST contracts that
+used to stop at `ui/pages/` read `ui/*.py` too — a rule an extraction could escape by moving a
+handler one folder up is not a rule.
+
+**The mapping is folded, and built the first time it opens.** Two 55vh tables on one screen were
+settled by the fold rather than by negotiating heights. It is built lazily because of what was
+measured first: a `virtual-scroll` table built inside a folded section is measured at zero height
+and opens as a dozen rows over a blank band until something scrolls it; built on first open it
+renders full (`theme.fold`).
+
+**Unsaved edits live in a `MappingSession`, outside the page.** The editor used to read the file
+once, when the screen was built, and keep staged edits in a closure — fine on a screen that never
+redraws, wrong on Data, which redraws on every upload. Kept per client at module level, like
+`data._BATCHES`: staged edits survive any redraw; every write re-reads the file, so the two old
+instructions to "reload this page" are gone; a file changed on disk since it was read is re-read
+before a Save rather than silently overwritten, with `write_validated`'s row-loss refusal as the
+backstop. The one refusal kept is the one about the text: an import (or an Apply) rewrites the whole
+file, so it refuses while there are unsaved row edits.
+
+**Neither of its writes is red.** Red is for a write that is hard or impossible to undo — Publish's
+run and production confirmation, Setup's two saves. Both mapping writes keep a `.bak` and are
+refused if the candidate lost a row, and the fold put them on the screen whose own save had been
+taken out of red on purpose. `tests/ui/test_shell_chrome_contract.py` holds red to two screens.
+
+It lists every file per language with its state (unset · confirmed · `skip` · not on disk), offers
+`build_video_map`'s ranked fuzzy hints as *suggestions that fill the box*, and stages edits until
+one Save. Three things it will not do:
+
+- **Re-draft the file.** Confirmed rows are client sign-off. Drafting stays a terminal job, where
+  redirecting the output over the mapping is a deliberate act rather than a click.
+- **Round-trip the YAML.** Each row's trailing comment records which fuzzy hint its GTIN came from
+  — the evidence behind the sign-off — so `ui/video_map_edit.py` rewrites one line at a time, in the
+  spirit of `ui/config_edit.py` on `clients.yml`.
+- **Write a file that lost a row.** Nothing here deletes one, so a row that has disappeared is a
+  fault in the tool, and the file is left alone.
+
+It also **imports the client's filled-in sign-off sheet**, which is the one input this pilot has
+been waiting on and which used to be re-typed into the rows by hand — 173 of them, where one
+transposed digit maps a video to the wrong product with nothing downstream to catch it.
+`scripts/report_video_candidates` writes the sheet to send; this reads it back. Four decisions in
+it, each of them a refusal:
+
+- **A confirmed row is never overwritten.** Only rows that are still unset can be filled. A sheet
+  that disagrees with existing sign-off produces a *conflict*, reported and left alone — the sheet
+  that arrives may be stale, partly filled, or last round's copy, and `lib/video_signoff.py` has no
+  flag that turns this off.
+- **The upload writes nothing.** It produces a plan, the plan is shown per row, and a second press
+  applies it — the shape the row editor beside it already has. The apply then re-reads the file, and
+  everything that counts from it redraws — coverage, the fold, the Video column, the report.
+- **A barcode is validated against the export, not against a check digit.** A transposed digit
+  usually yields a barcode no product has, which is catchable; a check digit stays silent on the
+  case that matters, a typo that happens to be another real product. Scientific notation
+  (`8.7132E+12`) gets a message of its own, because it is the commonest way a barcode arrives
+  broken and the least obvious to whoever sent it.
+- **Every sheet is kept, and the column choice is noted beside it.** It used to be read and not
+  kept, which left the data-quality report nothing to re-read — and re-reading it on every render is
+  what makes "what would the sheet still change?" (§1d) correct after a fill, a hand edit or a new
+  sheet. `lib/video_signoff_archive.py` keeps each upload as `videos/signoff/signoff-{stamp}.xlsx`
+  (through `input_layout.unique`, read back by mtime, never by name) and records the chosen columns
+  **with the headings they were chosen against** in one `signoff/signoff.json` — so a sheet edited
+  in place since is refused by the report, in words, instead of being read with a column moved.
+  Beside `mapping.yml`, not under `process/`: the folder README states that a run reads exactly two
+  files. Four alternatives were rejected: the filename (cannot carry heading text); a `.json` beside
+  every sheet (doubles a folder people open in Finder); a `history.jsonl` line (its `What` is a
+  closed set that four screens read, and that ledger belongs to the export's tree); not keeping it
+  at all (the report would be describing a sheet nobody can find). A sheet is kept only once it
+  reads as a spreadsheet and is not an export, so the report never describes something nobody sent.
+- **The operator says which column is which; the recognised names only pre-fill the pickers.** The
+  list of accepted spellings is a guess about somebody else's spreadsheet, and it was wrong about
+  the only real sign-off sheet there is — it calls the barcode `current_gtin`, so the import refused
+  the file it was built for. Adding that name fixes today and not the next sheet. The pickers show
+  even when the guess is right, because that is what makes the guess auditable: a column silently
+  read as the barcode is the one mistake on this screen that would publish the wrong video. It is
+  also why `read_sheet` has a second pass that finds a header row by *shape* — a sheet we cannot
+  recognise must still arrive with its headings listed, since "rename your columns to match a list
+  we never show you" is not a fix.
+
+The workbook reader behind it is `lib/xlsx.py` — `lib.process_list`'s, lifted out when this became
+its second caller. Both read files whose table starts below a title row, on a sheet that is not the
+first, in Strict Open XML that `openpyxl` reads **zero sheets** from. Normalising the barcode is
+deliberately *not* shared: `process_list` zero-pads without stripping punctuation and
+`lib.media_video.canon_gtin` strips then pads, so the import normalises on the mapping's own rule,
+because that is what will compare its value against products forever.
 
 ### Content
 
@@ -581,66 +698,6 @@ last. `python -m scripts.reconcile` is the same check in a terminal.
 
 ---
 
-### Video mapping
-
-Under *This machine* rather than in the numbered four: it is one input file's editor, not a step
-of a batch. It sat outside the rail entirely while the rail was a single numbered list, reachable
-only from a link on Data; splitting the rail gave it somewhere honest to sit. It exists because
-that file decides whether a product can be published at all —
-with `media.restrict_to_mapped_gtins` on, a product without a confirmed video in **every** language
-never reaches the plan, so an operator could complete every screen and still produce an empty plan
-with the fix available only in a text editor.
-
-It lists every file per language with its state (unset · confirmed · `skip` · not on disk), offers
-`build_video_map`'s ranked fuzzy hints as *suggestions that fill the box*, and stages edits until
-one Save. Three things it will not do:
-
-- **Re-draft the file.** Confirmed rows are client sign-off. Drafting stays a terminal job, where
-  redirecting the output over the mapping is a deliberate act rather than a click.
-- **Round-trip the YAML.** Each row's trailing comment records which fuzzy hint its GTIN came from
-  — the evidence behind the sign-off — so `ui/video_map_edit.py` rewrites one line at a time, in the
-  spirit of `ui/config_edit.py` on `clients.yml`.
-- **Write a file that lost a row.** Nothing here deletes one, so a row that has disappeared is a
-  fault in the tool, and the file is left alone.
-
-It also **imports the client's filled-in sign-off sheet**, which is the one input this pilot has
-been waiting on and which used to be re-typed into the rows by hand — 173 of them, where one
-transposed digit maps a video to the wrong product with nothing downstream to catch it.
-`scripts/report_video_candidates` writes the sheet to send; this reads it back. Four decisions in
-it, each of them a refusal:
-
-- **A confirmed row is never overwritten.** Only rows that are still unset can be filled. A sheet
-  that disagrees with existing sign-off produces a *conflict*, reported and left alone — the sheet
-  that arrives may be stale, partly filled, or last round's copy, and `lib/video_signoff.py` has no
-  flag that turns this off.
-- **The upload writes nothing.** It produces a plan, the plan is shown per row, and a second press
-  applies it — the shape the row editor beside it already has. The apply then recounts the coverage
-  figures and says what is now stale, rather than reloading the page out from under its own dialog.
-- **A barcode is validated against the export, not against a check digit.** A transposed digit
-  usually yields a barcode no product has, which is catchable; a check digit stays silent on the
-  case that matters, a typo that happens to be another real product. Scientific notation
-  (`8.7132E+12`) gets a message of its own, because it is the commonest way a barcode arrives
-  broken and the least obvious to whoever sent it.
-- **The sheet is read and not kept.** Where operator inputs are filed is an open question here, and
-  an upload that invented a folder of its own would be answering it by accident. The mapping's own
-  dated backup is what somebody would go looking for anyway.
-- **The operator says which column is which; the recognised names only pre-fill the pickers.** The
-  list of accepted spellings is a guess about somebody else's spreadsheet, and it was wrong about
-  the only real sign-off sheet there is — it calls the barcode `current_gtin`, so the import refused
-  the file it was built for. Adding that name fixes today and not the next sheet. The pickers show
-  even when the guess is right, because that is what makes the guess auditable: a column silently
-  read as the barcode is the one mistake on this screen that would publish the wrong video. It is
-  also why `read_sheet` has a second pass that finds a header row by *shape* — a sheet we cannot
-  recognise must still arrive with its headings listed, since "rename your columns to match a list
-  we never show you" is not a fix.
-
-The workbook reader behind it is `lib/xlsx.py` — `lib.process_list`'s, lifted out when this became
-its second caller. Both read files whose table starts below a title row, on a sheet that is not the
-first, in Strict Open XML that `openpyxl` reads **zero sheets** from. Normalising the barcode is
-deliberately *not* shared: `process_list` zero-pads without stripping punctuation and
-`lib.media_video.canon_gtin` strips then pads, so the import normalises on the mapping's own rule,
-because that is what will compare its value against products forever.
-
 ## Where the safety actually lives
 
 | Guard | Where |
@@ -674,12 +731,16 @@ The recipe, all of it outside the repository:
    `democlient` is already defined in it. Copy the repo rather than only moving the working
    directory: `lib.config.DEFAULT_CLIENTS_PATH` is anchored to the **repository** root, so a
    scratch cwd beside the real checkout would still read the real `clients.yml`.
-2. Write the two operator files with `python -m scripts.make_demo_export`. It lands a 24-sheet
-   GDSN export and a scope list at the configured paths, and already puts **one barcode on the
-   scope list that no export row carries** — the Data screen has a table whose only job is to show
-   those, and without one it is not in the picture. Nine of its twelve products publish cleanly and
-   three are held, one by each mandatory rule, so the figures are neither all zero nor uniformly
-   green.
+2. Write the operator files with `python -m scripts.make_demo_export`. It lands a 24-sheet GDSN
+   export and a scope list at the configured paths, and already puts **one barcode on the scope list
+   that no export row carries** — the Data screen has a table whose only job is to show those, and
+   without one it is not in the picture. It also writes the videos: a placeholder file per mapping
+   row, `mapping.yml` in the row-per-line shape the editor accepts, and
+   `test-uploads/video-signoff.xlsx` with one row per import outcome and the real sheet's
+   `current_gtin` column. Of the twelve products, three are held by a mandatory rule; before the
+   sheet is applied eight pass the video gate and four are held, after it nine — so the figures are
+   neither all zero nor uniformly green. To photograph the uploads, move the export and the list
+   into `test-uploads/` and upload them through the pickers.
 3. Parse it: `python -m scripts.parse_export democlient`. Then **backdate `products.xlsx` behind
    `products.json`**, or the staleness band fires on files written seconds apart and the screenshot
    tells the operator to re-parse for no reason.
@@ -687,8 +748,8 @@ The recipe, all of it outside the repository:
    the models in `lib.generator`, so the shapes are right by construction rather than by hand.
    Leave `input_fingerprint` **null** on each result item: it is optional, and any other value
    fails the doctor's staleness check.
-5. Add `videos/mapping.yml` in `{language: [{file, gtin}]}` shape with matching files on disk,
-   leaving some GTINs unmapped so the per-row "needs …" mark appears.
+5. The video mapping is already there from step 2. Do not write one with `yaml.safe_dump`: its
+   block style is refused by the mapping editor.
 6. Run `python -m scripts.run_plan {client}` there so the plan and the rail facts agree, then
    serve it with `ui.run(..., native=False, show=False)` on a spare port and drive Playwright
    at 1280x860.
