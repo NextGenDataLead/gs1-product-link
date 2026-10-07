@@ -226,6 +226,21 @@ def test_the_newest_run_is_chosen_by_mtime_not_by_name(
     assert not (runs / "20260827T085405Z" / RESULT_NAME).exists()
 
 
+def _export_also(workspace: Path, gtin: str) -> None:
+    """Add a product to the parsed export, so leaving it out of the batch was a real untick.
+
+    A row the export lacks has no tick box on the Data screen and reports as ``not in export``.
+    """
+    products = workspace / "output" / "acme" / "data" / "products.json"
+    records = json.loads(products.read_text(encoding="utf-8"))
+    records.append(
+        ProductRecord(
+            gtin=gtin, brand="Acme", product_name=LocalisedText(values={"nl": "Contour King"})
+        ).model_dump(mode="json")
+    )
+    products.write_text(json.dumps(records), encoding="utf-8")
+
+
 def test_the_run_s_own_copies_are_what_the_report_joins(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -246,6 +261,7 @@ def test_the_run_s_own_copies_are_what_the_report_joins(
     _write_list(run / SELECTION_NAME, [["1079", "Drain saver", GTIN]])
     # A later batch has since replaced the live files. Nothing here may come from them.
     _write_list(_control(workspace), [["9999", "Somebody else's batch", "8713195000009"]])
+    _export_also(workspace, "08713195000002")
     _patch_client(monkeypatch, _config(_list_config(workspace)))
 
     # Act
@@ -274,6 +290,7 @@ def test_a_legacy_run_with_no_copies_falls_back_to_the_upload_in_input(
         [["1079", "Drain saver", GTIN], ["3086", "Contour King", "8713195000002"]],
     )
     _write_list(control, [["1079", "Drain saver", GTIN]])
+    _export_also(workspace, "08713195000002")
     _patch_client(monkeypatch, _config(_list_config(workspace)))
 
     # Act

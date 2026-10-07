@@ -7,6 +7,7 @@ pinned to the split the plan makes.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,7 +15,16 @@ import pytest
 pytest.importorskip("nicegui", reason="the ui extra is not installed here")
 
 from lib.eligibility import Eligibility  # noqa: E402
-from ui.batch_grid import _GTIN, _ROW, Funnel, funnel, save_line  # noqa: E402
+from lib.process_list import ProcessListSheet  # noqa: E402
+from ui.batch_grid import (  # noqa: E402
+    _GTIN,
+    _ROW,
+    Funnel,
+    batch_of,
+    funnel,
+    save_line,
+    unticked_by,
+)
 
 _A, _B, _C, _D, _E = (f"0871319500000{n}" for n in range(1, 6))
 
@@ -84,3 +94,40 @@ def test_an_unticked_product_without_a_video_is_not_counted_as_selected_without_
     counts = funnel(rows, ticked=[rows[0]], verdict=_VERDICT, exported=_EXPORTED)
 
     assert (counts.missing_video, counts.missing_video_selected) == (1, 0)
+
+
+# --- what a restart ticks, and what Next writes ---------------------------------
+
+
+def test_a_restart_ticks_the_saved_batch_and_nothing_else() -> None:
+    """The grid is the whole upload; only the barcodes the saved batch names arrive ticked."""
+    eligible = _rows(_A, _B, _E)
+
+    assert unticked_by(eligible, saved=frozenset({_B})) == {0, 2}
+
+
+def test_a_barcode_on_two_rows_is_ticked_on_both() -> None:
+    eligible = _rows(_A, _A, _E)
+
+    assert unticked_by(eligible, saved=frozenset({_A})) == {2}
+
+
+def test_next_writes_the_ticked_rows_only_and_to_the_control_file(tmp_path: Path) -> None:
+    """Not the held rows, not the rows the export lacks: the batch file is the batch.
+
+    It used to keep every not-eligible row too, and the screens after Data read "24 of 118
+    ticked" for a batch of 3.
+    """
+    upload = ProcessListSheet(
+        path=tmp_path / "uploads" / "product-list.xlsx",
+        header=["Artikelnr.", "Barcode"],
+        rows=[["1", _A], ["2", _C], ["3", _D], ["4", _E]],
+        gtin_index=1,
+    )
+    control = tmp_path / "selection" / "selections.xlsx"
+
+    saved = batch_of(upload, {0, 3}, control)
+
+    assert saved.path == control
+    assert saved.rows == [["1", _A], ["4", _E]]
+    assert upload.rows[1] == ["2", _C], "the upload itself is never pruned"

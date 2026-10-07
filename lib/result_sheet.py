@@ -25,6 +25,7 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from lib.config import ProcessListConfig
+from lib.eligibility import eligibility
 from lib.input_layout import archive_path
 from lib.process_list import ProcessListSheet, read_process_list
 from lib.records import Plan, ProductRecord, RunOutcome
@@ -217,6 +218,7 @@ def build(  # noqa: PLR0913 — one keyword per CLI flag, which is the point of 
         outcomes=outcomes,
         skipped=plan.skipped if plan else [],
         languages=cfg.wordpress.languages,
+        not_eligible=_not_eligible(cfg, sheets.uploaded, products),
     )
 
     columns, grid = scope_grid(sheets.uploaded, rows, cfg.wordpress.languages)
@@ -233,6 +235,21 @@ def build(  # noqa: PLR0913 — one keyword per CLI flag, which is the point of 
         ],
     )
     return Built(destination, rows, unreadable, sheets, plan is not None)
+
+
+def _not_eligible(
+    cfg: ClientConfig, uploaded: ProcessListSheet, products: list[ProductRecord]
+) -> dict[str, str]:
+    """``{gtin14: why}`` for the upload's products the Data screen held — the same verdict.
+
+    The batch file holds only the ticked rows, so the plan never sees a held one to explain it.
+    Asked now rather than when the batch was chosen, which can differ only if the export or the
+    video mapping changed in between — and then today's reason is the one worth reading. Empty
+    when the holds cannot be decided: the rows then read ``not selected``, never a wrong reason.
+    """
+    named = uploaded.listed_gtins()
+    verdict = eligibility(cfg, [product for product in products if product.gtin14 in named])
+    return {} if verdict.problem else verdict.not_eligible
 
 
 def write_workbook(path: Path, sheets: list[tuple[str, list[str], list[list[str]]]]) -> None:

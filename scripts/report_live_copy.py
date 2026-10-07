@@ -9,13 +9,16 @@ Every other "does this need copy?" in this pipeline is answered from ``state.jso
 records what *this machine* wrote, and it does not travel: two machines publish, two ledgers
 diverge, and neither can say what is on the site. This asks the site.
 
-For each product on the process list it reports one of three states:
+For each product on the process list it reports one of four states:
 
 * **has text** — live in every configured language, with every generated field populated;
 * **needs text** — a page missing, or live with a blank generated field, and the export carries
   something to write copy from;
 * **no inputs** — the same, but the export carries neither attr 1083 nor attr 1067, so nothing on
-  this machine can supply it. That is a MyGS1 worklist, not a Generate button.
+  this machine can supply it. That is a MyGS1 worklist, not a Generate button;
+* **held** — the plan will hold it (missing mandatory data, the video gate, no image), so the site
+  is not consulted for it. These are the rows the Data screen shows without a tick box; the saved
+  selection keeps them only so a run can name them, and they must not read as chosen here.
 
 What it deliberately does **not** answer is whether the inputs *changed* since the live text was
 written. That needs a fingerprint of the published unit, which is exactly the ledger this exists
@@ -44,10 +47,17 @@ from pathlib import Path
 
 from lib.config import ClientConfig, get_client, resolve_client_id
 from lib.env import load_env
-from lib.errors import ConfigError, ExportParseError, MissingCredentialError, WordPressAPIError
+from lib.errors import (
+    ConfigError,
+    ExportParseError,
+    MissingCredentialError,
+    VideoMapError,
+    WordPressAPIError,
+)
+from lib.holds import held_products
 from lib.live_copy import LiveCopyReport, LiveText, classify
 from lib.media_video import canon_gtin
-from lib.preflight import held_for_video, in_scope
+from lib.preflight import in_scope
 from lib.records import ProductRecord
 from lib.wp_client import WordPressClient
 
@@ -121,7 +131,6 @@ def _as_json(cfg: ClientConfig, report: LiveCopyReport, checked_at: str) -> dict
                 "bucket": product.bucket.value,
                 "missing_languages": list(product.missing_languages),
                 "absent_languages": list(product.absent_languages),
-                "held_for_video": product.held_for_video,
             }
             for product in report.products
         ],
@@ -135,12 +144,12 @@ def _render(report: LiveCopyReport) -> None:
     print(
         f"{counts['in_scope']} product(s) in scope: {counts['needs_text']} to process (no live "
         f"text, input available), {counts['no_inputs']} skipped (no live text, input "
-        f"unavailable), {counts['has_text']} skipped (live text already)."
+        f"unavailable), {counts['has_text']} skipped (live text already), {counts['held']} held "
+        "(not eligible)."
     )
     for product in report.needs_text:
         where = ", ".join(product.missing_languages)
-        held = " (also waiting on a confirmed video)" if product.held_for_video else ""
-        print(f"  [process] {product.gtin} {product.name} — no live text in {where}{held}")
+        print(f"  [process] {product.gtin} {product.name} — no live text in {where}")
     for product in report.no_inputs:
         print(f"  [skip] {product.gtin} {product.name} — no attr 1083 or 1067 in the export")
 
@@ -150,13 +159,21 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = get_client(resolve_client_id(args.client_id))
         products = in_scope(cfg, _load_products(cfg))
-        held = {product.gtin14 for product in held_for_video(cfg, products)}
+        # The Data screen's own verdict, so "eligible" cannot mean one thing there and another here.
+        holds = held_products(cfg, products)
+        held = {product.gtin14 for product in products if product.gtin in holds}
         live = _fetch(cfg)
-    except (ConfigError, ExportParseError, MissingCredentialError, WordPressAPIError) as exc:
+    except (
+        ConfigError,
+        ExportParseError,
+        MissingCredentialError,
+        VideoMapError,
+        WordPressAPIError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return _EXIT_ERROR
 
-    report = classify(products, live, cfg.wordpress.languages, held_for_video=held)
+    report = classify(products, live, cfg.wordpress.languages, held=held)
     checked_at = datetime.now(UTC).isoformat(timespec="seconds")
     if args.json:
         print(json.dumps(_as_json(cfg, report, checked_at), indent=2))

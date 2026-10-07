@@ -337,7 +337,14 @@ def test_the_product_split_is_dropped_rather_than_guessed() -> None:
 
 def _live(**counts: int) -> dict[str, Any]:
     return {
-        "counts": {"in_scope": 0, "has_text": 0, "needs_text": 0, "no_inputs": 0, **counts},
+        "counts": {
+            "in_scope": 0,
+            "has_text": 0,
+            "needs_text": 0,
+            "no_inputs": 0,
+            "held": 0,
+            **counts,
+        },
         "products": [
             {"gtin": "1", "name": "a", "bucket": "needs_text"},
             {"gtin": "2", "name": "b", "bucket": "has_text"},

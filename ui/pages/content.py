@@ -199,6 +199,18 @@ def _live_figures(payload: Any, result: Any) -> None:
         )
     ui.label(f"The site was checked {context.live_checked_at(payload)}.").classes("note mb-3")
 
+    held = context.live_products(payload, "held")
+    if held:
+        # Said, not hidden: the saved selection keeps every not-eligible row so a run can name it,
+        # and without this line the figures above would not add up to what the batch card lists.
+        theme.band(
+            f"{len(held)} product(s) on the saved list are not eligible, so nothing is written for "
+            "them here — the Data screen says why. They stay on the list so the run can name them.",
+        )
+        ui.label(
+            ", ".join(f"{p.get('gtin', '')} {p.get('name') or ''}".strip() for p in held)
+        ).classes("mono scroll-x note")
+
     blocked = context.live_gtins(payload, "no_inputs")
     if blocked:
         theme.band(

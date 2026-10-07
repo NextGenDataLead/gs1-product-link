@@ -21,6 +21,7 @@ from lib.records import RunOutcome, SkippedUnit, SkipReason
 from lib.scope_report import (
     HELD,
     IN_SCOPE,
+    NOT_ELIGIBLE,
     NOT_IN_EXPORT,
     NOT_RUN,
     NOT_SELECTED,
@@ -140,20 +141,42 @@ def test_a_deselected_row_is_named_as_the_operators_own_decision() -> None:
     assert rows[1].in_scope == NOT_SELECTED
 
 
-def test_the_decision_outranks_the_data_fact() -> None:
-    """A row taken off the list was never considered, whatever the export holds.
-
-    Reporting it as ``not in export`` would blame the data for a choice, and send somebody to
-    MyGS1 to fix a product that is fine.
-    """
+def test_a_row_the_export_lacks_is_named_so_even_off_the_batch() -> None:
+    """Data offers no tick box on it, so leaving it out was never the operator's decision."""
     # Arrange
-    sheet = _sheet([_row("1080", "drop", A)])
+    sheet = _sheet([_row("1080", "gone", A)])
 
     # Act
     rows = _build(sheet, selected=set(), exported=set())
 
     # Assert
-    assert rows[0].in_scope == NOT_SELECTED
+    assert rows[0].in_scope == NOT_IN_EXPORT
+
+
+def test_a_held_row_off_the_batch_says_not_eligible_and_why() -> None:
+    """The batch file holds only the ticks now, so the plan never sees a held row to explain it.
+
+    The reason comes from the Data screen's verdict instead, and reads as a hold, not a failure.
+    """
+    # Arrange
+    sheet = _sheet([_row("1079", "keep", A), _row("1080", "held", B), _row("1081", "drop", C)])
+
+    # Act
+    rows = build_rows(
+        sheet,
+        selected={A},
+        exported={A, B, C},
+        outcomes=[],
+        skipped=[],
+        languages=LANGUAGES,
+        not_eligible={B: "missing data: dim_height"},
+    )
+
+    # Assert
+    assert [row.in_scope for row in rows] == [IN_SCOPE, NOT_ELIGIBLE, NOT_SELECTED]
+    assert rows[1].result == HELD
+    assert rows[1].units["nl"].detail == "missing data: dim_height"
+    assert rows[2].result == NOT_RUN
 
 
 def test_a_gtin_with_no_outcome_reads_not_run_and_never_blank() -> None:
@@ -291,7 +314,17 @@ def test_the_units_sheet_keeps_what_the_worst_of_reduction_drops() -> None:
 def test_the_legend_explains_every_value_the_report_can_emit() -> None:
     """The file is forwarded on its own; a value that needs a covering email arrives without one."""
     # Arrange
-    emitted = {IN_SCOPE, NOT_SELECTED, NOT_IN_EXPORT, HELD, NOT_RUN, "ok", "error", "dry-run"}
+    emitted = {
+        IN_SCOPE,
+        NOT_SELECTED,
+        NOT_ELIGIBLE,
+        NOT_IN_EXPORT,
+        HELD,
+        NOT_RUN,
+        "ok",
+        "error",
+        "dry-run",
+    }
 
     # Act
     _, grid = legend_grid()

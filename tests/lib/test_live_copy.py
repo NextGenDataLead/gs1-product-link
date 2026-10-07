@@ -46,7 +46,13 @@ def test_a_product_live_in_every_language_has_text() -> None:
 
     report = classify([product], live, ["nl", "fr"])
 
-    assert report.counts == {"in_scope": 1, "has_text": 1, "needs_text": 0, "no_inputs": 0}
+    assert report.counts == {
+        "in_scope": 1,
+        "has_text": 1,
+        "needs_text": 0,
+        "no_inputs": 0,
+        "held": 0,
+    }
     assert report.products[0].missing_languages == ()
 
 
@@ -124,17 +130,41 @@ def test_the_other_language_counts_as_an_input() -> None:
     assert report.products[0].bucket is Bucket.NEEDS_TEXT
 
 
-def test_a_video_hold_is_annotated_and_never_excluded() -> None:
-    """A product the operator asked for and cannot yet have is not a product they never asked for.
+def test_a_held_product_is_counted_apart_and_never_offered_for_text() -> None:
+    """Data shows a held product without a tick box; Content must not then offer to write for it.
 
-    Narrowing it away here would make the missing video look like nothing rather than like work —
-    the same mistake ``lib.preflight.in_scope`` documents at the top of its own docstring.
+    The saved selection keeps every not-eligible row so a run can name it afterwards, which made
+    those rows look chosen here: on the pilot, 3 ticked products came back as "6 to process / 11
+    skipped" — the other 14 were holds. Counted apart rather than dropped, so a hold still reads as
+    work outstanding and not as nothing.
     """
-    report = classify([_product()], {}, ["nl"], held_for_video=[GTIN_A])
+    report = classify([_product(GTIN_A), _product(GTIN_B)], {}, ["nl"], held=[GTIN_B])
 
-    assert report.counts["in_scope"] == 1
-    assert report.products[0].held_for_video is True
-    assert report.products[0].bucket is Bucket.NEEDS_TEXT
+    assert [p.gtin for p in report.needs_text] == [GTIN_A]
+    assert [p.gtin for p in report.held] == [GTIN_B]
+    assert report.counts == {
+        "in_scope": 2,
+        "has_text": 0,
+        "needs_text": 1,
+        "no_inputs": 0,
+        "held": 1,
+    }
+
+
+def test_held_wins_over_live_text_so_it_is_not_offered_as_an_override() -> None:
+    """The override list rewrites live text — it must not reach a product the plan will drop."""
+    live = {(GTIN_A, "nl"): _live(GTIN_A, "nl")}
+
+    report = classify([_product()], live, ["nl"], held=[GTIN_A])
+
+    assert report.products[0].bucket is Bucket.HELD
+    assert report.has_text == ()
+
+
+def test_held_matches_whatever_width_the_gtin_arrives_in() -> None:
+    report = classify([_product()], {}, ["nl"], held=[GTIN_A.lstrip("0")])
+
+    assert report.products[0].bucket is Bucket.HELD
 
 
 def test_products_keep_the_order_they_arrived_in() -> None:
