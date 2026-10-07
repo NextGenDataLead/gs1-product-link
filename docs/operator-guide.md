@@ -279,7 +279,7 @@ in the rail to run the checks again.
 
 ## Step 4 — Publish
 
-<img src="images/publish.png" alt="The Publish screen showing the first gate, Intent confirmation, with figures for products in scope, catalogue size, export date and environment, and a mode chooser." width="900">
+<img src="images/publish.png" alt="The Publish screen (an earlier version — the first gate now shows only the mode chooser and its buttons)." width="900">
 
 **What this screen is for:** doing it. Nothing is written until you have answered every required
 question, and the screen will not let you skip one.
@@ -302,8 +302,9 @@ means reversible; **red means this run writes permanent records.**
 
 **The gates you will meet, in order:**
 
-1. **Intent confirmation** — the mode, how many products are in scope, and which spreadsheet.
-   Check the figures against what you expect. "In scope" is the most this run could touch.
+1. **Intent confirmation** — the mode, and nothing else: **pages**, **links** or **both**. Check the
+   one that is selected before you press Confirm — it decides whether anything permanent is
+   written.
 2. **Language selection** — which languages this run covers.
 3. **Generated copy review** — confirms you have read the text from step 2.
 4. **Plan review** — the tool builds the plan and tells you how many rows it holds and what kind:
@@ -312,15 +313,16 @@ means reversible; **red means this run writes permanent records.**
 5. **Production environment confirmation** — only when the client is on production. You type the
    client id in full into a box before the Confirm button will accept it. Deliberate friction, in
    the one place it is worth it.
-6. **Dry run** — runs the whole thing while writing nothing, and shows you the output. **Read it**,
-   then Proceed or Cancel.
+6. **Dry run** — runs the whole thing while writing nothing, and shows you the output, which stays
+   on screen. **Read it**, then Proceed or Cancel.
 
 Then **Write it**, and the run starts. A grey panel fills with the log as it goes, and the button
 shows a spinner with the seconds counting up.
 
-**While it is running: do not press anything twice.** The button disables itself, but the rule
-underneath is worth knowing — a second run in `links` or `both` mode aims at records that cannot be
-deleted.
+**When it finishes, a message stays on screen until you close it:** **Published** — how many pages,
+with no errors, and for `links` or `both` how many GS1 records were written — or **Run failed**,
+with the reason. The button is then gone: a walk runs for real once. To publish again, open
+Publish from the rail and start a new walk.
 
 > **Your answers live on this screen only.** If you navigate to another screen part-way through the
 > gates and come back, you start again from the first gate. Nothing is lost except your place, but
