@@ -29,6 +29,7 @@ def render() -> None:
         client_id=cid,
         environment=cfg.gs1.environment if cfg else None,
         facts=context.rail_facts(cid, cfg),
+        locked=context.locked_steps(cid, cfg),
     ):
         theme.heading(
             theme.eyebrow("Runs"),

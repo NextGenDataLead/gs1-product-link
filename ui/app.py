@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from typing import Final
 
+from fastapi.responses import RedirectResponse
 from nicegui import ui
 
-from ui import theme
+from ui import context, progress, theme
 from ui.pages import content, data, preflight, publish, runs, setup
 
 #: Loopback only, and a port unlikely to collide with a dev server the operator also runs.
@@ -30,24 +31,49 @@ def _setup() -> None:
     setup.render()
 
 
+def _step(route: str) -> RedirectResponse | None:
+    """Where to send a request for a step this session has not reached — see :mod:`ui.progress`.
+
+    Not applied when the config will not load: every screen then says so and points at the fix,
+    and a lock would bounce the operator away from the one message that helps.
+    """
+    cid = context.client_id()
+    if context.client_config(cid) is None:
+        return None
+    elsewhere = progress.of(cid).arrive(route)
+    return RedirectResponse(elsewhere) if elsewhere else None
+
+
 @ui.page("/preflight")
-def _preflight() -> None:
+def _preflight() -> RedirectResponse | None:
+    if redirect := _step("/preflight"):
+        return redirect
     preflight.render()
+    return None
 
 
 @ui.page("/data")
-def _data() -> None:
+def _data() -> RedirectResponse | None:
+    if redirect := _step("/data"):
+        return redirect
     data.render()
+    return None
 
 
 @ui.page("/content")
-def _content() -> None:
+def _content() -> RedirectResponse | None:
+    if redirect := _step("/content"):
+        return redirect
     content.render()
+    return None
 
 
 @ui.page("/publish")
-def _publish() -> None:
+def _publish() -> RedirectResponse | None:
+    if redirect := _step("/publish"):
+        return redirect
     publish.render()
+    return None
 
 
 @ui.page("/runs")

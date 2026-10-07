@@ -55,6 +55,7 @@ from ui import (
     batch_grid,
     context,
     process_list_edit,
+    progress,
     runner,
     theme,
     video_map_panel,
@@ -117,6 +118,7 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
         client_id=cid,
         environment=cfg.gs1.environment if cfg else None,
         facts=context.rail_facts(cid, cfg),
+        locked=context.locked_steps(cid, cfg),
     ):
         theme.heading(
             theme.eyebrow("Data"),
@@ -210,6 +212,7 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             # A beat before leaving, so the one-word receipt is read: notifications do not survive
             # a page change. Disabled for the wait, so it is not pressed again meanwhile.
             onward.disable()
+            progress.of(cid).advance("/data")
             ui.timer(_TOAST_BEAT, lambda: ui.navigate.to("/content"), once=True)
 
         onward, caption = theme.onward("Next", save_and_go)

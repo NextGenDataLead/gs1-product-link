@@ -18,7 +18,7 @@ from typing import Any, Final
 
 from nicegui import ui
 
-from ui import batch_view, context, runner, theme
+from ui import batch_view, context, progress, runner, theme
 
 #: The four statuses, only for tallying here — the rendering of a check lives in the theme, so
 #: this screen and the Setup screen's Test buttons cannot start showing the same check differently.
@@ -40,6 +40,7 @@ def render() -> None:
         client_id=cid,
         environment=cfg.gs1.environment if cfg else None,
         facts=context.rail_facts(cid, cfg),
+        locked=context.locked_steps(cid, cfg),
     ):
         theme.heading(
             theme.eyebrow("Preflight"),
@@ -58,8 +59,10 @@ def render() -> None:
                 if payload is None:
                     theme.band("The preflight did not return readable results.", "danger")
                     ui.label(result.stderr or result.stdout or "(no output)").classes("console")
+                    gate(None)
                     return
                 _summary(payload)
+                gate(payload)
                 for check in payload:
                     theme.check_row(
                         str(check["status"]),
@@ -100,6 +103,24 @@ def render() -> None:
         ui.separator().classes("my-6")
         status = ui.label("").classes("note")
         results = ui.column().classes("w-full gap-0")
+
+        def onward() -> None:
+            if cid is not None:
+                progress.of(cid).advance("/preflight")
+            ui.navigate.to("/publish")
+
+        def gate(payload: list[dict[str, Any]] | None) -> None:
+            """Next opens Publish only once the latest run came back with no failure."""
+            failing = payload is None or any(check["status"] == "fail" for check in payload)
+            next_button.set_enabled(not failing)
+            caption.text = (
+                "Next opens Publish once the checks above show no failure."
+                if failing
+                else "Next goes on to Publish, where a dry run comes before anything is written."
+            )
+
+        next_button, caption = theme.onward("Next", onward)
+        gate(None)
 
         # Run once on arrival: a screen that opens blank asks the operator to press a button
         # before it can tell them anything, and this one is cheap and touches no credential.

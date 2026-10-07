@@ -17,7 +17,7 @@ Two rules the palette exists to serve:
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Final
@@ -105,6 +105,11 @@ body { background: var(--paper) !important; color: var(--ink) !important;
                     background: color-mix(in oklab, var(--accent) 7%, transparent); }
 .rail-link.active { color: var(--ink); font-weight: 600;
                     box-shadow: inset 3px 0 0 var(--accent); }
+/* A step this session has not reached by pressing Next — see `ui.progress`. Not a link at all,
+   so neither a click nor a keyboard can open it; dimmed rather than hidden, so the procedure's
+   shape is still readable. */
+.rail-link.locked { opacity: 0.45; cursor: not-allowed; }
+.rail-link.locked:hover { color: var(--ink-soft); background: none; }
 .rail-num     { font-family: var(--font-mono); font-size: var(--text-micro);
                 color: var(--ink-faint); min-width: 1.1rem; }
 .rail-text    { display: flex; flex-direction: column; gap: 0; min-width: 0; }
@@ -436,6 +441,7 @@ def page(
     client_id: str | None,
     environment: str | None,
     facts: Mapping[str, str] | None = None,
+    locked: Collection[str] = (),
 ) -> Iterator[None]:
     """The shell every screen is rendered inside: left rail, then a canvas.
 
@@ -450,14 +456,20 @@ def page(
         facts: One short fact per rail label, from :func:`ui.context.rail_facts`. Passed in
             rather than read here, so the theme keeps importing nothing but NiceGUI and cannot
             grow a way to run a subprocess on every page load.
+        locked: Routes of steps this session has not reached (:func:`ui.progress.Progress.locked`).
+            Drawn as the same entry with no link behind it.
     """
     facts = facts or {}
 
     def link(screen: Screen, *, numbered: bool) -> None:
         current = screen.label == active
-        anchor = ui.link(target=screen.route).classes(
-            "rail-link active" if current else "rail-link"
-        )
+        if screen.route in locked:
+            anchor = ui.element("div").classes("rail-link locked")
+            anchor.props('aria-disabled=true title="Reached by pressing Next on the step before"')
+        else:
+            anchor = ui.link(target=screen.route).classes(
+                "rail-link active" if current else "rail-link"
+            )
         if current:
             # `.active` is a class, which tells a sighted operator where they are and a screen
             # reader nothing at all.
