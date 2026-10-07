@@ -155,8 +155,9 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
                 ticks.seeded = False
             in_force = context.batch_in_force(cfg)
             ready = in_force is not None and in_force.ready
+            # Disabled here; the grid turns it on once a product is ticked — see ``draw_choose``.
+            onward.disable()
             draw_choose()
-            onward.set_enabled(ready)
             report_changed()
 
         def mapping_changed() -> None:
@@ -178,7 +179,17 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             coverage.clear()
             with selection:
                 if ready:
-                    _choose(cfg, cid, commit, caption, ticks, coverage)
+                    # Next only once something is ticked: nothing ticked is nothing to save, and a
+                    # button that is pressable and then refuses is a button that seems broken.
+                    _choose(
+                        cfg,
+                        cid,
+                        commit,
+                        caption,
+                        ticks,
+                        coverage,
+                        chosen=lambda count: onward.set_enabled(count > 0),
+                    )
                 else:
                     caption.text = ""
                     theme.band(
@@ -226,8 +237,13 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
     caption: ui.label,
     ticks: batch_grid.Ticks,
     coverage: ui.element,
+    *,
+    chosen: Callable[[int], None],
 ) -> None:
-    """Read the list and the export, decide eligibility once, and build step 4 under it."""
+    """Read the list and the export, decide eligibility once, and build step 4 under it.
+
+    ``chosen`` hears how many products are ticked, every time that changes.
+    """
     assert cfg.process_list is not None  # a batch is only ready with a list
     try:
         batch = process_list_edit.read_sheet(cfg.process_list)
@@ -253,6 +269,10 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             rows=len(chosen.rows),
         )
 
+    def counted(counts: batch_grid.Funnel) -> None:
+        batch_grid.draw_funnel(coverage, counts)
+        chosen(counts.selected)
+
     with theme.section(
         "Choose the products and save",
         step=4,
@@ -274,7 +294,7 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             commit=commit,
             caption=caption,
             ticks=ticks,
-            counted=lambda counts: batch_grid.draw_funnel(coverage, counts),
+            counted=counted,
             saved=batch.listed_gtins(),
             target=batch.path,
         )

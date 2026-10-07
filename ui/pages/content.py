@@ -63,6 +63,8 @@ def render() -> None:
                 route="/setup",
             )
             return
+        # Filled in once Next exists, below the steps it waits on.
+        unlock: list[Callable[[bool], None]] = []
         if cfg.generator is None:
             ui.label(
                 "This client has no `generator` block, so pages are published from feed copy only "
@@ -70,34 +72,52 @@ def render() -> None:
             ).classes("note")
         else:
             results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
-            _live_screen(cid, cfg, cfg.generator, results_path, list(cfg.wordpress.languages))
+            _live_screen(
+                cid, cfg, cfg.generator, results_path, list(cfg.wordpress.languages), unlock
+            )
 
-        _onward(cid)
+        unlock.append(_onward(cid, waits=cfg.generator is not None))
 
 
-def _onward(cid: str) -> None:
-    """Next: the only way on to Preflight — see :mod:`ui.progress`.
+def _onward(cid: str, *, waits: bool) -> Callable[[bool], None]:
+    """Next: the only way on to Preflight — see :mod:`ui.progress`. Returns its switch.
 
-    Not gated on the copy. Whether every product this batch publishes has its text is the
-    preflight's own check, and a second opinion here would be a second thing to keep true.
+    Off until step 3 is open, which is when this batch's text exists: the operator's rule is that
+    no Next is pressable before the steps of its screen are done. A client with no generator has
+    no steps here, so its Next is on.
     """
 
     def go() -> None:
         progress.of(cid).advance("/content")
         ui.navigate.to("/preflight")
 
-    _, caption = theme.onward("Next", go)
-    caption.text = "Next goes on to the preflight, which checks this batch's text is all there."
+    button, caption = theme.onward("Next", go)
+
+    def switch(on: bool) -> None:
+        button.set_enabled(on)
+        caption.text = (
+            "Next goes on to the preflight, once you have read the text above."
+            if on
+            else "Next opens once this batch's text is written — steps 1 and 2."
+        )
+
+    switch(not waits)
+    return switch
 
 
-def _live_screen(
+def _live_screen(  # noqa: PLR0913, PLR0915 — the three steps share one set of containers
     cid: str,
     cfg: ClientConfig,
     generator: GeneratorConfig,
     results_path: Path,
     languages: list[str],
+    unlock: list[Callable[[bool], None]],
 ) -> None:
     """The screen, driven by what the **site** carries rather than by the ledger.
+
+    **Each step opens when the one before it succeeds** (operator feedback, 2026-10-07): step 2
+    once the site has been read, step 3 — and Next, through ``unlock`` — once every product the
+    site says needs text has it in every language, written now or by an earlier Generate.
 
     Everything here used to be derived from ``state.json``: which units a run would write, which
     of those had copy, how much was outstanding. That ledger records what *this machine* wrote and
@@ -135,11 +155,23 @@ def _live_screen(
         action.clear()
         with status:
             _live_figures(payload, result)
+        checked = context.live_counts(payload) is not None
+        step2.set_visibility(checked)
         ready = context.live_gtins(payload, "needs_text")
+        done = checked and context.text_written_for(ready, _written(results_path), languages)
+        step3.set_visibility(done)
+        for switch in unlock:
+            switch(done)
         # The button is built before the list that feeds it, so the list's tick boxes have
         # something to update — the containers were created in reading order above, so building
         # them out of order does not move anything on screen.
         with action:
+            if done and ready:
+                theme.band(
+                    "This batch's text is already written — read it in step 3. Generating again "
+                    "replaces it.",
+                    "quiet",
+                )
             sync = _generate_panel(cid, generator, ready, selection, refresh)
         with picker:
             _override(payload, selection, sync)
@@ -170,7 +202,9 @@ def _live_screen(
         with status:
             theme.band("Not checked yet — press the button to ask the site.")
 
-    with theme.section("Generate content", step=2):
+    step2 = ui.column().classes("w-full gap-0")
+    step2.set_visibility(False)
+    with step2, theme.section("Generate content", step=2):
         ui.label(
             "Writes the tagline and the Eigenschappen list for the products step 1 found without "
             "them, in every language."
@@ -195,7 +229,9 @@ def _live_screen(
         with action:
             ui.label("Check the live site first.").classes("note")
 
-    with theme.section("Review the text", step=3):
+    step3 = ui.column().classes("w-full gap-0")
+    step3.set_visibility(False)
+    with step3, theme.section("Review the text", step=3):
         ui.label(
             "The last place this is read as text rather than as a count. Check it against the "
             "real product: this pipeline fails silently, and a 'validated N' figure proves only "
@@ -203,6 +239,17 @@ def _live_screen(
         ).classes("note")
         review = ui.column().classes("w-full gap-0")
     draw_review()
+
+
+def _written(results_path: Path) -> dict[str, dict[str, Any]]:
+    """The results file, per product and language — empty when it is absent or unreadable."""
+    import json  # noqa: PLC0415 — as in ``_review``
+
+    try:
+        data = json.loads(results_path.read_text(encoding="utf-8"))
+        return context.group_results(data.get("results", []))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return {}
 
 
 def _live_figures(payload: Any, result: Any) -> None:

@@ -148,8 +148,8 @@ choice of products, and it takes you on to step 2. There is no separate save but
 
 **The line above the button says what it will do** — *"Next saves 8 of 9 eligible row(s) — 1
 unticked — and goes on to the copy"* — and it updates as you tick. Read that before you press, not
-after: it is the one thing that will tell you if you ticked the wrong way round. Pressing then
-confirms with **Saved**.
+after: it is the one thing that will tell you if you ticked the wrong way round. With nothing ticked
+the button stays off. Pressing it takes you straight to Content.
 
 **Done looks like:** both files uploaded without a refusal, nothing unexpected in the first two
 tables, and *selected* in Coverage showing exactly the number of products you mean.
@@ -226,7 +226,9 @@ the Video column and the report all count from the file as it is now. Your ticks
 written by Claude, not taken from the spreadsheet. Everything else on the page — brand, size,
 material, barcode — comes from the GS1 export.
 
-The screen is three numbered steps. Do them in order.
+The screen is three numbered steps, and each one appears only when the one before it has worked:
+step 2 after the site has been checked, step 3 after the text is written. **Next** stays off until
+step 3 is showing.
 
 1. **Check the live site.** Press **Check the live site**. It asks the website which products in
    your batch are missing the two texts, and answers with three numbers: *no live text · generate*
@@ -239,7 +241,8 @@ The screen is three numbered steps. Do them in order.
    yellow note about a key? This machine cannot write text — ask your maintainer.
 3. **Review the text.** The text for this batch, per product, per language. **Read it.** This is
    the last comfortable moment to catch a sentence that is wrong; after Publish it is on the live
-   site. Text from an earlier batch is never shown here.
+   site. Text from an earlier batch is never shown here. If you come back to this screen after
+   generating, step 3 opens straight after the check — you do not have to generate again.
 
 **Done looks like:** every product in step 3 has text in every language, and no product is named
 as "no text yet". Then press **Next**.
@@ -266,8 +269,8 @@ Two buttons:
 
 - **Run offline checks** re-runs the cheap half, the one that ran automatically.
 - **Run everything, including credentials** also logs in to the website and to GS1. Both are
-  read-only — nothing is written. Run this one before a real publish, because a wrong password
-  found here costs you nothing, and found at step 4 costs you a half-finished batch.
+  read-only — nothing is written. **Next stays off until this one has passed**, because a wrong
+  password found here costs you nothing, and found at step 4 costs you a half-finished batch.
 
 **Done looks like:** "Ready." — or "Ready, but read the warnings first", once you have read them.
 

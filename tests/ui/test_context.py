@@ -29,6 +29,7 @@ from ui.context import (
     live_gtins,
     scope_from,
     split_results,
+    text_written_for,
 )
 
 
@@ -386,3 +387,24 @@ def test_the_check_time_is_shown_as_an_age() -> None:
     assert live_checked_at({"checked_at": (now - timedelta(hours=3)).isoformat()}) == "3 hours ago"
     # Unparseable is shown verbatim rather than as "just now": a wrong age is worse than a raw one.
     assert live_checked_at({"checked_at": "whenever"}) == "whenever"
+
+
+# --- what unlocks Content's review ----------------------------------------------
+
+
+def test_text_counts_as_written_only_in_every_language() -> None:
+    entries = {"08713195004488": {"nl": {"usps": ["a"]}, "fr": {"usps": ["b"]}}}
+
+    assert text_written_for(["8713195004488"], entries, ["nl", "fr"])
+    assert not text_written_for(["8713195004488"], entries, ["nl", "fr", "de"])
+
+
+def test_an_empty_tagline_list_is_not_text() -> None:
+    entries = {"08713195004488": {"nl": {"usps": []}}}
+
+    assert not text_written_for(["08713195004488"], entries, ["nl"])
+
+
+def test_a_product_missing_from_the_file_is_not_written() -> None:
+    assert not text_written_for(["08713195004488"], {}, ["nl"])
+    assert text_written_for([], {}, ["nl"]), "nothing to write is nothing missing"

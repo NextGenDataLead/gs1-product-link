@@ -86,6 +86,7 @@ def test_the_caption_says_what_next_will_save_before_it_is_pressed() -> None:
         "Next saves 1 of 3 eligible row(s) — 2 unticked — and goes on to the copy."
     )
     assert save_line(0, 0) == "Nothing on the list is eligible, so a run would publish nothing."
+    assert save_line(0, 3) == "Tick at least one product — Next stays off until then."
 
 
 def test_an_unticked_product_without_a_video_is_not_counted_as_selected_without_one() -> None:
