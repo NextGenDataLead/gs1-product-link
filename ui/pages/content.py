@@ -36,8 +36,8 @@ from typing import Any
 
 from nicegui import ui
 
-from lib.config import GeneratorConfig
-from ui import REPO_ROOT, batch_view, context, env_edit, progress, runner, theme
+from lib.config import ClientConfig, GeneratorConfig
+from ui import REPO_ROOT, context, env_edit, progress, runner, theme
 
 
 def render() -> None:
@@ -60,45 +60,64 @@ def render() -> None:
             theme.blocked(
                 "clients.yml did not load, so this screen has nothing to work from.",
                 link_label="Open Setup →",
-                route="/",
+                route="/setup",
             )
             return
+        # Filled in once Next exists, below the steps it waits on.
+        unlock: list[Callable[[bool], None]] = []
         if cfg.generator is None:
             ui.label(
                 "This client has no `generator` block, so pages are published from feed copy only "
                 "and there is nothing to import."
             ).classes("note")
         else:
-            # Which export and which ticks this copy is for. Generating against last quarter's
-            # export produces text for the right barcodes and the wrong products, and the only
-            # place that showed up before was the live site.
-            batch_view.render(context.batch_in_force(cfg))
-
             results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
-            _live_screen(cid, cfg.generator, results_path, list(cfg.wordpress.languages))
+            _live_screen(
+                cid, cfg, cfg.generator, results_path, list(cfg.wordpress.languages), unlock
+            )
 
-        _onward(cid)
+        unlock.append(_onward(cid, waits=cfg.generator is not None))
 
 
-def _onward(cid: str) -> None:
-    """Next: the only way on to Preflight — see :mod:`ui.progress`.
+def _onward(cid: str, *, waits: bool) -> Callable[[bool], None]:
+    """Next: the only way on to Preflight — see :mod:`ui.progress`. Returns its switch.
 
-    Not gated on the copy. Whether every product this batch publishes has its text is the
-    preflight's own check, and a second opinion here would be a second thing to keep true.
+    Off until step 3 is open, which is when this batch's text exists: the operator's rule is that
+    no Next is pressable before the steps of its screen are done. A client with no generator has
+    no steps here, so its Next is on.
     """
 
     def go() -> None:
         progress.of(cid).advance("/content")
         ui.navigate.to("/preflight")
 
-    _, caption = theme.onward("Next", go)
-    caption.text = "Next goes on to the preflight, which checks this batch's text is all there."
+    button, caption = theme.onward("Next", go)
+
+    def switch(on: bool) -> None:
+        button.set_enabled(on)
+        caption.text = (
+            "Next goes on to the preflight, once you have read the text above."
+            if on
+            else "Next opens once this batch's text is written — steps 1 and 2."
+        )
+
+    switch(not waits)
+    return switch
 
 
-def _live_screen(
-    cid: str, generator: GeneratorConfig, results_path: Path, languages: list[str]
+def _live_screen(  # noqa: PLR0913, PLR0915 — the three steps share one set of containers
+    cid: str,
+    cfg: ClientConfig,
+    generator: GeneratorConfig,
+    results_path: Path,
+    languages: list[str],
+    unlock: list[Callable[[bool], None]],
 ) -> None:
     """The screen, driven by what the **site** carries rather than by the ledger.
+
+    **Each step opens when the one before it succeeds** (operator feedback, 2026-10-07): step 2
+    once the site has been read, step 3 — and Next, through ``unlock`` — once every product the
+    site says needs text has it in every language, written now or by an earlier Generate.
 
     Everything here used to be derived from ``state.json``: which units a run would write, which
     of those had copy, how much was outstanding. That ledger records what *this machine* wrote and
@@ -107,15 +126,17 @@ def _live_screen(
     this product have a tagline and an Eigenschappen block?* — has an authoritative source, and it
     is the site.
 
-    So there is one button that asks, and three numbers that come back, each labelled with what
-    happens to it: **process** (no live text and the export can supply it), **skip** (no live text
-    and it cannot — a MyGS1 worklist, not a button), and **skip** (live text already).
+    **Three numbered steps, in the order they are done** (operator feedback, 2026-10-07): check the
+    live site, generate the content, review it. One button asks the site, and three numbers come
+    back, each labelled with what happens to it: **generate** (no live text and the export can
+    supply it), **skip** (no live text and it cannot — a MyGS1 worklist, not a button), and **skip**
+    (live text already).
 
     The third is skipped *by default*, and that is the only part a person has to decide: whether
     the inputs moved since the live text was written. Nothing here can tell — the site reports
     that a tagline exists, never which export values produced it, and the fingerprint that would
     say is in the ledger this screen exists to stop depending on. So it is a tick box, and the
-    ticks join the automatic set in **one** Process button: two buttons made the run two runs, and
+    ticks join the automatic set in **one** Generate button: two buttons made the run two runs, and
     an operator who pressed only the obvious one wrote half of what they meant to.
 
     The read is slow (a listing per language, then one request per page, because a language-scoped
@@ -134,19 +155,39 @@ def _live_screen(
         action.clear()
         with status:
             _live_figures(payload, result)
+        checked = context.live_counts(payload) is not None
+        step2.set_visibility(checked)
         ready = context.live_gtins(payload, "needs_text")
+        done = checked and context.text_written_for(ready, _written(results_path), languages)
+        step3.set_visibility(done)
+        for switch in unlock:
+            switch(done)
         # The button is built before the list that feeds it, so the list's tick boxes have
         # something to update — the containers were created in reading order above, so building
         # them out of order does not move anything on screen.
         with action:
-            sync = _process_panel(cid, generator, ready, selection, refresh)
+            if done and ready:
+                theme.band(
+                    "This batch's text is already written — read it in step 3. Generating again "
+                    "replaces it.",
+                    "quiet",
+                )
+            sync = _generate_panel(cid, generator, ready, selection, refresh)
         with picker:
             _override(payload, selection, sync)
 
+    def draw_review() -> None:
+        # Redrawn after every Generate, which ends in ``refresh``: drawn once at page load, the
+        # copy just written stayed off screen until the operator left and came back.
+        review.clear()
+        with review:
+            _review(context.batch_scope(cid, cfg), results_path, languages)
+
     async def refresh() -> None:
         show(await runner.run_json_off_the_loop(runner.report_live_copy_argv(cid)))
+        draw_review()
 
-    with theme.section("What the site is missing"):
+    with theme.section("Check the live site", step=1):
         ui.label(
             "Two things on every product page are written by a machine: the tagline at the top "
             "and the Eigenschappen bullet list. Everything else — brand, size, material, barcode "
@@ -161,29 +202,54 @@ def _live_screen(
         with status:
             theme.band("Not checked yet — press the button to ask the site.")
 
-    with theme.section("Override: also process products that already have live text"):
+    step2 = ui.column().classes("w-full gap-0")
+    step2.set_visibility(False)
+    with step2, theme.section("Generate content", step=2):
         ui.label(
-            "The third figure above is skipped by default. Tick a product here to include it "
-            "anyway — for text that is live but whose GS1 data has moved since it was written. "
-            "Nothing on this machine can detect that for you: the site can say a tagline exists, "
-            "never which export values produced it. So it is your call, and nothing is ticked."
+            "Writes the tagline and the Eigenschappen list for the products step 1 found without "
+            "them, in every language."
         ).classes("note")
-        picker = ui.column().classes("w-full mt-3")
-        with picker:
-            ui.label("Check the live site first.").classes("note")
-
-    with theme.section("Write the text"):
-        action = ui.column().classes("w-full")
+        # Folded: it is the exception, and a step that opens on a list of tick boxes reads as
+        # though they are the step.
+        with (
+            ui.expansion("Override: also regenerate products that already have live text")
+            .classes("w-full mt-2 fold-tight")
+            .props("dense")
+        ):
+            ui.label(
+                "Those are skipped by default. Tick a product here to include it anyway — for "
+                "text that is live but whose GS1 data has moved since it was written. Nothing on "
+                "this machine can detect that for you: the site can say a tagline exists, never "
+                "which export values produced it. So it is your call, and nothing is ticked."
+            ).classes("note")
+            picker = ui.column().classes("w-full mt-3")
+            with picker:
+                ui.label("Check the live site first.").classes("note")
+        action = ui.column().classes("w-full mt-3")
         with action:
             ui.label("Check the live site first.").classes("note")
 
-    with theme.section("Review the text"):
+    step3 = ui.column().classes("w-full gap-0")
+    step3.set_visibility(False)
+    with step3, theme.section("Review the text", step=3):
         ui.label(
             "The last place this is read as text rather than as a count. Check it against the "
             "real product: this pipeline fails silently, and a 'validated N' figure proves only "
             "that N things were shaped correctly."
         ).classes("note")
-        _review(None, results_path, languages)
+        review = ui.column().classes("w-full gap-0")
+    draw_review()
+
+
+def _written(results_path: Path) -> dict[str, dict[str, Any]]:
+    """The results file, per product and language — empty when it is absent or unreadable."""
+    import json  # noqa: PLC0415 — as in ``_review``
+
+    try:
+        data = json.loads(results_path.read_text(encoding="utf-8"))
+        return context.group_results(data.get("results", []))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return {}
 
 
 def _live_figures(payload: Any, result: Any) -> None:
@@ -201,7 +267,7 @@ def _live_figures(payload: Any, result: Any) -> None:
     with theme.figures():
         theme.figure(
             str(counts["needs_text"]),
-            "no live text · process",
+            "no live text · generate",
             "the export can supply it, so these are written",
         )
         theme.figure(
@@ -269,7 +335,7 @@ def _override(payload: Any, selection: set[str], sync: Callable[[], None]) -> No
             ui.label(str(product.get("name") or "")).classes("note")
 
 
-def _process_panel(
+def _generate_panel(
     cid: str,
     generator: GeneratorConfig,
     ready: list[str],
@@ -326,15 +392,15 @@ def _process_panel(
                 detail="\n".join(output[-_FAILURE_LINES:]) or "(no output)",
             )
 
-    button = theme.action("Process", go)
+    button = theme.action("Generate content", go)
 
     def sync() -> None:
         total = len(chosen())
         picked = len(selection)
         caption.text = f"{total} product(s) will be written: {len(ready)} with no live text" + (
-            f", plus {picked} you ticked above." if picked else ", and nothing ticked above."
+            f", plus {picked} ticked under Override." if picked else "."
         )
-        button.set_text(f"Process {total} product(s)")
+        button.set_text(f"Generate content for {total} product(s)")
         button.set_enabled(bool(total))
 
     sync()
@@ -362,34 +428,25 @@ def _review(scope: context.Scope | None, results_path: Path, languages: list[str
         return
 
     if not entries:
-        ui.label("No copy has been written for this run yet.").classes("note")
+        ui.label("No text written for this batch yet.").classes("note")
         return
 
+    if scope is None:
+        ui.label("The saved batch could not be read, so there is nothing to review.").classes(
+            "note"
+        )
+        return
+    # This batch's products and nothing else. Text left in the file from an earlier batch is not
+    # this batch's to review, and nothing publishes it.
     split = context.split_results(entries, scope)
-    if not split.scoped:
-        ui.label(f"{len(entries)} GTIN(s) in this file").classes("note mb-1")
-        theme.band(
-            "Showing the whole file: the preflight did not report which GTINs are in scope, so "
-            "this list is everything it holds and not necessarily this run's batch.",
-            "warn",
-        )
-        _entries(split.in_scope, languages, results_path)
-        return
-
-    ui.label(
-        f"{len(split.in_scope)} of {len(entries)} GTIN(s) in this file are in scope for this run"
-    ).classes("note mb-3")
     if not split.in_scope:
-        theme.band(
-            "None of this run's GTINs have copy in this file — it was written for a different "
-            "batch. The coverage figures above say how many units are uncovered.",
-            "warn",
-        )
+        ui.label("No text written for this batch yet.").classes("note")
+        return
     _entries(split.in_scope, languages, results_path)
 
     if split.missing:
         ui.label(
-            f"{len(split.missing)} in-scope GTIN(s) have no copy at all: "
+            f"{len(split.missing)} product(s) in this batch have no text yet: "
             + ", ".join(split.missing[:_MAX_NAMED])
             + (
                 f" …and {len(split.missing) - _MAX_NAMED} more"
@@ -397,20 +454,6 @@ def _review(scope: context.Scope | None, results_path: Path, languages: list[str
                 else ""
             )
         ).classes("note mono scroll-x mt-3")
-
-    if split.others:
-        theme.band(
-            f"{len(split.others)} GTIN(s) in this file are outside this run's scope, so it was "
-            "written against a different process list than the one about to run. Confirming the "
-            "plan will not publish them, but check the file is the one you meant to import.",
-            "warn",
-        )
-        with ui.expansion(
-            f"{len(split.others)} GTIN(s) outside this run's scope", icon="unfold_more"
-        ).classes("w-full mt-2"):
-            ui.label(", ".join(sorted(split.others)[:_MAX_NAMED])).classes("mono scroll-x")
-            if len(split.others) > _MAX_NAMED:
-                ui.label(f"…and {len(split.others) - _MAX_NAMED} more.").classes("note")
 
 
 def _entries(entries: dict[str, Any], languages: list[str], results_path: Path) -> None:

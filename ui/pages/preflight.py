@@ -18,7 +18,7 @@ from typing import Any, Final
 
 from nicegui import ui
 
-from ui import batch_view, context, progress, runner, theme
+from ui import context, progress, runner, theme
 
 #: The four statuses, only for tallying here — the rendering of a check lives in the theme, so
 #: this screen and the Setup screen's Test buttons cannot start showing the same check differently.
@@ -48,21 +48,17 @@ def render() -> None:
             "Everything that can be checked before anything is written — so a missing secret or "
             "a stale copy cache surfaces now, not after live pages exist.",
         )
-        # The batch these checks are about. A preflight that passes says the machine can publish,
-        # not that it would publish the right thing.
-        if cfg is not None:
-            batch_view.render(context.batch_in_force(cfg))
 
-        def show(payload: Any, result: runner.CommandResult) -> None:
+        def show(payload: Any, result: runner.CommandResult, *, offline: bool) -> None:
             results.clear()
             with results:
                 if payload is None:
                     theme.band("The preflight did not return readable results.", "danger")
                     ui.label(result.stderr or result.stdout or "(no output)").classes("console")
-                    gate(None)
+                    gate(None, offline=offline)
                     return
                 _summary(payload)
-                gate(payload)
+                gate(payload, offline=offline)
                 for check in payload:
                     theme.check_row(
                         str(check["status"]),
@@ -87,7 +83,7 @@ def render() -> None:
             finally:
                 for button in buttons:
                     button.enable()
-            show(payload, result)
+            show(payload, result, offline=offline)
 
         with ui.row().classes("gap-3 items-center mt-6"):
             buttons = [
@@ -109,18 +105,30 @@ def render() -> None:
                 progress.of(cid).advance("/preflight")
             ui.navigate.to("/publish")
 
-        def gate(payload: list[dict[str, Any]] | None) -> None:
-            """Next opens Publish only once the latest run came back with no failure."""
+        def gate(payload: list[dict[str, Any]] | None, *, offline: bool) -> None:
+            """Next opens Publish only once the **full** run came back with no failure.
+
+            The offline run on arrival stops before WordPress, GS1 and the target URL, so passing
+            it says nothing about a password — and a wrong one otherwise survives every gate and
+            surfaces at the first real write. The operator's rule: no Next before this screen's
+            steps are done, and the credentials run is the one that matters.
+            """
             failing = payload is None or any(check["status"] == "fail" for check in payload)
-            next_button.set_enabled(not failing)
-            caption.text = (
-                "Next opens Publish once the checks above show no failure."
-                if failing
-                else "Next goes on to Publish, where a dry run comes before anything is written."
-            )
+            next_button.set_enabled(not failing and not offline)
+            if failing:
+                caption.text = "Next opens Publish once the checks above show no failure."
+            elif offline:
+                caption.text = (
+                    "Next opens Publish once “Run everything, including credentials” passes — "
+                    "the checks above did not test a password."
+                )
+            else:
+                caption.text = (
+                    "Next goes on to Publish, where a dry run comes before anything is written."
+                )
 
         next_button, caption = theme.onward("Next", onward)
-        gate(None)
+        gate(None, offline=True)
 
         # Run once on arrival: a screen that opens blank asks the operator to press a button
         # before it can tell them anything, and this one is cheap and touches no credential.

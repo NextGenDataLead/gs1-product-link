@@ -98,7 +98,7 @@ def test_generating_re_asks_the_site_it_just_changed() -> None:
     """
     handler = next(
         node
-        for node in ast.walk(_function("_process_panel"))
+        for node in ast.walk(_function("_generate_panel"))
         if isinstance(node, ast.AsyncFunctionDef)
     )
     assert "refresh" in _calls(handler)
@@ -112,7 +112,7 @@ def test_generation_reports_its_outcome_in_something_that_must_be_dismissed() ->
     """
     handler = next(
         node
-        for node in ast.walk(_function("_process_panel"))
+        for node in ast.walk(_function("_generate_panel"))
         if isinstance(node, ast.AsyncFunctionDef)
     )
     calls = _calls(handler)
@@ -126,20 +126,20 @@ def test_generation_shows_no_console_block() -> None:
     The lines are still captured, because a failure has to be explainable; they are shown only
     then, in the dialog, where there is a reason to read them.
     """
-    assert "log" not in _calls(_function("_process_panel"))
-    assert "stream" in _calls(_function("_process_panel")), (
+    assert "log" not in _calls(_function("_generate_panel"))
+    assert "stream" in _calls(_function("_generate_panel")), (
         "dropping the console must not turn the write into a blocking call"
     )
 
 
-def test_no_process_button_without_a_key() -> None:
+def test_no_generate_button_without_a_key() -> None:
     """An action that can only fail is worse than an absence — you must run it to find out.
 
     The presence check comes from ``env_edit.describe``, which reads ``.env`` as text and returns
     presence and length only. Asserting the early ``return`` is what stops a later edit turning
     the guard into a band that merely sits above a live button.
     """
-    button = _function("_process_panel")
+    button = _function("_generate_panel")
     assert "describe" in _own_calls(button)
     guard = next(
         (node for node in button.body if isinstance(node, ast.If)),
@@ -182,10 +182,10 @@ def test_each_figure_says_what_happens_to_its_products() -> None:
     "have text / need text / cannot be written" names three conditions and leaves the operator to
     work out which one the button acts on — and on this screen two of the three are skipped for
     completely different reasons, one fixable here and one only in MyGS1. Labelling them
-    process/skip/skip is what makes the button's scope readable without reading the paragraph.
+    generate/skip/skip is what makes the button's scope readable without reading the paragraph.
     """
     source = _CONTENT.read_text("utf-8")
-    for label in ("no live text · process", "no live text · skip", "live text already · skip"):
+    for label in ("no live text · generate", "no live text · skip", "live text already · skip"):
         assert label in source, f"the figures no longer say what happens to {label!r}"
 
 
@@ -209,7 +209,7 @@ def test_one_button_writes_both_halves_of_the_run() -> None:
     and the ticked set go to one command, and the union is read when the button is pressed rather
     than captured when it was built, because the ticks keep moving until then.
     """
-    panel = _function("_process_panel")
+    panel = _function("_generate_panel")
     chosen = next(
         node
         for node in ast.walk(panel)
@@ -219,7 +219,7 @@ def test_one_button_writes_both_halves_of_the_run() -> None:
         node.id for node in ast.walk(chosen) if isinstance(node, ast.Name) and node.id != "sorted"
     }
     assert {"ready", "selection"} <= names, (
-        "the Process button no longer unions the automatic set with the ticked one"
+        "the Generate button no longer unions the automatic set with the ticked one"
     )
     handler = next(node for node in ast.walk(panel) if isinstance(node, ast.AsyncFunctionDef))
     assert "chosen" in _calls(handler), "the handler captured a set instead of re-reading it"

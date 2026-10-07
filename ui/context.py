@@ -11,16 +11,19 @@ corrupt one quarantines it (E19), and looking at the system must not change what
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from lib.batch import Batch, in_force
-from lib.config import ClientConfig, get_client, resolve_client_id
-from lib.errors import ConfigError
+from lib.config import ClientConfig, ProcessListConfig, get_client, resolve_client_id
+from lib.errors import ConfigError, ProcessListError
 from lib.gates import Mode
 from lib.input_layout import archive_path
+from lib.media_video import canon_gtin
+from lib.process_list import load_process_list
 from lib.provenance import history_path, read
 from lib.records import Plan, PlanSummary, ProductRecord, RunOutcome
 from lib.run_files import iter_logs, newest_log, stamp_of
@@ -302,6 +305,29 @@ class Scope:
     gtins: frozenset[str]
 
 
+def batch_scope(cid: str, cfg: ClientConfig) -> Scope | None:
+    """The saved batch as a :class:`Scope` — the products Next saved on Data, nothing else.
+
+    ``None`` when there is no list or it will not read. Asked of the files rather than of the
+    doctor because the screen that needs it (Content's review) runs before the preflight does,
+    and passing it nothing made the review show every product the results file had ever held.
+    """
+    if cfg.process_list is None:
+        return None
+    try:
+        named = load_process_list(
+            ProcessListConfig(
+                path=str(_resolved(cfg.process_list.path)),
+                gtin_column=cfg.process_list.gtin_column,
+            )
+        )
+    except ProcessListError:
+        return None
+    products = load_products(cid)
+    gtins = frozenset(product.gtin for product in products if product.gtin14 in named)
+    return Scope(in_scope=len(gtins), total=len(products), detail="", empty=not gtins, gtins=gtins)
+
+
 def scope_from(payload: Any) -> Scope | None:
     """Read the doctor's ``scope`` check, or ``None`` when it did not report one.
 
@@ -365,6 +391,27 @@ def group_results(results: list[Any]) -> dict[str, dict[str, Any]]:
         if isinstance(gtin, str) and isinstance(language, str):
             grouped.setdefault(gtin, {})[language] = item
     return grouped
+
+
+def text_written_for(
+    gtins: Collection[str], entries: dict[str, dict[str, Any]], languages: Collection[str]
+) -> bool:
+    """Whether every one of ``gtins`` has text — a non-empty tagline list — in every language.
+
+    What unlocks Content's review and its Next: the products the site says need text either got it
+    this visit or already had it from an earlier Generate, which should not cost a second one.
+    Barcodes are compared at 14 digits, because the live report and the results file are keyed by
+    two different fields that can spell the same product differently.
+    """
+    written = {canon_gtin(gtin): per_language for gtin, per_language in entries.items()}
+    return all(
+        all(
+            isinstance(entry := written.get(canon_gtin(gtin), {}).get(language), dict)
+            and entry.get("usps")
+            for language in languages
+        )
+        for gtin in gtins
+    )
 
 
 def split_results(entries: dict[str, dict[str, Any]], scope: Scope | None) -> ResultsSplit:

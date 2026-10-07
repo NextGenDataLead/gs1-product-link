@@ -14,9 +14,9 @@ about a quarter-second. Adding one there would slow every screen in the shell to
 is already on the screen that owns it.
 
 **The shell is the screens and the component modules, not ``ui/pages/`` alone.**
-``ui/batch_view.py`` is a panel two screens render, and the video panels are moving out of their
-page the same way. A rule that stopped at ``pages/`` would be one an extraction escapes without
-anybody editing it, so the toast rule reads both folders. ``ui/theme.py`` is the one exemption: it
+The video panels live outside their page, as the batch card did before it. A rule that stopped at
+``pages/`` would be one an extraction escapes without anybody editing it, so the toast rule reads
+both folders. ``ui/theme.py`` is the one exemption: it
 is where the helpers that wrap ``ui.notify`` live.
 
 AST-only, so this needs no NiceGUI and runs in the required CI job rather than the optional one.

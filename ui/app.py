@@ -27,6 +27,14 @@ TITLE: Final = "GS1 Digital Link — operator shell"
 
 
 @ui.page("/")
+def _start() -> RedirectResponse:
+    """The window opens here. Step 1 is where a batch starts, so that is where it lands —
+    Setup is set up once and rarely touched, and opening on it put a form in front of every
+    session (operator feedback, 2026-10-07)."""
+    return RedirectResponse("/data")
+
+
+@ui.page("/setup")
 def _setup() -> None:
     setup.render()
 

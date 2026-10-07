@@ -91,11 +91,6 @@ _BATCHES: dict[str, _Session] = {}
 #: The rows unticked in step 4, per client, for the life of the process — see :mod:`ui.batch_grid`.
 _TICKS: dict[str, batch_grid.Ticks] = {}
 
-#: How long the success message stands before the screen changes under it. A notification does not
-#: survive a page change, so this — not ``theme.notify_ok``'s own timeout — is how long it is
-#: actually on screen. The message is one word and the wait is four seconds, so the two agree.
-_TOAST_BEAT = 4.0
-
 
 def _resolve(path: str) -> Path:
     """A configured path, against the repository root — every path in clients.yml is relative."""
@@ -129,7 +124,7 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             theme.blocked(
                 "clients.yml did not load, so this screen has nothing to work from.",
                 link_label="Open Setup →",
-                route="/",
+                route="/setup",
             )
             return
 
@@ -160,8 +155,9 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
                 ticks.seeded = False
             in_force = context.batch_in_force(cfg)
             ready = in_force is not None and in_force.ready
+            # Disabled here; the grid turns it on once a product is ticked — see ``draw_choose``.
+            onward.disable()
             draw_choose()
-            onward.set_enabled(ready)
             report_changed()
 
         def mapping_changed() -> None:
@@ -183,7 +179,17 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             coverage.clear()
             with selection:
                 if ready:
-                    _choose(cfg, cid, commit, caption, ticks, coverage)
+                    # Next only once something is ticked: nothing ticked is nothing to save, and a
+                    # button that is pressable and then refuses is a button that seems broken.
+                    _choose(
+                        cfg,
+                        cid,
+                        commit,
+                        caption,
+                        ticks,
+                        coverage,
+                        chosen=lambda count: onward.set_enabled(count > 0),
+                    )
                 else:
                     caption.text = ""
                     theme.band(
@@ -210,11 +216,12 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             save = commit.get("save")
             if save is not None and not save():
                 return  # refused, and it said why — stay put rather than carry the refusal away
-            # A beat before leaving, so the one-word receipt is read: notifications do not survive
-            # a page change. Disabled for the wait, so it is not pressed again meanwhile.
-            onward.disable()
+            # Straight on. There was a four-second beat here so the one-word "Saved" could be
+            # read before the page changed, and it read as a click that did nothing — the
+            # operator clicked again and took the second click for the one that worked. Content
+            # opening is the receipt.
             progress.of(cid).advance("/data")
-            ui.timer(_TOAST_BEAT, lambda: ui.navigate.to("/content"), once=True)
+            ui.navigate.to("/content")
 
         onward, caption = theme.onward("Next", save_and_go)
         batch_changed("")
@@ -230,8 +237,13 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
     caption: ui.label,
     ticks: batch_grid.Ticks,
     coverage: ui.element,
+    *,
+    chosen: Callable[[int], None],
 ) -> None:
-    """Read the list and the export, decide eligibility once, and build step 4 under it."""
+    """Read the list and the export, decide eligibility once, and build step 4 under it.
+
+    ``chosen`` hears how many products are ticked, every time that changes.
+    """
     assert cfg.process_list is not None  # a batch is only ready with a list
     try:
         batch = process_list_edit.read_sheet(cfg.process_list)
@@ -257,6 +269,10 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             rows=len(chosen.rows),
         )
 
+    def counted(counts: batch_grid.Funnel) -> None:
+        batch_grid.draw_funnel(coverage, counts)
+        chosen(counts.selected)
+
     with theme.section(
         "Choose the products and save",
         step=4,
@@ -278,7 +294,7 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             commit=commit,
             caption=caption,
             ticks=ticks,
-            counted=lambda counts: batch_grid.draw_funnel(coverage, counts),
+            counted=counted,
             saved=batch.listed_gtins(),
             target=batch.path,
         )

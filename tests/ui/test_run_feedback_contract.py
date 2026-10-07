@@ -18,7 +18,7 @@ The fix is in two places because the defect was:
 Neither half works alone, which is why both are checked here. The handler rule reads the component
 modules beside ``ui/pages/`` as well as the pages themselves: a panel's button is a screen's button,
 and a rule that stopped at ``pages/`` would be escaped by the first extraction that moved a handler
-out of a page — ``ui/batch_view.py`` is the precedent, and the video panels follow it.
+out of a page — the video panels are the case.
 
 AST-only, so this needs no NiceGUI and runs in the required CI job rather than the optional one.
 """

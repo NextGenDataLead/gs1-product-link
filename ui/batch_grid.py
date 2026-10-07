@@ -151,6 +151,8 @@ def save_line(ticked: int, eligible: int) -> str:
     """
     if not eligible:
         return "Nothing on the list is eligible, so a run would publish nothing."
+    if not ticked:
+        return "Tick at least one product — Next stays off until then."
     dropped = eligible - ticked
     if not dropped:
         return f"Next saves all {eligible} eligible row(s) and goes on to the copy."
