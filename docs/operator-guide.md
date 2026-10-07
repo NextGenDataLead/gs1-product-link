@@ -345,6 +345,12 @@ some pages may be live and some records may already exist for the rows that land
 it against this machine's record, in both directions. It only reads; nothing is written. Use it if
 you are ever unsure whether a page exists.
 
+**Data quality of everything live**, under it, is the follow-up list for every product this tool
+has ever put live — not just the last batch. Press **Build the report**: it checks each page on the
+website, then lists per product what is still to fix (in MyGS1, in the video mapping, or on the
+page). It takes a few seconds, writes nothing to the site, and is saved as
+`live-data-quality-report.md`, ready to forward to the client.
+
 **To send the result back to whoever asked for the batch:** press **Build the result sheet** on
 the run's card. It writes your scope list again, beside the run log, with what happened to each
 row added on the right — one line per product, the page address where there is one, and a plain
