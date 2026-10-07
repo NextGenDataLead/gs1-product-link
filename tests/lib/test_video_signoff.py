@@ -27,10 +27,12 @@ from lib.video_signoff import (
     FILL,
     REJECTED,
     UNCHANGED,
+    Clash,
     column_options,
     columns,
     is_header,
     looks_like_an_export,
+    mapping_context,
     plan,
     read_sheet,
 )
@@ -482,3 +484,89 @@ def test_a_gs1_export_is_recognised_as_one_not_read_as_a_sheet() -> None:
 
     assert looks_like_an_export(export)
     assert not looks_like_an_export(sheet)  # a "gtin" column alone is an ordinary sign-off sheet
+
+
+# --- mapping_context: the figures beside a plan agree with the report's -------------------------
+
+
+def test_a_clash_already_in_the_mapping_is_counted_though_the_sheet_only_agrees_with_it() -> None:
+    """The pilot's case: both Super Trap rows are confirmed, so the sheet's rows are UNCHANGED —
+    and the panel said 0 clashes beside report §1b's 1. It counts the mapping's own clash now."""
+    vmap = VideoMap(
+        by_language={
+            "nl": [
+                VideoMapEntry(file="Super Trap.mp4", gtin=_GTIN13),
+                VideoMapEntry(file="Super Trap.mpg", gtin=_GTIN14),
+            ],
+            "fr": [],
+        }
+    )
+    decided = plan(
+        _sheet(("nl", "Super Trap.mp4", _GTIN13), ("nl", "Super Trap.mpg", _GTIN13)),
+        vmap,
+        exported=_EXPORTED,
+        languages=_LANGUAGES,
+    )
+
+    context = mapping_context(decided, vmap, _LANGUAGES)
+
+    assert {row.outcome for row in decided.rows} == {"unchanged"}
+    assert context.clashes == (Clash(_GTIN14, "nl", ("Super Trap.mp4", "Super Trap.mpg")),)
+    assert context.new_clashes == frozenset()
+    assert context.clashing_products == 1
+
+
+def test_a_clash_this_sheet_would_create_is_counted_apart_from_the_mapping() -> None:
+    vmap = VideoMap(
+        by_language={
+            "nl": [
+                VideoMapEntry(file="Roll Light Summer.mpg", gtin=""),
+                VideoMapEntry(file="Roll Light Winter.mpg", gtin=""),
+            ],
+            "fr": [],
+        }
+    )
+    grid = _sheet(
+        ("nl", "Roll Light Summer.mpg", _GTIN13), ("nl", "Roll Light Winter.mpg", _GTIN13)
+    )
+    decided = plan(grid, vmap, exported=_EXPORTED, languages=_LANGUAGES)
+
+    context = mapping_context(decided, vmap, _LANGUAGES)
+
+    assert context.clashes == ()
+    assert context.new_clashes == frozenset({_GTIN14})
+    assert context.clashing_products == 1
+
+
+def test_unset_is_the_mappings_rows_with_no_gtin_whatever_the_sheet_says() -> None:
+    """The doctor's figure — 16 left blank plus 2 rejected made 18 on the pilot."""
+    vmap = VideoMap(
+        by_language={
+            "nl": [VideoMapEntry(file="a.mpg", gtin=""), VideoMapEntry(file="b.mpg", gtin="skip")],
+            "fr": [VideoMapEntry(file="c.mpg", gtin="")],
+        }
+    )
+    decided = plan(_sheet(("nl", "a.mpg", "")), vmap, exported=_EXPORTED, languages=_LANGUAGES)
+
+    assert mapping_context(decided, vmap, _LANGUAGES).unset == 2
+
+
+def test_a_sheet_adding_a_third_file_to_an_existing_clash_is_not_a_new_one() -> None:
+    """Otherwise "1 already in the mapping · 1 from this sheet" would describe one product."""
+    vmap = VideoMap(
+        by_language={
+            "nl": [
+                VideoMapEntry(file="a.mp4", gtin=_GTIN13),
+                VideoMapEntry(file="a.mpg", gtin=_GTIN13),
+                VideoMapEntry(file="a.mov", gtin=""),
+            ],
+            "fr": [],
+        }
+    )
+    decided = plan(_sheet(("nl", "a.mov", _GTIN13)), vmap, exported=_EXPORTED, languages=_LANGUAGES)
+
+    context = mapping_context(decided, vmap, _LANGUAGES)
+
+    assert decided.rows[0].outcome == "ambiguous"
+    assert context.new_clashes == frozenset()
+    assert context.clashing_products == 1

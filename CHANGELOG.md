@@ -183,6 +183,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **The Data screen's eligible table keeps its column headers in view while its rows scroll**
   (operator feedback, 2026-10-07). A `sticky-head` class in `ui/theme.py`, opaque in both themes.
+- **The sign-off review's figures agree with the rest of the app** (operator feedback, 2026-10-07).
+  *Two-video clashes* counted only rows this sheet would turn into a clash, so it read 0 beside
+  report §1b's 2; it now counts products, the mapping's plus the sheet's (`lib.video_signoff.
+  mapping_context`), and lists the mapping's own. *Left blank* names the mapping's rows with no GTIN
+  (the doctor's 18 = 16 blank + 2 rejected on noviplast). *Could not be used* is headed *Rejected*,
+  matching its figure, in the panel and in report §1d. Figure labels wrap inside their column.
 - **The mapping is no longer edited in the shell.** *The mapping, file by file* — the row-by-row
   editor, its coverage figures and fuzzy hints — is removed from the Data screen; the operator
   edits `videos/mapping.yml` directly (the guide shows how). The sign-off sheet import stays and is

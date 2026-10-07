@@ -301,8 +301,8 @@ def test_a_sheet_is_named_dated_and_counted_in_one_sentence() -> None:
     assert "signoff-20261006-101500.xlsx" in sheet
     assert (
         "Of its 7 rows: **2** would fill an empty slot, 1 already match, **1** disagree with what "
-        "is signed off, **1** would give one product two videos, **1** cannot be applied, and 1 "
-        "are still blank." in sheet
+        "is signed off, **1** would give a product a new two-video clash (1b lists the 2 already "
+        "in the selection), **1** are rejected, and 1 are still blank." in sheet
     )
 
 
@@ -315,7 +315,7 @@ def test_fills_are_a_count_and_never_a_row() -> None:
 def test_conflicts_and_rejections_are_tables_led_by_the_sheets_own_row_number() -> None:
     """The rejection is the table the operator forwards verbatim, so the sheet's text is quoted."""
     sheet = _part(_render(VideoReport(_status(), _review())), "d")
-    person, _, fix = sheet.partition("Cannot be applied")
+    person, _, fix = sheet.partition("Rejected — for the client")
 
     assert [row[0] for row in _rows(person)] == ["5", "6"]
     rejected = _rows(fix)

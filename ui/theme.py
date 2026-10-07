@@ -266,7 +266,11 @@ body { background: var(--paper) !important; color: var(--ink) !important;
 .figure-row     { display: grid; gap: var(--space-4) var(--space-5); width: 100%;
                   grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
                   align-items: start; margin-bottom: var(--space-4); }
-.figure-block   { max-width: 13rem; }
+.figure-block   { max-width: 13rem; min-width: 0; }
+/* A label wider than its column wraps inside it. The block is a flex column aligned to the start,
+   so its children size to their text; six figures on a sign-off review ran one label into the
+   next ("…WOULD BE FILLEDCONFLICT(S)"). */
+.figure-block > .figure-label, .figure-block > .figure-meaning { max-width: 100%; }
 .figure-meaning { font-size: var(--text-micro); color: var(--ink-soft); line-height: 1.45;
                   margin-top: var(--space-1); }
 .band-quiet   { border-color: var(--rule); color: var(--ink-soft);
