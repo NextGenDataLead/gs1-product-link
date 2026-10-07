@@ -98,11 +98,7 @@ def render() -> None:
             "GET against a barcode from your own catalogue."
         ).classes("note mt-4")
 
-        with ui.row().classes("items-center gap-3 mt-6") as busy:
-            ui.spinner(size="1.6em")
-            ui.label("Running the checks…").classes("note")
-            elapsed = ui.label("0s").classes("note mono")
-        busy.set_visibility(False)
+        busy, elapsed = _busy_row()
 
         status = ui.label("").classes("note mt-4")
         results = ui.column().classes("w-full gap-0")
@@ -129,6 +125,17 @@ def render() -> None:
 
         # On arrival, every time: each visit is a fresh run, and nothing earlier is shown.
         ui.timer(0, go, once=True)
+
+
+def _busy_row() -> tuple[ui.row, ui.label]:
+    """The loading state — a spinner, what is happening, and the seconds so far — hidden until a
+    run starts. The counter is what tells a slow login apart from a screen that stopped."""
+    with ui.row().classes("items-center gap-3 mt-6") as busy:
+        ui.spinner(size="1.6em")
+        ui.label("Running the checks…").classes("note")
+        elapsed = ui.label("0s").classes("note mono")
+    busy.set_visibility(False)
+    return busy, elapsed
 
 
 def _finished_at() -> str:
