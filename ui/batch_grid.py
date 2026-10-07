@@ -14,6 +14,12 @@ operator reads it**:
 The funnel counts the same split in **products** (distinct barcodes), not spreadsheet rows: the
 pilot's own list carries one barcode on two rows, and a run publishes products.
 
+**The rows are the uploaded list; the ticks are the saved batch.** The grid is built from the list
+as it arrived, every row of it, and a row is ticked when the saved selection names its barcode — so
+a restart shows the whole list with the batch the later screens act on ticked, never a different
+one. A new upload replaces both, so everything arrives ticked again. Next saves the ticked rows and
+nothing else: the saved file *is* the batch, and every screen after this one counts it as such.
+
 **A tick survives anything but a new list.** Unticked rows are remembered per client for the life
 of the process, so a mapping edit that rebuilds this step — a video arriving can make a product
 eligible — does not cost the operator the choices they had made.
@@ -22,7 +28,7 @@ eligible — does not cost the operator the choices they had made.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -57,6 +63,9 @@ class Ticks:
     """The rows the operator unticked, per client, for the life of the process. See the module."""
 
     unticked: set[int] = field(default_factory=set)
+    #: Whether :attr:`unticked` has been read from the saved batch yet. Cleared with it when a new
+    #: list arrives, so the next build seeds again — from the upload, which ticks everything.
+    seeded: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,11 +170,13 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
     caption: ui.label,
     ticks: Ticks,
     counted: Callable[[Funnel], None],
+    saved: frozenset[str],
+    target: Path,
 ) -> None:
     """Step 4: the list split four ways, the eligible table, and the save behind Next.
 
     Args:
-        sheet: The selection list as read.
+        sheet: The list as uploaded — every row, whatever was saved since.
         products: The export's products.
         verdict: :func:`lib.eligibility.eligibility` over the products the list names.
         record: Called with where the save was kept and what it holds, so the page can note which
@@ -174,6 +185,8 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
         caption: The line above Next, kept current with :func:`save_line`.
         ticks: The rows unticked so far — read to build, written on every change.
         counted: Called with the funnel whenever a tick changes.
+        saved: The barcodes of the saved batch. Seeds the ticks once per list — see :class:`Ticks`.
+        target: Where Next writes the batch: the control file a run reads, not the upload.
     """
     exported = {product.gtin14 for product in products}
     matched, unmatched = rows_in_export(sheet, exported)
@@ -199,6 +212,9 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
     held = [every[n] for n in matched if not verdict.is_eligible(str(every[n][_GTIN]))]
     eligible = [every[n] for n in matched if verdict.is_eligible(str(every[n][_GTIN]))]
     bare = [row for row in eligible if row[_VIDEO]]
+    if not ticks.seeded:
+        ticks.unticked = unticked_by(eligible, saved)
+        ticks.seeded = True
 
     if verdict.problem:
         theme.band(f"No product can be called eligible: {verdict.problem}.", "danger")
@@ -244,10 +260,10 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
     grid.on_select(describe)
 
     def save() -> bool:
-        # Everything not eligible is kept, always, and never counted as chosen: nothing can run
-        # it, and keeping it is what lets the result sheet name it afterwards.
-        keep = {int(row[_ROW]) for row in grid.selected} | {int(r[_ROW]) for r in (*missing, *held)}
-        chosen = sheet.keeping(keep)
+        # The ticked rows and nothing else. Keeping the not-eligible rows too made every later
+        # screen count them as chosen — "24 of 118 ticked" for a batch of 3. The result sheet
+        # names them from the upload instead (``lib.result_sheet``).
+        chosen = batch_of(sheet, {int(row[_ROW]) for row in grid.selected}, target)
         try:
             saved = process_list_edit.save_sheet(chosen)
         except ProcessListError as exc:
@@ -258,6 +274,25 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
         return True
 
     commit["save"] = save
+
+
+def unticked_by(eligible: list[dict[str, Any]], saved: frozenset[str]) -> set[int]:
+    """The eligible rows the saved batch does not name — what a fresh build starts unticked. Pure.
+
+    By barcode, not by row: the batch file is a subset of the upload and renumbers it. A barcode on
+    two rows of the upload is ticked on both, which is one product either way.
+    """
+    return {int(row[_ROW]) for row in eligible if row[_GTIN] not in saved}
+
+
+def batch_of(sheet: ProcessListSheet, ticked: set[int], target: Path) -> ProcessListSheet:
+    """What Next writes: the ticked rows of the uploaded list, in its order, at ``target``. Pure.
+
+    Nothing else — not the rows the export lacks, not the held ones. The file a run reads *is* the
+    batch; a row kept there "so the result sheet can name it" was counted as chosen by every
+    screen after this one.
+    """
+    return replace(sheet.keeping(ticked), path=target)
 
 
 def _held_title(held: list[dict[str, Any]]) -> str:
@@ -357,7 +392,8 @@ def _scope_table(
     theme.subhead(
         f"Eligible ({len(rows)}) — tick the ones to publish",
         explain=(
-            "Every eligible row arrives ticked. Untick a product to leave it out of this batch. "
+            "The saved batch arrives ticked — every eligible row, for a list just uploaded. Untick "
+            "a product to leave it out of this batch. "
             "The Video column names the languages a product goes live without a video in. Filters "
             "change only what you can see, never what is ticked, and the tick buttons act on the "
             "rows the filters are showing — so you can filter to twenty rows, untick all twenty, "

@@ -35,7 +35,7 @@ does the I/O.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -47,7 +47,10 @@ from lib.records import RunOutcome, SkippedUnit
 IN_SCOPE: Final = "yes"
 #: On the uploaded list, taken off the control file before the run. The operator's own decision.
 NOT_SELECTED: Final = "not selected"
-#: On the control file, and the export has no row for it. Nothing else in the tool reports this:
+#: On the uploaded list, and the Data screen held it — missing data, two videos, no image. It had
+#: no tick box there, so it is the data's doing and not the operator's; the reason is in ``detail``.
+NOT_ELIGIBLE: Final = "not eligible"
+#: On the list, and the export has no row for it. Nothing else in the tool reports this:
 #: it produces no error, no plan row and no count, only a total one smaller than expected.
 NOT_IN_EXPORT: Final = "not in export"
 
@@ -69,6 +72,13 @@ LEGEND: Final[tuple[tuple[str, str, str], ...]] = (
         NOT_SELECTED,
         "You uploaded this row but took it off the list before the run, so the run never "
         "considered it. Nothing was published and nothing failed.",
+    ),
+    (
+        "in_scope",
+        NOT_ELIGIBLE,
+        "The export carries this product, but it could not be chosen: a mandatory value is blank "
+        "in MyGS1, the client confirmed two videos for one language, or there is no product "
+        "image. The detail column says which. Fix that and it can be chosen next time.",
     ),
     (
         "in_scope",
@@ -146,6 +156,7 @@ def build_rows(  # noqa: PLR0913 — five named inputs read better than a contex
     outcomes: Sequence[RunOutcome],
     skipped: Sequence[SkippedUnit],
     languages: Sequence[str],
+    not_eligible: Mapping[str, str] | None = None,
 ) -> list[ScopeRow]:
     """Join the uploaded list against what the run did, one row per SKU.
 
@@ -160,12 +171,16 @@ def build_rows(  # noqa: PLR0913 — five named inputs read better than a contex
         outcomes: The run log, as read.
         skipped: ``Plan.skipped`` — units the plan dropped before classification.
         languages: The client's configured languages, in order.
+        not_eligible: ``{gtin14: why}`` from :func:`lib.eligibility.eligibility` — the rows the Data
+            screen offered no tick box for. Never in the batch file, so the plan never held them;
+            this is where their reason comes from.
 
     Returns:
         One :class:`ScopeRow` per data row of ``sheet``, in the sheet's own order.
     """
     by_unit = {(canon_gtin(o.gtin), o.language): o for o in outcomes}
     held = {(canon_gtin(s.gtin), s.language): s for s in skipped}
+    why_not = not_eligible or {}
 
     rows = []
     for index in range(len(sheet.rows)):
@@ -174,13 +189,17 @@ def build_rows(  # noqa: PLR0913 — five named inputs read better than a contex
             ScopeRow(
                 cells=list(sheet.rows[index]),
                 gtin=gtin,
-                in_scope=_in_scope(gtin, selected, exported),
+                in_scope=_in_scope(gtin, selected, exported, why_not),
                 # A row with a blank barcode matches no unit, which is right: it is a row of
                 # the operator's file that names no product.
                 units={
-                    language: _unit(
-                        by_unit.get((gtin, language)) if gtin else None,
-                        held.get((gtin, language)) if gtin else None,
+                    language: (
+                        UnitResult(status=HELD, page="", detail=why_not[gtin])
+                        if gtin and gtin not in selected and gtin in why_not
+                        else _unit(
+                            by_unit.get((gtin, language)) if gtin else None,
+                            held.get((gtin, language)) if gtin else None,
+                        )
                     )
                     for language in languages
                 },
@@ -189,16 +208,26 @@ def build_rows(  # noqa: PLR0913 — five named inputs read better than a contex
     return rows
 
 
-def _in_scope(gtin: str | None, selected: Collection[str], exported: Collection[str]) -> str:
-    """The decision first, then the data fact.
+def _in_scope(
+    gtin: str | None,
+    selected: Collection[str],
+    exported: Collection[str],
+    not_eligible: Mapping[str, str],
+) -> str:
+    """Why a row is or is not in the batch — the data fact where there was no choice to make.
 
-    A row the operator took off the list was never considered, whatever the export holds, so
-    ``not selected`` wins over ``not in export``. Reporting it the other way round would blame
-    the data for a choice.
+    The Data screen offers a tick box only on an eligible row, so a row the export lacks or the
+    plan would hold was never the operator's to choose, and calling it ``not selected`` would send
+    them looking for a decision they did not make. ``not selected`` is left for the rows they
+    unticked.
     """
-    if gtin is None or gtin not in selected:
+    if gtin is None:
         return NOT_SELECTED
-    return IN_SCOPE if gtin in exported else NOT_IN_EXPORT
+    if gtin not in exported:
+        return NOT_IN_EXPORT
+    if gtin in selected:
+        return IN_SCOPE
+    return NOT_ELIGIBLE if gtin in not_eligible else NOT_SELECTED
 
 
 def _unit(outcome: RunOutcome | None, skip: SkippedUnit | None) -> UnitResult:

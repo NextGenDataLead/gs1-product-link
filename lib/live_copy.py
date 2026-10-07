@@ -77,6 +77,8 @@ class Bucket(StrEnum):
     NEEDS_TEXT = "needs_text"
     #: Missing text somewhere, and the export carries nothing to write it from.
     NO_INPUTS = "no_inputs"
+    #: The plan will hold it whatever the site says — not eligible on the Data screen.
+    HELD = "held"
 
 
 @dataclass(frozen=True)
@@ -92,10 +94,6 @@ class ProductStatus:
     #: two read differently to an operator: no page is work the pipeline has not done yet, a blank
     #: field on a live page is work it did and lost — the ACF write path fails silently.
     absent_languages: tuple[str, ...] = ()
-    #: Whether E24 will hold this product anyway. Reported, never used to exclude: a product the
-    #: operator put on the list and cannot yet have is a different fact from one they never asked
-    #: about, and generating for it is their call to make.
-    held_for_video: bool = False
 
     @property
     def needs_generation(self) -> bool:
@@ -130,6 +128,11 @@ class LiveCopyReport:
         return self._of(Bucket.NO_INPUTS)
 
     @property
+    def held(self) -> tuple[ProductStatus, ...]:
+        """Not eligible: the plan holds it, so no text written for it would ever be read."""
+        return self._of(Bucket.HELD)
+
+    @property
     def counts(self) -> dict[str, int]:
         """The figures, in one place so a screen and a CLI cannot disagree about them."""
         return {
@@ -137,6 +140,7 @@ class LiveCopyReport:
             "has_text": len(self.has_text),
             "needs_text": len(self.needs_text),
             "no_inputs": len(self.no_inputs),
+            "held": len(self.held),
         }
 
 
@@ -166,7 +170,7 @@ def classify(
     live: Mapping[tuple[str, str], LiveText],
     languages: Iterable[str],
     *,
-    held_for_video: Iterable[str] = (),
+    held: Iterable[str] = (),
 ) -> LiveCopyReport:
     """Bucket every product against what the site carries.
 
@@ -177,14 +181,18 @@ def classify(
             ordinary state of a product that has never published.
         languages: The client's configured languages. Every one is required for a product to
             count as done — a product live in Dutch and absent in French needs copy.
-        held_for_video: GTINs E24 will hold. Annotated, never excluded.
+        held: GTINs the plan will hold (:func:`lib.holds.held_products`) — what the Data screen
+            shows without a tick box. Bucketed :attr:`Bucket.HELD` before the site is consulted:
+            the saved selection keeps those rows only so a run can name them, and treating them
+            as chosen offered to write text for 3 held products in a batch of 3 ticked ones.
+            Counted rather than dropped, so a hold still reads as outstanding work.
 
     Returns:
         The report. Products keep the order they were given, so a screen renders them in the
         order the operator's own list did.
     """
     languages = tuple(languages)
-    held = {canon_gtin(gtin) for gtin in held_for_video}
+    holds = {canon_gtin(gtin) for gtin in held}
     fields = _configured_fields(live.values())
     statuses = []
     for product in products:
@@ -197,14 +205,14 @@ def classify(
                 absent.append(language)
             elif not found.has_text:
                 missing.append(language)
+        bucket = Bucket.HELD if gtin in holds else _bucket(bool(missing), has_copy_inputs(product))
         statuses.append(
             ProductStatus(
                 gtin=gtin,
                 name=_name(product, languages),
-                bucket=_bucket(bool(missing), has_copy_inputs(product)),
+                bucket=bucket,
                 missing_languages=tuple(missing),
                 absent_languages=tuple(absent),
-                held_for_video=gtin in held,
             )
         )
     return LiveCopyReport(languages=languages, fields=fields, products=tuple(statuses))

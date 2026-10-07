@@ -45,7 +45,7 @@ from typing import Any
 from nicegui import events, ui
 
 from lib import batch_reset, input_layout, provenance
-from lib.config import ClientConfig
+from lib.config import ClientConfig, ProcessListConfig
 from lib.eligibility import eligibility
 from lib.errors import ProcessListError
 from lib.input_layout import export_archive_path, write_readme
@@ -155,6 +155,7 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             nonlocal ready
             if which in {"list", "cleared"}:
                 ticks.unticked.clear()
+                ticks.seeded = False
             in_force = context.batch_in_force(cfg)
             ready = in_force is not None and in_force.ready
             draw_choose()
@@ -230,7 +231,8 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
     """Read the list and the export, decide eligibility once, and build step 4 under it."""
     assert cfg.process_list is not None  # a batch is only ready with a list
     try:
-        sheet = process_list_edit.read_sheet(cfg.process_list)
+        batch = process_list_edit.read_sheet(cfg.process_list)
+        sheet = _uploaded(cfg.process_list, batch)
     except ProcessListError as exc:
         theme.band(str(exc), "danger")
         return
@@ -259,10 +261,10 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
         explain=(
             "Your list, split the way a run will treat it: not in the export, not eligible (and "
             "why), missing a video, and the eligible products — the only ones you choose between. "
-            "Every eligible row arrives ticked; untick a product to leave it out of this batch. "
-            "Next saves your choice and moves on, keeping every row that is not eligible in the "
-            "file as it was. Every save is kept, dated, under process/selection/. Nothing is "
-            "published here."
+            "Your saved batch arrives ticked, or every eligible row for a list just uploaded; "
+            "untick a product to leave it out of this batch. Next saves the ticked products — "
+            "exactly those, and nothing else, are what the next screens work on. Every save is "
+            "kept, dated, under process/selection/. Nothing is published here."
         ),
     ):
         batch_grid.choose(
@@ -274,7 +276,25 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             caption=caption,
             ticks=ticks,
             counted=lambda counts: batch_grid.draw_funnel(coverage, counts),
+            saved=batch.listed_gtins(),
+            target=batch.path,
         )
+
+
+def _uploaded(config: ProcessListConfig, batch: ProcessListSheet) -> ProcessListSheet:
+    """The list as it arrived, which the grid shows whatever was saved since.
+
+    The saved batch holds only the ticked rows, so drawing the grid from it would show three rows
+    after a restart and lose the rest until the list was uploaded again. The upload is kept beside
+    it from the moment it lands; a control file placed by hand has none until its first save, and
+    then it *is* the list as it arrived.
+    """
+    upload = input_layout.archive_path(_resolve(config.path))
+    if not upload.is_file():
+        return batch
+    return process_list_edit.read_sheet(
+        ProcessListConfig(path=str(upload), gtin_column=config.gtin_column)
+    )
 
 
 # --- Step 3: the videos ------------------------------------------------------------
