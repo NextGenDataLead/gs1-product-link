@@ -91,11 +91,6 @@ _BATCHES: dict[str, _Session] = {}
 #: The rows unticked in step 4, per client, for the life of the process — see :mod:`ui.batch_grid`.
 _TICKS: dict[str, batch_grid.Ticks] = {}
 
-#: How long the success message stands before the screen changes under it. A notification does not
-#: survive a page change, so this — not ``theme.notify_ok``'s own timeout — is how long it is
-#: actually on screen. The message is one word and the wait is four seconds, so the two agree.
-_TOAST_BEAT = 4.0
-
 
 def _resolve(path: str) -> Path:
     """A configured path, against the repository root — every path in clients.yml is relative."""
@@ -129,7 +124,7 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             theme.blocked(
                 "clients.yml did not load, so this screen has nothing to work from.",
                 link_label="Open Setup →",
-                route="/",
+                route="/setup",
             )
             return
 
@@ -210,11 +205,12 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             save = commit.get("save")
             if save is not None and not save():
                 return  # refused, and it said why — stay put rather than carry the refusal away
-            # A beat before leaving, so the one-word receipt is read: notifications do not survive
-            # a page change. Disabled for the wait, so it is not pressed again meanwhile.
-            onward.disable()
+            # Straight on. There was a four-second beat here so the one-word "Saved" could be
+            # read before the page changed, and it read as a click that did nothing — the
+            # operator clicked again and took the second click for the one that worked. Content
+            # opening is the receipt.
             progress.of(cid).advance("/data")
-            ui.timer(_TOAST_BEAT, lambda: ui.navigate.to("/content"), once=True)
+            ui.navigate.to("/content")
 
         onward, caption = theme.onward("Next", save_and_go)
         batch_changed("")

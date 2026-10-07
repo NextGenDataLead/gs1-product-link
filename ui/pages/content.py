@@ -60,7 +60,7 @@ def render() -> None:
             theme.blocked(
                 "clients.yml did not load, so this screen has nothing to work from.",
                 link_label="Open Setup →",
-                route="/",
+                route="/setup",
             )
             return
         if cfg.generator is None:

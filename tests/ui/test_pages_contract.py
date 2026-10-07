@@ -58,13 +58,14 @@ PANEL_MODULES: Final = (
 #: A screen added without either an entry here or a rail entry is unreachable, which is the point
 #: of checking both directions.
 #:
-#: Empty, and kept anyway. ``/videos`` lived here for as long as the rail was a single numbered
-#: list of six — an entry would have numbered a detour as a step of the run. Splitting the rail
-#: into the batch and the tools gave it somewhere honest to sit, so it moved; later it folded into
-#: the Data screen and the route went altogether. The next screen that
-#: is genuinely reachable only from another one still needs a home, and it should be this rather
-#: than a quiet exemption.
-UNLISTED_ROUTES: Final[dict[str, str]] = {}
+#: ``/videos`` lived here for as long as the rail was a single numbered list of six — an entry
+#: would have numbered a detour as a step of the run. Splitting the rail into the batch and the
+#: tools gave it somewhere honest to sit, so it moved; later it folded into the Data screen and the
+#: route went altogether. The next screen that is genuinely reachable only from another one still
+#: needs a home, and it should be this rather than a quiet exemption.
+UNLISTED_ROUTES: Final[dict[str, str]] = {
+    "/": "where the window opens; redirects to /data, since step 1 is where a batch starts",
+}
 
 #: NiceGUI's own machinery, not ours. ``/favicon.ico`` is registered when the app starts, so it
 #: appears once any test in the session has run the app's lifespan (the Data screen smoke test).

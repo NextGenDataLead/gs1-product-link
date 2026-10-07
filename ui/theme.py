@@ -390,7 +390,7 @@ WAVE: Final = (
 #: The video mapping sat here too, as "one input file's editor". It is not: it decides whether a
 #: product can be published at all, so it moved onto the Data screen, where the batch is chosen.
 TOOLS: Final = (
-    Screen("Setup", "/", "This machine"),
+    Screen("Setup", "/setup", "This machine"),
     Screen("Runs", "/runs", "History"),
 )
 
