@@ -106,15 +106,17 @@ def _live_screen(
     this product have a tagline and an Eigenschappen block?* — has an authoritative source, and it
     is the site.
 
-    So there is one button that asks, and three numbers that come back, each labelled with what
-    happens to it: **process** (no live text and the export can supply it), **skip** (no live text
-    and it cannot — a MyGS1 worklist, not a button), and **skip** (live text already).
+    **Three numbered steps, in the order they are done** (operator feedback, 2026-10-07): check the
+    live site, generate the content, review it. One button asks the site, and three numbers come
+    back, each labelled with what happens to it: **generate** (no live text and the export can
+    supply it), **skip** (no live text and it cannot — a MyGS1 worklist, not a button), and **skip**
+    (live text already).
 
     The third is skipped *by default*, and that is the only part a person has to decide: whether
     the inputs moved since the live text was written. Nothing here can tell — the site reports
     that a tagline exists, never which export values produced it, and the fingerprint that would
     say is in the ledger this screen exists to stop depending on. So it is a tick box, and the
-    ticks join the automatic set in **one** Process button: two buttons made the run two runs, and
+    ticks join the automatic set in **one** Generate button: two buttons made the run two runs, and
     an operator who pressed only the obvious one wrote half of what they meant to.
 
     The read is slow (a listing per language, then one request per page, because a language-scoped
@@ -138,12 +140,12 @@ def _live_screen(
         # something to update — the containers were created in reading order above, so building
         # them out of order does not move anything on screen.
         with action:
-            sync = _process_panel(cid, generator, ready, selection, refresh)
+            sync = _generate_panel(cid, generator, ready, selection, refresh)
         with picker:
             _override(payload, selection, sync)
 
     def draw_review() -> None:
-        # Redrawn after every Process, which ends in ``refresh``: drawn once at page load, the
+        # Redrawn after every Generate, which ends in ``refresh``: drawn once at page load, the
         # copy just written stayed off screen until the operator left and came back.
         review.clear()
         with review:
@@ -153,7 +155,7 @@ def _live_screen(
         show(await runner.run_json_off_the_loop(runner.report_live_copy_argv(cid)))
         draw_review()
 
-    with theme.section("What the site is missing"):
+    with theme.section("Check the live site", step=1):
         ui.label(
             "Two things on every product page are written by a machine: the tagline at the top "
             "and the Eigenschappen bullet list. Everything else — brand, size, material, barcode "
@@ -168,23 +170,32 @@ def _live_screen(
         with status:
             theme.band("Not checked yet — press the button to ask the site.")
 
-    with theme.section("Override: also process products that already have live text"):
+    with theme.section("Generate content", step=2):
         ui.label(
-            "The third figure above is skipped by default. Tick a product here to include it "
-            "anyway — for text that is live but whose GS1 data has moved since it was written. "
-            "Nothing on this machine can detect that for you: the site can say a tagline exists, "
-            "never which export values produced it. So it is your call, and nothing is ticked."
+            "Writes the tagline and the Eigenschappen list for the products step 1 found without "
+            "them, in every language."
         ).classes("note")
-        picker = ui.column().classes("w-full mt-3")
-        with picker:
-            ui.label("Check the live site first.").classes("note")
-
-    with theme.section("Write the text"):
-        action = ui.column().classes("w-full")
+        # Folded: it is the exception, and a step that opens on a list of tick boxes reads as
+        # though they are the step.
+        with (
+            ui.expansion("Override: also regenerate products that already have live text")
+            .classes("w-full mt-2 fold-tight")
+            .props("dense")
+        ):
+            ui.label(
+                "Those are skipped by default. Tick a product here to include it anyway — for "
+                "text that is live but whose GS1 data has moved since it was written. Nothing on "
+                "this machine can detect that for you: the site can say a tagline exists, never "
+                "which export values produced it. So it is your call, and nothing is ticked."
+            ).classes("note")
+            picker = ui.column().classes("w-full mt-3")
+            with picker:
+                ui.label("Check the live site first.").classes("note")
+        action = ui.column().classes("w-full mt-3")
         with action:
             ui.label("Check the live site first.").classes("note")
 
-    with theme.section("Review the text"):
+    with theme.section("Review the text", step=3):
         ui.label(
             "The last place this is read as text rather than as a count. Check it against the "
             "real product: this pipeline fails silently, and a 'validated N' figure proves only "
@@ -209,7 +220,7 @@ def _live_figures(payload: Any, result: Any) -> None:
     with theme.figures():
         theme.figure(
             str(counts["needs_text"]),
-            "no live text · process",
+            "no live text · generate",
             "the export can supply it, so these are written",
         )
         theme.figure(
@@ -277,7 +288,7 @@ def _override(payload: Any, selection: set[str], sync: Callable[[], None]) -> No
             ui.label(str(product.get("name") or "")).classes("note")
 
 
-def _process_panel(
+def _generate_panel(
     cid: str,
     generator: GeneratorConfig,
     ready: list[str],
@@ -334,15 +345,15 @@ def _process_panel(
                 detail="\n".join(output[-_FAILURE_LINES:]) or "(no output)",
             )
 
-    button = theme.action("Process", go)
+    button = theme.action("Generate content", go)
 
     def sync() -> None:
         total = len(chosen())
         picked = len(selection)
         caption.text = f"{total} product(s) will be written: {len(ready)} with no live text" + (
-            f", plus {picked} you ticked above." if picked else ", and nothing ticked above."
+            f", plus {picked} ticked under Override." if picked else "."
         )
-        button.set_text(f"Process {total} product(s)")
+        button.set_text(f"Generate content for {total} product(s)")
         button.set_enabled(bool(total))
 
     sync()

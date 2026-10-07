@@ -220,31 +220,31 @@ the Video column and the report all count from the file as it is now. Your ticks
 
 ## Step 2 — Content
 
-<img src="images/content.png" alt="The Content screen: a Generate section, an import area, and coverage figures reading 8 units to publish, 8 have copy, 0 pending." width="900">
+<img src="images/content.png" alt="The Content screen (an earlier version — it now has three numbered steps: check the live site, generate content, review the text)." width="900">
 
 **What this screen is for:** the tagline and the Eigenschappen text that go on each page. They are
-written by Claude, not taken from the spreadsheet.
+written by Claude, not taken from the spreadsheet. Everything else on the page — brand, size,
+material, barcode — comes from the GS1 export.
 
-**Where the text comes from — one of two places, depending on how your machine is set up:**
+The screen is three numbered steps. Do them in order.
 
-- **Generate the copy** — if this section shows a button, your machine can write the copy itself.
-  Press **Generate copy for this run** and wait; the output appears in a black panel as it goes.
-- **Import** — otherwise the maintainer writes it and sends you a file called
-  `generation_results.json`. Drop it on the upload area here.
+1. **Check the live site.** Press **Check the live site**. It asks the website which products in
+   your batch are missing the two texts, and answers with three numbers: *no live text · generate*
+   (these get written in step 2), *no live text · skip* (the export has nothing to write from —
+   that is fixed in MyGS1, not here) and *live text already · skip*. Nothing is written.
+2. **Generate content.** Press **Generate content for N product(s)**. N should be the first number
+   from step 1. The text is written in every language and replaces any earlier text for those
+   products. If a product's text is live but its GS1 data has changed since, open **Override** and
+   tick it to have it written again; nothing there is ticked unless you tick it. No button, but a
+   yellow note about a key? This machine cannot write text — ask your maintainer.
+3. **Review the text.** The text for this batch, per product, per language. **Read it.** This is
+   the last comfortable moment to catch a sentence that is wrong; after Publish it is on the live
+   site. Text from an earlier batch is never shown here.
 
-Either way the copy is written **fresh for this batch**. Generating or importing again replaces it
-rather than adding to it.
+**Done looks like:** every product in step 3 has text in every language, and no product is named
+as "no text yet". Then press **Next**.
 
-**Then read it.** *Coverage against the current export* gives three numbers — how many units this
-batch will publish, how many have copy, how many are still pending. You want the middle one to
-equal the first and the last to be zero. Below that, *Review the copy* shows the actual text, per
-product, per language. **Read it.** This is the last comfortable moment to catch a sentence that is
-wrong; after Publish it is on the live site.
-
-**Done looks like:** "N unit(s) to publish, all covered."
-
-**Stop if:** the pending number is not zero. Those products have no text and will be dropped from
-the batch silently.
+**Stop if:** step 3 names products with no text yet. They would be dropped from the batch silently.
 
 ---
 
