@@ -37,7 +37,7 @@ from typing import Any
 from nicegui import ui
 
 from lib.config import GeneratorConfig
-from ui import REPO_ROOT, batch_view, context, env_edit, runner, theme
+from ui import REPO_ROOT, batch_view, context, env_edit, progress, runner, theme
 
 
 def render() -> None:
@@ -49,6 +49,7 @@ def render() -> None:
         client_id=cid,
         environment=cfg.gs1.environment if cfg else None,
         facts=context.rail_facts(cid, cfg),
+        locked=context.locked_steps(cid, cfg),
     ):
         theme.heading(
             theme.eyebrow("Content"),
@@ -67,15 +68,31 @@ def render() -> None:
                 "This client has no `generator` block, so pages are published from feed copy only "
                 "and there is nothing to import."
             ).classes("note")
-            return
+        else:
+            # Which export and which ticks this copy is for. Generating against last quarter's
+            # export produces text for the right barcodes and the wrong products, and the only
+            # place that showed up before was the live site.
+            batch_view.render(context.batch_in_force(cfg))
 
-        # Which export and which ticks this copy is for. Generating against last quarter's
-        # export produces text for the right barcodes and the wrong products, and the only place
-        # that showed up before was the live site.
-        batch_view.render(context.batch_in_force(cfg))
+            results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
+            _live_screen(cid, cfg.generator, results_path, list(cfg.wordpress.languages))
 
-        results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
-        _live_screen(cid, cfg.generator, results_path, list(cfg.wordpress.languages))
+        _onward(cid)
+
+
+def _onward(cid: str) -> None:
+    """Next: the only way on to Preflight — see :mod:`ui.progress`.
+
+    Not gated on the copy. Whether every product this batch publishes has its text is the
+    preflight's own check, and a second opinion here would be a second thing to keep true.
+    """
+
+    def go() -> None:
+        progress.of(cid).advance("/content")
+        ui.navigate.to("/preflight")
+
+    _, caption = theme.onward("Next", go)
+    caption.text = "Next goes on to the preflight, which checks this batch's text is all there."
 
 
 def _live_screen(

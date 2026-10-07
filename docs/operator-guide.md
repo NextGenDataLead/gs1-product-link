@@ -41,9 +41,13 @@ A **batch** is one pass through those four. You will do it again next time there
 
 The strip down the left is how you move around. It has two halves, and the difference matters:
 
-- **The numbered four are the batch.** Work down them in order. Under each one the tool shows you
-  a small fact about where you stand — how old the spreadsheet is, how many rows are planned. They
-  are facts, not ticks: "today" tells you the file is recent, not that it is the right file.
+- **The numbered four are the batch, and they open in order.** Each time you start the tool only
+  **Data** is open; the next step opens when you press **Next** at the bottom of the one before
+  it, and the ones not reached yet are greyed out. Going back to an earlier step greys out the
+  steps after it again, until you press Next there once more — so a later screen never works on
+  something you might have changed. Under each one the tool shows you a small fact about where you
+  stand — how old the spreadsheet is, how many rows are planned. They are facts, not ticks:
+  "today" tells you the file is recent, not that it is the right file.
 - **Below the line is everything else.** *Setup* is the site settings, set up once and rarely
   touched. *Runs* is the record of what happened. Neither is a step; you go there when you need
   them. (The video mapping used to live here too. It is part of **Data** now, because it decides

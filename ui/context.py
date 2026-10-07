@@ -24,7 +24,7 @@ from lib.input_layout import archive_path
 from lib.provenance import history_path, read
 from lib.records import Plan, PlanSummary, ProductRecord, RunOutcome
 from lib.run_files import iter_logs, newest_log, stamp_of
-from ui import REPO_ROOT
+from ui import REPO_ROOT, progress
 
 
 @dataclass(frozen=True)
@@ -533,6 +533,12 @@ def _resolved(path: str) -> Path:
     """A configured path against the repository root. Every path in ``clients.yml`` is relative."""
     candidate = Path(path)
     return candidate if candidate.is_absolute() else REPO_ROOT / candidate
+
+
+def locked_steps(cid: str | None, cfg: ClientConfig | None) -> set[str]:
+    """The steps the rail draws without a link — none while the config will not load, the same
+    exemption as the route guard in :mod:`ui.app`."""
+    return set() if cfg is None else progress.of(cid).locked()
 
 
 def batch_in_force(cfg: ClientConfig) -> Batch | None:
