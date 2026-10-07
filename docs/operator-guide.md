@@ -256,7 +256,9 @@ as "no text yet". Then press **Next**.
 <img src="images/preflight.png" alt="The Preflight screen: a summary of 7 passed and 1 warning, a Ready band, and a list of individual checks each marked ok, warn or FAIL." width="900">
 
 **What this screen is for:** everything that can be checked before anything is written. It runs by
-itself when you arrive.
+itself when you arrive — a turning wheel and a seconds counter show it working — and there are no
+buttons to press. It checks the settings, this batch and its text, and then logs in to the website
+and to GS1. All of it is read-only: nothing is written. Every visit runs it again from scratch.
 
 Each line is one check, marked **ok**, **warn** or **FAIL**, with a sentence saying what it found
 and — when it failed — what to do about it. The verdict at the top is the one to read first.
@@ -265,12 +267,9 @@ and — when it failed — what to do about it. The verdict at the top is the on
 - **warn** — read it. The run can proceed; something is less than ideal.
 - **FAIL** — fix it before publishing. The remedy is printed under the check.
 
-Two buttons:
-
-- **Run offline checks** re-runs the cheap half, the one that ran automatically.
-- **Run everything, including credentials** also logs in to the website and to GS1. Both are
-  read-only — nothing is written. **Next stays off until this one has passed**, because a wrong
-  password found here costs you nothing, and found at step 4 costs you a half-finished batch.
+**Next stays off until the checks pass with no FAIL**, because a wrong password found here costs you
+nothing, and found at step 4 costs you a half-finished batch. Fixed something? Click **Preflight**
+in the rail to run the checks again.
 
 **Done looks like:** "Ready." — or "Ready, but read the warnings first", once you have read them.
 
