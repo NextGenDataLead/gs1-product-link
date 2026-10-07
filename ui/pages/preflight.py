@@ -18,7 +18,7 @@ from typing import Any, Final
 
 from nicegui import ui
 
-from ui import batch_view, context, progress, runner, theme
+from ui import context, progress, runner, theme
 
 #: The four statuses, only for tallying here — the rendering of a check lives in the theme, so
 #: this screen and the Setup screen's Test buttons cannot start showing the same check differently.
@@ -48,10 +48,6 @@ def render() -> None:
             "Everything that can be checked before anything is written — so a missing secret or "
             "a stale copy cache surfaces now, not after live pages exist.",
         )
-        # The batch these checks are about. A preflight that passes says the machine can publish,
-        # not that it would publish the right thing.
-        if cfg is not None:
-            batch_view.render(context.batch_in_force(cfg))
 
         def show(payload: Any, result: runner.CommandResult) -> None:
             results.clear()

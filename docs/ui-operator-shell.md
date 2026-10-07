@@ -294,10 +294,11 @@ which export each set of ticks was chosen against. The second is what makes the 
 possible at all, and a selection with no record reads as *not recorded* — a third answer, never as
 agreement and never as staleness. Every batch saved before this existed is in that state.
 
-**The batch in force is read from disk, on every screen.** `lib/batch.in_force` describes it and
-`ui/batch_view` renders it, on Content, Preflight and Publish — Data still reads it to decide
-whether there is a batch, but no longer shows the card (operator feedback, 2026-10-06: the uploads
-above it already say which files these are). It replaced three booleans held
+**The batch in force is read from disk, on every screen.** `lib/batch.in_force` describes it, and
+Data reads it to decide whether there is a batch. No screen shows it as a card any more: Data
+dropped it on 2026-10-06 (the uploads above it already say which files these are), and Content,
+Preflight and Publish on 2026-10-07 — with the steps opening only through Next (`ui/progress`),
+the batch on those screens is always the one just saved on Data, and gate 0 names the export. It replaced three booleans held
 for the life of the process, which gated whether the Data screen showed the selection at all: before
 this, restarting the shell hid the grid while a run went on consuming the file, as the band that
 replaced it said in so many words. A batch that is invisible and live at once is worse than either.
@@ -388,8 +389,8 @@ That is also why it moved: an input that decides a batch's size belongs where th
 
 **`/videos` was deleted, not kept as an unlisted route.** With no screen linking to it, a surviving
 route would have been a second live editor of one client-sign-off file, holding its own copy of the
-text and knowing nothing of the session below. What is left lives in two components beside
-`ui/batch_view.py`: `ui/video_signoff_panel.py` (step 3) and `ui/video_map_panel.py` (the session it
+text and knowing nothing of the session below. What is left lives in two components:
+`ui/video_signoff_panel.py` (step 3) and `ui/video_map_panel.py` (the session it
 writes through). Both are import-checked as `PANEL_MODULES`, and the AST contracts that
 used to stop at `ui/pages/` read `ui/*.py` too — a rule an extraction could escape by moving a
 handler one folder up is not a rule.

@@ -17,10 +17,11 @@ from pathlib import Path
 from typing import Any
 
 from lib.batch import Batch, in_force
-from lib.config import ClientConfig, get_client, resolve_client_id
-from lib.errors import ConfigError
+from lib.config import ClientConfig, ProcessListConfig, get_client, resolve_client_id
+from lib.errors import ConfigError, ProcessListError
 from lib.gates import Mode
 from lib.input_layout import archive_path
+from lib.process_list import load_process_list
 from lib.provenance import history_path, read
 from lib.records import Plan, PlanSummary, ProductRecord, RunOutcome
 from lib.run_files import iter_logs, newest_log, stamp_of
@@ -300,6 +301,29 @@ class Scope:
     #: Empty when the doctor predates this field; callers must treat that as "scope unknown"
     #: rather than as "nothing is in scope".
     gtins: frozenset[str]
+
+
+def batch_scope(cid: str, cfg: ClientConfig) -> Scope | None:
+    """The saved batch as a :class:`Scope` — the products Next saved on Data, nothing else.
+
+    ``None`` when there is no list or it will not read. Asked of the files rather than of the
+    doctor because the screen that needs it (Content's review) runs before the preflight does,
+    and passing it nothing made the review show every product the results file had ever held.
+    """
+    if cfg.process_list is None:
+        return None
+    try:
+        named = load_process_list(
+            ProcessListConfig(
+                path=str(_resolved(cfg.process_list.path)),
+                gtin_column=cfg.process_list.gtin_column,
+            )
+        )
+    except ProcessListError:
+        return None
+    products = load_products(cid)
+    gtins = frozenset(product.gtin for product in products if product.gtin14 in named)
+    return Scope(in_scope=len(gtins), total=len(products), detail="", empty=not gtins, gtins=gtins)
 
 
 def scope_from(payload: Any) -> Scope | None:

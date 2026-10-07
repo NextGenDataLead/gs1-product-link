@@ -36,8 +36,8 @@ from typing import Any
 
 from nicegui import ui
 
-from lib.config import GeneratorConfig
-from ui import REPO_ROOT, batch_view, context, env_edit, progress, runner, theme
+from lib.config import ClientConfig, GeneratorConfig
+from ui import REPO_ROOT, context, env_edit, progress, runner, theme
 
 
 def render() -> None:
@@ -69,13 +69,8 @@ def render() -> None:
                 "and there is nothing to import."
             ).classes("note")
         else:
-            # Which export and which ticks this copy is for. Generating against last quarter's
-            # export produces text for the right barcodes and the wrong products, and the only
-            # place that showed up before was the live site.
-            batch_view.render(context.batch_in_force(cfg))
-
             results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
-            _live_screen(cid, cfg.generator, results_path, list(cfg.wordpress.languages))
+            _live_screen(cid, cfg, cfg.generator, results_path, list(cfg.wordpress.languages))
 
         _onward(cid)
 
@@ -96,7 +91,11 @@ def _onward(cid: str) -> None:
 
 
 def _live_screen(
-    cid: str, generator: GeneratorConfig, results_path: Path, languages: list[str]
+    cid: str,
+    cfg: ClientConfig,
+    generator: GeneratorConfig,
+    results_path: Path,
+    languages: list[str],
 ) -> None:
     """The screen, driven by what the **site** carries rather than by the ledger.
 
@@ -143,8 +142,16 @@ def _live_screen(
         with picker:
             _override(payload, selection, sync)
 
+    def draw_review() -> None:
+        # Redrawn after every Process, which ends in ``refresh``: drawn once at page load, the
+        # copy just written stayed off screen until the operator left and came back.
+        review.clear()
+        with review:
+            _review(context.batch_scope(cid, cfg), results_path, languages)
+
     async def refresh() -> None:
         show(await runner.run_json_off_the_loop(runner.report_live_copy_argv(cid)))
+        draw_review()
 
     with theme.section("What the site is missing"):
         ui.label(
@@ -183,7 +190,8 @@ def _live_screen(
             "real product: this pipeline fails silently, and a 'validated N' figure proves only "
             "that N things were shaped correctly."
         ).classes("note")
-        _review(None, results_path, languages)
+        review = ui.column().classes("w-full gap-0")
+    draw_review()
 
 
 def _live_figures(payload: Any, result: Any) -> None:
@@ -362,34 +370,25 @@ def _review(scope: context.Scope | None, results_path: Path, languages: list[str
         return
 
     if not entries:
-        ui.label("No copy has been written for this run yet.").classes("note")
+        ui.label("No text written for this batch yet.").classes("note")
         return
 
+    if scope is None:
+        ui.label("The saved batch could not be read, so there is nothing to review.").classes(
+            "note"
+        )
+        return
+    # This batch's products and nothing else. Text left in the file from an earlier batch is not
+    # this batch's to review, and nothing publishes it.
     split = context.split_results(entries, scope)
-    if not split.scoped:
-        ui.label(f"{len(entries)} GTIN(s) in this file").classes("note mb-1")
-        theme.band(
-            "Showing the whole file: the preflight did not report which GTINs are in scope, so "
-            "this list is everything it holds and not necessarily this run's batch.",
-            "warn",
-        )
-        _entries(split.in_scope, languages, results_path)
-        return
-
-    ui.label(
-        f"{len(split.in_scope)} of {len(entries)} GTIN(s) in this file are in scope for this run"
-    ).classes("note mb-3")
     if not split.in_scope:
-        theme.band(
-            "None of this run's GTINs have copy in this file — it was written for a different "
-            "batch. The coverage figures above say how many units are uncovered.",
-            "warn",
-        )
+        ui.label("No text written for this batch yet.").classes("note")
+        return
     _entries(split.in_scope, languages, results_path)
 
     if split.missing:
         ui.label(
-            f"{len(split.missing)} in-scope GTIN(s) have no copy at all: "
+            f"{len(split.missing)} product(s) in this batch have no text yet: "
             + ", ".join(split.missing[:_MAX_NAMED])
             + (
                 f" …and {len(split.missing) - _MAX_NAMED} more"
@@ -397,20 +396,6 @@ def _review(scope: context.Scope | None, results_path: Path, languages: list[str
                 else ""
             )
         ).classes("note mono scroll-x mt-3")
-
-    if split.others:
-        theme.band(
-            f"{len(split.others)} GTIN(s) in this file are outside this run's scope, so it was "
-            "written against a different process list than the one about to run. Confirming the "
-            "plan will not publish them, but check the file is the one you meant to import.",
-            "warn",
-        )
-        with ui.expansion(
-            f"{len(split.others)} GTIN(s) outside this run's scope", icon="unfold_more"
-        ).classes("w-full mt-2"):
-            ui.label(", ".join(sorted(split.others)[:_MAX_NAMED])).classes("mono scroll-x")
-            if len(split.others) > _MAX_NAMED:
-                ui.label(f"…and {len(split.others) - _MAX_NAMED} more.").classes("note")
 
 
 def _entries(entries: dict[str, Any], languages: list[str], results_path: Path) -> None:

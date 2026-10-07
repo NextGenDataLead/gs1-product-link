@@ -48,9 +48,8 @@ PAGE_MODULES: Final = (
 
 #: Every component module — a part of a screen that lives outside ``ui/pages/`` so that more than
 #: one screen, or one long screen, can render it. Listed by hand for the same reason as the
-#: screens; ``ui.batch_view`` was the first and was never import-checked until this list existed.
+#: screens; the first such module was never import-checked until this list existed.
 PANEL_MODULES: Final = (
-    "ui.batch_view",
     "ui.video_map_panel",
     "ui.video_signoff_panel",
 )

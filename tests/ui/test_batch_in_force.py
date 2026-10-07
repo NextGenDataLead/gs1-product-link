@@ -27,6 +27,7 @@ from lib.config import (
     WordPressConfig,
 )
 from lib.input_layout import PROCESS_DIR
+from lib.records import LocalisedText, ProductRecord
 from ui import context
 
 GTIN_A = "08713195007359"
@@ -158,3 +159,34 @@ def test_two_clients_do_not_share_one_cached_batch(tmp_path: Path) -> None:
 
     assert context.batch_in_force(first).selection.rows == 1  # type: ignore[union-attr]
     assert context.batch_in_force(second).selection.rows == 2  # type: ignore[union-attr]
+
+
+# --- the batch as a scope, for Content's review ------------------------------------------
+
+
+def test_the_review_scope_is_the_saved_batch_and_not_the_catalogue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Passed nothing, the review showed every product the results file had ever held.
+
+    On the e2e run that was text for 6 products of an earlier batch, under a batch of 3 that had
+    none yet — the section looked filled in when this batch's text did not exist.
+    """
+    cfg = _config(tmp_path)
+    assert cfg.process_list is not None
+    _list(Path(cfg.process_list.path), [GTIN_A])
+    catalogue = [
+        ProductRecord(gtin=gtin, brand="Acme", product_name=LocalisedText(values={"nl": "x"}))
+        for gtin in (GTIN_A, GTIN_B)
+    ]
+    monkeypatch.setattr(context, "load_products", lambda cid: catalogue)
+
+    scope = context.batch_scope("acme", cfg)
+
+    assert scope is not None
+    assert scope.gtins == frozenset({GTIN_A})
+    assert context.split_results({GTIN_B: {"nl": {}}}, scope).in_scope == {}
+
+
+def test_no_list_on_disk_is_no_scope_rather_than_everything(tmp_path: Path) -> None:
+    assert context.batch_scope("acme", _config(tmp_path)) is None
