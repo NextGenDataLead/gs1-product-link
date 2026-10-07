@@ -341,6 +341,76 @@ def _mark_ambiguous(decided: Sequence[SignoffRow], vmap: VideoMap) -> tuple[Sign
     return tuple(marked)
 
 
+@dataclass(frozen=True)
+class Clash:
+    """One product confirmed to two or more files in one language.
+
+    Attributes:
+        gtin: Canonical GTIN-14.
+        language: Where the files compete.
+        files: The competing filenames, sorted — the two to choose between.
+    """
+
+    gtin: str
+    language: str
+    files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MappingContext:
+    """What the mapping already says, for the figures beside a sheet's plan.
+
+    The plan counts **rows of the sheet**. Two of the things it is read beside are counted elsewhere
+    in other units, and the operator compares them: report §1b and step 4's *Not eligible* count
+    *products with two videos in one language*, and the doctor counts *mapping rows with no GTIN*.
+    So the panel shows those numbers too, split into what the mapping already has and what this
+    sheet would add — the same figure as everywhere else, with the sheet's part named.
+
+    Attributes:
+        clashes: Two-video clashes already in the mapping, before this sheet.
+        new_clashes: GTINs this sheet would put on a second file in a language (its AMBIGUOUS rows),
+            that are not clashing there already.
+        unset: Mapping rows with no GTIN yet — the doctor's figure.
+    """
+
+    clashes: tuple[Clash, ...]
+    new_clashes: frozenset[str]
+    unset: int
+
+    @property
+    def existing_products(self) -> frozenset[str]:
+        """Distinct products already clashing in the mapping — report §1b's count."""
+        return frozenset(clash.gtin for clash in self.clashes)
+
+    @property
+    def clashing_products(self) -> int:
+        """Distinct products with a two-video clash once this sheet were applied."""
+        return len(self.existing_products | self.new_clashes)
+
+
+def mapping_context(
+    decided: SignoffPlan, vmap: VideoMap, languages: Collection[str]
+) -> MappingContext:
+    """The mapping's own clash and unset counts, beside the plan of a sheet against it. Pure."""
+    clashes: list[Clash] = []
+    for language in languages:
+        files: dict[str, list[str]] = {}
+        for entry in vmap.by_language.get(language, []):
+            if state_of(entry.gtin) == CONFIRMED:
+                files.setdefault(canon_gtin(entry.gtin), []).append(entry.file)
+        clashes.extend(
+            Clash(gtin, language, tuple(sorted(names)))
+            for gtin, names in sorted(files.items())
+            if len(names) > 1
+        )
+    existing = {clash.gtin for clash in clashes}
+    new = frozenset(row.gtin for row in decided.of(AMBIGUOUS) if row.gtin not in existing)
+    unset = sum(
+        state_of(entry.gtin) == UNSET for entries in vmap.by_language.values() for entry in entries
+    )
+    return MappingContext(tuple(clashes), new, unset)
+
+
 def _decide(  # noqa: PLR0913 — one collaborator per question this row has to answer
     cells: Sequence[str],
     line: int,
@@ -393,7 +463,7 @@ def _unaddressable(
     if language not in languages:
         return f"{language!r} is not a configured language ({', '.join(sorted(languages))})"
     if file not in known.get(language, set()):
-        return f"the mapping has no {language} row for this file — add it on this screen first"
+        return f"the mapping has no {language} row for this file — add one to videos/mapping.yml"
     return ""
 
 
