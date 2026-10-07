@@ -37,7 +37,7 @@ from typing import Any
 from nicegui import ui
 
 from lib.config import ClientConfig, GeneratorConfig
-from ui import REPO_ROOT, context, env_edit, progress, runner, theme
+from ui import REPO_ROOT, content_session, context, env_edit, progress, runner, theme
 
 
 def render() -> None:
@@ -65,6 +65,7 @@ def render() -> None:
             return
         # Filled in once Next exists, below the steps it waits on.
         unlock: list[Callable[[bool], None]] = []
+        resume: Callable[[], None] = lambda: None  # noqa: E731 — nothing to resume without a generator
         if cfg.generator is None:
             ui.label(
                 "This client has no `generator` block, so pages are published from feed copy only "
@@ -72,11 +73,12 @@ def render() -> None:
             ).classes("note")
         else:
             results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
-            _live_screen(
+            resume = _live_screen(
                 cid, cfg, cfg.generator, results_path, list(cfg.wordpress.languages), unlock
             )
 
         unlock.append(_onward(cid, waits=cfg.generator is not None))
+        resume()
 
 
 def _onward(cid: str, *, waits: bool) -> Callable[[bool], None]:
@@ -112,8 +114,9 @@ def _live_screen(  # noqa: PLR0913, PLR0915 — the three steps share one set of
     results_path: Path,
     languages: list[str],
     unlock: list[Callable[[bool], None]],
-) -> None:
-    """The screen, driven by what the **site** carries rather than by the ledger.
+) -> Callable[[], None]:
+    """The screen, driven by what the **site** carries rather than by the ledger. Returns the call
+    that restores this session's earlier check — see :mod:`ui.content_session`.
 
     **Each step opens when the one before it succeeds** (operator feedback, 2026-10-07): step 2
     once the site has been read, step 3 — and Next, through ``unlock`` — once every product the
@@ -145,8 +148,10 @@ def _live_screen(  # noqa: PLR0913, PLR0915 — the three steps share one set of
     """
     payload: Any = None
     selection: set[str] = set()
+    scope = context.batch_scope(cid, cfg)
+    batch = scope.gtins if scope is not None else frozenset()
 
-    def show(fetched: tuple[Any, runner.CommandResult]) -> None:
+    def show(fetched: tuple[Any, runner.CommandResult | None]) -> None:
         nonlocal payload
         payload, result = fetched
         selection.clear()
@@ -184,7 +189,10 @@ def _live_screen(  # noqa: PLR0913, PLR0915 — the three steps share one set of
             _review(context.batch_scope(cid, cfg), results_path, languages)
 
     async def refresh() -> None:
-        show(await runner.run_json_off_the_loop(runner.report_live_copy_argv(cid)))
+        fetched = await runner.run_json_off_the_loop(runner.report_live_copy_argv(cid))
+        if context.live_counts(fetched[0]) is not None:
+            content_session.CHECKS.keep(cid, batch, fetched[0])
+        show(fetched)
         draw_review()
 
     with theme.section("Check the live site", step=1):
@@ -239,6 +247,15 @@ def _live_screen(  # noqa: PLR0913, PLR0915 — the three steps share one set of
         ).classes("note")
         review = ui.column().classes("w-full gap-0")
     draw_review()
+
+    def resume() -> None:
+        # Back on this screen in the same session, for the same batch: pick up where it was left,
+        # steps 2 and 3 and Next included. The figures carry their own "checked … ago". Called by
+        # ``render`` once Next exists, or the restored state could not switch it on.
+        if (kept := content_session.CHECKS.find(cid, batch)) is not None:
+            show((kept, None))
+
+    return resume
 
 
 def _written(results_path: Path) -> dict[str, dict[str, Any]]:
