@@ -181,6 +181,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text true every time and needed once, never a warning or a count.
 
 ### Changed
+- **The Data screen's eligible table keeps its column headers in view while its rows scroll**
+  (operator feedback, 2026-10-07). A `sticky-head` class in `ui/theme.py`, opaque in both themes.
 - **The sign-off review's figures agree with the rest of the app** (operator feedback, 2026-10-07).
   *Two-video clashes* counted only rows this sheet would turn into a clash, so it read 0 beside
   report §1b's 2; it now counts products, the mapping's plus the sheet's (`lib.video_signoff.
