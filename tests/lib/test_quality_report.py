@@ -194,7 +194,7 @@ def test_a_subsection_carries_its_parents_number_with_no_gap() -> None:
     """A dangling `3b.` under a `3.` with no `3a.` is the drift this report keeps being read for.
 
     One of the three tests that assert a number: whatever the MyGS1 section is numbered, its
-    subsections are that number with `a`, `b`, and nothing after.
+    subsections are that number with `a`, `b`, `c`, and nothing after.
     """
     md = _render(
         source_issues=[
@@ -210,6 +210,7 @@ def test_a_subsection_carries_its_parents_number_with_no_gap() -> None:
     assert _subheads(md, _MYGS1) == [
         f"### {number}a. Values inconsistent across markets",
         f"### {number}b. Possible wrong-language values (worth a glance)",
+        f"### {number}c. Marketing text much shorter in one language",
     ]
 
 
@@ -244,6 +245,65 @@ def test_wrong_language_values_are_listed() -> None:
     assert "Possible wrong-language values" in md  # the Summary row
     assert any("Possible wrong-language values" in line for line in _subheads(md, _MYGS1))
     assert "Schoonmaakdoek" in md
+
+
+def test_marketing_text_much_shorter_in_one_language_is_listed_with_word_counts() -> None:
+    """The Bottle Lamp on the e2e run: one Dutch bullet beside four French ones, from the source.
+
+    Each language as a column of word counts, so the reader sees the imbalance without opening
+    MyGS1 — and the Summary says it does not block, because it does not.
+    """
+    gtin = "08713195005898"
+    product = ProductRecord(
+        gtin=gtin,
+        brand="Noviplast",
+        product_name=LocalisedText(values={"nl": "Tafellamp"}),
+        description_short=LocalisedText(
+            values={"nl": "Draadloze led-wijnfleslamp", "fr": " ".join(["mot"] * 189)}
+        ),
+    )
+    src = [
+        _issue(
+            gtin,
+            "value_thin_in_one_language",
+            field="description_short.nl",
+            source="MarketingInformation attr 1083",
+            value="Draadloze led-wijnfleslamp",
+        )
+    ]
+
+    md = _render(source_issues=src, products={product.gtin14: product})
+
+    assert "| Source | Marketing text much shorter in one language | 1 |" in md
+    assert any("Marketing text much shorter" in line for line in _subheads(md, _MYGS1))
+    section = _section(md, _MYGS1)
+    assert "| GTIN | Source attribute | Words (nl) | Words (fr) |" in section
+    assert "| MarketingInformation attr 1083 | 2 | 189 |" in section
+
+
+def test_both_languages_short_in_one_product_is_still_one_row() -> None:
+    """Rows are (product, attribute); a third language would add a column, never a row."""
+    gtin = "08713195005898"
+    product = ProductRecord(
+        gtin=gtin,
+        brand="Noviplast",
+        product_name=LocalisedText(values={"nl": "x"}),
+        description_short=LocalisedText(
+            values={"nl": "kort", "fr": "court", "de": " ".join(["Wort"] * 40)}
+        ),
+    )
+    src = [
+        _issue(gtin, "value_thin_in_one_language", field=f"description_short.{lang}", source="a")
+        for lang in ("nl", "fr")
+    ]
+
+    md = _render(
+        source_issues=src, products={product.gtin14: product}, languages=["nl", "fr", "de"]
+    )
+
+    rows = [line for line in _section(md, _MYGS1).splitlines() if "| a |" in line]
+    assert len(rows) == 1
+    assert rows[0].endswith("| 1 | 1 | 40 |")
 
 
 def test_summary_counts_each_area() -> None:
