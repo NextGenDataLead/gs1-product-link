@@ -45,6 +45,7 @@ def render() -> None:
             return
 
         _reconcile(cid)
+        _live_report(cid)
 
         runs = context.recent_runs(cid)
         if not runs:
@@ -94,6 +95,39 @@ def _reconcile(cid: str) -> None:
                 _report(payload)
 
         theme.action("Compare against the site", run)
+
+
+def _live_report(cid: str) -> None:
+    """The data-quality report for every product this tool has put live, built on request.
+
+    Operator, 2026-10-07: "a data quality report for everything that went live straight from the
+    application", to give it follow-up. The Data screen's report is about the batch in progress;
+    this one opens with an inventory of every live product — the ledger, checked against the site —
+    and then the same sections over those products. A button rather than on every visit: it asks
+    the site, which takes a few seconds and needs the credentials the subprocess loads itself.
+    """
+    report = REPO_ROOT / "output" / cid / "live-data-quality-report.md"
+    with theme.section("Data quality of everything live"):
+        ui.label(
+            "Every product this tool has published and not taken down, checked against the site, "
+            "with what is still to fix for each — in MyGS1, in the video mapping, or on the page. "
+            "It is saved as a file you can forward to the client. Nothing is written to the site."
+        ).classes("note")
+        body = ui.column().classes("w-full mt-3")
+
+        async def build() -> None:
+            result = await runner.run_off_the_loop(runner.report_quality_argv(cid, live=True))
+            body.clear()
+            with body:
+                if not result.ok or not report.is_file():
+                    theme.band(result.stderr or "The report could not be built.", "warn")
+                    return
+                ui.label(
+                    f"{report.relative_to(REPO_ROOT)} — built {context.file_fact(report).age}"
+                ).classes("mono")
+                ui.markdown(report.read_text(encoding="utf-8")).classes("prose max-w-none")
+
+        theme.action("Build the report", build)
 
 
 def _report(payload: dict[str, object]) -> None:

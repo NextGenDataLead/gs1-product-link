@@ -34,14 +34,24 @@ from xml.etree import ElementTree as ET
 from lib import video_signoff, video_signoff_archive
 from lib.config import ClientConfig, get_client, resolve_client_id
 from lib.env import load_env
-from lib.errors import ConfigError, ExportParseError, VideoMapError
+from lib.errors import (
+    ConfigError,
+    ExportParseError,
+    MissingCredentialError,
+    StateError,
+    VideoMapError,
+    WordPressAPIError,
+)
+from lib.live_inventory import inventory_lines, live_products
 from lib.mandatory import MandatoryGap, missing_mandatory
 from lib.media_video import canon_gtin, check_video_map, files_by_language, load_video_map
 from lib.preflight import in_scope, load_video_status
 from lib.quality_report import MatrixInput, render_quality_report
 from lib.quality_report_video import SignoffReview, VideoReport
 from lib.records import ProductRecord, SourceIssue
+from lib.state import peek_state
 from lib.video_status import HAS_VIDEO
+from lib.wp_client import WordPressClient
 
 _EXIT_OK = 0
 _EXIT_CONFIG_ERROR = 2
@@ -90,8 +100,18 @@ def _generated_at() -> str:
     return f"{now:%Y-%m-%d %H:%M} {now:%Z}".strip()
 
 
+def _scope(
+    cfg: ClientConfig, products: dict[str, ProductRecord], live: frozenset[str] | None
+) -> list[ProductRecord]:
+    """The products this report is about: the batch in progress, or — with ``--live`` — every
+    product the ledger records as live. One function, so no section can use the other scope."""
+    if live is None:
+        return in_scope(cfg, list(products.values()))
+    return [product for product in products.values() if product.gtin14 in live]
+
+
 def _publish_blocks(
-    client_id: str, products: dict[str, ProductRecord]
+    client_id: str, products: dict[str, ProductRecord], live: frozenset[str] | None = None
 ) -> tuple[dict[str, list[MandatoryGap]], list[str]]:
     """The two whole-SKU holds, recomputed from config rather than read from a run artifact.
 
@@ -112,7 +132,7 @@ def _publish_blocks(
     except (ConfigError, ExportParseError):
         return {}, []
 
-    scoped = in_scope(cfg, list(products.values()))
+    scoped = _scope(cfg, products, live)
     languages = cfg.wordpress.languages
     gaps = {
         product.gtin14: found
@@ -130,7 +150,9 @@ def _publish_blocks(
     return gaps, sorted(p.gtin for p in status.held if p.gtin not in gaps)
 
 
-def _video_report(client_id: str, products: dict[str, ProductRecord]) -> VideoReport | None:
+def _video_report(
+    client_id: str, products: dict[str, ProductRecord], live: frozenset[str] | None = None
+) -> VideoReport | None:
     """§1's inputs: the selection joined to the video mapping. ``None`` with no readable mapping.
 
     Follows :func:`_publish_blocks`' rule — every failure is an absent section, never a traceback;
@@ -140,7 +162,7 @@ def _video_report(client_id: str, products: dict[str, ProductRecord]) -> VideoRe
         cfg = get_client(client_id)
     except (ConfigError, ExportParseError):
         return None
-    status = load_video_status(cfg, in_scope(cfg, list(products.values())))
+    status = load_video_status(cfg, _scope(cfg, products, live))
     if status is None:
         return None
     review = _signoff_review(cfg, products)
@@ -208,7 +230,10 @@ def _languages(client_id: str, issues: dict[str, list[SourceIssue]]) -> list[str
 
 
 def _scoped_issues(
-    client_id: str, products: dict[str, ProductRecord], issues: list[SourceIssue]
+    client_id: str,
+    products: dict[str, ProductRecord],
+    issues: list[SourceIssue],
+    live: frozenset[str] | None = None,
 ) -> list[SourceIssue]:
     """Drop findings about GTINs this run will not touch.
 
@@ -230,11 +255,13 @@ def _scoped_issues(
         cfg = get_client(client_id)
     except (ConfigError, ExportParseError):
         return issues  # doctor reports config problems; do not also blank the report
-    scope = {p.gtin14 for p in in_scope(cfg, list(products.values()))}
+    scope = {p.gtin14 for p in _scope(cfg, products, live)}
     return [i for i in issues if not i.gtin or canon_gtin(i.gtin) in scope]
 
 
-def _matrix_input(client_id: str, products: dict[str, ProductRecord]) -> MatrixInput | None:
+def _matrix_input(
+    client_id: str, products: dict[str, ProductRecord], live: frozenset[str] | None = None
+) -> MatrixInput | None:
     """Gather the §0 matrix inputs, or ``None`` when there is nothing to tabulate.
 
     Scoped to the process list, like every other per-SKU section: a coverage table over the whole
@@ -250,7 +277,7 @@ def _matrix_input(client_id: str, products: dict[str, ProductRecord]) -> MatrixI
         return None
 
     languages = cfg.wordpress.languages
-    scoped = in_scope(cfg, list(products.values()))
+    scoped = _scope(cfg, products, live)
     # ● means the page gets a video in that language — what ``VideoMap.resolve`` attaches, not
     # merely "some row names this GTIN". A GTIN confirmed to two files is therefore ○: the page
     # gets neither. With no readable mapping every cell is ○, which is what "not confirmed" means.
@@ -324,9 +351,79 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Key under clients: in clients.yml (optional when only one client is defined)",
     )
     parser.add_argument(
-        "--out", help="output path (default output/{client_id}/data-quality-report.md)"
+        "--out",
+        help="output path (default output/{client_id}/data-quality-report.md, or "
+        "live-data-quality-report.md with --live)",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="report on every product this tool has put live (the ledger, checked against the "
+        "site) instead of the batch in progress",
     )
     return parser.parse_args(argv)
+
+
+def _live_scope(client_id: str, data_dir: Path) -> tuple[frozenset[str], list[str]]:
+    """``--live``: every product the ledger records as live, and the section that lists them.
+
+    The ledger is read with :func:`lib.state.peek_state`, which never quarantines a corrupt file —
+    this is a report, and a report must not change what the next run does. The site is then asked
+    which of those pages it lists; if it cannot be asked, every page says "not checked".
+
+    Raises:
+        ConfigError: The client config will not load.
+        StateError: The ledger will not read.
+    """
+    cfg = get_client(client_id)
+    live = live_products(peek_state(client_id))
+    on_site, note = _listed_on_site(cfg)
+    lines = inventory_lines(live, list(cfg.wordpress.languages), on_site=on_site, site_note=note)
+    written = _generated_for(data_dir)
+    covered = sorted(p.gtin for p in live if canon_gtin(p.gtin) in written)
+    lines += [
+        "Sections 3 and 5 come from the last text generation, which wrote for "
+        f"{len(covered)} of these {len(live)} product(s)"
+        + (f" ({', '.join(f'`{g}`' for g in covered)})" if covered else "")
+        + ". For the rest there is no record of which claims were inferred or which values were "
+        "translated — not that there were none.",
+        "",
+    ]
+    return frozenset(canon_gtin(p.gtin) for p in live), lines
+
+
+def _listed_on_site(cfg: ClientConfig) -> tuple[set[tuple[str, str]] | None, str]:
+    """``(gtin14, language)`` for every published tool page the site lists — or ``None`` and why.
+
+    A listing per language (an unscoped one answers with the default language only), read-only.
+    Any failure is reported in the section rather than failing the report: the data findings are
+    still worth having when the site cannot be reached.
+    """
+    found: set[tuple[str, str]] = set()
+    try:
+        with WordPressClient(cfg.wordpress) as client:
+            for language in cfg.wordpress.languages:
+                for page in client.list_pages_with_gtin(cfg.wordpress.post_type, language):
+                    meta = page.get("meta")
+                    gtin = str(meta.get("gtin", "")) if isinstance(meta, dict) else ""
+                    if gtin and page.get("status", "publish") == "publish":
+                        found.add((canon_gtin(gtin), language))
+    except (ConfigError, MissingCredentialError, WordPressAPIError) as exc:
+        return None, str(exc)
+    return found, ""
+
+
+def _generated_for(data_dir: Path) -> set[str]:
+    """The barcodes the last text generation wrote for, from ``generation_results.json``."""
+    try:
+        data = json.loads((data_dir / "generation_results.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return {
+        canon_gtin(str(item["gtin"]))
+        for item in data.get("results", [])
+        if isinstance(item, dict) and item.get("gtin")
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -357,10 +454,20 @@ def main(argv: list[str] | None = None) -> int:
         issues["video_map"], freshness["video_map"] = live
 
     products = _load_products(data_dir / "products.json")
-    issues = {key: _scoped_issues(client_id, products, found) for key, found in issues.items()}
-    mandatory_gaps, video_held = _publish_blocks(client_id, products)
-    matrix = _matrix_input(client_id, products)
-    video = _video_report(client_id, products)
+    live: frozenset[str] | None = None
+    preface: list[str] = []
+    if args.live:
+        try:
+            live, preface = _live_scope(client_id, data_dir)
+        except (ConfigError, StateError) as exc:
+            print(f"config error: {exc}", file=sys.stderr)
+            return _EXIT_CONFIG_ERROR
+    issues = {
+        key: _scoped_issues(client_id, products, found, live) for key, found in issues.items()
+    }
+    mandatory_gaps, video_held = _publish_blocks(client_id, products, live)
+    matrix = _matrix_input(client_id, products, live)
+    video = _video_report(client_id, products, live)
 
     markdown = render_quality_report(
         client_id=client_id,
@@ -377,9 +484,12 @@ def main(argv: list[str] | None = None) -> int:
         video_held=video_held,
         matrix=matrix,
         video=video,
+        preface=preface,
+        live=args.live,
     )
 
-    out = Path(args.out) if args.out else Path("output") / client_id / "data-quality-report.md"
+    name = "live-data-quality-report.md" if args.live else "data-quality-report.md"
+    out = Path(args.out) if args.out else Path("output") / client_id / name
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(markdown, encoding="utf-8")
     total = sum(len(v) for v in issues.values())
