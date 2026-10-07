@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from lib.gdsn import is_mandatory
 from lib.mandatory import MandatoryGap, value_for
+from lib.quality_report_balance import THIN_TEXT, TITLE, balance_lines
 from lib.quality_report_video import VideoReport, held_count, summary_rows, video_lines
 from lib.records import ProductRecord, SourceIssue
 from lib.report_markdown import cell as _cell
@@ -443,6 +444,21 @@ def _summary_lines(  # noqa: PLR0913 — one parameter per source feeding a summ
         ],
         [
             "Source",
+            TITLE,
+            str(
+                len(
+                    {
+                        (i.gtin, i.field.split(".", 1)[0])
+                        for i in source_issues
+                        if i.issue == THIN_TEXT
+                    }
+                )
+            ),
+            "Client (MyGS1)",
+            "No — the page says less",
+        ],
+        [
+            "Source",
             "Values translated to fill a language gap",
             str(len([i for i in generated_issues if i.issue == _TRANSLATED])),
             "Client (MyGS1)",
@@ -761,7 +777,9 @@ def _review_lines(
 def _source_lines(
     inconsistent: list[SourceIssue],
     wrong_lang: list[SourceIssue],
+    thin: list[SourceIssue],
     products: dict[str, ProductRecord],
+    languages: list[str],
 ) -> list[str]:
     """§4 — source findings that are worth fixing but hold nothing.
 
@@ -771,9 +789,9 @@ def _source_lines(
     Summary keeps the count, exactly as it does for the blank title/image findings whose own
     subsection (§1d) went for the same reason.
 
-    What is left is the two findings a matrix *cannot* show, because both are about the value
-    rather than its presence: markets disagreeing about a value, and a value that reads as the
-    wrong language.
+    What is left is the findings a matrix *cannot* show, because each is about the value rather
+    than its presence: markets disagreeing about a value, a value that reads as the wrong language,
+    and marketing text far shorter in one language than another (§4c).
     """
     inc_rows = [[_label(products, i.gtin), i.field, _market_cell(i)] for i in inconsistent]
     lang_rows = [[_label(products, i.gtin), i.field, _cell(i.value)] for i in wrong_lang]
@@ -796,6 +814,7 @@ def _source_lines(
         "",
         *_table(["GTIN", "Field", "Value (reads like the wrong language)"], lang_rows),
         "",
+        *balance_lines(thin, products, languages, _label),
     ]
 
 
@@ -932,6 +951,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     # keeps both counts — blocking (title/image) and degrading — as it has since §1d went.
     inconsistent = [i for i in source_issues if i.issue == _INCONSISTENT]
     wrong_lang = [i for i in source_issues if i.issue == _WRONG_LANG]
+    thin = [i for i in source_issues if i.issue == THIN_TEXT]
 
     lines = [
         *_header_lines(client_id, snapshot, freshness),
@@ -966,7 +986,7 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
         ),
         *_blocking_lines(mandatory_gaps or {}, products, matrix, languages),
         *_review_lines(inferences, generated_count, products, client_id, languages),
-        *_source_lines(inconsistent, wrong_lang, products),
+        *_source_lines(inconsistent, wrong_lang, thin, products, languages),
         *_translated_lines(translated, products, languages),
         *_category_lines(category_issues),
     ]

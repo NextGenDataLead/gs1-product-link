@@ -615,6 +615,11 @@ def build_records(  # noqa: PLR0913 — each argument is a distinct input; bundl
                     product_name, "product_name", source_label(gdsn_map["product_name"]), gtin
                 )
             )
+        for field in _COPY_FIELDS:
+            if field in gdsn_map and (copy := acc.localised.get(field)):
+                issues.extend(
+                    check_language_balance(copy, field, source_label(gdsn_map[field]), gtin)
+                )
         try:
             records.append(
                 build_product_record(
@@ -796,6 +801,58 @@ def suspect_language(value: str, lang: str) -> str | None:
     if lang == "nl" and any(h in folded for h in _FRENCH_HALLMARKS):
         return "French"
     return None
+
+
+#: The issue kind for marketing text far shorter in one language than another.
+THIN_TEXT_ISSUE: Final = "value_thin_in_one_language"
+
+#: Flag the shorter text when it has fewer words than this share of the longest. Measured on the
+#: pilot export: 23 of 117 nl/fr pairs sit at or below 0.09, and the next is far above a quarter,
+#: so the threshold separates the two groups rather than slicing through one.
+_THIN_SHARE: Final = 0.25
+
+#: The longest text must have at least this many words for a gap to cost anything: two short texts
+#: are not a mismatch, and a short text in every language is a different finding.
+_THIN_MIN_WORDS: Final = 20
+
+#: The localised fields the generator writes the page's copy from (attr 1083 and attr 1067).
+_COPY_FIELDS: Final = ("description_short", "description_long")
+
+
+def check_language_balance(
+    values: dict[str, str], field_base: str, source: str, gtin: str
+) -> list[SourceIssue]:
+    """Flag a language whose marketing text is far shorter than another language's (§4c).
+
+    The generator writes each language only from that language's own text and never invents a
+    claim, so a three-word Dutch message beside a two-hundred-word French one gives the Dutch page
+    one bullet and the French page four — correct, and a page the client will not want. The fix is
+    in MyGS1: fill in the short one. A blank value is not compared; that is a gap, which the
+    coverage matrix and the translation path already handle.
+    """
+    words = {lang: len(value.split()) for lang, value in values.items() if value.strip()}
+    if len(words) < 2:  # noqa: PLR2004 — a comparison needs two sides
+        return []
+    richest = max(words, key=lambda lang: words[lang])
+    most = words[richest]
+    if most < _THIN_MIN_WORDS:
+        return []
+    return [
+        SourceIssue(
+            gtin=gtin,
+            field=f"{field_base}.{lang}",
+            source=source,
+            issue=THIN_TEXT_ISSUE,
+            value=values[lang],
+            detail=(
+                f"the {lang} text has {count} words where the {richest} text has {most} — the "
+                f"{lang} page is written only from its own text, so it will say much less; fill "
+                f"in the {lang} text in MyGS1"
+            ),
+        )
+        for lang, count in words.items()
+        if count < most * _THIN_SHARE
+    ]
 
 
 def _check_field_language(
