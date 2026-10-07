@@ -14,6 +14,7 @@ concentrated in one unreviewed click.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Final
 
@@ -22,7 +23,9 @@ from nicegui import events, ui
 
 from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Gate, GateOption, Mode
 from lib.records import PlanClassification, PlanRow, SkipReason
-from ui import REPO_ROOT, context, runner, theme
+from lib.result_sheet import load_outcomes
+from lib.run_files import newest_log
+from ui import REPO_ROOT, context, publish_outcome, runner, theme
 from ui.session import GateNotAnsweredError, PublishSession
 
 #: Scroll to an element once the page has stopped moving under it.
@@ -54,6 +57,10 @@ _SCROLL_WHEN_SETTLED: Final = """
   requestAnimationFrame(step);
 })()
 """
+
+
+#: How much of a failed real run's output the outcome dialog shows — the tail, where it says why.
+_FAILURE_LINES: Final = 40
 
 
 def render() -> None:
@@ -118,6 +125,13 @@ class _Flow:
         #: Whether the dry run has been run at all. Its Proceed/Cancel buttons appear only after
         #: there is output to approve — offering them beforehand invites approving nothing.
         self.has_run_dry = False
+        #: The dry run's output, kept so a redraw shows it again. The redraw that offers
+        #: Proceed/Cancel used to rebuild the log empty and hidden, so the output the gate asks
+        #: the operator to read was gone the moment it finished (operator, 2026-10-07).
+        self.dry_log: list[str] = []
+        #: The real run's output, once there is one — and the sign that this walk has run. The
+        #: button stayed pressable after a real run; a walk runs for real once.
+        self.real_log: list[str] | None = None
         #: Whether the next plan re-admits already-published GTINs. Screen state rather than a
         #: gate answer: it changes what the plan *contains*, so it is chosen before the plan is
         #: built and re-chosen for every rebuild, not carried as a decision already made.
@@ -224,7 +238,8 @@ class _Flow:
             with ui.element("div").classes("head-row"):
                 ui.label(gate.title).classes("gate-title")
                 theme.explanation(gate.purpose, about=gate.title, rich=True)
-            ui.label(gate.summary).classes("gate-lede")
+            if gate.id != "intent":  # gate 0 is the mode and its buttons — see ``_gate_intent``
+                ui.label(gate.summary).classes("gate-lede")
             self._gate_body(gate)
 
     def _folded_gate(self, gate: Gate, *, answered: bool) -> None:
@@ -276,71 +291,21 @@ class _Flow:
         self._options(gate)
 
     def _gate_intent(self, gate: Gate) -> None:
-        """Gate 0's figures are the scope, with the catalogue behind it — not the other way round.
+        """Gate 0 is the mode and Confirm / Change mode / Cancel — nothing else.
 
-        This used to lead with ``product_count`` — the length of ``products.json`` — under the
-        label "products in the catalogue". Honest, and the wrong number: during the install
-        rehearsal it read **127** on a run scoped to one product. Gate 0 is where the operator
-        forms their picture of what they are about to do, so it is the worst place in the flow
-        for the prominent figure to describe something other than this run.
-
-        The catalogue total is kept, one size down, because "15" alone cannot be sanity-checked
-        against the export the gate is asking about in the same breath.
+        Operator, 2026-10-07: "remove all info but the buttons from step 0". It carried the scope
+        figures, the export path and age, the environment and three notes, and the one decision it
+        asks for — which mode — was the thing that got missed: two dry runs went out in ``pages``
+        after ``both`` was meant. The facts it dropped are still said where they act: the
+        permanence band heads this screen whenever the mode writes to GS1, the rail names the
+        environment, Preflight checked the scope and the export, gate 5 shows the rows, and gate 8
+        asks about production on its own.
         """
-        fact = context.file_fact(self.cfg.export.path)
-        scope = context.scope_from(self.doctor)
-        with theme.figures():
-            if scope is None:
-                # Never fall back to the catalogue count here. A wrong number under the right
-                # label is worse than no number: it reads as an answer.
-                theme.figure("—", "products in scope", "could not be read")
-            else:
-                theme.figure(
-                    str(scope.in_scope),
-                    "products in scope",
-                    "the most this run could touch, not what it writes",
-                )
-                theme.figure(str(scope.total), "in the catalogue", "every product in the export")
-            theme.figure(fact.age, "export modified", "when that file last changed")
-            theme.figure(
-                self.cfg.gs1.environment,
-                "environment",
-                "production records can never be deleted",
-            )
-        if scope is None:
-            theme.band(
-                "Could not read what this run would touch — the preflight did not report its "
-                "scope check. Run it on the Preflight screen; until then the figures above "
-                "describe nothing.",
-                "warn",
-            )
-        else:
-            # The doctor's own sentence, which names the gates that removed the rest. Without it
-            # a reader sees 15 of 127 and has to guess whether that is intended.
-            ui.label(scope.detail).classes("note mb-2")
-            if scope.empty:
-                theme.band(
-                    "Nothing is in scope, so this run would write nothing and report success — "
-                    "the one outcome indistinguishable from working. Fix the scope before "
-                    "confirming anything below.",
-                    "danger",
-                )
-        ui.label(f"Export: {self.cfg.export.path}").classes("mono mb-1")
-        ui.label(
-            "That path comes from clients.yml and has no command-line override. If the workbook "
-            "you mean is somewhere else, this run will silently use the old one."
-        ).classes("note mb-1")
-        ui.label(
-            "In scope is the ceiling on what this run could touch, not how many rows it will "
-            "write: it counts what the process list and the video allowlist admit, and cannot "
-            "yet know which of those are already published. That number arrives at step 5."
-        ).classes("note mb-4")
 
         def pick(value: str) -> None:
             self.session.mode = Mode(value)
             self._redraw()
 
-        ui.label("Mode").classes("figure-label")
         ui.toggle(
             {mode.value: f"{mode.value} — {mode.summary}" for mode in Mode},
             value=self.session.mode.value,
@@ -711,8 +676,14 @@ class _Flow:
                 return
             log.style("display:block")
             log.clear()
-            log.push(" ".join(["python", *argv]))
-            result = await runner.stream(argv, log.push)
+            self.dry_log = [" ".join(["python", *argv])]
+            log.push(self.dry_log[0])
+
+            def keep(line: str) -> None:
+                self.dry_log.append(line)
+                log.push(line)
+
+            result = await runner.stream(argv, keep)
             if result.ok:
                 theme.notify_ok("Dry run finished — now read it, then Proceed or Cancel")
             else:
@@ -731,6 +702,10 @@ class _Flow:
         ).classes("note mb-3")
         theme.action("Run the dry run", go)
         log = ui.log().classes("console mt-4").style("display:none")
+        if self.dry_log:
+            log.style("display:block")
+            for line in self.dry_log:
+                log.push(line)
         if self.has_run_dry:
             self._options(gate)
         else:
@@ -813,6 +788,18 @@ class _Flow:
                 )
                 return
 
+            if self.real_log is not None:
+                # This walk has run for real. Its output stays; the button does not come back.
+                theme.band(
+                    "This walk has run for real — every row is on the Runs screen. To publish "
+                    "again, open Publish from the rail and start a new walk.",
+                    "quiet",
+                )
+                done = ui.log().classes("console mt-4")
+                for line in self.real_log:
+                    done.push(line)
+                return
+
             async def go() -> None:
                 confirmed = self._write_confirmed()
                 if confirmed is None:
@@ -822,22 +809,50 @@ class _Flow:
                 except GateNotAnsweredError as exc:
                     theme.notify_problem(str(exc))
                     return
+                # Off before it starts, and it stays off: a second press during or after a real run
+                # is a second real run.
+                button.disable()
+                started = time.time()
                 log.style("display:block")
                 log.clear()
-                log.push(" ".join(["python", *argv]))
-                result = await runner.stream(argv, log.push)
-                # No second subprocess for the result sheet. `run_execute` writes it itself now,
-                # on failure too — which it had to, because a publish driven from anywhere but this
-                # screen produced no sheet at all, and the moment it is most wanted is the moment a
-                # run has just half-failed.
-                where = " The per-row result sheet is on the Runs screen."
-                if result.ok:
-                    theme.notify_ok(f"Run finished with no errors.{where}")
-                else:
-                    theme.notify_problem(f"Run exited {result.returncode} — read the log.{where}")
+                lines = [" ".join(["python", *argv])]
+                log.push(lines[0])
+
+                def keep(line: str) -> None:
+                    lines.append(line)
+                    log.push(line)
+
+                result = await runner.stream(argv, keep)
+                self.real_log = lines
+                # No second subprocess for the result sheet. `run_execute` writes it itself, on
+                # failure too. The dialog is built from this run's own log, not from the exit code
+                # alone: the log is what each row actually did.
+                newest = newest_log(self.cid)
+                outcomes = (
+                    load_outcomes(newest)[0]
+                    if newest is not None and newest.stat().st_mtime >= started
+                    else []
+                )
+                headline, body, kind = publish_outcome.verdict(
+                    outcomes,
+                    returncode=result.returncode,
+                    permanent=self.session.mode.is_permanent,
+                )
+                # Redrawn rather than disabled: the button's own wrapper re-enables it when this
+                # handler returns (found in rehearsal). The redraw replaces it with the "has run"
+                # note and keeps the output. The dialog opens after, under the body, so the redraw
+                # cannot take it with it.
+                self._redraw()
+                with self.body:
+                    theme.announce(
+                        headline,
+                        body,
+                        kind=kind,
+                        detail="" if kind == "quiet" else "\n".join(lines[-_FAILURE_LINES:]),
+                    )
 
             log = ui.log().classes("console mt-4").style("display:none")
-            theme.action(
+            button = theme.action(
                 f"Run {self.session.mode.value} for real",
                 go,
                 danger=self.session.mode.is_permanent,

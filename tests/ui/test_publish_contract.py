@@ -112,26 +112,19 @@ def _calls(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     }
 
 
-def test_gate_zero_shows_the_scope_and_not_the_catalogue() -> None:
-    """The figure at gate 0 must describe *this run*, not the size of the parsed export.
+def test_gate_zero_is_the_mode_and_its_buttons_only() -> None:
+    """Operator, 2026-10-07: "remove all info but the buttons from step 0".
 
-    It used to render ``context.product_count`` — the length of ``products.json`` — labelled
-    "products in the catalogue", which read 127 on a run scoped to one product. Gate 0 is where
-    the operator confirms what they are about to do, so it is the worst place in the flow for the
-    prominent number to be about something else.
-
-    ``product_count`` is not wrong in itself and still serves the Data screen; what is asserted
-    here is that gate 0 does not reach for it.
+    Gate 0 carried the scope figures, the export path and age, the environment and three notes,
+    and the one decision it asks for was the thing missed — two dry runs went out in ``pages``
+    after ``both`` was meant. It once showed the catalogue total as its headline figure (127 on a
+    one-product run); it now shows no figure at all, so neither that nor any other can creep back
+    in without this failing.
     """
     calls = _calls(_renderers()["intent"])
-    assert "scope_from" in calls, (
-        "_gate_intent does not read the doctor's scope check, so whatever figure it shows is not "
-        "what this run would touch"
-    )
-    assert "product_count" not in calls, (
-        "_gate_intent reads product_count — the catalogue total. That is the number this gate "
-        "was showing when it said 127 for a one-product run"
-    )
+    facts = {"figure", "figures", "scope_from", "product_count", "file_fact"}
+    assert facts.isdisjoint(calls), f"_gate_intent shows facts again: {sorted(calls & facts)}"
+    assert {"toggle", "_options"} <= calls, "gate 0 lost its mode choice or its buttons"
 
 
 def test_no_gate_renderer_runs_its_own_preflight() -> None:
