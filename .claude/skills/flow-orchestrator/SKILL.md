@@ -103,7 +103,7 @@ told.
 |---|---|---|---|
 | `intent` | 0 | **yes** | all |
 | `languages` | 2 | no | all |
-| `content_review` | 3 | **yes** | all, when a `generator` is configured |
+| `content_review` | 3 | **yes** | `pages`, `both`, when a `generator` is configured |
 | `missing_field` | 4 | no | all, when a unit was dropped for a missing `product_name` |
 | `plan_review` | 5 | **yes** | all |
 | `row_diff` | 6 | no | all |
@@ -212,14 +212,24 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    second gate is `plan.json` (step 5), and there is no third — execute writes each page at
    `wordpress.post_status`, `publish` by default, so it is live immediately.
 
-   This step runs in **`links` mode too**, even though no page is written. Not for the copy itself —
-   for the plan: with a `generator` configured, `run_plan` omits any **NEW or CHANGED**
-   `(GTIN, language)` that has no generated tagline (E21), so a missing or stale results file
-   yields an empty plan and the run publishes nothing while reporting success. (An UNCHANGED row
-   has no copy by design and keeps its row — it is not a skip and not a work item.)
+   **Skip this step in `links` mode.** No page is written, and step 4 plans with `--links-only`,
+   which does not apply the copy rule (E21) — so there is neither copy to review nor any whose
+   absence could empty the plan. In `pages` and `both` the rule stands: with a `generator`
+   configured, `run_plan` omits any **NEW or CHANGED** `(GTIN, language)` that has no generated
+   tagline, so a missing or stale results file yields an empty plan and the run publishes nothing
+   while reporting success. (An UNCHANGED row has no copy by design and keeps its row — it is not
+   a skip and not a work item.)
 
-4. **Plan.** Run `python -m scripts.run_plan {client}` and read
-   `output/{client}/plan.json`. run_plan omits any `(GTIN, language)` with a missing
+4. **Plan.** Run `python -m scripts.run_plan {client}` — **with `--links-only` in `links` mode**,
+   and only then: `run_execute` refuses a links-only plan in any other mode — and read
+   `output/{client}/plan.json`. When the client sets `process_list.target_url_column`, a row may
+   carry `listed_url`: the page the operator named for a product whose page this tool did not
+   make. In `links` mode the GS1 record points at that page and at the translation the page
+   itself advertises (hreflang); a GTIN whose listed page has no translation for a confirmed
+   language, or whose listed page differs from one this tool already published, is refused at
+   execute, not guessed. In `pages`/`both` a listed page that is not the one the run would
+   publish refuses that GTIN — tell the operator to clear the cell or run `links`. Say how many
+   GTINs carry one beneath the counts at step 5 (run_plan prints it). run_plan omits any `(GTIN, language)` with a missing
    `product_name` and logs a `SKIPPED …` warning to stderr; for each such warning, present
    the **missing-field prompt (§10.6.5)** verbatim:
    ```

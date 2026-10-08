@@ -81,6 +81,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, NamedTuple
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -293,6 +294,86 @@ def _pages_for_links(  # noqa: PLR0913 — three sources of pages, plus what to 
     for row in rows:
         if row.language not in pages:
             pages[row.language] = _find_page(cfg, row, wp)
+    return pages
+
+
+def _same_page(a: str, b: str) -> bool:
+    """Whether two addresses name one page: scheme, host case and a trailing slash aside."""
+
+    def key(url: str) -> tuple[str, str]:
+        parts = urlsplit(url.strip())
+        return ((parts.hostname or "").lower(), parts.path.rstrip("/") or "/")
+
+    return key(a) == key(b)
+
+
+def _listed_conflict(row: PlanRow) -> str | None:
+    """Why a run that writes pages must refuse this row's GTIN, or ``None``.
+
+    A listed page is the operator saying "this product already has a page, here". A pages or
+    both run would publish a second one at ``target_url``, and a both run would then point the
+    permanent GS1 record at the new page while the list says otherwise. Two answers to "which
+    page is this product's" is a stop, not a choice to make on the operator's behalf.
+    """
+    if not row.listed_url or _same_page(row.listed_url, row.target_url):
+        return None
+    return (
+        f"the process list names {row.listed_url} as this product's page, but this run would "
+        f"publish its own at {row.target_url} — clear the cell to replace the old page, or run "
+        f"--only links to point GS1 at it"
+    )
+
+
+def _listed_pages(
+    cfg: ClientConfig,
+    gtin: str,
+    rows: list[PlanRow],
+    wp: WordPressClient,
+    state: State,
+) -> dict[str, _Page]:
+    """``--only links`` targets for a GTIN whose page the operator listed in the process list.
+
+    The listed address is the default language's page. Every other confirmed language is the
+    translation **that page itself names** (its ``hreflang`` alternate); a page that names none
+    refuses the whole GTIN rather than registering a record without that language, because the
+    GS1 link set replaces and would silently drop a link a record may already carry.
+
+    Refused, too, when this tool already has its own page for the product at a different
+    address — in state, or findable by ``slug_pattern``. Then there are two answers to which
+    page the permanent record should name, and choosing one is the operator's call. When the
+    tool's page *is* the listed one, nothing is in dispute and the ordinary lookup runs.
+
+    No page here gets an id, so :func:`_commit_state` records no state for them — the same
+    rule as any page this tool does not manage.
+    """
+    listed = rows[0].listed_url
+    assert listed is not None  # the caller routes here only for a listed GTIN
+    default = cfg.wordpress.default_language
+    own = _known_pages(gtin, {}, state).get(default)
+    if own is None:
+        found = wp.find_by_slug(cfg.wordpress.post_type, rows[0].slug, default)
+        own = _Page(found["id"], found["link"], rows[0].title) if found else None
+    if own is not None:
+        if _same_page(own.url, listed):
+            return _pages_for_links(cfg, gtin, rows, {}, wp, state)
+        raise RuntimeError(
+            f"the process list names {listed} as this product's page, but this tool already "
+            f"published its own at {own.url} — clear one of them before pointing a permanent "
+            f"GS1 record at either"
+        )
+    pages: dict[str, _Page] = {}
+    for row in rows:
+        if row.language == default:
+            pages[row.language] = _Page(None, listed, row.title)
+            continue
+        alternate = wp.alternate_url(listed, row.language)
+        if alternate is None:
+            raise RuntimeError(
+                f"the listed page {listed} names no {row.language} translation — refusing to "
+                f"register a GS1 record without its {row.language} link; translate the page, "
+                f"or confirm only the {default} row"
+            )
+        pages[row.language] = _Page(None, alternate, row.title)
     return pages
 
 
@@ -824,6 +905,12 @@ def _execute_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them
     }
     fresh: dict[str, _Page] = {}
     if mode.writes_pages:
+        conflict = next(filter(None, (_listed_conflict(row) for row in rows)), None)
+        if conflict:
+            for row in rows:
+                _record_failure(outcomes[row.language], RuntimeError(conflict))
+            _log.error("gtin %s refused: %s", gtin, conflict)
+            return [outcomes[row.language] for row in rows]
         for row in rows:
             try:
                 fresh[row.language] = _upsert_row(
@@ -840,7 +927,11 @@ def _execute_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them
         page_entries = _finish_pages(gtin, rows, fresh, wp, state, ts) if mode.writes_pages else {}
         link_hash = None
         if mode.writes_links:
-            pages = _pages_for_links(cfg, gtin, rows, fresh, wp, state)
+            pages = (
+                _pages_for_links(cfg, gtin, rows, fresh, wp, state)
+                if mode.writes_pages or not rows[0].listed_url
+                else _listed_pages(cfg, gtin, rows, wp, state)
+            )
             _verify_targets(wp, pages, {page.url for page in fresh.values()})
             link_hash = _finish_links(cfg, gtin, rows, pages, gs1, outcomes)
         _commit_state(state, gtin, rows, page_entries, link_hash, ts)
@@ -934,10 +1025,16 @@ def _preview_text(cfg: ClientConfig, row: PlanRow, mode: _Mode) -> str:
             f"this GTIN's languages as translations"
         )
     if mode.writes_links:
+        target = row.target_url
+        if row.listed_url and not mode.writes_pages:
+            target = f"the listed page {row.listed_url} (in {row.language} via its own hreflang)"
         parts.append(
-            f"point GS1 {_digital_link_url(cfg, row)} at {row.target_url} and render its "
+            f"point GS1 {_digital_link_url(cfg, row)} at {target} and render its "
             f"QR (the real run verifies that target serves first, and refuses if it does not)"
         )
+    conflict = _listed_conflict(row) if mode.writes_pages else None
+    if conflict:
+        return f"would refuse this GTIN: {conflict}"
     return "would " + ", then ".join(parts)
 
 
@@ -1191,7 +1288,9 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
     rows = _restrict_to_pilot(
         _drop_without_copy(
             _drop_held(_confirmed_rows(confirmed), revive=revive),
-            generator_configured=cfg.generator is not None,
+            # A links run renders no page, so the copy a page would carry is not its business:
+            # the resolver link's title comes from the product name, not the tagline.
+            generator_configured=cfg.generator is not None and mode.writes_pages,
         ),
         _pilot_allowlist(cfg),
     )
@@ -1314,6 +1413,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+#: Exit-2 message for a ``run_plan --links-only`` plan offered to a mode that writes pages. That
+#: plan kept units with no generated copy, and rendering one publishes a blank tagline over a
+#: live page — the very thing E21 exists to stop.
+_LINKS_ONLY_REFUSAL = (
+    "config error: this plan was built with `run_plan --links-only`, so it carries rows with no "
+    "generated copy; it can only run with `--only links`, not in {mode!r} mode. Re-run run_plan "
+    "without --links-only to publish pages."
+)
+
+
 def _production_refusal(cfg: ClientConfig, mode: _Mode) -> str:
     """The exit-2 message for a production run without the acknowledgment flag.
 
@@ -1354,6 +1463,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = get_client(args.client_id)
         confirmed = _load_confirmed(args)
+        if confirmed.plan.links_only and mode is not _Mode.LINKS:
+            print(_LINKS_ONLY_REFUSAL.format(mode=mode), file=sys.stderr)
+            return _EXIT_CONFIG_ERROR
         if (
             not args.dry_run
             and cfg.gs1.environment == "production"

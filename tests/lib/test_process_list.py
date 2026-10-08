@@ -23,7 +23,12 @@ import pytest
 
 from lib.config import ProcessListConfig
 from lib.errors import ProcessListError
-from lib.process_list import ProcessListSheet, load_process_list, read_process_list
+from lib.process_list import (
+    ProcessListSheet,
+    load_listed_targets,
+    load_process_list,
+    read_process_list,
+)
 
 _HEADER = ["Artikelnr.", "Omschrijving NL", "Barcode"]
 
@@ -431,3 +436,67 @@ def test_a_strict_workbook_yields_the_same_gtins_to_a_run(tmp_path: Path) -> Non
 
     # Act / Assert
     assert load_process_list(_config(path)) == frozenset({GTIN14})
+
+
+# --- target_url_column: the one value read, and only when configured ----------
+
+_SITE = "https://www.noviplast.nl"
+_LINKED = ["Barcode", "Link naar site"]
+
+
+def _linked(path: str) -> ProcessListConfig:
+    return ProcessListConfig(path=path, target_url_column="Link naar site")
+
+
+def test_no_target_column_configured_reads_no_addresses(tmp_path: Path) -> None:
+    path = _write_xlsx(tmp_path, [[GTIN13, f"{_SITE}/noviplast/x/"]], header=_LINKED)
+
+    assert load_listed_targets(_config(path), _SITE) == {}
+
+
+def test_listed_addresses_are_keyed_by_gtin14_and_blank_cells_are_absent(tmp_path: Path) -> None:
+    rows = [[GTIN13, f"{_SITE}/noviplast/notenkraker-2/"], ["8713195005409", None]]
+    path = _write_xlsx(tmp_path, rows, header=_LINKED)
+
+    assert load_listed_targets(_linked(path), _SITE) == {
+        GTIN14: f"{_SITE}/noviplast/notenkraker-2/"
+    }
+
+
+def test_a_configured_column_missing_from_the_file_is_refused(tmp_path: Path) -> None:
+    path = _write_xlsx(tmp_path, [[None, None, GTIN13]])
+
+    with pytest.raises(ProcessListError, match="no 'Link naar site' column"):
+        load_listed_targets(_linked(path), _SITE)
+
+
+@pytest.mark.parametrize(
+    ("cell", "reason"),
+    [
+        ("noviplast/notenkraker-2", "not an absolute"),
+        ("ftp://www.noviplast.nl/x/", "not an absolute"),
+        ("https://elsewhere.example/x/", "not on the site's host"),
+    ],
+)
+def test_an_unusable_address_refuses_the_whole_file(tmp_path: Path, cell: str, reason: str) -> None:
+    """A GS1 record can never be deleted, so a bad cell stops the plan rather than one row."""
+    path = _write_xlsx(tmp_path, [[GTIN13, cell]], header=_LINKED)
+
+    with pytest.raises(ProcessListError, match=reason):
+        load_listed_targets(_linked(path), _SITE)
+
+
+def test_one_gtin_with_two_addresses_is_refused(tmp_path: Path) -> None:
+    rows = [[GTIN13, f"{_SITE}/noviplast/a/"], [GTIN13, f"{_SITE}/noviplast/b/"]]
+    path = _write_xlsx(tmp_path, rows, header=_LINKED)
+
+    with pytest.raises(ProcessListError, match="also listed as"):
+        load_listed_targets(_linked(path), _SITE)
+
+
+def test_the_host_check_ignores_case(tmp_path: Path) -> None:
+    path = _write_xlsx(
+        tmp_path, [[GTIN13, "https://WWW.Noviplast.nl/noviplast/x/"]], header=_LINKED
+    )
+
+    assert GTIN14 in load_listed_targets(_linked(path), _SITE)

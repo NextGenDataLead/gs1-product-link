@@ -1,7 +1,7 @@
 """Build a run plan by classifying products against prior state (IMPLEMENTATION_SPEC §8.2).
 
 Usage:
-    python -m scripts.run_plan CLIENT_ID [--include-published] [--products PATH]
+    python -m scripts.run_plan CLIENT_ID [--include-published] [--links-only] [--products PATH]
 
 Loads the client config, its persisted state, and the parsed products, then classifies
 each ``(GTIN, language)`` as NEW / UNCHANGED / CHANGED (``lib.state.diff_against_state``)
@@ -15,6 +15,14 @@ run. Without a ``process_list`` config, every product is planned (the plain spec
 behaviour).
 
     --products:   default output/{client_id}/data/products.json
+    --links-only: build the plan for a ``run_execute --only links`` run — the generated-copy
+                  rule (E21) is not applied, because a links run renders no page. The plan is
+                  marked ``links_only`` and ``run_execute`` refuses it for any other mode.
+
+When ``process_list.target_url_column`` is set, every row of a GTIN whose cell is filled carries
+that address as ``listed_url``: the page a links run points the resolver at, for a product whose
+page this tool did not make. It is read in every mode, so a pages or both run can refuse a GTIN
+whose listed page is not the one it would publish.
 
 A *corrupt* state file is not fatal (E19): ``load_state`` moves it aside and starts fresh,
 and the summary leads with a warning — every row then re-plans as NEW, which is idempotent
@@ -54,10 +62,11 @@ from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError
 from lib.generator import generation_context, load_results, merge_generated
 from lib.holds import video_gate_for
 from lib.media_video import VideoGate, canon_gtin
-from lib.process_list import load_process_list
+from lib.process_list import load_listed_targets, load_process_list
 from lib.records import (
     Plan,
     PlanClassification,
+    PlanRow,
     PlanSummary,
     ProductRecord,
     SkippedUnit,
@@ -88,6 +97,14 @@ _INCLUDE_PUBLISHED_WARNING = (
     "instead of being treated as finished. A CHANGED row here rewrites a LIVE page. Pages are "
     "matched by slug/meta.gtin and updated in place, not duplicated, and an untouched product "
     "still classifies UNCHANGED and is never executed."
+)
+
+#: Printed above the counts when ``--links-only`` built the plan. It leads because it limits what
+#: the plan may be used for: rows with no generated copy are in it, which is right for a resolver
+#: write and wrong for a page.
+_LINKS_ONLY_NOTE = (
+    "NOTE: --links-only — the generated-copy rule was not applied, so this plan can only be "
+    "executed with --only links (run_execute refuses it otherwise)."
 )
 
 
@@ -290,8 +307,22 @@ class _PlanResult(NamedTuple):
     included_published: bool = False
 
 
+def _with_listed_urls(rows: list[PlanRow], listed: dict[str, str]) -> list[PlanRow]:
+    """Attach each GTIN's listed page to every one of its rows, leaving the rest untouched."""
+    return [
+        row.model_copy(update={"listed_url": listed[row.product.gtin14]})
+        if row.product.gtin14 in listed
+        else row
+        for row in rows
+    ]
+
+
 def _build_plan(
-    cfg: ClientConfig, products: list[ProductRecord], *, include_published: bool = False
+    cfg: ClientConfig,
+    products: list[ProductRecord],
+    *,
+    include_published: bool = False,
+    links_only: bool = False,
 ) -> _PlanResult:
     """Gate, assign categories, merge generated copy, classify, and assemble the :class:`Plan`.
 
@@ -300,8 +331,10 @@ def _build_plan(
     issues (unmapped bricks left unset), and the generated-content issues (one per
     generated/adjusted value and per blank marketing message).
     """
+    listed: dict[str, str] = {}
     if cfg.process_list is not None:
         candidates, excluded = _gate(products, load_process_list(cfg.process_list))
+        listed = load_listed_targets(cfg.process_list, cfg.wordpress.site_url)
     else:
         candidates, excluded = products, {"not_listed": 0}
 
@@ -323,7 +356,7 @@ def _build_plan(
         state,
         cfg.wordpress.languages,
         cfg.wordpress,
-        require_generated_copy=cfg.generator is not None,
+        require_generated_copy=cfg.generator is not None and not links_only,
         require_hero_image=cfg.media is not None and cfg.media.require_hero_image,
         mandatory_sources=cfg.export.all_sources,
         video_gate=gate,
@@ -335,8 +368,9 @@ def _build_plan(
         generated_at=datetime.now(UTC),
         total=len(rows),
         counts=counts,
-        rows=rows,
+        rows=_with_listed_urls(rows, listed),
         skipped=skipped,
+        links_only=links_only,
     )
     return _PlanResult(plan, excluded, state, category_issues, generated_issues, include_published)
 
@@ -370,6 +404,7 @@ def _summarise(result: _PlanResult) -> PlanSummary:
         state_reset_from_corrupt=result.state.reset_from_corrupt,
         state_corrupt_backup=result.state.corrupt_backup,
         included_published=result.included_published,
+        links_only=plan.links_only,
         text=_summary(
             plan,
             result.excluded,
@@ -429,8 +464,13 @@ def _summary(  # noqa: PLR0913 — one parameter per thing the operator must be 
         line += f"; {unmapped_categories} product(s) with unmapped category (left unset)"
     if generated_issues:
         line += f"; {generated_issues} generated-content note(s) — see generated_issues.json"
+    listed = len({row.gtin for row in plan.rows if row.listed_url})
+    if listed:
+        line += f"; {listed} GTIN(s) with a listed page"
     if included_published:
         line = f"{_INCLUDE_PUBLISHED_WARNING}\n{line}"
+    if plan.links_only:
+        line = f"{_LINKS_ONLY_NOTE}\n{line}"
     if state_was_reset:
         # Above the include-published note as well: a corrupt-state reset re-plans *everything*
         # as NEW, which subsumes whatever the flag re-admitted.
@@ -468,6 +508,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "then rewrites a LIVE page"
         ),
     )
+    parser.add_argument(
+        "--links-only",
+        action="store_true",
+        help=(
+            "Build the plan for a `run_execute --only links` run: units with no generated copy "
+            "are kept, since no page is rendered. run_execute refuses such a plan for any "
+            "other mode"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -481,7 +530,9 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.products) if args.products else _default_products_path(cfg.client_id)
         )
         products = _load_products(products_path)
-        result = _build_plan(cfg, products, include_published=args.include_published)
+        result = _build_plan(
+            cfg, products, include_published=args.include_published, links_only=args.links_only
+        )
     except (
         ConfigError,
         GeneratorError,

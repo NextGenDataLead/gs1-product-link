@@ -426,7 +426,11 @@ class _Flow:
         # the command has already finished, so the button never gets to show it is working.
         async def build_plan() -> None:
             result = await runner.run_off_the_loop(
-                runner.run_plan_argv(self.cid, include_published=self.include_published)
+                runner.run_plan_argv(
+                    self.cid,
+                    include_published=self.include_published,
+                    links_only=self.session.mode is Mode.LINKS,
+                )
             )
             # These rows are not the rows those decisions were made about. Carrying an *apply*
             # across a rebuild is consent to publish a row in a form the operator may never have
@@ -467,7 +471,13 @@ class _Flow:
             value=self.include_published,
             on_change=toggle,
         )
-        theme.command(runner.run_plan_argv(self.cid, include_published=self.include_published))
+        theme.command(
+            runner.run_plan_argv(
+                self.cid,
+                include_published=self.include_published,
+                links_only=self.session.mode is Mode.LINKS,
+            )
+        )
         theme.action("Build the plan", build_plan)
 
         if summary is None or plan is None:
@@ -500,6 +510,15 @@ class _Flow:
                 "and updated in place, not duplicated, and an untouched product still classifies "
                 "UNCHANGED and is never executed.",
                 "danger",
+            )
+
+        # The plan and the mode can part company: the mode is chosen at gate 0 and can be changed
+        # after the plan was built. Said here because the run would be refused for it at the end.
+        if plan.links_only and self.session.mode is not Mode.LINKS:
+            theme.band(
+                "This plan was built for a links-only run, so it keeps products with no generated "
+                f"copy. It cannot run in {self.session.mode.value} mode — build the plan again.",
+                "warn",
             )
 
         with theme.figures():

@@ -304,6 +304,22 @@ reversible:
 A band at the top of the screen tells you which of those you are in, all the way through. Grey
 means reversible; **red means this run writes permanent records.**
 
+**Products that already have an older page.** Many products have a page on the site that this tool
+did not make, at an address of its own (`…/noviplast/notenkraker-2/`). To point their GS1 record at
+that page, put its address in the **Link naar site** column of the product selection list, and run
+**links**. The tool uses the Dutch page you named and the French page *that page itself* links to as
+its translation. It refuses a product, and says why, rather than guess, when:
+
+- the page has no French version and you confirmed French — confirm Dutch only, or translate the
+  page first;
+- the tool already published its own page for that product at another address — clear one of
+  the two;
+- you run **pages** or **both** for a product whose cell is filled — that would make a second page.
+  Clear the cell if the new page should replace the old one.
+
+A **links** run needs no generated copy, so the Content step can be skipped for it. Leave the cell
+empty for every product whose page this tool publishes.
+
 **The gates you will meet, in order:**
 
 1. **Intent confirmation** — the mode, and nothing else: **pages**, **links** or **both**. Check the

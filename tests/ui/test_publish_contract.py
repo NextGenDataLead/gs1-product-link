@@ -253,9 +253,10 @@ def test_the_displayed_command_carries_the_flag() -> None:
     ]
     assert len(calls) == 2, "expected exactly the displayed command and the executed one"
     for call in calls:
-        assert any(kw.arg == "include_published" for kw in call.keywords), (
-            "every run_plan_argv call on this screen must pass include_published explicitly"
-        )
+        for flag in ("include_published", "links_only"):
+            assert any(kw.arg == flag for kw in call.keywords), (
+                f"every run_plan_argv call on this screen must pass {flag} explicitly"
+            )
 
 
 def test_the_plan_gate_warns_when_the_plan_re_admits_published_products() -> None:
