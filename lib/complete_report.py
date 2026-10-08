@@ -27,6 +27,8 @@ from lib.report_markdown import cell, table
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from lib.process_list import ProcessListSheet
+
 LIVE: Final = "live"
 READY: Final = "ready to publish"
 NOT_IN_EXPORT: Final = "not in the export"
@@ -162,14 +164,37 @@ def status_lines(rows: Sequence[StatusRow], languages: Sequence[str], site_note:
     ]
 
 
-def list_lines(listed: Sequence[ListedRow], exported: Mapping[str, str]) -> list[str]:
-    """What is wrong with the product list itself — before any product is looked at."""
-    missing = [row for row in listed if row.gtin and row.gtin not in exported]
+def listed_rows(sheet: ProcessListSheet) -> list[ListedRow]:
+    """The product list as rows a person can recognise: barcode, and the first two filled cells
+    other than the barcode (on Noviplast's list: the article number and the description)."""
+    rows = []
+    for index in range(len(sheet.rows)):
+        cells = [
+            value.strip()
+            for n, value in enumerate(sheet.rows[index])
+            if n != sheet.gtin_index and value and value.strip()
+        ]
+        rows.append(ListedRow(sheet.gtin14_at(index), " ".join(cells[:2])))
+    return rows
+
+
+def shared_barcodes(listed: Sequence[ListedRow]) -> dict[str, list[str]]:
+    """``{gtin14: [row labels]}`` for every barcode on more than one row, in list order.
+
+    One function for the Data screen's warning and this report's table, so the two cannot
+    disagree about which rows share a barcode.
+    """
     by_gtin: dict[str, list[str]] = defaultdict(list)
     for row in listed:
         if row.gtin:
             by_gtin[row.gtin].append(row.label)
-    shared = {gtin: labels for gtin, labels in by_gtin.items() if len(labels) > 1}
+    return {gtin: labels for gtin, labels in by_gtin.items() if len(labels) > 1}
+
+
+def list_lines(listed: Sequence[ListedRow], exported: Mapping[str, str]) -> list[str]:
+    """What is wrong with the product list itself — before any product is looked at."""
+    missing = [row for row in listed if row.gtin and row.gtin not in exported]
+    shared = shared_barcodes(listed)
     return [
         "## Your product list",
         "",

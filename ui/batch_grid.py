@@ -34,6 +34,7 @@ from typing import Any, Final
 
 from nicegui import ui
 
+from lib.complete_report import listed_rows, shared_barcodes
 from lib.eligibility import Eligibility
 from lib.errors import ProcessListError
 from lib.process_list import ProcessListSheet, rows_in_export
@@ -143,8 +144,43 @@ def draw_funnel(box: ui.element, counts: Funnel) -> None:
             )
 
 
+def shared_barcode_notes(sheet: ProcessListSheet, names: dict[str, str]) -> list[tuple[str, str]]:
+    """``(band kind, sentence)`` for every barcode on more than one row of the list. Pure.
+
+    Two different products on one barcode is almost always a typo, and it was invisible here: the
+    only trace was the caption counting 97 rows beside a Coverage of 96 products (7 Days and Fun
+    Grill share ``8713195008486``; the export says it is the grill). The same product listed twice
+    is harmless — it counts once — so it gets a quiet note, not a warning.
+    """
+    notes = []
+    for gtin, labels in shared_barcodes(listed_rows(sheet)).items():
+        named = names.get(gtin)
+        if len(set(labels)) > 1:
+            says = f" The export says it is {named}." if named else " The export does not carry it."
+            notes.append(
+                (
+                    "warn",
+                    f"Barcode {gtin} is on {len(labels)} rows with different products: "
+                    f"{', '.join(labels)}.{says} Correct the barcode in your product list "
+                    "and upload it again.",
+                )
+            )
+        else:
+            notes.append(
+                (
+                    "quiet",
+                    f"Barcode {gtin} is on {len(labels)} rows of your list for the same product "
+                    f"({labels[0]}). It counts once.",
+                )
+            )
+    return notes
+
+
 def save_line(ticked: int, eligible: int) -> str:
-    """What Next will do, said before it is pressed — in rows, because a save writes rows.
+    """What Next will do, said before it is pressed — in products, as Coverage counts them.
+
+    It counted rows, so a barcode on two rows made it say 97 beside Coverage's 96 with nothing on
+    screen saying why. :func:`shared_barcode_notes` now names such rows; this counts what runs.
 
     The tick box inverted its meaning one release ago — a tick used to mean *remove this row* — so
     "2 unticked" has to be legible *while the operator can still change their mind*.
@@ -155,10 +191,10 @@ def save_line(ticked: int, eligible: int) -> str:
         return "Tick at least one product — Next stays off until then."
     dropped = eligible - ticked
     if not dropped:
-        return f"Next saves all {eligible} eligible row(s) and goes on to the copy."
+        return f"Next saves all {eligible} eligible product(s) and goes on to the copy."
     return (
-        f"Next saves {ticked} of {eligible} eligible row(s) — {dropped} unticked — and goes on to "
-        "the copy."
+        f"Next saves {ticked} of {eligible} eligible product(s) — {dropped} unticked — and goes "
+        "on to the copy."
     )
 
 
@@ -250,13 +286,17 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
         bare,
         collapsed=True,
     )
+    names = {p.gtin14: (p.product_name.values.get("nl") or "") for p in products}
+    for kind, sentence in shared_barcode_notes(sheet, names):
+        theme.band(sentence, kind)
     grid = _scope_table(columns, eligible, untick=ticks.unticked)
     keys = {int(row[_ROW]) for row in eligible}
+    eligible_products = len({row[_GTIN] for row in eligible})
 
     def describe() -> None:
         ticked = grid.selected
         ticks.unticked = keys - {int(row[_ROW]) for row in ticked}
-        caption.text = save_line(len(ticked), len(eligible))
+        caption.text = save_line(len({row[_GTIN] for row in ticked}), eligible_products)
         counted(funnel(every, ticked, verdict, exported))
 
     grid.on_select(describe)
