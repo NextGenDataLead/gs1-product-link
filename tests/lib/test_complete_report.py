@@ -14,8 +14,10 @@ from lib.complete_report import (
     ListedRow,
     PageState,
     list_lines,
+    published_lines,
     status_rows,
 )
+from lib.live_inventory import PublishedTotals
 
 A, B, C, D = "08713195004488", "08713195005829", "08713195008486", "08713195009999"
 LANGS = ["nl", "fr"]
@@ -94,3 +96,41 @@ def test_the_product_list_names_barcodes_the_export_lacks_and_shared_barcodes() 
     assert "`08713195009999`" in lines and "9999 Unknown" in lines
     assert "4214 7 Days" in lines and "5003 Fun Grill" in lines
     assert "| Grillen |" in lines
+
+
+def test_the_published_section_gives_the_numbers_per_language() -> None:
+    totals = PublishedTotals(
+        products=38,
+        pages={"nl": 38, "fr": 38},
+        records=38,
+        links={"nl": 38, "fr": 38},
+        qr_codes=38,
+    )
+
+    text = "\n".join(published_lines(totals, LANGS, "nl"))
+
+    assert "## What this tool has published" in text
+    assert "**38** products live, **38** GS1 records, **38** QR codes" in text
+    assert "a scan of the QR code opens the nl page" in text
+    assert "| Pages live | 38 | 38 |" in text
+    assert "| Links in GS1 records | 38 | 38 |" in text
+    assert "no GS1 record yet" not in text  # nothing to say, so nothing said
+
+
+def test_the_published_section_names_what_is_unfinished() -> None:
+    totals = PublishedTotals(
+        products=3,
+        pages={"nl": 3, "fr": 3},
+        records=2,
+        links={"nl": 2, "fr": 2},
+        without_record=1,
+        qr_codes=1,
+        records_without_qr=1,
+        taken_down=1,
+    )
+
+    text = "\n".join(published_lines(totals, LANGS, "nl"))
+
+    assert "**1** live product(s) have their pages but no GS1 record yet" in text
+    assert "**1** product(s) have a GS1 record but no QR file" in text
+    assert "**1** product(s) were published once and taken down since" in text

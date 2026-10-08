@@ -368,7 +368,8 @@ you are ever unsure whether a page exists.
 **Complete data-quality report**, under it, is the follow-up list for **every product on your
 product list and everything that is live** — not just the last batch. Press **Build the report**.
 It opens with *What to do, by who* (the client in MyGS1, the client's videos, you, the site's
-maintainer), then every product with where it stands — live (each page checked on the website for
+maintainer), then *What this tool has published* — how many products are live, and per language
+how many pages and GS1 links, plus how many GS1 records and QR codes — then every product with where it stands — live (each page checked on the website for
 its video and text), ready to publish, held and why, or not in the export — then what is wrong with
 the product list itself, then the usual sections. It takes a while, writes nothing to the site, and
 is saved as `complete-data-quality-report.md`, ready to forward to the client.

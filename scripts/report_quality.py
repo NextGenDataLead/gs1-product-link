@@ -40,6 +40,7 @@ from lib.complete_report import (
     Action,
     action_lines,
     list_lines,
+    published_lines,
     status_lines,
 )
 from lib.complete_scope import Complete, gather
@@ -524,6 +525,12 @@ def _complete_preface(
         ),
         Action(
             "Operator",
+            "Write the GS1 record for live products without one (links run)",
+            complete.published.without_record,
+            "What this tool has published",
+        ),
+        Action(
+            "Operator",
             "Publish again: live pages without their text",
             sum("no text" in c for c in live_cells),
             "Every product",
@@ -549,6 +556,7 @@ def _complete_preface(
     covered = sum(1 for gtin in complete.scope if gtin in written)
     return [
         *action_lines(actions),
+        *published_lines(complete.published, languages, complete.default_language),
         *status_lines(rows, languages, complete.site_note),
         *list_lines(complete.listed, complete.exported),
         f"Sections 3 and 5 come from the last text generation, which wrote for {covered} of the "

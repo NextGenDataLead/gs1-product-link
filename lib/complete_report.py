@@ -27,6 +27,7 @@ from lib.report_markdown import cell, table
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from lib.live_inventory import PublishedTotals
     from lib.process_list import ProcessListSheet
 
 LIVE: Final = "live"
@@ -160,6 +161,49 @@ def status_lines(rows: Sequence[StatusRow], languages: Sequence[str], site_note:
                 for row in rows
             ],
         ),
+        "",
+    ]
+
+
+def published_lines(
+    totals: PublishedTotals, languages: Sequence[str], default_language: str
+) -> list[str]:
+    """The section: how many products, pages, GS1 records, links and QR codes this tool made."""
+    notes = []
+    if totals.without_record:
+        notes.append(
+            f"**{totals.without_record}** live product(s) have their pages but no GS1 record yet "
+            "(published with **pages** only) — a **links** run writes it."
+        )
+    if totals.records_without_qr:
+        notes.append(
+            f"**{totals.records_without_qr}** product(s) have a GS1 record but no QR file on this "
+            "machine."
+        )
+    if totals.taken_down:
+        notes.append(
+            f"**{totals.taken_down}** product(s) were published once and taken down since."
+        )
+    return [
+        "## What this tool has published",
+        "",
+        f"**{totals.products}** products live, **{totals.records}** GS1 records, "
+        f"**{totals.qr_codes}** QR codes. Each GS1 record's {default_language} link is its default "
+        f"link, so a scan of the QR code opens the {default_language} page.",
+        "",
+        *table(
+            ["", *languages],
+            [
+                ["Pages live", *(str(totals.pages.get(lang, 0)) for lang in languages)],
+                ["Links in GS1 records", *(str(totals.links.get(lang, 0)) for lang in languages)],
+            ],
+        ),
+        "",
+        *(f"- {note}" for note in notes),
+        *([""] if notes else []),
+        "Counted from this machine's record of what it wrote and the QR files beside it; the GS1 "
+        "records are not re-read for this. Whether each page is really on the site is checked in "
+        "the next section.",
         "",
     ]
 

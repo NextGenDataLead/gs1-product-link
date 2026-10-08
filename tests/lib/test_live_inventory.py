@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from lib.live_inventory import live_products
+from lib.live_inventory import live_products, published_totals
 from lib.records import State, StateEntry
 
 A, B, C = "08713195004488", "08713195007151", "08713195000527"
@@ -49,3 +49,34 @@ def test_retracted_and_unpublished_pages_are_not_live() -> None:
 
     assert [p.gtin for p in live] == [A, B]
     assert {page.language for page in live[0].pages} == {"nl", "fr"}
+
+
+# --- What this tool has published: the counts the complete report opens its record with ----------
+# Operator, 2026-10-08: the report "should also contain numbers on what is processed like pages and
+# links".
+
+D = "08713195003344"
+
+
+def test_published_totals_count_pages_records_links_and_qr_codes() -> None:
+    state = _state()
+    # D went live with pages only: no GS1 record yet.
+    state.entries[D] = {"nl": _entry(D, "nl", gs1=""), "fr": _entry(D, "fr", gs1="")}
+
+    totals = published_totals(state, ["nl", "fr"], qr_gtins={A, C})
+
+    assert totals.products == 3  # A, B, D — C was taken down
+    assert totals.pages == {"nl": 3, "fr": 3}
+    assert totals.records == 2  # A and B
+    assert totals.links == {"nl": 2, "fr": 2}
+    assert totals.without_record == 1  # D
+    assert totals.qr_codes == 1  # A; C's file belongs to a product no longer live
+    assert totals.records_without_qr == 1  # B
+    assert totals.taken_down == 1  # C
+
+
+def test_a_language_with_nothing_published_is_counted_as_zero() -> None:
+    totals = published_totals(_state(), ["nl", "fr", "de"], qr_gtins=set())
+
+    assert totals.pages["de"] == 0
+    assert totals.links["de"] == 0
