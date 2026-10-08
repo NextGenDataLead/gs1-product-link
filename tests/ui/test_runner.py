@@ -203,3 +203,9 @@ def test_the_shell_never_offers_to_re_draft_the_video_mapping() -> None:
     over the mapping is a deliberate act. Behind a button it would be one click.
     """
     assert "--check" in runner.build_video_map_argv("acme")
+
+
+def test_the_complete_report_asks_for_complete_and_the_batch_one_does_not() -> None:
+    """Runs builds the complete report; Data builds the batch's. One flag apart."""
+    assert runner.report_quality_argv("noviplast", complete=True)[-1] == "--complete"
+    assert "--complete" not in runner.report_quality_argv("noviplast")

@@ -1,0 +1,96 @@
+"""Tests for lib/complete_report.py — the sections only the complete data-quality report has.
+
+Operator, 2026-10-08: the report "needs to give a complete insight into all missing data/video's,
+data to be adjusted, etc. So an actionable report." Every product the client sent and everything
+live, each with where it stands; what is wrong with the product list itself; who does what.
+"""
+
+from __future__ import annotations
+
+from lib.complete_report import (
+    LIVE,
+    NOT_IN_EXPORT,
+    READY,
+    ListedRow,
+    PageState,
+    list_lines,
+    status_rows,
+)
+
+A, B, C, D = "08713195004488", "08713195005829", "08713195008486", "08713195009999"
+LANGS = ["nl", "fr"]
+
+
+def _rows() -> list:
+    return status_rows(
+        listed=[
+            ListedRow(A, "4156 Desk lamp"),
+            ListedRow(B, "4194 Roll Light"),
+            ListedRow(C, "5003 Fun Grill"),
+            ListedRow(D, "9999 Unknown"),
+        ],
+        exported={A: "bureaulamp", B: "ledstrip", C: "Grillen"},
+        held={B: "two videos in nl — the client must keep one"},
+        missing_video={C: "no confirmed video in fr"},
+        live={
+            A: {
+                "nl": PageState(on_site=True, video=True, text=True),
+                "fr": PageState(on_site=True, video=False, text=True),
+            }
+        },
+        languages=LANGS,
+    )
+
+
+def test_every_product_gets_one_status() -> None:
+    by_gtin = {row.gtin: row for row in _rows()}
+
+    assert by_gtin[A].status == LIVE
+    assert by_gtin[B].status.startswith("held — two videos")
+    assert by_gtin[C].status == READY
+    assert by_gtin[D].status == NOT_IN_EXPORT
+
+
+def test_a_live_page_says_what_the_site_has() -> None:
+    row = next(r for r in _rows() if r.gtin == A)
+
+    assert row.cells == ["video · text", "no video"]
+
+
+def test_a_product_not_yet_live_names_what_it_will_lack() -> None:
+    row = next(r for r in _rows() if r.gtin == C)
+
+    assert row.note == "no confirmed video in fr"
+    assert row.cells == ["—", "—"]
+
+
+def test_an_unchecked_site_is_never_called_live_with_video() -> None:
+    rows = status_rows(
+        listed=[ListedRow(A, "4156 Desk lamp")],
+        exported={A: "bureaulamp"},
+        held={},
+        missing_video={},
+        live={A: {"nl": PageState(on_site=None, video=None, text=None)}},
+        languages=["nl"],
+    )
+
+    assert rows[0].cells == ["not checked"]
+
+
+def test_the_product_list_names_barcodes_the_export_lacks_and_shared_barcodes() -> None:
+    """7 Days and Fun Grill on one barcode: the export says it is the grill."""
+    lines = "\n".join(
+        list_lines(
+            [
+                ListedRow(A, "4156 Desk lamp"),
+                ListedRow(C, "4214 7 Days"),
+                ListedRow(C, "5003 Fun Grill"),
+                ListedRow(D, "9999 Unknown"),
+            ],
+            exported={A: "bureaulamp", C: "Grillen"},
+        )
+    )
+
+    assert "`08713195009999`" in lines and "9999 Unknown" in lines
+    assert "4214 7 Days" in lines and "5003 Fun Grill" in lines
+    assert "| Grillen |" in lines

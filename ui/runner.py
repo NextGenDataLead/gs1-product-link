@@ -285,9 +285,15 @@ def run_generate_argv(client_id: str | None, gtins: list[str] | None = None) -> 
     ]
 
 
-def report_quality_argv(client_id: str | None) -> list[str]:
-    """Render every issue file into one worklist."""
-    return ["-m", "scripts.report_quality", *([client_id] if client_id else [])]
+def report_quality_argv(client_id: str | None, *, complete: bool = False) -> list[str]:
+    """Render every issue file into one worklist — for the batch in progress, or with ``complete``
+    for every product on the client's list and everything live, checked against the site."""
+    return [
+        "-m",
+        "scripts.report_quality",
+        *([client_id] if client_id else []),
+        *(["--complete"] if complete else []),
+    ]
 
 
 def report_scope_argv(client_id: str | None, *, run: str | None = None) -> list[str]:

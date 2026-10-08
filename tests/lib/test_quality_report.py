@@ -1366,3 +1366,22 @@ def test_the_generated_copy_count_says_which_copy_it_counted() -> None:
     md = _render(generated_issues=gen, products=_products("08713195000001"))
 
     assert "1 generated-copy row(s) written this run" in md
+
+
+def test_the_everything_live_report_leads_with_its_inventory_and_drops_run_notes() -> None:
+    """Run notes describe one run; beside an inventory of every live product they mislead.
+
+    Found on the first real render: August's "all 12 published products … with video showing"
+    sat under an inventory showing 13 of 16 with no video.
+    """
+    md = _render(
+        preface=["## Live on the site", "", "inventory", ""],
+        observations=["All 12 published products are live."],
+        live=True,
+    )
+
+    assert md.splitlines()[0] == "# Noviplast — Data quality report — complete"
+    assert "report_quality noviplast --complete" in md
+    assert md.index("## Live on the site") < md.index("## Summary")
+    assert "Observations (this run)" not in md
+    assert "All 12 published" not in md

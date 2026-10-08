@@ -345,6 +345,14 @@ some pages may be live and some records may already exist for the rows that land
 it against this machine's record, in both directions. It only reads; nothing is written. Use it if
 you are ever unsure whether a page exists.
 
+**Complete data-quality report**, under it, is the follow-up list for **every product on your
+product list and everything that is live** — not just the last batch. Press **Build the report**.
+It opens with *What to do, by who* (the client in MyGS1, the client's videos, you, the site's
+maintainer), then every product with where it stands — live (each page checked on the website for
+its video and text), ready to publish, held and why, or not in the export — then what is wrong with
+the product list itself, then the usual sections. It takes a while, writes nothing to the site, and
+is saved as `complete-data-quality-report.md`, ready to forward to the client.
+
 **To send the result back to whoever asked for the batch:** press **Build the result sheet** on
 the run's card. It writes your scope list again, beside the run log, with what happened to each
 row added on the right — one line per product, the page address where there is one, and a plain

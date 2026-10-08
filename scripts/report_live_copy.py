@@ -56,9 +56,9 @@ from lib.errors import (
 )
 from lib.holds import held_products
 from lib.live_copy import LiveCopyReport, LiveText, classify
-from lib.media_video import canon_gtin
 from lib.preflight import in_scope
 from lib.records import ProductRecord
+from lib.site_read import read_tool_pages
 from lib.wp_client import WordPressClient
 
 _EXIT_OK = 0
@@ -93,27 +93,18 @@ def _fetch(cfg: ClientConfig) -> dict[tuple[str, str], LiveText]:
     French pages came to look empty.
     """
     fields = tuple(cfg.wordpress.acf_map)
-    found: dict[tuple[str, str], LiveText] = {}
     with WordPressClient(cfg.wordpress) as client:
-        for language in cfg.wordpress.languages:
-            for listed in client.list_pages_with_gtin(cfg.wordpress.post_type, language):
-                meta = listed.get("meta")
-                gtin = str(meta.get("gtin", "")) if isinstance(meta, dict) else ""
-                if not gtin:
-                    continue
-                page_id = int(listed.get("id", 0))
-                page = client.read_page(cfg.wordpress.post_type, page_id) or {}
-                acf = page.get("acf")
-                values = acf if isinstance(acf, dict) else {}
-                filled = {f for f in fields if str(values.get(f) or "").strip()}
-                found[canon_gtin(gtin), language] = LiveText(
-                    gtin=canon_gtin(gtin),
-                    language=language,
-                    page_id=page_id,
-                    filled=frozenset(filled),
-                    empty=tuple(f for f in fields if f not in filled),
-                )
-    return found
+        pages = read_tool_pages(client, cfg.wordpress, fields)
+    return {
+        (gtin, language): LiveText(
+            gtin=gtin,
+            language=language,
+            page_id=page.page_id,
+            filled=page.filled,
+            empty=tuple(f for f in fields if f not in page.filled),
+        )
+        for (gtin, language), page in pages.items()
+    }
 
 
 def _as_json(cfg: ClientConfig, report: LiveCopyReport, checked_at: str) -> dict[str, object]:

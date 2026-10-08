@@ -332,7 +332,9 @@ def _label(products: dict[str, ProductRecord], gtin: str) -> str:
     return f"`{gtin}` ({_short(gtin)})" + (f" — {name}" if name else "")
 
 
-def _header_lines(client_id: str, snapshot: str, freshness: dict[str, str]) -> list[str]:
+def _header_lines(
+    client_id: str, snapshot: str, freshness: dict[str, str], *, live: bool = False
+) -> list[str]:
     """The title block, leading with **when this document was written**.
 
     On its own line, in local time with the zone named, and first — because the question a reader
@@ -348,7 +350,7 @@ def _header_lines(client_id: str, snapshot: str, freshness: dict[str, str]) -> l
 
     stale = _stalest(freshness)
     return [
-        f"# {client_id.title()} — Data quality report",
+        f"# {client_id.title()} — Data quality report" + (" — complete" if live else ""),
         "",
         f"**Generated {snapshot}**",
         "",
@@ -362,7 +364,7 @@ def _header_lines(client_id: str, snapshot: str, freshness: dict[str, str]) -> l
         "",
         f"> Regenerate the underlying data: `run_plan {client_id}` (generated + categories), "
         f"`parse_export {client_id}` (source), `build_video_map {client_id} --check` (video-map); "
-        f"then `python -m scripts.report_quality {client_id}`.",
+        f"then `python -m scripts.report_quality {client_id}{' --complete' if live else ''}`.",
         "",
     ]
 
@@ -908,6 +910,8 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     video_held: list[str] | None = None,
     matrix: MatrixInput | None = None,
     video: VideoReport | None = None,
+    preface: list[str] | None = None,
+    live: bool = False,
 ) -> str:
     """Render the consolidated data-quality report as markdown.
 
@@ -940,6 +944,12 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
             re-planned — §1. ``None`` still renders §1, as one line, so every later section keeps
             its number whether or not the client attaches videos.
 
+        preface: Lines placed after the title block — the complete report's jobs, status table and
+            product-list findings (:mod:`lib.complete_report`). ``None`` adds nothing.
+        live: The complete report: titled so, its regenerate hint carries ``--complete``, and the
+            run notes are left out — they describe one run, and beside every product the client
+            sent they read as a claim about all of them.
+
     Returns:
         The full markdown document.
     """
@@ -954,7 +964,9 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
     thin = [i for i in source_issues if i.issue == THIN_TEXT]
 
     lines = [
-        *_header_lines(client_id, snapshot, freshness),
+        *_header_lines(client_id, snapshot, freshness, live=live),
+        # The complete report's opening (``lib.complete_report``): jobs, statuses, the list.
+        *(preface or []),
         *_summary_lines(
             generated_issues,
             source_issues,
@@ -964,7 +976,9 @@ def render_quality_report(  # noqa: PLR0913 — a document renderer needs each s
             video_held or [],
             video,
         ),
-        *_observations_lines(observations or []),
+        # Off for the complete report: the notes are about one run, and next to an
+        # inventory of every live product they read as a claim about all of them.
+        *([] if live else _observations_lines(observations or [])),
         *(
             _matrix_lines(
                 matrix.products,
