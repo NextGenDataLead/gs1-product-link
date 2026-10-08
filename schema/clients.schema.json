@@ -360,7 +360,11 @@
       "description": "Operator-maintained list of exactly which GTINs a run may touch. Every GTIN in the file is processed; no cell values are interpreted. The operator prepares it by deleting rows that should not run.",
       "properties": {
         "path": { "type": "string" },
-        "gtin_column": { "type": "string" }
+        "gtin_column": { "type": "string" },
+        "target_url_column": {
+          "type": "string",
+          "description": "Optional column holding the address of a page this tool did not make (e.g. 'Link naar site'). A links run points the product's GS1 record at it. Blank cells change nothing."
+        }
       }
     },
     "categories": {
