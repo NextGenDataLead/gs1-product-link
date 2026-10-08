@@ -82,7 +82,6 @@ export const GATES: readonly Gate[] = [
     "required": true,
     "modes": [
       "both",
-      "links",
       "pages"
     ],
     "needsProduction": false,

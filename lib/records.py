@@ -197,6 +197,13 @@ class PlanRow(BaseModel):
     target_url: str
     diff: dict[str, tuple[str, str]] | None = None
     product: ProductRecord
+    #: The page the operator listed for this GTIN in the process list's
+    #: ``target_url_column`` — the default language's page, on a product whose page this tool
+    #: did not make. Deliberately **not** folded into ``target_url``: that field is what this
+    #: tool would publish at, and it is inside the content hash; this one is what already
+    #: exists. One field answering both would make every listed product read CHANGED, and a
+    #: pages run would believe it had published somewhere it never wrote. ``None`` = not listed.
+    listed_url: str | None = None
 
 
 class SkipReason(StrEnum):
@@ -262,6 +269,10 @@ class Plan(BaseModel):
     counts: dict[PlanClassification, int]
     rows: list[PlanRow]
     skipped: list[SkippedUnit] = Field(default_factory=list)
+    #: Built by ``run_plan --links-only``: the generated-copy rule (E21) was not applied,
+    #: because a links run renders no page. Such a plan carries rows with no tagline, so
+    #: ``run_execute`` refuses it for any mode that writes pages.
+    links_only: bool = False
 
 
 class PlanSummary(BaseModel):
@@ -298,6 +309,11 @@ class PlanSummary(BaseModel):
     #: count below it means — a "changed" row is then a rewrite of a live page, not a first
     #: publish — and a reader an hour later has no other way to know which kind of plan this is.
     included_published: bool = False
+
+    #: ``run_plan --links-only`` built this plan, so units with no generated copy are in it.
+    #: Carried for the same reason as ``included_published``: it changes what the plan may be
+    #: used for, and a reader later has no other way to tell.
+    links_only: bool = False
 
     #: E19. Named in full rather than as ``reset``: a reader who skims must not have to
     #: guess which of several things was reset, or whether ``False`` is the alarming value.

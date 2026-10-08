@@ -1308,3 +1308,88 @@ def test_a_new_unit_with_no_copy_is_still_skipped(
     plan = _read_plan()
     assert plan.rows == []
     assert [s.reason for s in plan.skipped] == [SkipReason.NO_GENERATED_COPY]
+
+
+# --- --links-only and the listed page ------------------------------------------
+
+
+def test_links_only_keeps_a_unit_with_no_generated_copy_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A links run renders no page, so the tagline E21 protects is not needed for it."""
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products), "--links-only"]) == 0
+
+    plan = _read_plan()
+    assert [row.gtin for row in plan.rows] == [GTIN_A]
+    assert plan.links_only is True
+    assert _read_summary().links_only is True
+    assert "--links-only" in capsys.readouterr().err
+
+
+def test_without_links_only_the_copy_rule_still_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+
+    plan = _read_plan()
+    assert plan.rows == [] and plan.links_only is False
+
+
+def test_a_listed_page_rides_on_every_row_of_its_gtin_and_nowhere_else(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Barcode", "Link naar site"])
+    sheet.append([GTIN_A[1:], "https://wp.test/product/rugsteun-oud/"])  # 13 digits, as typed
+    sheet.append([GTIN_B, None])
+    list_path = tmp_path / "selection.xlsx"
+    workbook.save(list_path)
+    cfg = _make_config(
+        process_list=ProcessListConfig(path=str(list_path), target_url_column="Link naar site")
+    )
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A), _product(GTIN_B)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+
+    listed = {row.gtin: row.listed_url for row in _read_plan().rows}
+    assert listed == {GTIN_A: "https://wp.test/product/rugsteun-oud/", GTIN_B: None}
+    # Not folded into target_url, which stays what this tool would publish at.
+    assert {row.target_url for row in _read_plan().rows if row.gtin == GTIN_A} == {
+        f"https://wp.test/product/p-{GTIN_A}/"
+    }
+    assert "1 GTIN(s) with a listed page" in capsys.readouterr().err
+
+
+def test_an_off_site_listed_page_stops_the_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Barcode", "Link naar site"])
+    sheet.append([GTIN_A, "https://elsewhere.example/x/"])
+    list_path = tmp_path / "selection.xlsx"
+    workbook.save(list_path)
+    cfg = _make_config(
+        process_list=ProcessListConfig(path=str(list_path), target_url_column="Link naar site")
+    )
+    monkeypatch.chdir(tmp_path)
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products)]) == 2
+    assert "not on the site's host" in capsys.readouterr().err
