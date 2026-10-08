@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from lib.live_inventory import inventory_lines, live_products
+from lib.live_inventory import live_products
 from lib.records import State, StateEntry
 
 A, B, C = "08713195004488", "08713195007151", "08713195000527"
@@ -49,40 +49,3 @@ def test_retracted_and_unpublished_pages_are_not_live() -> None:
 
     assert [p.gtin for p in live] == [A, B]
     assert {page.language for page in live[0].pages} == {"nl", "fr"}
-
-
-def test_the_inventory_names_each_page_and_its_video() -> None:
-    on_site = {(A, "nl"), (A, "fr"), (B, "nl"), (B, "fr")}
-
-    lines = "\n".join(
-        inventory_lines(live_products(_state()), ["nl", "fr"], on_site=on_site, site_note="")
-    )
-
-    assert "2 product(s), 4 page(s)" in lines
-    assert "| live · no video |" in lines  # B fr
-    assert "| 2026-10-07 |" in lines
-
-
-def test_a_page_the_site_does_not_list_is_called_so_and_counted() -> None:
-    """A ledger saying "live" is the claim; the site listing is the check."""
-    lines = "\n".join(
-        inventory_lines(live_products(_state()), ["nl", "fr"], on_site={(A, "nl")}, site_note="")
-    )
-
-    cells = [
-        c.strip() for line in lines.splitlines() if line.startswith("| `") for c in line.split("|")
-    ]
-    assert cells.count("not on the site") == 3
-    assert "3 page(s) the ledger calls live are not on the site" in lines
-
-
-def test_an_unchecked_site_never_reads_as_live() -> None:
-    lines = "\n".join(
-        inventory_lines(
-            live_products(_state()), ["nl", "fr"], on_site=None, site_note="no credentials"
-        )
-    )
-
-    assert "live ·" not in lines
-    assert "not checked" in lines
-    assert "no credentials" in lines

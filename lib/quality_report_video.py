@@ -23,10 +23,11 @@ Pure: no config, no I/O, no clock. :mod:`scripts.report_quality` gathers the inp
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Final, NamedTuple
 
 from lib.mandatory import MandatoryGap
+from lib.media_video import VideoCandidate
 from lib.records import SourceIssue
 from lib.report_markdown import cell, table
 from lib.video_signoff import (
@@ -94,6 +95,9 @@ class VideoReport(NamedTuple):
     status: VideoStatus
     signoff: SignoffReview | None = None
     signoff_absent: str = NO_SHEET
+    #: ``(language, file) -> best match`` for the unassigned files, in the complete report only.
+    #: ``None`` keeps §1c's short sample.
+    suggestions: Mapping[tuple[str, str], VideoCandidate] | None = None
 
 
 def video_lines(
@@ -136,7 +140,10 @@ def video_lines(
         "### 1c. Videos still waiting for a barcode",
         "",
         *_backlog_lines(
-            status.unassigned, client_id, publish_without_video=status.publish_without_video
+            status.unassigned,
+            client_id,
+            publish_without_video=status.publish_without_video,
+            suggestions=video.suggestions,
         ),
         *_folder_lines(status),
         *_signoff_lines(video),
@@ -338,7 +345,11 @@ def _clash_lines(status: VideoStatus) -> list[str]:
 
 
 def _backlog_lines(
-    entries: tuple[UnassignedVideo, ...], client_id: str, *, publish_without_video: bool = False
+    entries: tuple[UnassignedVideo, ...],
+    client_id: str,
+    *,
+    publish_without_video: bool = False,
+    suggestions: Mapping[tuple[str, str], VideoCandidate] | None = None,
 ) -> list[str]:
     """The unassigned files — a count, a sample, and how many more. No HTML: the report is read raw.
 
@@ -359,6 +370,23 @@ def _backlog_lines(
         ),
         "",
     ]
+    if entries and suggestions is not None:
+        # The complete report's version: every file, with a starting point for the client. A
+        # suggestion is a fuzzy match on the name — a hint to confirm, never an assignment.
+        return [
+            *lines[:-1],
+            " The *best match* is the export product whose name is closest to the filename — a "
+            "hint to check against the video, not an answer.",
+            "",
+            *table(
+                ["Language", "File", "Best match in the export"],
+                [
+                    [e.language, cell(e.file), _suggestion(suggestions.get((e.language, e.file)))]
+                    for e in entries
+                ],
+            ),
+            "",
+        ]
     if entries:
         lines += [f"- `{e.language}` — {cell(e.file)}" for e in entries[:VIDEO_SAMPLE]]
         if (remaining := len(entries) - VIDEO_SAMPLE) > 0:
@@ -368,6 +396,12 @@ def _backlog_lines(
             )
         lines.append("")
     return lines
+
+
+def _suggestion(candidate: VideoCandidate | None) -> str:
+    if candidate is None:
+        return "—"
+    return f"`{candidate.gtin}` {cell(candidate.name)} ({candidate.score:.2f})"
 
 
 def _folder_lines(status: VideoStatus) -> list[str]:

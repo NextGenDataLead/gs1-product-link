@@ -27,31 +27,51 @@ import argparse
 import json
 import sys
 import zipfile
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from lib import video_signoff, video_signoff_archive
+from lib.complete_report import (
+    LIVE,
+    NOT_IN_EXPORT,
+    READY,
+    Action,
+    action_lines,
+    list_lines,
+    status_lines,
+)
+from lib.complete_scope import Complete, gather
 from lib.config import ClientConfig, get_client, resolve_client_id
 from lib.env import load_env
 from lib.errors import (
     ConfigError,
     ExportParseError,
-    MissingCredentialError,
     StateError,
     VideoMapError,
-    WordPressAPIError,
 )
-from lib.live_inventory import inventory_lines, live_products
+from lib.gdsn import THIN_TEXT_ISSUE, check_language_balance, source_label
 from lib.mandatory import MandatoryGap, missing_mandatory
-from lib.media_video import canon_gtin, check_video_map, files_by_language, load_video_map
+from lib.media_video import (
+    VideoCandidate,
+    canon_gtin,
+    check_video_map,
+    files_by_language,
+    load_video_map,
+)
 from lib.preflight import in_scope, load_video_status
 from lib.quality_report import MatrixInput, render_quality_report
-from lib.quality_report_video import SignoffReview, VideoReport
+from lib.quality_report_video import SignoffReview, VideoReport, summary_rows
 from lib.records import ProductRecord, SourceIssue
-from lib.state import peek_state
+from lib.video_candidates import build_rows as candidate_rows
 from lib.video_status import HAS_VIDEO
-from lib.wp_client import WordPressClient
+
+#: Issue kinds the complete report's job table counts — the renderer's own names for them.
+_INCONSISTENT = "value_inconsistent_across_markets"
+_WRONG_LANG = "value_wrong_language"
+_TRANSLATED = "value_translated"
+_INFERENCE = "generation_inference"
 
 _EXIT_OK = 0
 _EXIT_CONFIG_ERROR = 2
@@ -103,8 +123,9 @@ def _generated_at() -> str:
 def _scope(
     cfg: ClientConfig, products: dict[str, ProductRecord], live: frozenset[str] | None
 ) -> list[ProductRecord]:
-    """The products this report is about: the batch in progress, or — with ``--live`` — every
-    product the ledger records as live. One function, so no section can use the other scope."""
+    """The products this report is about: the batch in progress, or — with ``--complete`` — every
+    product on the client's list and everything live. One function, so no section can use the
+    other scope."""
     if live is None:
         return in_scope(cfg, list(products.values()))
     return [product for product in products.values() if product.gtin14 in live]
@@ -151,7 +172,11 @@ def _publish_blocks(
 
 
 def _video_report(
-    client_id: str, products: dict[str, ProductRecord], live: frozenset[str] | None = None
+    client_id: str,
+    products: dict[str, ProductRecord],
+    live: frozenset[str] | None = None,
+    *,
+    suggest: bool = False,
 ) -> VideoReport | None:
     """§1's inputs: the selection joined to the video mapping. ``None`` with no readable mapping.
 
@@ -166,9 +191,55 @@ def _video_report(
     if status is None:
         return None
     review = _signoff_review(cfg, products)
+    hints = _suggestions(cfg, products) if suggest else None
     if isinstance(review, str):
-        return VideoReport(status=status, signoff_absent=review)
-    return VideoReport(status=status, signoff=review)
+        return VideoReport(status=status, signoff_absent=review, suggestions=hints)
+    return VideoReport(status=status, signoff=review, suggestions=hints)
+
+
+def _suggestions(
+    cfg: ClientConfig, products: dict[str, ProductRecord]
+) -> dict[tuple[str, str], VideoCandidate]:
+    """The best-matching export product for every video file that has no barcode yet.
+
+    The same ranking as ``report_video_candidates`` — the whole export as the pool, because the
+    point is to find which product a file shows. A hint for the client, never an assignment.
+    """
+    media = cfg.media
+    if media is None or not media.video_map_path:
+        return {}
+    try:
+        vmap = load_video_map(Path(media.video_map_path))
+    except VideoMapError:
+        return {}
+    rows = candidate_rows(
+        vmap,
+        files_by_language(media.video_folders),
+        list(products.values()),
+        list(cfg.wordpress.languages),
+        top_n=1,
+    )
+    return {(r.language, r.file): r.candidates[0] for r in rows if r.candidates and not r.gtin}
+
+
+def _thin_text(client_id: str, products: dict[str, ProductRecord]) -> list[SourceIssue]:
+    """§4c, from the export as parsed now — see :func:`lib.gdsn.check_language_balance`."""
+    try:
+        cfg = get_client(client_id)
+    except (ConfigError, ExportParseError):
+        return []
+    found: list[SourceIssue] = []
+    for field in ("description_short", "description_long"):
+        src = cfg.export.gdsn_map.get(field)
+        if src is None:
+            continue
+        for product in products.values():
+            localised = getattr(product, field, None)
+            if localised is not None:
+                found += check_language_balance(
+                    localised.values, field, source_label(src), product.gtin
+                )
+    return found
 
 
 def _signoff_review(cfg: ClientConfig, products: dict[str, ProductRecord]) -> SignoffReview | str:
@@ -353,64 +424,138 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--out",
         help="output path (default output/{client_id}/data-quality-report.md, or "
-        "live-data-quality-report.md with --live)",
+        "complete-data-quality-report.md with --complete)",
     )
     parser.add_argument(
-        "--live",
+        "--complete",
         action="store_true",
-        help="report on every product this tool has put live (the ledger, checked against the "
-        "site) instead of the batch in progress",
+        help="report on every product on the client's list and everything live (checked against "
+        "the site) instead of the batch in progress",
     )
     return parser.parse_args(argv)
 
 
-def _live_scope(client_id: str, data_dir: Path) -> tuple[frozenset[str], list[str]]:
-    """``--live``: every product the ledger records as live, and the section that lists them.
+def _complete_preface(
+    complete: Complete,
+    issues: dict[str, list[SourceIssue]],
+    gaps: dict[str, list[MandatoryGap]],
+    video: VideoReport | None,
+    data_dir: Path,
+) -> list[str]:
+    """What the complete report opens with: who does what, where every product stands, the list.
 
-    The ledger is read with :func:`lib.state.peek_state`, which never quarantines a corrupt file —
-    this is a report, and a report must not change what the next run does. The site is then asked
-    which of those pages it lists; if it cannot be asked, every page says "not checked".
-
-    Raises:
-        ConfigError: The client config will not load.
-        StateError: The ledger will not read.
+    The jobs are counted from the same data the sections below list, so the table and the sections
+    cannot disagree; a job with nothing to do is left out.
     """
-    cfg = get_client(client_id)
-    live = live_products(peek_state(client_id))
-    on_site, note = _listed_on_site(cfg)
-    lines = inventory_lines(live, list(cfg.wordpress.languages), on_site=on_site, site_note=note)
+    kinds = Counter(issue.issue for issue in issues["source"])
+    generated = Counter(issue.issue for issue in issues["generated"])
+    rows = complete.rows
+    live_cells = [c for r in rows if r.status == LIVE for c in r.cells]
+    by_gtin: Counter[str] = Counter(row.gtin for row in complete.listed if row.gtin)
+    media = {row[1]: row[2] for row in summary_rows(video, issues["video_map"])}
+    status = video.status if video is not None else None
+
+    def media_count(finding: str) -> int:
+        digits = "".join(ch for ch in media.get(finding, "0").split()[0] if ch.isdigit())
+        return int(digits or 0)
+
+    actions = [
+        Action(
+            "Client — MyGS1",
+            "Fill in missing mandatory data (product held)",
+            len(gaps),
+            "§0, Every product",
+        ),
+        Action("Client — MyGS1", "Make values agree across markets", kinds[_INCONSISTENT], "§4a"),
+        Action(
+            "Client — MyGS1",
+            "Check values that read like the wrong language",
+            kinds[_WRONG_LANG],
+            "§4b",
+        ),
+        Action(
+            "Client — MyGS1",
+            "Write the short marketing text in full",
+            kinds[THIN_TEXT_ISSUE],
+            "§4c",
+        ),
+        Action("Client — MyGS1", "Paste translated values back", generated[_TRANSLATED], "§5"),
+        Action(
+            "Client — MyGS1",
+            "Export, or correct, barcodes the export lacks",
+            sum(1 for r in rows if r.status == NOT_IN_EXPORT),
+            "Your product list",
+        ),
+        Action(
+            "Client — videos",
+            "Confirm a video for products missing one",
+            len(status.without_video) if status is not None else 0,
+            "§1a",
+        ),
+        Action(
+            "Client — videos",
+            "Keep one of two videos for one language",
+            media_count("Products with two videos in one language"),
+            "§1b",
+        ),
+        Action(
+            "Client — videos",
+            "Name the product for unassigned video files",
+            media_count("Videos not yet mapped to a GTIN"),
+            "§1c",
+        ),
+        Action(
+            "Client — videos",
+            "Settle sign-off sheet rows",
+            media_count("Sign-off sheet rows that need a person"),
+            "§1d",
+        ),
+        Action(
+            "Operator",
+            "Publish the products that are ready",
+            sum(1 for r in rows if r.status == READY),
+            "Every product",
+        ),
+        Action(
+            "Operator",
+            "Correct a barcode used on several rows",
+            sum(1 for n in by_gtin.values() if n > 1),
+            "Your product list",
+        ),
+        Action(
+            "Operator",
+            "Publish again: live pages without their text",
+            sum("no text" in c for c in live_cells),
+            "Every product",
+        ),
+        Action(
+            "Operator",
+            "Find out why: live pages not on the site",
+            live_cells.count("not on the site"),
+            "Every product",
+        ),
+        Action(
+            "Operator / client", "Check inferred claims on the page", generated[_INFERENCE], "§3"
+        ),
+        Action(
+            "Site maintainer",
+            "Show the play button only on pages with a video",
+            sum("no video" in c for c in live_cells),
+            "Every product",
+        ),
+    ]
+    languages = complete.languages
     written = _generated_for(data_dir)
-    covered = sorted(p.gtin for p in live if canon_gtin(p.gtin) in written)
-    lines += [
-        "Sections 3 and 5 come from the last text generation, which wrote for "
-        f"{len(covered)} of these {len(live)} product(s)"
-        + (f" ({', '.join(f'`{g}`' for g in covered)})" if covered else "")
-        + ". For the rest there is no record of which claims were inferred or which values were "
-        "translated — not that there were none.",
+    covered = sum(1 for gtin in complete.scope if gtin in written)
+    return [
+        *action_lines(actions),
+        *status_lines(rows, languages, complete.site_note),
+        *list_lines(complete.listed, complete.exported),
+        f"Sections 3 and 5 come from the last text generation, which wrote for {covered} of the "
+        f"{len(complete.scope)} products in this report. For the rest there is no record of which "
+        "claims were inferred or which values were translated — not that there were none.",
         "",
     ]
-    return frozenset(canon_gtin(p.gtin) for p in live), lines
-
-
-def _listed_on_site(cfg: ClientConfig) -> tuple[set[tuple[str, str]] | None, str]:
-    """``(gtin14, language)`` for every published tool page the site lists — or ``None`` and why.
-
-    A listing per language (an unscoped one answers with the default language only), read-only.
-    Any failure is reported in the section rather than failing the report: the data findings are
-    still worth having when the site cannot be reached.
-    """
-    found: set[tuple[str, str]] = set()
-    try:
-        with WordPressClient(cfg.wordpress) as client:
-            for language in cfg.wordpress.languages:
-                for page in client.list_pages_with_gtin(cfg.wordpress.post_type, language):
-                    meta = page.get("meta")
-                    gtin = str(meta.get("gtin", "")) if isinstance(meta, dict) else ""
-                    if gtin and page.get("status", "publish") == "publish":
-                        found.add((canon_gtin(gtin), language))
-    except (ConfigError, MissingCredentialError, WordPressAPIError) as exc:
-        return None, str(exc)
-    return found, ""
 
 
 def _generated_for(data_dir: Path) -> set[str]:
@@ -454,20 +599,30 @@ def main(argv: list[str] | None = None) -> int:
         issues["video_map"], freshness["video_map"] = live
 
     products = _load_products(data_dir / "products.json")
-    live: frozenset[str] | None = None
-    preface: list[str] = []
-    if args.live:
+    complete = None
+    if args.complete:
         try:
-            live, preface = _live_scope(client_id, data_dir)
+            complete = gather(get_client(client_id), products)
         except (ConfigError, StateError) as exc:
             print(f"config error: {exc}", file=sys.stderr)
             return _EXIT_CONFIG_ERROR
+    live = complete.scope if complete is not None else None
+    # Recomputed from the export as it is now rather than read from the parse that wrote
+    # source_issues.json: a check added after that parse would otherwise report nothing.
+    issues["source"] = [i for i in issues["source"] if i.issue != THIN_TEXT_ISSUE] + _thin_text(
+        client_id, products
+    )
     issues = {
         key: _scoped_issues(client_id, products, found, live) for key, found in issues.items()
     }
     mandatory_gaps, video_held = _publish_blocks(client_id, products, live)
     matrix = _matrix_input(client_id, products, live)
-    video = _video_report(client_id, products, live)
+    video = _video_report(client_id, products, live, suggest=complete is not None)
+    preface = (
+        _complete_preface(complete, issues, mandatory_gaps, video, data_dir)
+        if complete is not None
+        else []
+    )
 
     markdown = render_quality_report(
         client_id=client_id,
@@ -485,10 +640,10 @@ def main(argv: list[str] | None = None) -> int:
         matrix=matrix,
         video=video,
         preface=preface,
-        live=args.live,
+        live=complete is not None,
     )
 
-    name = "live-data-quality-report.md" if args.live else "data-quality-report.md"
+    name = "complete-data-quality-report.md" if complete is not None else "data-quality-report.md"
     out = Path(args.out) if args.out else Path("output") / client_id / name
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(markdown, encoding="utf-8")

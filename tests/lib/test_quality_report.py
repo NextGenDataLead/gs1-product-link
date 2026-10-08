@@ -1380,8 +1380,8 @@ def test_the_everything_live_report_leads_with_its_inventory_and_drops_run_notes
         live=True,
     )
 
-    assert md.splitlines()[0] == "# Noviplast — Data quality report — everything live"
-    assert "report_quality noviplast --live" in md
+    assert md.splitlines()[0] == "# Noviplast — Data quality report — complete"
+    assert "report_quality noviplast --complete" in md
     assert md.index("## Live on the site") < md.index("## Summary")
     assert "Observations (this run)" not in md
     assert "All 12 published" not in md
