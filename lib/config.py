@@ -277,9 +277,9 @@ class CategoryConfig(BaseModel):
 
     ``on_unmapped`` is fixed at ``"warn"`` — an unmapped brick leaves the category unset and
     is reported; the tool never guesses. ``require_terms_exist`` records the resolved open
-    decision (require the WordPress term to pre-exist rather than auto-creating it); its
-    enforcement point is the future term-assignment step, so it is carried here, not acted on
-    yet.
+    decision (require the WordPress term to pre-exist rather than auto-creating it), and
+    ``run_execute`` enforces it where it sets the page's term: a category the site has no term
+    for, in the page's language, refuses the row (or, off, only warns).
     """
 
     model_config = ConfigDict(frozen=True)

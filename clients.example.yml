@@ -262,9 +262,9 @@ clients:
     #
     # The VALUES below are illustrative placeholders, not the signed-off map. Replace them.
     categories:
-      terms: [keuken, doe_het_zelf, schoonmaak, tuin, dier, specials]
+      terms: [keuken, doe_het_zelf, schoonmaak, outdoor_dier, dier, specials]
       brick_category_map:
-        "10003865": tuin           # garden tools (the nutcracker is overridden per-GTIN below)
+        "10003865": outdoor_dier   # garden tools (the nutcracker is overridden per-GTIN below)
         "10006459": specials       # lighting has no category of its own -> specials
       overrides:
         "08713195000XXX": keuken   # the nutcracker in brick 10003865 (illustrative GTIN)
