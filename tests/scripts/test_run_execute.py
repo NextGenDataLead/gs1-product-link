@@ -158,6 +158,7 @@ class _Recorder:
         self.uploaded: list[dict[str, Any]] = []
         self.slug_lookups: list[dict[str, Any]] = []
         self.deleted_media: list[int] = []
+        self.alternate_reads: list[tuple[str, str]] = []
 
 
 def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration has to survive
@@ -172,6 +173,7 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
     upload_error: Exception | None = None,
     reused_media: frozenset[int] = frozenset(),
     delete_media_error: Exception | None = None,
+    alternates: dict[tuple[str, str], str] | None = None,
 ) -> _Recorder:
     """Patch the two clients with recording fakes.
 
@@ -186,6 +188,9 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
     ``upload_error`` makes ``upload_media`` raise. Unlike the media *resolution* steps, which
     degrade to ``None`` under E7, an upload failure is meant to fail the row — publishing a page
     whose video is missing or truncated while reporting success is the worse outcome.
+
+    ``alternates`` maps ``(url, language)`` to the hreflang address that page names; anything
+    absent is a page with no translation in that language.
     """
     rec = _Recorder()
 
@@ -226,6 +231,10 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
 
         def link_translations(self, translations: dict[str, int]) -> None:
             rec.translations.append(translations)
+
+        def alternate_url(self, url: str, language: str) -> str | None:
+            rec.alternate_reads.append((url, language))
+            return (alternates or {}).get((url, language))
 
         def download_image(self, url: str) -> bytes | None:
             rec.downloaded.append(url)
@@ -1779,7 +1788,11 @@ def test_a_copy_less_row_never_reaches_wordpress_end_to_end(
 ) -> None:
     """`--plan` confirms every row in the file, so this is the path the guard exists for."""
     monkeypatch.chdir(tmp_path)
-    rec = _install(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    rec = _install(
+        monkeypatch,
+        _make_config(generator=GeneratorConfig(enabled=True)),
+        alternates={(_OLD_NL, "fr"): _OLD_FR},
+    )
     path = _write_json(
         tmp_path / "plan.json", _plan(_unchanged(_row(GTIN_A)), _with_copy(_row(GTIN_B)))
     )
@@ -1793,37 +1806,88 @@ def test_a_copy_less_row_never_reaches_wordpress_end_to_end(
 
 # --- A page the operator listed (process_list.target_url_column) ---------------
 # Older product pages live under their own slugs (/noviplast/notenkraker-2/), so neither state
-# nor `slug_pattern` can find them. The selection list's `Link naar site` names the nl page, and
-# that page is the record's only link: the packaging's QR names one site (decided 2026-10-08).
+# nor `slug_pattern` can find them. The selection list's `Link naar site` names the nl page — the
+# record's default link, so every scan resolves to it — and fr is whatever translation that page
+# itself advertises, when it advertises one.
 
 _OLD_NL = "https://wp.test/product/rugsteun-oud/"
+_OLD_FR = "https://wp.test/fr/product/rugsteun-oud/"
 
 
 def _listed(row: PlanRow, url: str = _OLD_NL) -> PlanRow:
     return row.model_copy(update={"listed_url": url})
 
 
-@pytest.mark.parametrize("languages", [("nl", "fr"), ("nl",), ("fr",)])
-def test_only_links_points_gs1_at_the_listed_page_alone(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, languages: tuple[str, ...]
+def test_only_links_points_gs1_at_the_listed_page_and_its_own_translation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One link, nl, the default — whichever languages were confirmed. No fr page is sought."""
     monkeypatch.chdir(tmp_path)
-    rec = _install(monkeypatch, _make_config())
-    rows = [_listed(_row(GTIN_A, language)) for language in languages]
-    plan = _write_json(tmp_path / "plan.json", _plan(*rows))
+    rec = _install(monkeypatch, _make_config(), alternates={(_OLD_NL, "fr"): _OLD_FR})
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_listed(_row(GTIN_A, "nl")), _listed(_row(GTIN_A, "fr")))
+    )
 
     code = run_execute.main(["acme", "--plan", str(plan), "--only", "links"])
 
     assert code == 0
     assert rec.wp == []
-    assert len(rec.gs1) == 1
-    links = rec.gs1[0]["links"]
-    assert [(link["language"], link["target_url"]) for link in links] == [("nl", _OLD_NL)]
-    assert links[0]["default_link_type"] is True  # so a French scanner lands here too
-    assert rec.verified == [_OLD_NL]  # still checked before the permanent write
+    links = {link["language"]: link for link in rec.gs1[0]["links"]}
+    assert {lang: link["target_url"] for lang, link in links.items()} == {
+        "nl": _OLD_NL,
+        "fr": _OLD_FR,
+    }
+    # nl is the default link, so every scan resolves to the Dutch page.
+    assert links["nl"]["default_link_type"] is True
+    assert links["fr"]["default_link_type"] is False
+    assert sorted(rec.verified) == sorted([_OLD_NL, _OLD_FR])  # both checked before the write
     # A page this tool does not manage gets no state, exactly as for any unmanaged page.
     assert GTIN_A not in load_state("acme").entries
+
+
+def test_a_listed_page_with_no_french_translation_gets_the_nl_link_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """notenkraker-2: no fr hreflang. Its QR still has somewhere to go — the Dutch page."""
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _make_config())
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_listed(_row(GTIN_A, "nl")), _listed(_row(GTIN_A, "fr")))
+    )
+
+    code = run_execute.main(["acme", "--plan", str(plan), "--only", "links"])
+
+    assert code == 0
+    links = rec.gs1[0]["links"]
+    assert [(link["language"], link["target_url"]) for link in links] == [("nl", _OLD_NL)]
+    assert links[0]["default_link_type"] is True
+    assert rec.alternate_reads == [(_OLD_NL, "fr")]
+    assert "names no fr translation" in caplog.text
+
+
+def test_confirming_only_the_nl_row_of_a_listed_page_writes_nl_without_reading_its_translation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _make_config(), alternates={(_OLD_NL, "fr"): _OLD_FR})
+    plan = _write_json(tmp_path / "plan.json", _plan(_listed(_row(GTIN_A, "nl"))))
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "links"]) == 0
+    assert [link["target_url"] for link in rec.gs1[0]["links"]] == [_OLD_NL]
+    assert rec.alternate_reads == []
+
+
+def test_confirming_only_the_fr_row_of_a_listed_page_still_links_nl_as_the_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _make_config(), alternates={(_OLD_NL, "fr"): _OLD_FR})
+    plan = _write_json(tmp_path / "plan.json", _plan(_listed(_row(GTIN_A, "fr"))))
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "links"]) == 0
+    links = {link["language"]: link for link in rec.gs1[0]["links"]}
+    assert links["nl"]["target_url"] == _OLD_NL
+    assert links["nl"]["default_link_type"] is True
+    assert links["fr"]["target_url"] == _OLD_FR
 
 
 def test_a_listed_page_that_does_not_serve_is_refused(
@@ -1918,7 +1982,11 @@ def test_a_links_run_keeps_a_row_with_no_generated_copy(
 ) -> None:
     """E21 protects a page; a links run renders none, and the link title is the product name."""
     monkeypatch.chdir(tmp_path)
-    rec = _install(monkeypatch, _make_config(generator=GeneratorConfig(enabled=True)))
+    rec = _install(
+        monkeypatch,
+        _make_config(generator=GeneratorConfig(enabled=True)),
+        alternates={(_OLD_NL, "fr"): _OLD_FR},
+    )
     plan = _plan(_listed(_row(GTIN_A, "nl")), _listed(_row(GTIN_A, "fr")))
     path = _write_json(tmp_path / "plan.json", plan.model_copy(update={"links_only": True}))
 

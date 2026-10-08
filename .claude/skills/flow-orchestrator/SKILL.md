@@ -224,9 +224,9 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    and only then: `run_execute` refuses a links-only plan in any other mode — and read
    `output/{client}/plan.json`. When the client sets `process_list.target_url_column`, a row may
    carry `listed_url`: the page the operator named for a product whose page this tool did not
-   make. In `links` mode the GS1 record gets **one link, the Dutch (default-language) one, at
-   that page**, whichever languages were confirmed — the operator's decision: the packaging's QR
-   names one site, and the default link catches every other language's scanner. A GTIN whose
+   make. In `links` mode the GS1 record's Dutch (default) link points at that page — so every scan
+   resolves to it — and its French link at the translation the page itself advertises (hreflang),
+   when it advertises one; a page with none gets the Dutch link alone (logged, not refused). A GTIN whose
    listed page differs from one this tool already published is refused at execute, not guessed. In `pages`/`both` a listed page that is not the one the run would
    publish refuses that GTIN — tell the operator to clear the cell or run `links`. Say how many
    GTINs carry one beneath the counts at step 5 (run_plan prints it). run_plan omits any `(GTIN, language)` with a missing

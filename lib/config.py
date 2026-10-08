@@ -253,8 +253,9 @@ class ProcessListConfig(BaseModel):
     address of a page this tool did not make. A product that already has a page on the site
     under its own slug (``/noviplast/notenkraker-2/``) cannot be found by ``slug_pattern``, so
     a ``--only links`` run would otherwise point its permanent GS1 record at a URL that does
-    not exist and be refused. The cell is the default language's page, and the record's only
-    link: the packaging's QR names one site, so no translation is looked up. A blank cell means
+    not exist and be refused. The cell is the default language's page and the record's default
+    link; another language is linked when that page names a translation for it (its ``hreflang``),
+    and left out when it names none. A blank cell means
     "no page named" and changes nothing. Unset (the default), no column is read at all.
     """
 
