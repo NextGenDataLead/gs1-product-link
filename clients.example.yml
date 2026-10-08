@@ -227,6 +227,11 @@ clients:
       # process/: what arrived, and what was chosen from it.
       path: "./input/democlient/process/selection/selections.xlsx"
       gtin_column: "Barcode"
+      # Optional. The column holding the address of a page this tool did NOT make — an older
+      # product page under its own slug. A `--only links` run then points the GS1 record at
+      # that page (the Dutch, default link — every scan resolves there) and at the French page
+      # it names as its translation, if it names one, instead of looking for `p-{gtin}`. Must be on `wordpress.site_url`'s host. Blank cells change nothing.
+      # target_url_column: "Link naar site"
 
     # Content generator (tagline + Eigenschappen copy). Two producers share one results file and
     # contract: the in-session `content-generator` skill (writes copy in-session, no API key)

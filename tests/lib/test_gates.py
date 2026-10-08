@@ -213,12 +213,11 @@ def test_the_dry_run_gate_fires_in_every_mode(mode: Mode) -> None:
         assert any(gate.id == "dry_run" and gate.required for gate in fired)
 
 
-def test_content_review_fires_in_links_mode_too(  # noqa: D401 — the name is the assertion
-) -> None:
-    """No page is written, but an empty cache still empties the plan.
+def test_content_review_does_not_fire_in_links_mode() -> None:
+    """A links run renders no page and plans with `--links-only`, which does not apply E21.
 
-    With a generator configured, run_plan omits any unit with no generated tagline (E21), so a
-    links run against an unfilled cache publishes nothing and reports success.
+    The gate used to fire here because an unfilled cache emptied a links plan too. Asking the
+    operator to review copy that will never reach a page is a gate answered without reading.
     """
     fired = {
         gate.id
@@ -229,7 +228,7 @@ def test_content_review_fires_in_links_mode_too(  # noqa: D401 — the name is t
             has_missing_product_name=False,
         )
     }
-    assert "content_review" in fired
+    assert "content_review" not in fired
 
 
 def test_content_review_does_not_fire_without_a_generator() -> None:

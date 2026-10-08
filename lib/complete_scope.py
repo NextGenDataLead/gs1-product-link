@@ -21,7 +21,7 @@ from lib.config import ProcessListConfig
 from lib.eligibility import eligibility
 from lib.errors import ConfigError, MissingCredentialError, ProcessListError, WordPressAPIError
 from lib.input_layout import archive_path
-from lib.live_inventory import live_products
+from lib.live_inventory import PublishedTotals, live_products, published_totals
 from lib.process_list import read_process_list
 from lib.site_read import SitePage, read_tool_pages
 from lib.state import peek_state
@@ -45,6 +45,8 @@ class Complete:
     rows: list[StatusRow]
     site_note: str
     languages: list[str]
+    published: PublishedTotals
+    default_language: str
 
 
 def gather(cfg: ClientConfig, products: dict[str, ProductRecord]) -> Complete:
@@ -58,9 +60,9 @@ def gather(cfg: ClientConfig, products: dict[str, ProductRecord]) -> Complete:
     exported = {gtin: _name(product, languages) for gtin, product in products.items()}
     pages, site_note = _site(cfg)
 
+    state = peek_state(cfg.client_id)
     ledger = {
-        product.gtin: {page.language for page in product.pages}
-        for product in live_products(peek_state(cfg.client_id))
+        product.gtin: {page.language for page in product.pages} for product in live_products(state)
     }
     live_pages: dict[str, set[str]] = {gtin: set(langs) for gtin, langs in ledger.items()}
     for (gtin, language), page in (pages or {}).items():
@@ -90,7 +92,23 @@ def gather(cfg: ClientConfig, products: dict[str, ProductRecord]) -> Complete:
         languages=languages,
     )
     scope = frozenset((named & set(exported)) | (set(live) & set(exported)))
-    return Complete(scope, listed, exported, rows, site_note, languages)
+    published = published_totals(state, languages, _qr_gtins(cfg.client_id))
+    return Complete(
+        scope,
+        listed,
+        exported,
+        rows,
+        site_note,
+        languages,
+        published,
+        cfg.wordpress.default_language,
+    )
+
+
+def _qr_gtins(client_id: str) -> set[str]:
+    """The barcodes with a QR file on this machine, from the folder ``run_execute`` renders into."""
+    folder = Path("output") / client_id / "qr"
+    return {path.stem for path in folder.glob("*") if path.stem.isdigit()}
 
 
 def _state(

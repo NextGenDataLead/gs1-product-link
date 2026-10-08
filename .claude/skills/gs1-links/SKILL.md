@@ -16,23 +16,31 @@ already settled by the command:
   the gate.
 - Step 9 appends **`--only links`**.
 
-Everything else — the export cross-check, the copy review, the plan gate, the production
-environment confirmation, the post-run summary — happens exactly as written there. Nothing about
+Everything else — the export cross-check, the plan gate (built with `run_plan --links-only`), the
+production environment confirmation, the post-run summary — happens exactly as written there. The
+copy review (step 3) does not apply in this mode. Nothing about
 the gates is restated here on purpose: one copy, one place to change.
 
 ## The risk this mode carries, and what handles it
 
-The targets do not come from a page this run just created and verified. `run_execute` resolves each
-one from `state.json`, else a slug lookup on the site, else the plan row's `target_url` (built from
-`wordpress.target_url_pattern`) — and **HEADs every one of them before writing anything**. A GTIN
-with any target that does not serve gets no GS1 write at all.
+The targets do not come from a page this run just created and verified. When the plan row carries a
+`listed_url` (the process list's `target_url_column`, e.g. `Link naar site`), that page is the
+default language's target and the record's default link, so every scan resolves to it. Every other
+confirmed language links the translation the page itself names in its hreflang — and gets no link
+when it names none (the GTIN is not refused for that). Refused if this
+tool already has its own, different page for the GTIN. Otherwise `run_execute` resolves each target from `state.json`, else a slug lookup on the
+site, else the plan row's `target_url` (built from `wordpress.target_url_pattern`). Either way it
+**HEADs every one of them before writing anything**. A GTIN with any target that does not serve
+gets no GS1 write at all.
 
 That check is in the script, not in this file, precisely because instructions can be skipped and a
 GS1 record can never be deleted: a permanent QR aimed at a 404 is not recoverable.
 
 So when step 11 reports `refusing to point a permanent GS1 record at it`, do not work around it.
 The page is not where the plan says it is — the slug may not match `slug_pattern`, or the page may
-be drafted or gone. Fix `wordpress.target_url_pattern` or publish the page, then re-run. The rest of
+be drafted or gone. For an older page with its own slug, put its address in the selection list's
+`Link naar site` column; otherwise fix `wordpress.target_url_pattern` or publish the page, then
+re-run. The rest of
 the batch already went through.
 
 **A dry run cannot verify.** It builds no clients, so it lists the targets it would use and says the

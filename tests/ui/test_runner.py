@@ -160,6 +160,10 @@ def test_the_dot_env_rule_is_enforced_elsewhere() -> None:
             ["-m", "scripts.run_plan", "acme", "--include-published"],
         ),
         (
+            lambda: runner.run_plan_argv("acme", links_only=True),
+            ["-m", "scripts.run_plan", "acme", "--links-only"],
+        ),
+        (
             lambda: runner.run_generate_argv("acme"),
             ["-m", "scripts.run_generate", "acme", "--backend", "api"],
         ),

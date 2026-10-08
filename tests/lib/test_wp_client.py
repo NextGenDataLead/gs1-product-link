@@ -1171,6 +1171,48 @@ def test_set_page_terms_never_writes_a_page_that_belongs_to_another_product(
     assert all(r.method == "GET" for r in _business_requests(httpx_mock))
 
 
+# --- alternate_url: the translation a page this tool did not make names --------
+
+_WPML_HEAD = """<html><head>
+<link rel="alternate" hreflang="nl-nl" href="{site}/noviplast/rubber-bezem/" />
+<link rel="alternate" hreflang="fr-fr" href="{site}/fr/noviplast/rubber-bezem/" />
+<link rel="alternate" hreflang="x-default" href="{site}/noviplast/rubber-bezem/" />
+</head><body></body></html>"""
+
+
+def test_alternate_url_reads_the_hreflang_the_page_names(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    url = f"{SITE}/noviplast/rubber-bezem/"
+    for _ in range(2):  # one GET per call: nothing is cached between languages
+        httpx_mock.add_response(method="GET", url=url, text=_WPML_HEAD.format(site=SITE))
+
+    assert client.alternate_url(url, "fr") == f"{SITE}/fr/noviplast/rubber-bezem/"
+    assert client.alternate_url(url, "nl") == url
+
+
+def test_alternate_url_is_none_for_an_untranslated_page_and_ignores_x_default(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """notenkraker-2 on the live site: nl-nl and x-default only. x-default is not French."""
+    client, _ = make_client(httpx_mock)
+    url = f"{SITE}/noviplast/notenkraker-2/"
+    head = f'<link rel="alternate" hreflang="nl-nl" href="{url}" />' + (
+        f'<link rel="alternate" hreflang="x-default" href="{url}" />'
+    )
+    httpx_mock.add_response(method="GET", url=url, text=head)
+
+    assert client.alternate_url(url, "fr") is None
+
+
+def test_alternate_url_raises_on_a_page_that_does_not_serve(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", url=f"{SITE}/gone/", status_code=404)
+
+    with pytest.raises(WordPressAPIError) as exc:
+        client.alternate_url(f"{SITE}/gone/", "fr")
+    assert exc.value.status_code == 404
+
+
 # --- Retry policy (§5.1) -----------------------------------------------------
 
 

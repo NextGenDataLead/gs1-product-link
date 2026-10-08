@@ -248,12 +248,22 @@ class ProcessListConfig(BaseModel):
     columns using presence-semantics (any non-blank cell meant ``True``). That was
     right only for files marking rows with ``X``; a file saying ``no`` silently meant
     the opposite. See ``lib/process_list.py`` for the full account.
+
+    ``target_url_column`` is the one exception, and it reads a *value*, not a status: the
+    address of a page this tool did not make. A product that already has a page on the site
+    under its own slug (``/noviplast/notenkraker-2/``) cannot be found by ``slug_pattern``, so
+    a ``--only links`` run would otherwise point its permanent GS1 record at a URL that does
+    not exist and be refused. The cell is the default language's page and the record's default
+    link; another language is linked when that page names a translation for it (its ``hreflang``),
+    and left out when it names none. A blank cell means
+    "no page named" and changes nothing. Unset (the default), no column is read at all.
     """
 
     model_config = ConfigDict(frozen=True)
 
     path: str
     gtin_column: str = "Barcode"
+    target_url_column: str | None = None
 
 
 class CategoryConfig(BaseModel):

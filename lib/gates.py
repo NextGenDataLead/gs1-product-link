@@ -310,7 +310,9 @@ GATES: Final[tuple[Gate, ...]] = (
             GateOption("cancel", "Cancel", "Abort; nothing runs", GateOutcome.STOPS),
         ),
         required=True,
-        modes=_ALL_MODES,  # links mode too: copy this run lacks still empties the plan
+        # Not links: that mode plans with `run_plan --links-only`, which does not apply E21, so
+        # there is no copy to review and none whose absence could empty the plan.
+        modes=frozenset({Mode.PAGES, Mode.BOTH}),
         needs_generator=True,
     ),
     Gate(

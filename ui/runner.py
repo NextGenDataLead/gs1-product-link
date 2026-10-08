@@ -230,16 +230,23 @@ def parse_export_argv(client_id: str | None, *, dry_run: bool = False) -> list[s
     return argv
 
 
-def run_plan_argv(client_id: str | None, *, include_published: bool = False) -> list[str]:
+def run_plan_argv(
+    client_id: str | None, *, include_published: bool = False, links_only: bool = False
+) -> list[str]:
     """Classify every unit against prior state.
 
     ``include_published`` re-admits GTINs that are already published *and* resolvable, which
     ``run_plan`` otherwise drops as finished. It defaults to off here for the same reason it does
     on the CLI: with it on, a CHANGED row rewrites a live page, and that has to be chosen.
+
+    ``links_only`` builds the plan for a ``links`` run: products with no generated copy stay in
+    it, since no page is rendered. ``run_execute`` refuses such a plan in any other mode.
     """
     argv = ["-m", "scripts.run_plan", *([client_id] if client_id else [])]
     if include_published:
         argv.append("--include-published")
+    if links_only:
+        argv.append("--links-only")
     return argv
 
 

@@ -41,6 +41,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
 
 from lib import xlsx
@@ -221,3 +222,72 @@ def load_process_list(config: ProcessListConfig) -> frozenset[str]:
         )
     _log.info("Loaded %d GTIN(s) to process from %s", len(gtins), config.path)
     return gtins
+
+
+def load_listed_targets(config: ProcessListConfig, site_url: str) -> dict[str, str]:
+    """Read the page address the operator listed per GTIN, keyed by GTIN-14.
+
+    The one value this module interprets, and only when ``target_url_column`` names it — see
+    :class:`~lib.config.ProcessListConfig` for why. A blank cell is simply absent from the
+    result, so a list where nobody filled the column behaves exactly as it did before.
+
+    Everything that can be wrong with a cell is refused here, for the whole file at once,
+    rather than per GTIN at run time: the address ends up as the target of a GS1 record that
+    can never be deleted, and a plan that quietly dropped a bad row would read as a product
+    nobody asked about.
+
+    Args:
+        config: The client's ``process_list`` configuration.
+        site_url: ``wordpress.site_url``. A listed page must be on the same host — the tool
+            points GS1 at the client's own site, never at an address someone pasted from
+            elsewhere.
+
+    Returns:
+        ``{gtin14: url}`` for every row whose barcode and address are both filled.
+
+    Raises:
+        ProcessListError: If the configured column is missing from the file, a cell is not an
+            absolute ``http(s)`` address on the site's host, or one GTIN is listed with two
+            different addresses.
+    """
+    column = config.target_url_column
+    if column is None:
+        return {}
+    sheet = read_process_list(config)
+    if column not in sheet.header:
+        raise ProcessListError(
+            f"process list at {config.path} has no {column!r} column, which "
+            f"process_list.target_url_column names — rename the column or the setting"
+        )
+    index = sheet.header.index(column)
+    site_host = (urlsplit(site_url).hostname or "").lower()
+    targets: dict[str, str] = {}
+    problems: list[str] = []
+    for n, row in enumerate(sheet.rows):
+        gtin = sheet.gtin14_at(n)
+        url = row[index].strip() if index < len(row) else ""
+        if gtin is None or not url:
+            continue
+        problem = _target_problem(url, site_host)
+        if problem is None and targets.get(gtin, url) != url:
+            problem = f"also listed as {targets[gtin]}"
+        if problem is not None:
+            problems.append(f"{gtin}: {url!r} — {problem}")
+            continue
+        targets[gtin] = url
+    if problems:
+        raise ProcessListError(
+            f"process list at {config.path}: {len(problems)} unusable {column!r} value(s): "
+            + "; ".join(problems)
+        )
+    return targets
+
+
+def _target_problem(url: str, site_host: str) -> str | None:
+    """Why ``url`` cannot be a resolver target on ``site_host``, or ``None`` when it can."""
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        return "not an absolute http(s) address"
+    if parts.hostname.lower() != site_host:
+        return f"not on the site's host ({site_host})"
+    return None
