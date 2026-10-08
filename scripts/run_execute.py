@@ -275,7 +275,7 @@ def _find_page(cfg: ClientConfig, row: PlanRow, wp: WordPressClient) -> _Page:
     return _Page(None, row.target_url, row.title)
 
 
-def _link_pages(  # noqa: PLR0913 — three sources of pages, plus what to look the rest up with
+def _pages_for_links(  # noqa: PLR0913 — three sources of pages, plus what to look the rest up with
     cfg: ClientConfig,
     gtin: str,
     rows: list[PlanRow],
@@ -283,30 +283,18 @@ def _link_pages(  # noqa: PLR0913 — three sources of pages, plus what to look 
     wp: WordPressClient,
     state: State,
 ) -> dict[str, _Page]:
-    """The one page this GTIN's resolver record links: the default language's.
+    """Every language's page this GTIN's resolver link set must span.
 
-    A GS1 record carries **only the default language's link** (decided 2026-10-08: the
-    packaging's QR names one site). That link is the record's default, so a scanner in any other
-    language lands on it too; the other languages' pages are still published and still linked to
-    each other as translations, they are just not in the record. The link array replaces, so a
-    record that used to carry fr loses it on its next write — which is the point.
-
-    The page is this run's, else state's (:func:`_known_pages`), else located live from the
-    default language's confirmed row. A run that confirmed only another language's row of a
-    product with no known default page has nothing to link, and is refused rather than writing
-    a record with no link at all.
+    Starts from :func:`_known_pages` — this run's pages plus state's — for the reason that
+    function exists: the GS1 link array **replaces**, so a language left out is deleted from
+    the record. Any confirmed language still unaccounted for is then located live, which is
+    the ``--only links`` case where state has never heard of the product.
     """
-    default = cfg.wordpress.default_language
-    page = _known_pages(gtin, fresh, state).get(default)
-    if page is None:
-        row = next((row for row in rows if row.language == default), None)
-        if row is None:
-            raise RuntimeError(
-                f"no {default} page is known for this product, and the GS1 record links only "
-                f"the {default} page — confirm its {default} row too"
-            )
-        page = _find_page(cfg, row, wp)
-    return {default: page}
+    pages = _known_pages(gtin, fresh, state)
+    for row in rows:
+        if row.language not in pages:
+            pages[row.language] = _find_page(cfg, row, wp)
+    return pages
 
 
 def _same_page(a: str, b: str) -> bool:
@@ -345,8 +333,11 @@ def _listed_pages(
 ) -> dict[str, _Page]:
     """``--only links`` target for a GTIN whose page the operator listed in the process list.
 
-    The record gets the listed address as its one link — every record carries only the default
-    language's (:func:`_link_pages`), whatever languages were confirmed.
+    The record gets **one link, the default language's, at the listed address** — whatever
+    languages were confirmed. That is the operator's decision (2026-10-08): a listed page is an
+    older page this tool did not make, and the QR on its packaging names one site, the Dutch
+    one. Because the default language's link is the record's default link, a scanner in any
+    other language lands on it too. No translation is looked up, so none can be missing.
 
     Refused when this tool already has its own page for the product at a different address —
     in state, or findable by ``slug_pattern``. Then there are two answers to which page the
@@ -365,7 +356,7 @@ def _listed_pages(
         own = _Page(found["id"], found["link"], rows[0].title) if found else None
     if own is not None:
         if _same_page(own.url, listed):
-            return _link_pages(cfg, gtin, rows, {}, wp, state)
+            return _pages_for_links(cfg, gtin, rows, {}, wp, state)
         raise RuntimeError(
             f"the process list names {listed} as this product's page, but this tool already "
             f"published its own at {own.url} — clear one of them before pointing a permanent "
@@ -431,11 +422,10 @@ def _link_title(
 def _build_links(
     cfg: ClientConfig, product: ProductRecord, pages: dict[str, _Page]
 ) -> list[LinkInput]:
-    """Build the resolver link set for one GTIN from the pages it links (§4.3).
+    """Build the resolver link set for one GTIN, spanning every known language (§4.3).
 
-    This is the whole record's link set: GS1's CreateOrUpdate replaces the ``links`` array
-    wholesale, so whatever is omitted here is deleted from the record. ``pages`` is what
-    :func:`_link_pages` returns — the default language's page only.
+    This is the whole record's link set, not one language's: GS1's CreateOrUpdate replaces
+    the ``links`` array wholesale, so whatever is omitted here is deleted from the record.
 
     Languages are emitted in sorted order so :func:`_link_set_hash` is stable across runs
     regardless of plan order.
@@ -851,7 +841,6 @@ def _commit_state(  # noqa: PLR0913 — the merge needs both legs' output plus w
     page_entries: dict[str, StateEntry],
     link_hash: str | None,
     ts: datetime,
-    link_languages: list[str] | None = None,
 ) -> None:
     """Persist one GTIN's state, once every leg of this run has succeeded.
 
@@ -882,12 +871,7 @@ def _commit_state(  # noqa: PLR0913 — the merge needs both legs' output plus w
             # (:func:`_drop_held`), so this cannot un-hold anything on its own, and
             # ``_is_held`` is an OR: a product whose pages are still drafts stays held.
             entry = entry.model_copy(
-                update={
-                    "gs1_link_set_hash": link_hash,
-                    "gs1_link_languages": link_languages,
-                    "retracted": False,
-                    "last_run": ts,
-                }
+                update={"gs1_link_set_hash": link_hash, "retracted": False, "last_run": ts}
             )
         state.entries.setdefault(gtin, {})[row.language] = entry
 
@@ -931,17 +915,15 @@ def _execute_gtin(  # noqa: PLR0913 — one collaborator per step; bundling them
     try:
         page_entries = _finish_pages(gtin, rows, fresh, wp, state, ts) if mode.writes_pages else {}
         link_hash = None
-        link_languages: list[str] = []
         if mode.writes_links:
             pages = (
-                _link_pages(cfg, gtin, rows, fresh, wp, state)
+                _pages_for_links(cfg, gtin, rows, fresh, wp, state)
                 if mode.writes_pages or not rows[0].listed_url
                 else _listed_pages(cfg, gtin, rows, wp, state)
             )
             _verify_targets(wp, pages, {page.url for page in fresh.values()})
             link_hash = _finish_links(cfg, gtin, rows, pages, gs1, outcomes)
-            link_languages = sorted(pages)
-        _commit_state(state, gtin, rows, page_entries, link_hash, ts, link_languages)
+        _commit_state(state, gtin, rows, page_entries, link_hash, ts)
     except Exception as exc:  # noqa: BLE001 — one bad GTIN must not abort the run
         for row in rows:
             _record_failure(outcomes[row.language], exc)
@@ -1009,7 +991,7 @@ def _preview_row(
         if mode.writes_pages:
             engine.render(row.product, row.language, _client_meta(cfg))
         # One line per row, but the GS1 write is per GTIN: a GTIN with two confirmed rows
-        # gets one resolver write carrying the default language's link, not one per line.
+        # gets one resolver write carrying both languages' links, not one write per line.
         _log.info("[dry-run] %s/%s: %s", row.gtin, row.language, _preview_text(cfg, row, mode))
     except Exception as exc:  # noqa: BLE001 — surface template errors as a failed preview row
         _record_failure(outcome, exc)
@@ -1031,16 +1013,13 @@ def _preview_text(cfg: ClientConfig, row: PlanRow, mode: _Mode) -> str:
             f"upsert WP {cfg.wordpress.post_type!r} page {row.slug!r}{media}, then link "
             f"this GTIN's languages as translations"
         )
-    default = cfg.wordpress.default_language
-    if mode.writes_links and row.language != default:
-        parts.append(
-            f"add no GS1 link for {row.language} (the record links only the {default} page, "
-            f"which every language's scan lands on)"
-        )
-    elif mode.writes_links:
+    if mode.writes_links:
         target = row.target_url
         if row.listed_url and not mode.writes_pages:
-            target = f"the listed page {row.listed_url}"
+            target = (
+                f"the listed page {row.listed_url} (one {cfg.wordpress.default_language} link "
+                f"for every language)"
+            )
         parts.append(
             f"point GS1 {_digital_link_url(cfg, row)} at {target} and render its "
             f"QR (the real run verifies that target serves first, and refuses if it does not)"

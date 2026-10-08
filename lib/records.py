@@ -462,12 +462,6 @@ class StateEntry(BaseModel):
     one: ``lib.state._classify`` reads it and reports the row CHANGED so the links half can
     still be planned. Every state file written before ``--only`` existed carries a real
     digest, so nothing already live is affected.
-
-    ``gs1_link_languages`` is which languages that resolver record links, as last written; ``None``
-    for an entry written before it was recorded. Since 2026-10-08 a record carries **only the
-    default language's link** (the packaging's QR names one site), so anything else — including
-    ``None``, every record written when nl and fr were both linked — is a record still to rewrite,
-    and ``lib.state.link_set_outdated`` reports it so. Same back-compat move as ``title``.
     """
 
     wp_page_id: int
@@ -481,7 +475,6 @@ class StateEntry(BaseModel):
     retracted: bool = False
     video_file: str | None = None
     video_failed: str | None = None
-    gs1_link_languages: list[str] | None = None
 
     @model_validator(mode="before")
     @classmethod

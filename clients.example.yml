@@ -206,10 +206,9 @@ clients:
         fr: product.fr.html
 
     gs1_links:
-      # Only the default language's link is emitted (since 2026-10-08: the packaging's QR names
-      # one site, and every language's scanner lands on the default link). CreateOrUpdate
-      # replaces the whole links array, so a record that still carries another language loses
-      # it on its next write — a `links` run re-plans those for exactly that.
+      # One link per configured language is always emitted — GS1's CreateOrUpdate replaces
+      # the whole links array, so a language left out is a language deleted from the
+      # resolver. `default` applies to the default language's link only.
       - link_type: "gs1:pip"
         default: true
         public: true

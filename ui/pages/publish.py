@@ -925,10 +925,6 @@ _PER_ROW_OPTIONS: Final = frozenset({"apply", "skip"})
 _DECISION_WORD: Final = {True: "Applied", False: "Skipped", None: "Not decided"}
 
 
-#: Diff keys that are not a page field, in the operator's words.
-_FIELD_LABEL: Final = {"gs1_languages": "GS1 link"}
-
-
 def _changes(row: PlanRow) -> list[str]:
     """What changed on one row, worded as `SKILL.md` §10.6.2 words it.
 
@@ -940,9 +936,6 @@ def _changes(row: PlanRow) -> list[str]:
       the common case, not the exotic one: 19 of 20 CHANGED rows on the pilot plan;
     * a `gs1_link` key — the page is published and its resolver link was never written. Nothing
       about the page is changing, which is why it does not read as a content change.
-
-    A `gs1_languages` key (a links plan rewriting a record that still links fr) is an ordinary
-    before/after, only labelled in the operator's words rather than the field's.
     """
     diff = row.diff or {}
     if not diff:
@@ -950,6 +943,5 @@ def _changes(row: PlanRow) -> list[str]:
     if "gs1_link" in diff:
         return ["Changes: resolver link not written yet"]
     return ["Changes:"] + [
-        f"  {_FIELD_LABEL.get(field, field)}: {before} → {after}"
-        for field, (before, after) in diff.items()
+        f"  {field}: {before} → {after}" for field, (before, after) in diff.items()
     ]

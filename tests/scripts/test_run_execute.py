@@ -277,15 +277,12 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
 def test_both_languages_land_in_one_gs1_link_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One GS1 write per GTIN, carrying the nl link only — not one write per language.
+    """One GS1 write per GTIN, carrying every language — not one write per language.
 
     GS1's CreateOrUpdate **replaces** the links array (confirmed live against the real
     API). The pipeline used to issue one ``safe_upsert`` per (GTIN, language), each with a
     single-element array, so the fr row overwrote the record with only its own link — the
     nl link was destroyed, the Dutch QR resolved nowhere, and the row reported ``ok``.
-
-    Since 2026-10-08 the record links only the default language's page (the packaging's QR
-    names one site); the fr page is still published, and still a translation of the nl one.
     """
     monkeypatch.chdir(tmp_path)
     cfg = _make_config()
@@ -296,18 +293,15 @@ def test_both_languages_land_in_one_gs1_link_set(
 
     assert code == 0
     assert len(rec.gs1) == 1  # one write for the GTIN, not one per language
-    links = rec.gs1[0]["links"]
-    assert [(link["language"], link["target_url"]) for link in links] == [
-        ("nl", _page_url("nl", f"p-{GTIN_A}"))
-    ]
-    # The default link, so a scanner in any language lands on the nl page.
-    assert links[0]["default_link_type"] is True
-    assert sorted(c["language"] for c in rec.wp) == ["fr", "nl"]  # both pages still published
-    entries = load_state("acme").entries[GTIN_A]
-    assert {lang: e.gs1_link_languages for lang, e in entries.items()} == {
-        "nl": ["nl"],
-        "fr": ["nl"],
-    }
+    links = {link["language"]: link for link in rec.gs1[0]["links"]}
+    assert set(links) == {"nl", "fr"}
+    # Each link points at its own language's page.
+    assert links["nl"]["target_url"] == _page_url("nl", f"p-{GTIN_A}")
+    assert links["fr"]["target_url"] == _page_url("fr", f"p-{GTIN_A}")
+    assert links["fr"]["link_title"] == "Support"  # the fr product_name, not the nl one
+    # "standaardlink voor nl, niet voor fr" — exactly one default link, and it is nl.
+    assert links["nl"]["default_link_type"] is True
+    assert links["fr"]["default_link_type"] is False
 
 
 def test_translations_are_linked_once_per_gtin(
@@ -364,9 +358,8 @@ def test_partial_confirm_reconstructs_the_other_language_from_state(
     """Confirming only fr must not drop nl from the link set.
 
     The orchestrator confirms rows individually, so an operator can apply fr and skip nl.
-    Because the array replaces, a link set built from the fr row would destroy the nl link —
-    so the nl link (the record's only one) is rebuilt from the state entry written by the run
-    that created its page.
+    Because the array replaces, sending links:[fr] would destroy the nl link — so the nl
+    link is rebuilt from the state entry written by the run that created its page.
     """
     monkeypatch.chdir(tmp_path)
     cfg = _make_config()
@@ -391,60 +384,13 @@ def test_partial_confirm_reconstructs_the_other_language_from_state(
 
     assert len(rec.gs1) == 1
     links = {link["language"]: link for link in rec.gs1[0]["links"]}
-    assert set(links) == {"nl"}  # nl survives, rebuilt from state; fr gets no link of its own
+    assert set(links) == {"nl", "fr"}  # nl survives, rebuilt from state
     assert links["nl"]["target_url"] == _page_url("nl", f"p-{GTIN_A}")
     assert links["nl"]["default_link_type"] is True
     # The translation group keeps the stored nl page id alongside the fresh fr one.
     assert rec.translations == [
         {"nl": _page_id(f"p-{GTIN_A}", "nl"), "fr": _page_id(f"p-{GTIN_A}", "fr")}
     ]
-
-
-def test_a_links_run_confirming_only_fr_of_a_product_with_no_known_nl_page_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The record links only nl; with no nl page known or confirmed there is nothing to link."""
-    monkeypatch.chdir(tmp_path)
-    rec = _install(monkeypatch, _make_config())
-    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "fr")))
-
-    assert run_execute.main(["acme", "--plan", str(plan), "--only", "links"]) == 1
-    assert rec.gs1 == []
-    assert "confirm its nl row too" in _read_outcomes(tmp_path)[0]["error"]
-
-
-def test_a_links_run_rewrites_a_record_that_still_carried_fr(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A record written when nl and fr were both linked: the rewrite drops fr, and says so."""
-    monkeypatch.chdir(tmp_path)
-    rec = _install(monkeypatch, _make_config())
-    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
-    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
-    state = load_state("acme")
-    for language, entry in state.entries[GTIN_A].items():  # as a record from before the change
-        state.entries[GTIN_A][language] = entry.model_copy(update={"gs1_link_languages": None})
-    save_state(state)
-    rec.gs1.clear()
-
-    assert run_execute.main(["acme", "--plan", str(plan), "--only", "links"]) == 0
-    assert [link["language"] for link in rec.gs1[0]["links"]] == ["nl"]
-    entries = load_state("acme").entries[GTIN_A]
-    assert all(e.gs1_link_languages == ["nl"] for e in entries.values())
-
-
-def test_a_dry_run_says_the_fr_row_adds_no_link(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _install(monkeypatch, _make_config())
-    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl"), _row(GTIN_A, "fr")))
-
-    with caplog.at_level("INFO"):
-        assert run_execute.main(["acme", "--plan", str(plan), "--dry-run"]) == 0
-
-    assert "add no GS1 link for fr" in caplog.text
-    assert f"at {_page_url('nl', f'p-{GTIN_A}')}" in caplog.text
 
 
 # --- Happy path --------------------------------------------------------------

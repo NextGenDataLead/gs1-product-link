@@ -25,9 +25,8 @@ the gates is restated here on purpose: one copy, one place to change.
 
 The targets do not come from a page this run just created and verified. When the plan row carries a
 `listed_url` (the process list's `target_url_column`, e.g. `Link naar site`), that page is the
-record's link. Every record carries **only** the default language's link, which is also the default
-link, so a French scanner lands on it too — no French link is written (the operator's decision of
-2026-10-08: one site per QR), and a record that still carries one is re-planned and loses it. Refused if this
+record's **only** link — the default language's, which is also the default link, so a French scanner
+lands on it too. No French page is sought (the operator's decision: one site per QR). Refused if this
 tool already has its own, different page for the GTIN. Otherwise `run_execute` resolves each target from `state.json`, else a slug lookup on the
 site, else the plan row's `target_url` (built from `wordpress.target_url_pattern`). Either way it
 **HEADs every one of them before writing anything**. A GTIN with any target that does not serve

@@ -304,16 +304,11 @@ reversible:
 A band at the top of the screen tells you which of those you are in, all the way through. Grey
 means reversible; **red means this run writes permanent records.**
 
-**A GS1 record links one page: the Dutch one.** The French page is still made and still linked to
-the Dutch page as its translation, but the record — and so the QR code — leads to the Dutch page,
-whatever the language of the phone that scans it. Products published before 8 October 2026 also
-carry a French link; a **links** run lists them as changed (`GS1 link: every language → nl only`)
-and, once you confirm, rewrites them to the Dutch link alone.
-
 **Products that already have an older page.** Many products have a page on the site that this tool
 did not make, at an address of its own (`…/noviplast/notenkraker-2/`). To point their GS1 record at
 that page, put its address in the **Link naar site** column of the product selection list, and run
-**links**. The QR code then leads to that Dutch page. The tool refuses a
+**links**. The QR code then leads to that Dutch page only — French-speaking scanners land there too.
+Whether you confirm Dutch, French or both makes no difference for these products. The tool refuses a
 product, and says why, rather than guess, when:
 
 - the page you named does not load — check the address in the list;
