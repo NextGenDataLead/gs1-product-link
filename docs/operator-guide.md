@@ -146,10 +146,14 @@ MyGS1 or by the client, not here. The report is written to be forwarded to the c
 When you are done, press **Next** at the foot of the screen. It does two things: it saves your
 choice of products, and it takes you on to step 2. There is no separate save button.
 
-**The line above the button says what it will do** — *"Next saves 8 of 9 eligible row(s) — 1
+**The line above the button says what it will do** — *"Next saves 8 of 9 eligible product(s) — 1
 unticked — and goes on to the copy"* — and it updates as you tick. Read that before you press, not
 after: it is the one thing that will tell you if you ticked the wrong way round. With nothing ticked
 the button stays off. Pressing it takes you straight to Content.
+
+**A yellow band above the table names any barcode that is on two rows of your list with different
+products** — usually a typo. It says which rows, and which product the export says the barcode
+belongs to. Correct the other row in your spreadsheet and upload the list again.
 
 **Done looks like:** both files uploaded without a refusal, nothing unexpected in the first two
 tables, and *selected* in Coverage showing exactly the number of products you mean.

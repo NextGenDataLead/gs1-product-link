@@ -23,6 +23,7 @@ from ui.batch_grid import (  # noqa: E402
     batch_of,
     funnel,
     save_line,
+    shared_barcode_notes,
     unticked_by,
 )
 
@@ -81,9 +82,9 @@ def test_an_undecidable_batch_has_nothing_eligible() -> None:
 
 
 def test_the_caption_says_what_next_will_save_before_it_is_pressed() -> None:
-    assert save_line(3, 3) == "Next saves all 3 eligible row(s) and goes on to the copy."
+    assert save_line(3, 3) == "Next saves all 3 eligible product(s) and goes on to the copy."
     assert save_line(1, 3) == (
-        "Next saves 1 of 3 eligible row(s) — 2 unticked — and goes on to the copy."
+        "Next saves 1 of 3 eligible product(s) — 2 unticked — and goes on to the copy."
     )
     assert save_line(0, 0) == "Nothing on the list is eligible, so a run would publish nothing."
     assert save_line(0, 3) == "Tick at least one product — Next stays off until then."
@@ -132,3 +133,40 @@ def test_next_writes_the_ticked_rows_only_and_to_the_control_file(tmp_path: Path
     assert saved.path == control
     assert saved.rows == [["1", _A], ["4", _E]]
     assert upload.rows[1] == ["2", _C], "the upload itself is never pruned"
+
+
+# --- one barcode on several rows ------------------------------------------------
+
+
+def _list(*rows: tuple[str, str, str]) -> ProcessListSheet:
+    return ProcessListSheet(
+        path=Path("list.xlsx"),
+        header=["Artikelnr.", "Omschrijving", "Barcode"],
+        rows=[list(row) for row in rows],
+        gtin_index=2,
+    )
+
+
+def test_two_different_products_on_one_barcode_are_a_warning_naming_both() -> None:
+    """7 Days and Fun Grill on 8713195008486 — the export says it is the grill."""
+    sheet = _list(("4214", "7 Days", "8713195008486"), ("5003", "Fun Grill", "8713195008486"))
+
+    notes = shared_barcode_notes(sheet, {"08713195008486": "Grillen"})
+
+    assert len(notes) == 1
+    kind, sentence = notes[0]
+    assert kind == "warn"
+    assert "4214 7 Days" in sentence and "5003 Fun Grill" in sentence
+    assert "The export says it is Grillen." in sentence
+
+
+def test_the_same_product_twice_is_a_quiet_note() -> None:
+    sheet = _list(("4156", "Desk lamp", "8713195004488"), ("4156", "Desk lamp", "8713195004488"))
+
+    assert [kind for kind, _ in shared_barcode_notes(sheet, {})] == ["quiet"]
+
+
+def test_a_list_without_shared_barcodes_says_nothing() -> None:
+    sheet = _list(("4156", "Desk lamp", "8713195004488"), ("2078", "Multi Wiper", "8713195007151"))
+
+    assert shared_barcode_notes(sheet, {}) == []

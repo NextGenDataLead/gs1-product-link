@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lib.complete_report import ListedRow, PageState, StatusRow, status_rows
+from lib.complete_report import ListedRow, PageState, StatusRow, listed_rows, status_rows
 from lib.config import ProcessListConfig
 from lib.eligibility import eligibility
 from lib.errors import ConfigError, MissingCredentialError, ProcessListError, WordPressAPIError
@@ -29,7 +29,6 @@ from lib.wp_client import WordPressClient
 
 if TYPE_CHECKING:
     from lib.config import ClientConfig
-    from lib.process_list import ProcessListSheet
     from lib.records import ProductRecord
 
 #: The ACF sources that are generated text — what "text" means on a live page.
@@ -137,19 +136,7 @@ def _listed(cfg: ClientConfig) -> list[ListedRow]:
         )
     except ProcessListError:
         return []
-    return [
-        ListedRow(sheet.gtin14_at(index), _label(sheet, index)) for index in range(len(sheet.rows))
-    ]
-
-
-def _label(sheet: ProcessListSheet, index: int) -> str:
-    """How a person would name the row: its first two filled cells other than the barcode."""
-    cells = [
-        value.strip()
-        for n, value in enumerate(sheet.rows[index])
-        if n != sheet.gtin_index and value and value.strip()
-    ]
-    return " ".join(cells[:2])
+    return listed_rows(sheet)
 
 
 def _name(product: ProductRecord, languages: list[str]) -> str:
