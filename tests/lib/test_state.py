@@ -566,6 +566,69 @@ def test_diff_changed_when_page_published_without_a_resolver_link() -> None:
     assert rows[0].diff == {"gs1_link": ("not written", "will be written")}
 
 
+def _linked(state: State, gtin: str, languages: list[str] | None) -> State:
+    entry = state.entries[gtin]["nl"]
+    state.entries[gtin]["nl"] = entry.model_copy(update={"gs1_link_languages": languages})
+    return state
+
+
+def test_a_links_plan_rewrites_a_record_that_still_links_fr() -> None:
+    """Every record written before 2026-10-08 links nl and fr, and records no languages."""
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    ).rows[0]
+    state = _linked(
+        _state_with(
+            product.gtin, "nl", content_hash=baseline.content_hash, wp_url=baseline.target_url
+        ),
+        product.gtin,
+        None,
+    )
+
+    rows, _ = diff_against_state([product], state, ["nl"], _wp(), links_only=True)
+
+    assert rows[0].classification is PlanClassification.CHANGED
+    assert rows[0].diff == {"gs1_languages": ("every language", "nl only")}
+
+
+def test_a_record_already_linking_only_nl_is_unchanged_in_a_links_plan() -> None:
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    ).rows[0]
+    state = _linked(
+        _state_with(
+            product.gtin, "nl", content_hash=baseline.content_hash, wp_url=baseline.target_url
+        ),
+        product.gtin,
+        ["nl"],
+    )
+
+    rows, _ = diff_against_state([product], state, ["nl"], _wp(), links_only=True)
+
+    assert rows[0].classification is PlanClassification.UNCHANGED
+
+
+def test_a_pages_plan_leaves_a_record_that_still_links_fr_alone() -> None:
+    """CHANGED there would rewrite a page, with fresh copy, whose content did not change."""
+    product = _product()
+    baseline = diff_against_state(
+        [product], State(client_id="noviplast", entries={}), ["nl"], _wp()
+    ).rows[0]
+    state = _linked(
+        _state_with(
+            product.gtin, "nl", content_hash=baseline.content_hash, wp_url=baseline.target_url
+        ),
+        product.gtin,
+        None,
+    )
+
+    rows, _ = diff_against_state([product], state, ["nl"], _wp())
+
+    assert rows[0].classification is PlanClassification.UNCHANGED
+
+
 def test_a_pages_only_revive_leaves_a_row_that_still_needs_its_resolver_link() -> None:
     """The defect this rename came with: the revived row read as fully published.
 

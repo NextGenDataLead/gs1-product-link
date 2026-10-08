@@ -207,7 +207,12 @@ def _write_video_map(tmp_path: Path, both: list[str], nl_only: list[str] | None 
     return str(path)
 
 
-def _present_state(*gtins: str, content_hash: str = "h", video_file: str | None = None) -> None:
+def _present_state(
+    *gtins: str,
+    content_hash: str = "h",
+    video_file: str | None = None,
+    link_languages: list[str] | None = None,
+) -> None:
     entry = StateEntry(
         wp_page_id=1,
         wp_url="https://wp.test/x",
@@ -216,6 +221,7 @@ def _present_state(*gtins: str, content_hash: str = "h", video_file: str | None 
         gs1_link_set_hash="h",
         last_run=datetime(2026, 1, 1, tzinfo=UTC),
         video_file=video_file,
+        gs1_link_languages=link_languages,
     )
     save_state(State(client_id="acme", entries={g: {"nl": entry} for g in gtins}))
 
@@ -400,6 +406,30 @@ def test_include_published_replans_a_finished_gtin(
     rows = _read_plan().rows
     assert {r.gtin for r in rows} == {GTIN_A}
     assert {r.classification for r in rows} == {PlanClassification.CHANGED}
+
+
+@pytest.mark.parametrize(("link_languages", "planned"), [(None, True), (["nl"], False)])
+def test_a_links_plan_re_admits_a_finished_gtin_whose_record_still_links_fr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    link_languages: list[str] | None,
+    planned: bool,
+) -> None:
+    """Records written before 2026-10-08 link nl and fr; a links run is what rewrites them."""
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap))
+    _patch_client(monkeypatch, cfg)
+    _present_state(GTIN_A, link_languages=link_languages)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_A)])
+
+    assert run_plan.main(["acme", "--products", str(products), "--links-only"]) == 0
+    assert bool(_read_plan().rows) is planned
+
+    # A pages plan never re-admits it: that would rewrite a page whose content did not change.
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    assert _read_plan().rows == []
 
 
 def test_include_published_is_not_the_default(

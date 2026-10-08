@@ -73,7 +73,7 @@ from lib.records import (
     SourceIssue,
     State,
 )
-from lib.state import diff_against_state, load_state, video_arrived
+from lib.state import diff_against_state, link_set_outdated, load_state, video_arrived
 
 _log = logging.getLogger("scripts.run_plan")
 
@@ -136,13 +136,14 @@ def _gate(
     return candidates, {"not_listed": len(products) - len(candidates)}
 
 
-def _pilot_gate(
+def _pilot_gate(  # noqa: PLR0913 — the products, what is already done, and each policy flag
     products: list[ProductRecord],
     state: State,
     excluded: dict[str, int],
     gate: VideoGate | None,
     *,
     include_published: bool = False,
+    relink_language: str | None = None,
 ) -> tuple[list[ProductRecord], dict[str, int]]:
     """Drop GTINs that are already finished (§9.5), unless ``include_published``.
 
@@ -187,6 +188,12 @@ def _pilot_gate(
     classification that would notice the arrival (:func:`lib.state.video_arrived`), and the page
     serves no video forever while every run reports nothing to do. So a GTIN with an arriving video
     stays in, and the classification decides — CHANGED for that language only.
+
+    **Nor, for a links plan (``relink_language`` set), "has the record it should have".** A GS1
+    record carries only the default language's link now; one written when nl and fr were both
+    linked is not finished for a links run, which is the run that rewrites it
+    (:func:`lib.state.link_set_outdated`). Any other plan keeps treating it as finished, so a pages
+    run does not rewrite a page whose content never changed.
     """
     excluded = {**excluded, "already_present": 0}
     if include_published or gate is None or not gate.enforced:
@@ -195,7 +202,11 @@ def _pilot_gate(
     present = {
         canon_gtin(gtin)
         for gtin, entries in state.entries.items()
-        if all(entry.gs1_link_set_hash for entry in entries.values())
+        if all(
+            entry.gs1_link_set_hash
+            and not (relink_language and link_set_outdated(entry, relink_language))
+            for entry in entries.values()
+        )
         and not any(
             video_arrived(entry, gate.file_for(gtin, language))
             for language, entry in entries.items()
@@ -341,7 +352,12 @@ def _build_plan(
     state = load_state(cfg.client_id)
     gate = video_gate_for(cfg)
     candidates, excluded = _pilot_gate(
-        candidates, state, excluded, gate, include_published=include_published
+        candidates,
+        state,
+        excluded,
+        gate,
+        include_published=include_published,
+        relink_language=cfg.wordpress.default_language if links_only else None,
     )
 
     candidates, category_issues = _assign_categories(cfg, candidates)
@@ -361,6 +377,7 @@ def _build_plan(
         mandatory_sources=cfg.export.all_sources,
         video_gate=gate,
         hash_source=feed_view,
+        links_only=links_only,
     )
     counts = {c: sum(1 for row in rows if row.classification is c) for c in PlanClassification}
     plan = Plan(

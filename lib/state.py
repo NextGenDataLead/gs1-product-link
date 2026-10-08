@@ -289,6 +289,30 @@ def _has_no_resolver_link(prior: StateEntry) -> bool:
     return not prior.gs1_link_set_hash
 
 
+def link_set_outdated(prior: StateEntry, default_language: str) -> bool:
+    """Whether this entry's resolver record links any language but the default one.
+
+    A GS1 record carries only the default language's link (decided 2026-10-08: the packaging's
+    QR names one site; its default link catches every other language's scanner). A record written
+    before that links nl and fr, and its state entry says so by recording no languages at all
+    (``None``). Those are reported CHANGED so a ``links`` run rewrites them — the link array
+    replaces, so the rewrite is what removes the fr link. An entry with no record at all is
+    :func:`_has_no_resolver_link`'s case, not this one.
+    """
+    return bool(prior.gs1_link_set_hash) and prior.gs1_link_languages != [default_language]
+
+
+def _relinks(prior: StateEntry, relink_language: str | None) -> bool:
+    """Whether a links plan must rewrite this entry's record to carry only ``relink_language``.
+
+    Asked only of a plan built for a ``links`` run (``relink_language`` set). A pages or both
+    plan leaves such a record alone rather than reporting the row CHANGED, because a CHANGED row
+    there is a page rewrite — with freshly generated copy — for a product whose page did not
+    change. Its record is put right by the next links run, or by any run that rewrites it anyway.
+    """
+    return relink_language is not None and link_set_outdated(prior, relink_language)
+
+
 def video_arrived(prior: StateEntry, video_file: str | None) -> bool:
     """Whether this page now gets a video file other than the one it was published with.
 
@@ -313,7 +337,10 @@ def video_arrived(prior: StateEntry, video_file: str | None) -> bool:
 
 
 def _classify(
-    prior: StateEntry | None, content_hash: str, video_file: str | None = None
+    prior: StateEntry | None,
+    content_hash: str,
+    video_file: str | None = None,
+    relink_language: str | None = None,
 ) -> PlanClassification:
     """Classify one unit against its prior state entry.
 
@@ -336,7 +363,7 @@ def _classify(
         return PlanClassification.NEW
     if _is_held(prior):
         return PlanClassification.HELD
-    if _has_no_resolver_link(prior):
+    if _has_no_resolver_link(prior) or _relinks(prior, relink_language):
         return PlanClassification.CHANGED
     if video_arrived(prior, video_file):
         return PlanClassification.CHANGED
@@ -345,12 +372,13 @@ def _classify(
     return PlanClassification.CHANGED
 
 
-def _row_diff(
+def _row_diff(  # noqa: PLR0913 — one argument per recorded field the diff can name
     prior: StateEntry | None,
     classification: PlanClassification,
     title: str,
     target_url: str,
     video_file: str | None = None,
+    relink_language: str | None = None,
 ) -> dict[str, tuple[str, str]] | None:
     """The field-level diff for a plan row, or ``None`` when there is nothing to show.
 
@@ -371,6 +399,10 @@ def _row_diff(
     if _has_no_resolver_link(prior):
         return {"gs1_link": ("not written", "will be written")}
     diff: dict[str, tuple[str, str]] = {}
+    # Its own key, not ``gs1_link``: that one means "never written", and every surface reads it so.
+    if relink_language is not None and _relinks(prior, relink_language):
+        before = " + ".join(prior.gs1_link_languages or []) or "every language"
+        diff["gs1_languages"] = (before, f"{relink_language} only")
     if prior.title is not None and prior.title != title:
         diff["title"] = (prior.title, title)
     if prior.wp_url != target_url:
@@ -420,6 +452,7 @@ def _plan_unit(  # noqa: PLR0913 — one argument per input the classification i
     hashed: ProductRecord,
     prior: StateEntry | None,
     video_file: str | None = None,
+    relink_language: str | None = None,
 ) -> _UnitPlan:
     """Build one unit's slug, target URL, content hash and classification.
 
@@ -443,7 +476,12 @@ def _plan_unit(  # noqa: PLR0913 — one argument per input the classification i
         gtin14=product.gtin14,
     )
     content_hash = compute_content_hash(hashed, language, target_url)
-    return _UnitPlan(slug, target_url, content_hash, _classify(prior, content_hash, video_file))
+    return _UnitPlan(
+        slug,
+        target_url,
+        content_hash,
+        _classify(prior, content_hash, video_file, relink_language),
+    )
 
 
 def classify_units(
@@ -525,6 +563,8 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     mandatory_sources: dict[str, GdsnSource] | None = None,
     video_gate: VideoGate | None = None,
     hash_source: Mapping[str, ProductRecord] | None = None,
+    *,
+    links_only: bool = False,
 ) -> PlanDiff:
     """Classify each ``(GTIN, language)`` against prior state, building plan rows (§4.8, §8.2).
 
@@ -591,6 +631,10 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
             on it beats silently hashing the enriched record for the one GTIN that was forgotten,
             which would reclassify exactly that row and nothing else. Defaults to ``None``, which
             hashes each product itself.
+        links_only: The plan is for a ``links`` run. Only then is a published product whose GS1
+            record still links a language other than the default one reported CHANGED
+            (:func:`link_set_outdated`), so the run rewrites that record to the default
+            language's link alone. Off, such a product classifies on its content as before.
 
     Returns:
         A :class:`PlanDiff`: one :class:`~lib.records.PlanRow` per planned
@@ -605,6 +649,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
             is unset — both are required to build a plan.
     """
     patterns = _patterns(wordpress)
+    relink_language = wordpress.default_language if links_only else None
 
     rows: list[PlanRow] = []
     skipped: list[SkippedUnit] = []
@@ -657,7 +702,9 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
             title = product.product_name.values[language]
             prior = state.entries.get(product.gtin, {}).get(language)
             video_file = video_gate.file_for(product.gtin, language) if video_gate else None
-            unit = _plan_unit(product, language, wordpress, patterns, hashed, prior, video_file)
+            unit = _plan_unit(
+                product, language, wordpress, patterns, hashed, prior, video_file, relink_language
+            )
             tagline = product.generated_tagline
             if (
                 require_generated_copy  # E21
@@ -682,7 +729,14 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                     slug=unit.slug,
                     content_hash=unit.content_hash,
                     target_url=unit.target_url,
-                    diff=_row_diff(prior, unit.classification, title, unit.target_url, video_file),
+                    diff=_row_diff(
+                        prior,
+                        unit.classification,
+                        title,
+                        unit.target_url,
+                        video_file,
+                        relink_language,
+                    ),
                     product=product,
                 )
             )

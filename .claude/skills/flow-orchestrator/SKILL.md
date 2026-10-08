@@ -224,9 +224,11 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
    and only then: `run_execute` refuses a links-only plan in any other mode — and read
    `output/{client}/plan.json`. When the client sets `process_list.target_url_column`, a row may
    carry `listed_url`: the page the operator named for a product whose page this tool did not
-   make. In `links` mode the GS1 record gets **one link, the Dutch (default-language) one, at
-   that page**, whichever languages were confirmed — the operator's decision: the packaging's QR
-   names one site, and the default link catches every other language's scanner. A GTIN whose
+   make. In `links` mode the GS1 record links **that page**. Every GS1 record, listed or not,
+   carries only the Dutch (default-language) link — the operator's decision of 2026-10-08: the
+   packaging's QR names one site, and the default link catches every other language's scanner.
+   A `--links-only` plan therefore also re-plans products whose record still carries the fr link
+   (diff key `gs1_languages`), so the run rewrites them to nl only. A GTIN whose
    listed page differs from one this tool already published is refused at execute, not guessed. In `pages`/`both` a listed page that is not the one the run would
    publish refuses that GTIN — tell the operator to clear the cell or run `links`. Say how many
    GTINs carry one beneath the counts at step 5 (run_plan prints it). run_plan omits any `(GTIN, language)` with a missing
@@ -317,6 +319,9 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
      A `gs1_link` key means something different from a content change: the page is published
      but its resolver link was never written (a previous `pages` run). Present it as
      `Changes: resolver link not written yet` — nothing about the page is changing.
+     A `gs1_languages` key (only in a `--links-only` plan) is a record written when nl and fr
+     were both linked; the run rewrites it to the nl link alone. Present it as
+     `GS1 link: every language → nl only`.
      **Walk every CHANGED row, not only the ones whose `diff` has fields in it.** State keeps
      the prior `title` and `wp_url` and nothing else, so a row changed in the product body
      has an empty `diff` — on the pilot plan that is 19 of 20 CHANGED rows. A walk keyed on

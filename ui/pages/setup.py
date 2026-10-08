@@ -251,9 +251,8 @@ def _wordpress(editor: _Editor, cfg: ClientConfig) -> None:
             ("wordpress", "languages"),
             "Languages",
             wp.languages,
-            "Comma-separated. One page and one resolver link per language — and GS1's write "
-            "replaces the whole links array, so a language removed here is a language deleted "
-            "from the resolver on the next run.",
+            "Comma-separated. One page per language. The GS1 record links only the default "
+            "language's page, which every language's scan lands on.",
         )
         editor.text(
             ("wordpress", "default_language"),

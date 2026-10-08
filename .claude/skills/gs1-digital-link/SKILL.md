@@ -18,13 +18,15 @@ on their own.
 ## What this skill does
 
 Drives `lib/gs1_dl_client.py`. For each `(GTIN, language)` it builds the
-links array from the client's `gs1_links` config (one `gs1:pip` link per configured language; the NL
-link is the `default` standaardlink) and the `target_url` pattern, sets `item_description` to the
+links array from the client's `gs1_links` config and the `target_url` pattern — **one `gs1:pip` link,
+the NL page's, and it is the `default` standaardlink** (decided 2026-10-08: the packaging's QR names
+one site, and a French scanner lands on the default link too; the FR page is still published), sets `item_description` to the
 product name, and upserts the entry. Auth is OAuth2 client-credentials: the client mints a ~1h JWT
 (cached, Bearer) from credentials in environment variables, against the `test`
 (`gs1nl-api-acc.gs1.nl`) or `production` (`gs1nl-api.gs1.nl`) host per the client's resolved
 environment. Upserts are idempotent — `CreateOrUpdate` replaces the whole links array, so a language
-left out of the payload is **deleted** from the resolver. Tone is **concise and business-like, not
+left out of the payload is **deleted** from the resolver; that is how a record that still carries an
+FR link loses it. Tone is **concise and business-like, not
 conversational**.
 
 ## Inputs
@@ -44,9 +46,9 @@ conversational**.
    GTINs are in scope (usually the confirmed plan subset).
 
 2. **Build the payload.** For each GTIN assemble `links[]` from `gs1_links` and the per-language
-   `target_url`, one link per configured language (NL carries `default: true`). Set
-   `item_description` to the product name and `is_enabled` to `true`. Include every configured
-   language — a missing language is removed from the resolver, not left untouched.
+   `target_url`: the NL link only, carrying `default: true`. Set `item_description` to the
+   product name and `is_enabled` to `true`. Any other language is left out on purpose — and so
+   removed from the resolver, not left untouched.
 
 3. **Upsert.** Call `safe_upsert(gtin, item_description, links, is_enabled=True, overwrite=...)` —
    it GETs before writing and raises `OverwriteError` rather than clobbering an existing entry
