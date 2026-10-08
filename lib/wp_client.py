@@ -394,6 +394,46 @@ class WordPressClient:
             self._term_ids[key] = found
         return self._term_ids[key]
 
+    def page_terms(self, post_type: str, page_id: int, gtin: str, taxonomy: str) -> list[int]:
+        """The term ids ``taxonomy`` gives page ``page_id`` — once it is shown to be ``gtin``'s.
+
+        The ``meta.gtin`` guard is the one :meth:`upsert_page` applies (E8/E11): a page id from
+        state can be stale, and a category written onto somebody else's page is a live mistake.
+
+        Raises:
+            GtinMismatchError: The page belongs to another product.
+            WordPressAPIError: The page does not exist (404), carries no ``meta.gtin``, or the
+                read failed.
+        """
+        page = self._get_page(post_type, page_id)
+        if page is None:
+            raise WordPressAPIError(
+                int(HTTPStatus.NOT_FOUND),
+                f"{post_type}/{page_id} does not exist",
+                call=f"GET {post_type}/{page_id}",
+            )
+        self._guard_gtin_match(page, gtin)
+        raw = cast(dict[str, object], page).get(taxonomy)
+        return [int(cast(int, term)) for term in raw] if isinstance(raw, list) else []
+
+    def set_page_terms(
+        self, post_type: str, page_id: int, gtin: str, terms: dict[str, list[int]]
+    ) -> None:
+        """Set ``{taxonomy: [term id]}`` on an existing page, and change nothing else about it.
+
+        An update carrying only the taxonomy fields: WordPress leaves every field a request does
+        not name as it is, so title, content, ACF and status are untouched. Guarded by
+        :meth:`page_terms` first, for the same reason.
+        """
+        for taxonomy in terms:
+            self.page_terms(post_type, page_id, gtin, taxonomy)
+        self._request(
+            "POST",
+            f"{_WP_API_PREFIX}/{post_type}/{page_id}",
+            json_body=dict(terms),
+            label=f"set terms on {post_type}/{page_id}",
+        )
+
     def list_pages_with_gtin(
         self, post_type: str, language: str | None = None, *, page_limit: int = _PAGE_LIMIT
     ) -> list[WordPressPage]:

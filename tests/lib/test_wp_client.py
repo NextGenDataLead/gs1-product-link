@@ -1130,6 +1130,47 @@ def test_upsert_page_sets_the_terms_it_is_given(httpx_mock: HTTPXMock) -> None:
     assert json.loads(post.content)[_TAX] == [5]
 
 
+def test_page_terms_reads_the_page_after_checking_it_is_this_products(
+    httpx_mock: HTTPXMock,
+) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json={"id": 1, "meta": {"gtin": "1"}, _TAX: [5]})
+
+    assert client.page_terms(POST_TYPE, 1, "1", _TAX) == [5]
+
+
+def test_page_terms_refuses_a_page_that_belongs_to_another_product(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json={"id": 1, "meta": {"gtin": "2"}, _TAX: []})
+
+    with pytest.raises(GtinMismatchError):
+        client.page_terms(POST_TYPE, 1, "1", _TAX)
+
+
+def test_set_page_terms_sends_the_taxonomy_and_nothing_else(httpx_mock: HTTPXMock) -> None:
+    """Title, content, ACF and status are left as they are: WordPress keeps what is not named."""
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json={"id": 1, "meta": {"gtin": "1"}, _TAX: []})
+    httpx_mock.add_response(method="POST", json={"id": 1})
+
+    client.set_page_terms(POST_TYPE, 1, "1", {_TAX: [5]})
+
+    post = next(r for r in _business_requests(httpx_mock) if r.method == "POST")
+    assert post.url.path == f"/wp-json/wp/v2/{POST_TYPE}/1"
+    assert json.loads(post.content) == {_TAX: [5]}
+
+
+def test_set_page_terms_never_writes_a_page_that_belongs_to_another_product(
+    httpx_mock: HTTPXMock,
+) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json={"id": 1, "meta": {"gtin": "2"}, _TAX: []})
+
+    with pytest.raises(GtinMismatchError):
+        client.set_page_terms(POST_TYPE, 1, "1", {_TAX: [5]})
+    assert all(r.method == "GET" for r in _business_requests(httpx_mock))
+
+
 # --- Retry policy (§5.1) -----------------------------------------------------
 
 
