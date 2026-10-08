@@ -556,6 +556,39 @@ def _rollback_media(wp: WordPressClient, media: _RowMedia, row: PlanRow) -> None
             )
 
 
+def _page_terms(cfg: ClientConfig, row: PlanRow, wp: WordPressClient) -> dict[str, list[int]]:
+    """The taxonomy terms this row's page is put in — its category, in the page's language.
+
+    Each ``wordpress.taxonomies`` entry names the product field its term comes from (``category``,
+    which the plan fills from the GPC brick map). Without this the site's category pages never
+    list a page this tool made: all 38 live products were in no category when that was found
+    (2026-10-08). A product with no value gets no term — the plan already reported its unmapped
+    brick.
+
+    A value the site has no term for, in this language, refuses the row while
+    ``categories.require_terms_exist`` (the default) — the term must be created on the site, or
+    the map corrected, rather than a page going live where no category page shows it. Off, it is
+    a warning and the page goes live without the term.
+    """
+    terms: dict[str, list[int]] = {}
+    for taxonomy, source in cfg.wordpress.taxonomies.items():
+        value = getattr(row.product, source.map_from_column, None)
+        if not isinstance(value, str) or not value:
+            continue
+        term = wp.term_id(taxonomy, value, row.language)
+        if term is not None:
+            terms[taxonomy] = [term]
+            continue
+        message = (
+            f"the site has no {taxonomy!r} term {value!r} in {row.language} — create it there, or "
+            f"map the product to one that exists"
+        )
+        if cfg.categories is None or cfg.categories.require_terms_exist:
+            raise RuntimeError(message)
+        _log.warning("%s/%s: %s; publishing without it", row.gtin, row.language, message)
+    return terms
+
+
 def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcome it annotates
     cfg: ClientConfig,
     row: PlanRow,
@@ -574,6 +607,7 @@ def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcom
     log. Without that the operator gets an error naming no page.
     """
     html = engine.render(row.product, row.language, _client_meta(cfg))
+    terms = _page_terms(cfg, row, wp)  # before any upload: a missing term must cost nothing
     # Themes that render from ACF (Oxygen) ignore post_content entirely, so for those
     # clients the ACF payload *is* the page. The body is still written: it is inert
     # where it is ignored, and it is what non-ACF clients render from.
@@ -604,6 +638,7 @@ def _upsert_row(  # noqa: PLR0913 — one collaborator per step, plus the outcom
             meta={"gtin": row.gtin},
             existing_id=prior.wp_page_id if prior else None,
             acf=acf,
+            terms=terms or None,
         )
     except Exception:
         _rollback_media(wp, media, row)
@@ -929,8 +964,9 @@ def _preview_text(cfg: ClientConfig, row: PlanRow, mode: _Mode) -> str:
     parts = []
     if mode.writes_pages:
         media = " (with hero image/video)" if cfg.media is not None else ""
+        category = f" in category {row.product.category!r}" if row.product.category else ""
         parts.append(
-            f"upsert WP {cfg.wordpress.post_type!r} page {row.slug!r}{media}, then link "
+            f"upsert WP {cfg.wordpress.post_type!r} page {row.slug!r}{media}{category}, then link "
             f"this GTIN's languages as translations"
         )
     if mode.writes_links:

@@ -411,8 +411,10 @@ def test_categories_unknown_key_rejected_by_schema(tmp_path: Path) -> None:
 def test_example_config_categories_block_loads() -> None:
     cfg = load_clients("clients.example.yml")["democlient"]
     assert cfg.categories is not None
-    assert "tuin" in cfg.categories.terms
-    assert cfg.categories.brick_category_map["10003865"] == "tuin"
+    # The site's own term set: it has no `tuin`, garden goes under outdoor_dier (2026-10-08).
+    assert "outdoor_dier" in cfg.categories.terms
+    assert "tuin" not in cfg.categories.terms
+    assert cfg.categories.brick_category_map["10003865"] == "outdoor_dier"
 
 
 # --- Media (Phase 9.5) -------------------------------------------------------

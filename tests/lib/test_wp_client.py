@@ -1077,6 +1077,59 @@ def test_verify_url_raises_on_404(httpx_mock: HTTPXMock) -> None:
     assert exc.value.status_code == 404
 
 
+# --- Category terms: one per language under WPML ---------------------------------
+# Found 2026-10-08: none of the 38 live pages was in a category, so no category page listed them.
+
+_TAX = "noviplast-categories"
+
+
+def test_term_id_finds_the_term_in_the_default_language(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    httpx_mock.add_response(method="GET", json=[{"id": 5, "slug": "keuken"}])
+
+    assert client.term_id(_TAX, "keuken", "nl") == 5
+    request = _business_requests(httpx_mock)[0]
+    assert request.url.path == f"/wp-json/wp/v2/{_TAX}"
+    assert request.url.params["slug"] == "keuken"
+    assert request.url.params["lang"] == "nl"
+
+
+def test_term_id_finds_the_french_term_by_its_wpml_slug(httpx_mock: HTTPXMock) -> None:
+    """keuken in fr is keuken-fr: the Dutch id would file a French page in the Dutch category."""
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    httpx_mock.add_response(method="GET", json=[])  # no "keuken" in fr
+    httpx_mock.add_response(method="GET", json=[{"id": 22, "slug": "keuken-fr"}])
+
+    assert client.term_id(_TAX, "keuken", "fr") == 22
+    slugs = [r.url.params["slug"] for r in _business_requests(httpx_mock)]
+    assert slugs == ["keuken", "keuken-fr"]
+    assert all(r.url.params["lang"] == "fr" for r in _business_requests(httpx_mock))
+
+
+def test_term_id_is_none_for_a_term_the_site_lacks_and_asks_only_once(
+    httpx_mock: HTTPXMock,
+) -> None:
+    client, _ = make_client(httpx_mock, plugin="wpml", config=_wpml_config())
+    httpx_mock.add_response(method="GET", json=[])
+    httpx_mock.add_response(method="GET", json=[])
+
+    assert client.term_id(_TAX, "tuin", "nl") is None
+    assert client.term_id(_TAX, "tuin", "nl") is None  # remembered, not asked again
+    assert len(_business_requests(httpx_mock)) == 2
+
+
+def test_upsert_page_sets_the_terms_it_is_given(httpx_mock: HTTPXMock) -> None:
+    client, _ = make_client(httpx_mock)
+    httpx_mock.add_response(method="GET", json=[])  # slug lookup
+    httpx_mock.add_response(method="GET", json=[])  # meta.gtin lookup
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 10, "slug": "p-1"})
+
+    client.upsert_page(POST_TYPE, "p-1", "T", "", "nl", meta={"gtin": "1"}, terms={_TAX: [5]})
+
+    post = next(r for r in _business_requests(httpx_mock) if r.method == "POST")
+    assert json.loads(post.content)[_TAX] == [5]
+
+
 # --- Retry policy (§5.1) -----------------------------------------------------
 
 

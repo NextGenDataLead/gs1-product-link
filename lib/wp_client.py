@@ -195,6 +195,7 @@ class WordPressClient:
         self._username = config.username
         self._http = httpx.Client(timeout=timeout or _DEFAULT_TIMEOUT)
         self._sleep = sleep
+        self._term_ids: dict[tuple[str, str, str], int | None] = {}
         self.multilingual_plugin: MultilingualPlugin = self._resolve_plugin()
         self._adapter: MultilingualAdapter = make_adapter(
             self.multilingual_plugin,
@@ -368,6 +369,31 @@ class WordPressClient:
         )
         return cast(WordPressPage, pages[0]) if pages else None
 
+    def term_id(self, taxonomy: str, term: str, language: str) -> int | None:
+        """The id of category ``term`` as it exists in ``language``, or ``None`` if it does not.
+
+        WPML keeps one term per language, and a translated term's slug is the original's with the
+        language appended — ``keuken`` in nl is ``keuken-fr`` in fr (verified live 2026-10-08). A
+        French page given the Dutch term's id would sit in the Dutch category, invisible on the
+        French category page, so the lookup is scoped to the page's language and tries both
+        spellings there. Read-only, and remembered for the life of this client: a run asks the
+        same few terms once per page.
+        """
+        key = (taxonomy, term, language)
+        if key not in self._term_ids:
+            found = None
+            for slug in (term, f"{term}-{language}"):
+                terms = self._get_list(
+                    f"{_WP_API_PREFIX}/{taxonomy}",
+                    params={"slug": slug, **self._lang_params(language)},
+                    label=f"{taxonomy}?slug={slug}",
+                )
+                if terms:
+                    found = int(cast(int, terms[0]["id"]))
+                    break
+            self._term_ids[key] = found
+        return self._term_ids[key]
+
     def list_pages_with_gtin(
         self, post_type: str, language: str | None = None, *, page_limit: int = _PAGE_LIMIT
     ) -> list[WordPressPage]:
@@ -438,6 +464,7 @@ class WordPressClient:
         meta: dict[str, object] | None = None,
         existing_id: int | None = None,
         acf: dict[str, object] | None = None,
+        terms: dict[str, list[int]] | None = None,
     ) -> WordPressPage:
         """Create or update one product page, idempotently (§6.1).
 
@@ -463,6 +490,9 @@ class WordPressClient:
             meta: Post meta; must include ``gtin``.
             existing_id: A known page id to update directly, if available.
             acf: ACF field values to write, if any.
+            terms: ``{taxonomy: [term id, ...]}`` to set on the page — it *replaces* the page's
+                terms in each taxonomy named, on create and update alike. Ids come from
+                :meth:`term_id`, in the page's own language.
 
         Returns:
             The created or updated :class:`WordPressPage`. When ``acf`` was written, this is
@@ -489,6 +519,7 @@ class WordPressClient:
             parent,
             meta,
             page_id=found["id"] if found is not None else None,
+            terms=terms,
         )
         if acf:
             page = self._write_acf(post_type, int(page["id"]), acf)
@@ -940,6 +971,7 @@ class WordPressClient:
         meta: dict[str, object] | None,
         *,
         page_id: int | None,
+        terms: dict[str, list[int]] | None = None,
     ) -> WordPressPage:
         """POST a create (``page_id is None``) or update to the post-type endpoint.
 
@@ -965,6 +997,8 @@ class WordPressClient:
             body["featured_media"] = featured_media
         if parent is not None:
             body["parent"] = parent
+        for taxonomy, ids in (terms or {}).items():
+            body[taxonomy] = ids
         if self.multilingual_plugin == "polylang":
             body["lang"] = language
 

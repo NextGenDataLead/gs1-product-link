@@ -22,6 +22,7 @@ import pytest
 import yaml
 
 from lib.config import (
+    CategoryConfig,
     ClientConfig,
     ExportConfig,
     GeneratorConfig,
@@ -30,6 +31,7 @@ from lib.config import (
     MediaConfig,
     ProcessListConfig,
     QRConfig,
+    TaxonomyConfig,
     TemplateConfig,
     WordPressConfig,
 )
@@ -158,6 +160,7 @@ class _Recorder:
         self.uploaded: list[dict[str, Any]] = []
         self.slug_lookups: list[dict[str, Any]] = []
         self.deleted_media: list[int] = []
+        self.term_reads: list[tuple[str, str, str]] = []
 
 
 def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration has to survive
@@ -172,6 +175,7 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
     upload_error: Exception | None = None,
     reused_media: frozenset[int] = frozenset(),
     delete_media_error: Exception | None = None,
+    site_terms: dict[tuple[str, str], int] | None = None,
 ) -> _Recorder:
     """Patch the two clients with recording fakes.
 
@@ -186,6 +190,9 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
     ``upload_error`` makes ``upload_media`` raise. Unlike the media *resolution* steps, which
     degrade to ``None`` under E7, an upload failure is meant to fail the row — publishing a page
     whose video is missing or truncated while reporting success is the worse outcome.
+
+    ``site_terms`` maps ``(term, language)`` to the id the site has for it; anything absent is a
+    term the site lacks in that language.
     """
     rec = _Recorder()
 
@@ -226,6 +233,10 @@ def _install(  # noqa: PLR0913 — one knob per failure mode the orchestration h
 
         def link_translations(self, translations: dict[str, int]) -> None:
             rec.translations.append(translations)
+
+        def term_id(self, taxonomy: str, term: str, language: str) -> int | None:
+            rec.term_reads.append((taxonomy, term, language))
+            return (site_terms or {}).get((term, language))
 
         def download_image(self, url: str) -> bytes | None:
             rec.downloaded.append(url)
@@ -391,6 +402,95 @@ def test_partial_confirm_reconstructs_the_other_language_from_state(
     assert rec.translations == [
         {"nl": _page_id(f"p-{GTIN_A}", "nl"), "fr": _page_id(f"p-{GTIN_A}", "fr")}
     ]
+
+
+# --- Category: the page goes in its category, in its own language -------------------
+# Found 2026-10-08: the taxonomy was configured and never written, so none of the 38 live pages
+# showed on a category page.
+
+_TAX = "product-categories"
+
+
+def _categorised(**categories: Any) -> ClientConfig:
+    cfg = _make_config()
+    wordpress = cfg.wordpress.model_copy(
+        update={"taxonomies": {_TAX: TaxonomyConfig(map_from_column="category")}}
+    )
+    return _make_config(
+        wordpress=wordpress,
+        categories=CategoryConfig(terms=["keuken", "outdoor_dier"], **categories),
+    )
+
+
+def _in(row: PlanRow, category: str | None) -> PlanRow:
+    return row.model_copy(update={"product": row.product.model_copy(update={"category": category})})
+
+
+def test_each_page_gets_its_category_in_its_own_language(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    rec = _install(
+        monkeypatch, _categorised(), site_terms={("keuken", "nl"): 5, ("keuken", "fr"): 22}
+    )
+    plan = _write_json(
+        tmp_path / "plan.json",
+        _plan(_in(_row(GTIN_A, "nl"), "keuken"), _in(_row(GTIN_A, "fr"), "keuken")),
+    )
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+    assert {c["language"]: c["terms"] for c in rec.wp} == {"nl": {_TAX: [5]}, "fr": {_TAX: [22]}}
+
+
+def test_a_category_the_site_lacks_refuses_the_product_before_anything_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A page no category page lists looks finished and is not — create the term, or remap."""
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _categorised(), site_terms={("keuken", "nl"): 5})
+    plan = _write_json(tmp_path / "plan.json", _plan(_in(_row(GTIN_A, "nl"), "outdoor_dier")))
+
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 1
+    assert rec.wp == [] and rec.gs1 == [] and rec.uploaded == []
+    error = _read_outcomes(tmp_path)[0]["error"]
+    assert "no 'product-categories' term 'outdoor_dier' in nl" in error
+
+
+def test_with_require_terms_exist_off_a_missing_category_is_only_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _categorised(require_terms_exist=False))
+    plan = _write_json(tmp_path / "plan.json", _plan(_in(_row(GTIN_A, "nl"), "keuken")))
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+    assert rec.wp[0]["terms"] is None
+    assert "publishing without it" in caplog.text
+
+
+def test_a_product_with_no_category_is_published_without_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unmapped brick: the plan already reported it, and there is nothing to look up."""
+    monkeypatch.chdir(tmp_path)
+    rec = _install(monkeypatch, _categorised())
+    plan = _write_json(tmp_path / "plan.json", _plan(_in(_row(GTIN_A, "nl"), None)))
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+    assert rec.wp[0]["terms"] is None
+    assert rec.term_reads == []
+
+
+def test_a_dry_run_names_the_category(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _install(monkeypatch, _categorised())
+    plan = _write_json(tmp_path / "plan.json", _plan(_in(_row(GTIN_A, "nl"), "keuken")))
+
+    with caplog.at_level("INFO"):
+        assert run_execute.main(["acme", "--plan", str(plan), "--dry-run"]) == 0
+    assert "in category 'keuken'" in caplog.text
 
 
 # --- Happy path --------------------------------------------------------------

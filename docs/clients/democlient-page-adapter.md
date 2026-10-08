@@ -389,8 +389,8 @@ as §5.n (e.g. the category design is **§5.7**).
   and leave the category unset. Design and tooling in §5.7.
 - ~~**Auto-create missing category terms**, or require them to pre-exist?~~ — **resolved: require
   pre-exist, warn on miss.** Recorded as `categories.require_terms_exist = true`. Its enforcement point
-  is the future term-assignment step (nothing writes WordPress taxonomy terms yet); Phase 7.5 only
-  assigns `product.category`.
+  is the term assignment in `run_execute` — **built 2026-10-08**, after it turned out no live page
+  was in any category; the French page gets the French term (`keuken-fr`).
 - **LLM provider/prompt + cache location** for the bullet generation — settle when that phase is planned.
 
 ## 7. WordPress-side enablers (onboarding tasks)
