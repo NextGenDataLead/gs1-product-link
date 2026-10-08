@@ -307,11 +307,11 @@ means reversible; **red means this run writes permanent records.**
 **Products that already have an older page.** Many products have a page on the site that this tool
 did not make, at an address of its own (`…/noviplast/notenkraker-2/`). To point their GS1 record at
 that page, put its address in the **Link naar site** column of the product selection list, and run
-**links**. The tool uses the Dutch page you named and the French page *that page itself* links to as
-its translation. It refuses a product, and says why, rather than guess, when:
+**links**. The QR code then leads to that Dutch page only — French-speaking scanners land there too.
+Whether you confirm Dutch, French or both makes no difference for these products. The tool refuses a
+product, and says why, rather than guess, when:
 
-- the page has no French version and you confirmed French — confirm Dutch only, or translate the
-  page first;
+- the page you named does not load — check the address in the list;
 - the tool already published its own page for that product at another address — clear one of
   the two;
 - you run **pages** or **both** for a product whose cell is filled — that would make a second page.

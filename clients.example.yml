@@ -229,8 +229,8 @@ clients:
       gtin_column: "Barcode"
       # Optional. The column holding the address of a page this tool did NOT make — an older
       # product page under its own slug. A `--only links` run then points the GS1 record at
-      # that page (and at the French page it names as its translation) instead of looking for
-      # `p-{gtin}`. Must be on `wordpress.site_url`'s host. Blank cells change nothing.
+      # that page alone — one Dutch link, which every language's scanner falls back to — instead
+      # of looking for `p-{gtin}`. Must be on `wordpress.site_url`'s host. Blank cells change nothing.
       # target_url_column: "Link naar site"
 
     # Content generator (tagline + Eigenschappen copy). Two producers share one results file and

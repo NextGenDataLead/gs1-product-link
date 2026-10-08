@@ -331,20 +331,21 @@ def _listed_pages(
     wp: WordPressClient,
     state: State,
 ) -> dict[str, _Page]:
-    """``--only links`` targets for a GTIN whose page the operator listed in the process list.
+    """``--only links`` target for a GTIN whose page the operator listed in the process list.
 
-    The listed address is the default language's page. Every other confirmed language is the
-    translation **that page itself names** (its ``hreflang`` alternate); a page that names none
-    refuses the whole GTIN rather than registering a record without that language, because the
-    GS1 link set replaces and would silently drop a link a record may already carry.
+    The record gets **one link, the default language's, at the listed address** — whatever
+    languages were confirmed. That is the operator's decision (2026-10-08): a listed page is an
+    older page this tool did not make, and the QR on its packaging names one site, the Dutch
+    one. Because the default language's link is the record's default link, a scanner in any
+    other language lands on it too. No translation is looked up, so none can be missing.
 
-    Refused, too, when this tool already has its own page for the product at a different
-    address — in state, or findable by ``slug_pattern``. Then there are two answers to which
-    page the permanent record should name, and choosing one is the operator's call. When the
-    tool's page *is* the listed one, nothing is in dispute and the ordinary lookup runs.
+    Refused when this tool already has its own page for the product at a different address —
+    in state, or findable by ``slug_pattern``. Then there are two answers to which page the
+    permanent record should name, and choosing one is the operator's call. When the tool's
+    page *is* the listed one, nothing is in dispute and the ordinary lookup runs.
 
-    No page here gets an id, so :func:`_commit_state` records no state for them — the same
-    rule as any page this tool does not manage.
+    The page gets no id, so :func:`_commit_state` records no state for it — the same rule as
+    any page this tool does not manage.
     """
     listed = rows[0].listed_url
     assert listed is not None  # the caller routes here only for a listed GTIN
@@ -361,20 +362,8 @@ def _listed_pages(
             f"published its own at {own.url} — clear one of them before pointing a permanent "
             f"GS1 record at either"
         )
-    pages: dict[str, _Page] = {}
-    for row in rows:
-        if row.language == default:
-            pages[row.language] = _Page(None, listed, row.title)
-            continue
-        alternate = wp.alternate_url(listed, row.language)
-        if alternate is None:
-            raise RuntimeError(
-                f"the listed page {listed} names no {row.language} translation — refusing to "
-                f"register a GS1 record without its {row.language} link; translate the page, "
-                f"or confirm only the {default} row"
-            )
-        pages[row.language] = _Page(None, alternate, row.title)
-    return pages
+    title = next((row.title for row in rows if row.language == default), rows[0].title)
+    return {default: _Page(None, listed, title)}
 
 
 def _verify_targets(wp: WordPressClient, pages: dict[str, _Page], verified: set[str]) -> None:
@@ -1027,7 +1016,10 @@ def _preview_text(cfg: ClientConfig, row: PlanRow, mode: _Mode) -> str:
     if mode.writes_links:
         target = row.target_url
         if row.listed_url and not mode.writes_pages:
-            target = f"the listed page {row.listed_url} (in {row.language} via its own hreflang)"
+            target = (
+                f"the listed page {row.listed_url} (one {cfg.wordpress.default_language} link "
+                f"for every language)"
+            )
         parts.append(
             f"point GS1 {_digital_link_url(cfg, row)} at {target} and render its "
             f"QR (the real run verifies that target serves first, and refuses if it does not)"

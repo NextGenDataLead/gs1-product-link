@@ -25,9 +25,9 @@ the gates is restated here on purpose: one copy, one place to change.
 
 The targets do not come from a page this run just created and verified. When the plan row carries a
 `listed_url` (the process list's `target_url_column`, e.g. `Link naar site`), that page is the
-default language's target and every other language is the translation the page itself names in its
-hreflang — refused if it names none, or if this tool already has its own, different page for the
-GTIN. Otherwise `run_execute` resolves each target from `state.json`, else a slug lookup on the
+record's **only** link — the default language's, which is also the default link, so a French scanner
+lands on it too. No French page is sought (the operator's decision: one site per QR). Refused if this
+tool already has its own, different page for the GTIN. Otherwise `run_execute` resolves each target from `state.json`, else a slug lookup on the
 site, else the plan row's `target_url` (built from `wordpress.target_url_pattern`). Either way it
 **HEADs every one of them before writing anything**. A GTIN with any target that does not serve
 gets no GS1 write at all.

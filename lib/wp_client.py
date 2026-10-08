@@ -26,7 +26,6 @@ import os
 import re
 import time
 from collections.abc import Callable
-from html.parser import HTMLParser
 from http import HTTPStatus
 from pathlib import Path
 from typing import Final, Literal, NamedTuple, TypedDict, cast
@@ -612,38 +611,6 @@ class WordPressClient:
             return True
         _log.error("WP verify_url %s -> %d", url, resp.status_code)
         raise WordPressAPIError(resp.status_code, resp.text, call=f"HEAD {url}")
-
-    def alternate_url(self, url: str, language: str) -> str | None:
-        """The ``hreflang`` alternate that the page at ``url`` names for ``language``.
-
-        For a page this tool did not make, the page itself is the only record of its
-        translations: WPML prints them as ``<link rel="alternate" hreflang="fr-fr" …>``, and
-        prints none for a language the page was never translated into. ``x-default`` is never
-        an answer — it names the fallback page, not a translation.
-
-        An unauthenticated public GET (redirects followed), like ``verify_url``: it reads what
-        a visitor is served, which is what a GS1 record will send them to.
-
-        Args:
-            url: The absolute address of the page to read.
-            language: A language code (``fr``); matches ``fr`` and any ``fr-*`` region.
-
-        Returns:
-            The alternate's absolute address, or ``None`` when the page names none.
-
-        Raises:
-            WordPressAPIError: For a non-2xx response or a network error (no retry).
-        """
-        call = f"GET {url}"
-        try:
-            resp = self._http.request("GET", url, follow_redirects=True)
-        except (httpx.ConnectError, httpx.ReadTimeout) as exc:
-            raise WordPressAPIError(
-                _NETWORK_ERROR_STATUS, f"alternate_url network error: {exc!r}", call=call
-            ) from exc
-        if not _HTTP_SUCCESS_MIN <= resp.status_code < _HTTP_SUCCESS_MAX:
-            raise WordPressAPIError(resp.status_code, resp.text, call=call)
-        return _hreflang_alternates(resp.text).get(language.lower())
 
     def link_translations(self, translations: dict[str, int]) -> None:
         """Link per-language page ids as translations of one another (§4.5).
@@ -1381,35 +1348,6 @@ class WordPressClient:
 
 
 # --- Module helpers ----------------------------------------------------------
-
-
-class _AlternateLinks(HTMLParser):
-    """Collects ``<link rel="alternate" hreflang=…>`` tags, keyed by bare language code."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.found: dict[str, str] = {}
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "link":
-            return
-        attr = {key: value or "" for key, value in attrs}
-        if "alternate" not in attr.get("rel", "").lower().split():
-            return
-        hreflang = attr.get("hreflang", "").lower()
-        href = attr.get("href", "")
-        if not hreflang or hreflang == "x-default" or not href:
-            return
-        # First one wins: a page naming two regions of one language (fr-fr, fr-be) is
-        # already a choice the site made in that order.
-        self.found.setdefault(hreflang.split("-", 1)[0], href)
-
-
-def _hreflang_alternates(html: str) -> dict[str, str]:
-    """``{language: href}`` for every hreflang alternate in ``html`` (``x-default`` excluded)."""
-    parser = _AlternateLinks()
-    parser.feed(html)
-    return parser.found
 
 
 def _require_env(name: str) -> str:
