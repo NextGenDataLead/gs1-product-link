@@ -97,6 +97,10 @@ _DATA_NAMES = r"(\.env|clients\.yml|input|output)"
 _CODE_ROOTED_DATA = re.compile(rf"\b(?:REPO_ROOT|CODE_ROOT|_ROOT)\s*/\s*[\"']{_DATA_NAMES}[\"']")
 _FILE_ROOTED_DATA = re.compile(rf"Path\(__file__\)[^\n]*/\s*[\"']{_DATA_NAMES}[\"']")
 
+#: ``Path("prompts")`` and the like — a shipped asset looked up in the working directory, which is
+#: the data folder once ``GS1_DATA_DIR`` is set.
+_CWD_ROOTED_ASSET = re.compile(r"Path\([\"'](prompts|templates|schema|reference)\b")
+
 
 def test_no_data_location_is_built_from_the_code_folder() -> None:
     """Data paths go through the data folder or the working directory — never next to the code.
@@ -117,3 +121,15 @@ def test_no_data_location_is_built_from_the_code_folder() -> None:
         if _CODE_ROOTED_DATA.search(line) or _FILE_ROOTED_DATA.search(line)
     ]
     assert not offenders, "data location built from the code folder:\n" + "\n".join(offenders)
+
+
+def test_no_shipped_asset_is_looked_up_in_the_working_directory() -> None:
+    """The reverse mistake: ``prompts/`` and friends ship with the code, not with the data."""
+    offenders = [
+        f"{path.relative_to(_REPO_ROOT)}:{number}: {line.strip()}"
+        for package in ("lib", "scripts", "ui")
+        for path in (_REPO_ROOT / package).rglob("*.py")
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if _CWD_ROOTED_ASSET.search(line)
+    ]
+    assert not offenders, "shipped asset resolved from the data folder:\n" + "\n".join(offenders)
