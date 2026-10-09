@@ -2281,6 +2281,8 @@ def test_a_real_run_writes_its_own_result_sheet_and_its_record(
     assert (run_dir / SOURCES_NAME).is_file(), "what it read"
     assert (run_dir / SELECTION_NAME).is_file(), "the rows it ran"
     assert (run_dir / RESULT_NAME).is_file(), "the per-SKU outcome, without anyone asking"
+    assert (run_dir / "issues.pdf").is_file(), "the client's short report"
+    assert (run_dir / "issues.xlsx").is_file()
 
 
 def test_a_result_sheet_that_cannot_be_built_does_not_change_the_exit_code(

@@ -33,6 +33,7 @@ from ui.batch_grid import (  # noqa: E402
     runnable_keys,
     save_line,
     shared_barcode_notes,
+    ticked_products,
     unticked_by,
 )
 
@@ -247,3 +248,9 @@ def test_next_writes_only_the_ticked_rows_that_can_run() -> None:
     ]
 
     assert runnable_keys(ticked) == {0, 1}
+
+
+def test_the_issue_report_counts_each_ticked_product_once_in_list_order() -> None:
+    rows = _rows(_B, None, _A, _B)
+
+    assert ticked_products(rows, {_A: "Vergiet"}) == [(_B, ""), (_A, "Vergiet")]

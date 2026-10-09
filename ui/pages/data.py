@@ -46,12 +46,13 @@ from typing import Any
 
 from nicegui import events, ui
 
-from lib import batch_reset, input_layout, provenance
+from lib import batch_reset, input_layout, issue_report_files, provenance
 from lib.config import ClientConfig, ProcessListConfig
 from lib.eligibility import eligibility_for, link_targets
 from lib.errors import ProcessListError
 from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Mode
 from lib.input_layout import export_archive_path, write_readme
+from lib.issue_report import Issue, IssueReport
 from lib.link_targets import check_targets, host_problem
 from lib.process_list import ProcessListSheet, listed_urls
 from ui import (
@@ -349,6 +350,28 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
         batch_grid.draw_funnel(coverage, counts, links_only=links_only)
         chosen(counts.can_run)
 
+    def report(issues: list[Issue], products: list[tuple[str, str]], kind: str) -> None:
+        # Dated and kept under output/{client}/reports, so the copy that was sent can be found
+        # again; then handed to the browser.
+        now = datetime.now(UTC)
+        what = mode.value.value if mode.value is not None else "no run type chosen yet"
+        built = IssueReport(
+            title=f"Product issues - {cfg.display_name}",
+            subtitle=(
+                f"Selection of {len(products)} product(s) - {what} - "
+                f"{now.strftime('%Y-%m-%d %H:%M')} UTC. Before the run."
+            ),
+            selected=tuple(gtin for gtin, _ in products),
+            issues=tuple(issues),
+        )
+        path = REPO_ROOT / "output" / cid / "reports"
+        path = path / f"issues-selection-{now.strftime('%Y%m%dT%H%M%S')}.{kind}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        (issue_report_files.write_pdf if kind == "pdf" else issue_report_files.write_xlsx)(
+            built, path
+        )
+        ui.download(path)
+
     with theme.section(
         "Choose the products and save",
         step=5,
@@ -374,6 +397,7 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             saved=batch.listed_gtins(),
             target=batch.path,
             links_only=links_only,
+            report=report,
         )
 
 

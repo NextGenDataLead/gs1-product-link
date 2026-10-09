@@ -85,7 +85,7 @@ from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
-from lib import run_quality
+from lib import issue_report_files, run_quality
 from lib.acf import build_acf_payload
 from lib.config import ClientConfig, GS1LinkConfig, MediaConfig, get_client
 from lib.env import load_env
@@ -123,6 +123,7 @@ from lib.records import (
     StateEntry,
 )
 from lib.result_sheet import build as build_result_sheet
+from lib.result_sheet import load_products
 from lib.run_files import (
     QUALITY_NAME,
     SELECTION_NAME,
@@ -1372,7 +1373,7 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
             save_state(state)
 
     errors = sum(1 for o in outcomes if o.status == "error")
-    _write_result_sheet(cfg, log.path)
+    _write_result_sheet(cfg, log.path, outcomes, mode=str(mode), dry_run=dry_run)
     if not dry_run and resolved_gs1 is not None:
         _write_quality_note(log.path, outcomes)
     _log.info("run complete: %d ok, %d error(s)", len(outcomes) - errors, errors)
@@ -1383,7 +1384,9 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
     return _EXIT_ERRORS if errors else _EXIT_OK
 
 
-def _write_result_sheet(cfg: ClientConfig, log: Path) -> None:
+def _write_result_sheet(
+    cfg: ClientConfig, log: Path, outcomes: list[RunOutcome], *, mode: str, dry_run: bool
+) -> None:
     """The per-row result sheet, without being asked for. On failure too.
 
     The operator sent a list of barcodes and gets back a log keyed by (GTIN, language); this is
@@ -1405,6 +1408,23 @@ def _write_result_sheet(cfg: ClientConfig, log: Path) -> None:
         print(f"warning: could not write the result sheet: {exc}", file=sys.stderr)
         return
     print(f"result sheet: {built.out}", file=sys.stderr)
+    # The client's short report — failed products and why — from the same rows, beside it.
+    try:
+        report = issue_report_files.for_run(
+            f"Product issues - {cfg.display_name}",
+            stamp_of(log),
+            built.rows,
+            outcomes,
+            load_products(Path("output") / cfg.client_id / "data" / "products.json"),
+            mode=mode,
+            dry_run=dry_run,
+            default_language=cfg.wordpress.default_language,
+        )
+        pdf, _ = issue_report_files.write(report, log.parent)
+    except Exception as exc:  # noqa: BLE001 — as above: a report must not fail a publish
+        print(f"warning: could not write the issue report: {exc}", file=sys.stderr)
+        return
+    print(f"issue report: {pdf} (and .xlsx)", file=sys.stderr)
 
 
 def _write_quality_note(log: Path, outcomes: list[RunOutcome]) -> None:

@@ -40,6 +40,7 @@ from nicegui import ui
 from lib.complete_report import listed_rows, shared_barcodes
 from lib.eligibility import CHECKING, Eligibility
 from lib.errors import ProcessListError
+from lib.issue_report import Issue, selection_issues
 from lib.process_list import ProcessListSheet
 from lib.records import ProductRecord
 from ui import process_list_edit, theme
@@ -259,6 +260,7 @@ def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, capt
     saved: frozenset[str],
     target: Path,
     links_only: bool = False,
+    report: Callable[[list[Issue], list[tuple[str, str]], str], None] | None = None,
 ) -> None:
     """Step 5: every row of the list, ticked or not, and under it what the ticked ones still need.
 
@@ -275,6 +277,8 @@ def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, capt
         saved: The barcodes of the saved batch. Seeds the ticks once per list — see :class:`Ticks`.
         target: Where Next writes the batch: the control file a run reads, not the upload.
         links_only: The batch publishes GS1 links only — its problems are links, not data.
+        report: Called with the ticked products' issues, the ticked ``(barcode, name)`` and
+            ``"pdf"`` or ``"xlsx"`` when the operator asks for the client's issue report.
     """
     exported = {product.gtin14 for product in products}
     columns = [
@@ -313,6 +317,10 @@ def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, capt
     issues = ui.column().classes("w-full gap-0 mt-6")
     names = {p.gtin14: (p.product_name.values.get("nl") or "") for p in products}
     keys = {int(row[_ROW]) for row in every}
+    # The export's name, else the list's own words for the row — a product the export does not
+    # carry still needs a name in the client's report.
+    report_names = {row.gtin: row.label for row in listed_rows(sheet) if row.gtin}
+    report_names.update({gtin: name for gtin, name in names.items() if name})
     onward = "the preflight" if links_only else "the copy"
 
     def draw_issues(ticked: list[dict[str, Any]]) -> None:
@@ -323,6 +331,8 @@ def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, capt
             for gtin, kind, sentence in shared_barcode_notes(sheet, names):
                 if gtin in chosen:
                     theme.band(sentence, kind)
+            if report is not None:
+                _report_buttons(ticked, report_names, exported, verdict, report)
 
     def describe() -> None:
         ticked = grid.selected
@@ -348,6 +358,35 @@ def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, capt
         return True
 
     commit["save"] = save
+
+
+def ticked_products(ticked: list[dict[str, Any]], names: dict[str, str]) -> list[tuple[str, str]]:
+    """``(barcode, name)`` of each ticked product once, in list order. Pure."""
+    seen: dict[str, str] = {}
+    for row in ticked:
+        gtin = row[_GTIN]
+        if gtin and gtin not in seen:
+            seen[gtin] = names.get(gtin, "")
+    return list(seen.items())
+
+
+def _report_buttons(
+    ticked: list[dict[str, Any]],
+    names: dict[str, str],
+    exported: set[str],
+    verdict: Eligibility,
+    report: Callable[[list[Issue], list[tuple[str, str]], str], None],
+) -> None:
+    """The client's issue report for the ticked products — the tables above, on one or two pages."""
+    products = ticked_products(ticked, names)
+
+    def make(kind: str) -> None:
+        report(selection_issues(products, exported, verdict), products, kind)
+
+    with ui.row().classes("items-center gap-3 mt-6"):
+        ui.label("Issue report for the client, about the ticked products:").classes("note")
+        theme.quiet_action("Download PDF", lambda: make("pdf"))
+        theme.quiet_action("Download Excel", lambda: make("xlsx"))
 
 
 def _issue_tables(

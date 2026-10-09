@@ -141,6 +141,13 @@ a links batch **link problems**. Tick or untick, and the figures follow.
    for it. If neither exists, or the page does not load, the product cannot run until the address
    is fixed in your list and the list is uploaded again.
 
+   **The issue report for the client.** Under the tables, **Download PDF** and **Download Excel**
+   give the same tables as a one-to-two pager to send to the client: (1) how many of the ticked
+   products failed, (2) the issues by category, each with its products and the reason, and (3) the
+   failed products, each with its reasons. A missing video is listed but does not count as failed
+   — the product runs without it. Each download is also kept, dated, in the client's `reports`
+   folder.
+
    > ⚠️ **A tick means keep.** Untick a product to leave it out. If you used an earlier version of
    > this app, the button under the table said *Remove selected rows* and meant the opposite — it
    > is gone.
@@ -392,6 +399,10 @@ how many pages and GS1 links, plus how many GS1 records and QR codes — then ev
 its video and text), ready to publish, held and why, or not in the export — then what is wrong with
 the product list itself, then the usual sections. It takes a while, writes nothing to the site, and
 is saved as `complete-data-quality-report.md`, ready to forward to the client.
+
+**Every run also writes the client's issue report** — the same one-to-two pager as on the Data
+screen, now about the products that run was given: which failed and why, including any that failed
+while publishing. **Download PDF** and **Download Excel** are on the run's card.
 
 **To send the result back to whoever asked for the batch:** press **Build the result sheet** on
 the run's card. It writes your scope list again, beside the run log, with what happened to each
