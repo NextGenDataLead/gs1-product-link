@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A container image, for machines where IT runs containers instead of allowing the installer.**
+  `Dockerfile`, `compose.yml` and `.github/workflows/container.yml`: code in the image, the
+  installation's data in a `/data` volume (`GS1_DATA_DIR`), seeded from the examples on first
+  start and never overwritten. Published to GHCR on a `v*` tag; built and started on every PR that
+  could change it. Reachable on `127.0.0.1` only. `python -m ui --container` serves it, and refuses
+  to start outside a container, where it would face the network.
+- **Reports download through the browser when the shell is served to one** (`--browser` or the
+  container). The copy to Downloads stays for the native window; in a container it would have
+  landed somewhere the operator cannot reach.
 - **`GS1_DATA_DIR` — keep an installation's data apart from its code** (`lib/data_dir.py`). Unset,
   nothing changes. Set, `.env`, `clients.yml`, `input/` and `output/` (with `state.json`) are read
   from that folder, every script and the shell run inside it, and a folder that does not exist is

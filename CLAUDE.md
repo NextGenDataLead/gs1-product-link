@@ -111,6 +111,10 @@ drift silently. Read `docs/ui-operator-shell.md` before changing either.
   as it always was. Set, `.env`, `clients.yml`, `input/` and `output/` are read there, and every
   entry point `enter_data_dir()`s into it from its `__main__` block — same rule, same AST test as
   `load_env()`. Never build a data path from the code root; `tests/lib/test_data_dir.py` checks.
+- **Two install routes.** The double-click `uv` installers are the default; the container image
+  (`Dockerfile`, `compose.yml`, published to GHCR on a `v*` tag) is for machines where IT runs
+  containers. The image holds code only — data is the `/data` volume — and `tests/test_container.py`
+  keeps `.env`, `clients.yml`, `input/` and `output/` out of it and the port on `127.0.0.1`.
 - `clients.yml` (gitignored) holds config and the **names** of env vars, never values. `client_id` is
   optional on every script when exactly one client is defined.
 - CI: `ruff check`, `ruff format --check`, `mypy --strict lib`, `pytest`.
