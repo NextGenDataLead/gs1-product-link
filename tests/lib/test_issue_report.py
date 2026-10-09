@@ -111,7 +111,7 @@ def test_the_run_report_covers_only_what_the_run_was_given() -> None:
     ]
 
     selected, issues = run_issues(
-        rows, {A: "Vergiet", B: "Deurmat"}, writes_pages=True, without_video={A: ["fr"]}
+        rows, {A: "Vergiet", B: "Deurmat"}, writes_pages=True, without_video={A: "no video in fr"}
     )
 
     assert selected == [A, B, C], "an unticked row is not this run's"
@@ -127,7 +127,7 @@ def test_the_run_report_covers_only_what_the_run_was_given() -> None:
 def test_a_links_run_never_reports_a_missing_video() -> None:
     ok = UnitResult("ok", "", "")
     _, issues = run_issues(
-        [_scope(A, IN_SCOPE, nl=ok)], {}, writes_pages=False, without_video={A: ["nl"]}
+        [_scope(A, IN_SCOPE, nl=ok)], {}, writes_pages=False, without_video={A: "no video in nl"}
     )
 
     assert issues == []
@@ -163,3 +163,57 @@ def test_a_hold_in_every_language_is_said_once() -> None:
     _, issues = run_issues([_scope(A, IN_SCOPE, nl=held, fr=held)], {}, writes_pages=True)
 
     assert [(i.category, i.reason) for i in issues] == [(MISSING_DATA, "image")]
+
+
+def test_a_dry_run_reports_the_videos_a_real_run_would_go_live_without() -> None:
+    """Operator, 2026-10-09: a dry run wrote no page, so it is told what the real run would do."""
+    rows = [_scope(A, IN_SCOPE, nl=UnitResult("dry-run", "", ""))]
+
+    report = issue_report_files.for_run(
+        "t",
+        "20261009T000000Z",
+        rows,
+        [],
+        [],
+        mode="pages",
+        dry_run=True,
+        default_language="nl",
+        expected_without_video={A: "no confirmed video in fr"},
+    )
+
+    assert [(i.category, i.reason) for i in report.issues] == [
+        (MISSING_VIDEO, "no confirmed video in fr")
+    ]
+    assert report.failed == [], "still not a failure"
+
+
+def test_the_screen_shows_the_same_three_parts_as_the_file() -> None:
+    products = [(A, "Vergiet | groot"), (B, "Deurmat")]
+    issues = selection_issues(products, {B}, Eligibility())
+
+    text = issue_report_files.to_markdown(_report(products, issues))
+
+    assert "#### 1. Total" in text and "1 of 2 product(s) failed." in text
+    assert "#### 2. Issues by category" in text and "#### 3. Failed products" in text
+    assert "Vergiet \\| groot" in text, "a pipe in a name must not split the table"
+    issues = selection_issues(
+        [(B, "x")], {B}, Eligibility(not_eligible={B: "missing data: dim_height, dim_width"})
+    )
+    text = issue_report_files.to_markdown(_report([(B, "x")], issues))
+    assert "dim\\_height, dim\\_width" in text, "an underscore is not italics"
+
+
+def test_a_product_held_in_every_language_is_not_also_live_without_a_video() -> None:
+    held = UnitResult(HELD, "", "missing_mandatory_field: missing mandatory source data: image")
+    _, issues = run_issues(
+        [_scope(A, IN_SCOPE, nl=held, fr=held)],
+        {},
+        writes_pages=True,
+        without_video={A: "no confirmed video in fr"},
+    )
+
+    assert [i.category for i in issues] == [MISSING_DATA]
+
+
+def test_nothing_ticked_says_so() -> None:
+    assert issue_report_files.summary_lines(_report([], [])) == ["No products selected."]

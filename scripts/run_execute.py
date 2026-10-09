@@ -88,6 +88,7 @@ from pydantic import ValidationError
 from lib import issue_report_files, run_quality
 from lib.acf import build_acf_payload
 from lib.config import ClientConfig, GS1LinkConfig, MediaConfig, get_client
+from lib.eligibility import eligibility
 from lib.env import load_env
 from lib.errors import (
     ConfigError,
@@ -1410,15 +1411,22 @@ def _write_result_sheet(
     print(f"result sheet: {built.out}", file=sys.stderr)
     # The client's short report — failed products and why — from the same rows, beside it.
     try:
+        products = load_products(Path("output") / cfg.client_id / "data" / "products.json")
+        expected = {}
+        if dry_run and mode != "links":
+            ran = built.sheets.control.listed_gtins()
+            verdict = eligibility(cfg, [p for p in products if p.gtin14 in ran])
+            expected = verdict.missing_video
         report = issue_report_files.for_run(
             f"Product issues - {cfg.display_name}",
             stamp_of(log),
             built.rows,
             outcomes,
-            load_products(Path("output") / cfg.client_id / "data" / "products.json"),
+            products,
             mode=mode,
             dry_run=dry_run,
             default_language=cfg.wordpress.default_language,
+            expected_without_video=expected,
         )
         pdf, _ = issue_report_files.write(report, log.parent)
     except Exception as exc:  # noqa: BLE001 — as above: a report must not fail a publish

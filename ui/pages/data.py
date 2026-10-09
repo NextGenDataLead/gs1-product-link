@@ -39,7 +39,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -168,7 +168,7 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
                 ("Publishes", "publishes"),
                 ("Coverage", "coverage"),
                 ("Choose", "choose"),
-                ("Data quality", "data-quality"),
+                ("Issue report", "issue-report"),
             ]
         )
 
@@ -199,11 +199,15 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             report_changed()
 
         def report_changed() -> None:
-            """Rebuild the report — also when a sheet only *arrived*, which changes §1d alone."""
+            """The issue report follows the ticks — step 5 redraws it — so a sheet arriving alone
+            changes nothing here. Clear it when there is no batch to report on."""
+            if not ready:
+                quality.clear()
+
+        def reported(built: IssueReport) -> None:
             quality.clear()
-            if ready:
-                with quality:
-                    _quality(cid)
+            with quality:
+                _issue_report(cid, built)
 
         def draw_choose() -> None:
             selection.clear()
@@ -223,6 +227,7 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
                         mode,
                         chosen=count_ticked,
                         recheck=draw_choose,
+                        reported=reported,
                     )
                 else:
                     caption.text = ""
@@ -305,6 +310,7 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
     *,
     chosen: Callable[[int], None],
     recheck: Callable[[], None],
+    reported: Callable[[IssueReport], None],
 ) -> None:
     """Read the list and the export, decide eligibility once, and build step 5 under it.
 
@@ -350,27 +356,16 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
         batch_grid.draw_funnel(coverage, counts, links_only=links_only)
         chosen(counts.can_run)
 
-    def report(issues: list[Issue], products: list[tuple[str, str]], kind: str) -> None:
-        # Dated and kept under output/{client}/reports, so the copy that was sent can be found
-        # again; then handed to the browser.
-        now = datetime.now(UTC)
+    def report(issues: list[Issue], products: list[tuple[str, str]]) -> None:
         what = mode.value.value if mode.value is not None else "no run type chosen yet"
-        built = IssueReport(
-            title=f"Product issues - {cfg.display_name}",
-            subtitle=(
-                f"Selection of {len(products)} product(s) - {what} - "
-                f"{now.strftime('%Y-%m-%d %H:%M')} UTC. Before the run."
-            ),
-            selected=tuple(gtin for gtin, _ in products),
-            issues=tuple(issues),
+        reported(
+            IssueReport(
+                title=f"Product issues - {cfg.display_name}",
+                subtitle=f"Selection of {len(products)} product(s) - {what} - before the run.",
+                selected=tuple(gtin for gtin, _ in products),
+                issues=tuple(issues),
+            )
         )
-        path = REPO_ROOT / "output" / cid / "reports"
-        path = path / f"issues-selection-{now.strftime('%Y%m%dT%H%M%S')}.{kind}"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        (issue_report_files.write_pdf if kind == "pdf" else issue_report_files.write_xlsx)(
-            built, path
-        )
-        ui.download(path)
 
     with theme.section(
         "Choose the products and save",
@@ -743,50 +738,38 @@ def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> 
 # --- Quality ------------------------------------------------------------------
 
 
-def _quality(cid: str) -> None:
-    """The worklist, built every visit and folded away until it is wanted.
+def _issue_report(cid: str, built: IssueReport) -> None:
+    """The client's issue report for the ticked products — what a run would report — on screen.
 
-    It used to be a button. That made a fresh report something the operator had to think of asking
-    for, and the thing they were most likely to skip on the visit where it mattered — so it now
-    rebuilds on every load, from the files a run has just written.
-
-    **Collapsed, and built after the page paints.** The command takes about half a second, which is
-    half a second of blank screen if it runs during the render, on a screen nobody opened to read a
-    report. `ui.timer(once=True)` puts it just after the first paint instead, so the cost lands
-    somewhere nobody is waiting.
+    Operator, 2026-10-09: the long data-quality report that stood here was archived (it is still
+    written by every run and by ``report_quality``) and replaced by the one-to-two pager the client
+    gets, so what is on screen and what is sent are the same document. It follows the ticks.
     """
-    report = REPO_ROOT / "output" / cid / "data-quality-report.md"
-
     with theme.section(
-        "Data quality",
-        collapsed=True,
+        "Issue report for the client",
         tight=True,
-        anchor="data-quality",
+        anchor="issue-report",
         explain=(
-            "What is blank or wrong in the export itself. Those values get fixed in MyGS1, at the "
-            "source — never invented here — so this report is the work list to send upstream. It "
-            "is rebuilt every time this screen opens."
+            "The ticked products' problems as the client receives them: how many failed, the "
+            "issues by category, and each failed product with its reasons. A missing video is "
+            "listed but does not count as failed. Every run writes the same report afterwards, "
+            "about the products it ran."
         ),
     ):
-        stamp = ui.label("Building…").classes("mono")
-        body = ui.column().classes("w-full mt-4")
+        ui.markdown(issue_report_files.to_markdown(built)).classes("prose max-w-none")
 
-        # Async, and the subprocess runs off the event loop, for the reason
-        # `runner.run_off_the_loop` gives: a blocking call holds the loop until the command has
-        # already finished, so anything queued before it reaches the browser too late to matter.
-        async def build() -> None:
-            result = await runner.run_off_the_loop(runner.report_quality_argv(cid))
-            body.clear()
-            with body:
-                if not result.ok or not report.is_file():
-                    stamp.text = "The report could not be built."
-                    theme.band(result.stderr or "The report could not be built.", "warn")
-                    return
-                # Dated from the file that was just written, so a command that succeeded without
-                # writing anything new cannot leave last week's worklist looking like this week's.
-                stamp.text = (
-                    f"{report.relative_to(REPO_ROOT)} — built {context.file_fact(report).age}"
-                )
-                ui.markdown(report.read_text(encoding="utf-8")).classes("prose max-w-none")
+        def download(kind: str) -> None:
+            # Dated and kept under output/{client}/reports, so the copy that was sent can be found
+            # again; then handed to the browser.
+            now = datetime.now(UTC)
+            dated = replace(built, subtitle=f"{built.subtitle} {now:%Y-%m-%d %H:%M} UTC.")
+            path = REPO_ROOT / "output" / cid / "reports"
+            path = path / f"issues-selection-{now:%Y%m%dT%H%M%S}.{kind}"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write = issue_report_files.write_pdf if kind == "pdf" else issue_report_files.write_xlsx
+            write(dated, path)
+            ui.download(path)
 
-        ui.timer(0.1, build, once=True)
+        with ui.row().classes("gap-3 mt-4"):
+            theme.quiet_action("Download PDF", lambda: download("pdf"))
+            theme.quiet_action("Download Excel", lambda: download("xlsx"))

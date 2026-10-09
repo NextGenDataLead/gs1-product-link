@@ -71,7 +71,7 @@ and whoever helps you knows exactly what happened.
 
 <img src="images/data.png" alt="The Data screen as it opens: jump links, then three uploads side by side — the product selection list, the GS1 export and the video sign-off sheet — a Clear all — start fresh button, step 4 with the three choices pages, links and both and a note that Next waits for one, and a band asking for the list and the export." width="900">
 
-*This is the screen as it opens.* Coverage, the product tables and the quality report appear once
+*This is the screen as it opens.* Coverage, the product tables and the issue report appear once
 the list and the export are both there — see below.
 
 **What this screen is for:** everything a batch is made of, measured against the one thing you
@@ -141,13 +141,6 @@ a links batch **link problems**. Tick or untick, and the figures follow.
    for it. If neither exists, or the page does not load, the product cannot run until the address
    is fixed in your list and the list is uploaded again.
 
-   **The issue report for the client.** Under the tables, **Download PDF** and **Download Excel**
-   give the same tables as a one-to-two pager to send to the client: (1) how many of the ticked
-   products failed, (2) the issues by category, each with its products and the reason, and (3) the
-   failed products, each with its reasons. A missing video is listed but does not count as failed
-   — the product runs without it. Each download is also kept, dated, in the client's `reports`
-   folder.
-
    > ⚠️ **A tick means keep.** Untick a product to leave it out. If you used an earlier version of
    > this app, the button under the table said *Remove selected rows* and meant the opposite — it
    > is gone.
@@ -158,10 +151,13 @@ a links batch **link problems**. Tick or untick, and the figures follow.
    can see, never what is ticked. Your ticks also survive changing what the batch publishes, and
    the client's sign-off sheet being applied.
 
-**Data quality** at the bottom is folded away. It rebuilds every time you open this screen, so
-opening the fold always shows a current report — what is missing in the spreadsheet itself, and,
-in its first section, which products are waiting on a video and on what. Those values get fixed in
-MyGS1 or by the client, not here. The report is written to be forwarded to the client.
+**Issue report for the client**, at the bottom, is the report you send to the client, shown as
+they will read it — about the products you ticked, and it follows your ticks: (1) how many of
+them failed, (2) the issues by category, each with its products and the reason, and (3) the failed
+products, each with its reasons. A missing video is listed but does not count as failed — the
+product runs without it. **Download PDF** and **Download Excel** under it give the same report as a
+file to send; each download is also kept, dated, in the client's `reports` folder. Every run writes
+the same report afterwards, about the products it ran.
 
 When you are done, press **Next** at the foot of the screen. It does two things: it saves your
 choice of products and what the batch publishes, and it takes you on to step 2 — or, for a
@@ -196,8 +192,8 @@ not pick one for the client, so the product sits in *Not eligible* until one is 
 Two kinds of waiting look the same in a count and are different jobs. *no confirmed video in fr*
 can mean a French video exists and nobody has said which product it is — or that no French video
 has been made yet.
-The data-quality report's first section lists both sides, so you and the client can tell them
-apart.
+The complete data-quality report on the Runs screen lists both sides, so you and the client can
+tell them apart.
 
 **Importing the client's sheet.** You do not have to type barcodes in. When the client sends back
 the spreadsheet with the barcodes filled in, upload it in **step 3**.

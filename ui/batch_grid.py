@@ -260,7 +260,7 @@ def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, capt
     saved: frozenset[str],
     target: Path,
     links_only: bool = False,
-    report: Callable[[list[Issue], list[tuple[str, str]], str], None] | None = None,
+    report: Callable[[list[Issue], list[tuple[str, str]]], None] | None = None,
 ) -> None:
     """Step 5: every row of the list, ticked or not, and under it what the ticked ones still need.
 
@@ -277,8 +277,8 @@ def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, capt
         saved: The barcodes of the saved batch. Seeds the ticks once per list — see :class:`Ticks`.
         target: Where Next writes the batch: the control file a run reads, not the upload.
         links_only: The batch publishes GS1 links only — its problems are links, not data.
-        report: Called with the ticked products' issues, the ticked ``(barcode, name)`` and
-            ``"pdf"`` or ``"xlsx"`` when the operator asks for the client's issue report.
+        report: Called with the ticked products' issues and the ticked ``(barcode, name)``
+            whenever the ticks change — the client's issue report follows the selection.
     """
     exported = {product.gtin14 for product in products}
     columns = [
@@ -331,8 +331,9 @@ def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, capt
             for gtin, kind, sentence in shared_barcode_notes(sheet, names):
                 if gtin in chosen:
                     theme.band(sentence, kind)
-            if report is not None:
-                _report_buttons(ticked, report_names, exported, verdict, report)
+        if report is not None:
+            products = ticked_products(ticked, report_names)
+            report(selection_issues(products, exported, verdict), products)
 
     def describe() -> None:
         ticked = grid.selected
@@ -368,25 +369,6 @@ def ticked_products(ticked: list[dict[str, Any]], names: dict[str, str]) -> list
         if gtin and gtin not in seen:
             seen[gtin] = names.get(gtin, "")
     return list(seen.items())
-
-
-def _report_buttons(
-    ticked: list[dict[str, Any]],
-    names: dict[str, str],
-    exported: set[str],
-    verdict: Eligibility,
-    report: Callable[[list[Issue], list[tuple[str, str]], str], None],
-) -> None:
-    """The client's issue report for the ticked products — the tables above, on one or two pages."""
-    products = ticked_products(ticked, names)
-
-    def make(kind: str) -> None:
-        report(selection_issues(products, exported, verdict), products, kind)
-
-    with ui.row().classes("items-center gap-3 mt-6"):
-        ui.label("Issue report for the client, about the ticked products:").classes("note")
-        theme.quiet_action("Download PDF", lambda: make("pdf"))
-        theme.quiet_action("Download Excel", lambda: make("xlsx"))
 
 
 def _issue_tables(

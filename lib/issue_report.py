@@ -245,7 +245,7 @@ def run_issues(
     names: Mapping[str, str],
     *,
     writes_pages: bool,
-    without_video: Mapping[str, Sequence[str]] | None = None,
+    without_video: Mapping[str, str] | None = None,
 ) -> tuple[list[str], list[Issue]]:
     """The products a run was given, and their issues.
 
@@ -254,7 +254,8 @@ def run_issues(
             outcome. Only the rows the run was given (``in_scope == yes``) count.
         names: ``{gtin14: product name}``.
         writes_pages: Whether the run wrote pages — only then can a page lack a video.
-        without_video: ``{gtin14: [language, …]}`` of pages the run published with no video.
+        without_video: ``{gtin14: what is missing}`` for pages that go live with no video — from
+            the run log after a real run, from the video verdict after a dry run.
 
     Returns:
         The run's products by barcode, in list order, and their issues.
@@ -276,10 +277,13 @@ def run_issues(
             Issue(gtin, name, category, _languages(found, len(row.units)))
             for category, found in per_language.items()
         )
-        bare = (without_video or {}).get(gtin, ()) if writes_pages else ()
-        if bare:
-            reason = f"no video in {', '.join(bare)}"
-            issues.append(Issue(gtin, name, MISSING_VIDEO, reason))
+        bare = (without_video or {}).get(gtin) if writes_pages else None
+        # A product that fails in every language goes live nowhere, so it lacks no video on a page.
+        live_somewhere = any(
+            _unit_issue(unit.status, unit.detail)[0] is None for unit in row.units.values()
+        )
+        if bare and live_somewhere:
+            issues.append(Issue(gtin, name, MISSING_VIDEO, bare))
     return selected, _ordered(_merged(issues))
 
 

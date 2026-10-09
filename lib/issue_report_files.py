@@ -22,7 +22,7 @@ from lib.media_video import canon_gtin
 from lib.result_sheet import write_workbook
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from lib.records import ProductRecord, RunOutcome
     from lib.scope_report import ScopeRow
@@ -59,13 +59,23 @@ def for_run(  # noqa: PLR0913 — what one run was, each named
     mode: str,
     dry_run: bool,
     default_language: str,
+    expected_without_video: Mapping[str, str] | None = None,
 ) -> IssueReport:
-    """The report for one run: the products it was given, and what stopped or marked them."""
+    """The report for one run: the products it was given, and what stopped or marked them.
+
+    A real run knows which pages went live without a video — its log says so. A dry run wrote no
+    page, so it is told instead: ``expected_without_video`` is the Data screen's own verdict
+    (:attr:`lib.eligibility.Eligibility.missing_video`), which is what the real run would do.
+    """
     names = {p.gtin14: p.product_name.get(default_language) or "" for p in products}
-    bare: dict[str, list[str]] = {}
-    for outcome in outcomes:
-        if outcome.status == "ok" and outcome.video_file == "":
-            bare.setdefault(canon_gtin(outcome.gtin), []).append(outcome.language)
+    if dry_run:
+        bare = dict(expected_without_video or {})
+    else:
+        languages: dict[str, list[str]] = {}
+        for outcome in outcomes:
+            if outcome.status == "ok" and outcome.video_file == "":
+                languages.setdefault(canon_gtin(outcome.gtin), []).append(outcome.language)
+        bare = {gtin: f"no video in {', '.join(found)}" for gtin, found in languages.items()}
     selected, issues = run_issues(rows, names, writes_pages=mode != "links", without_video=bare)
     kind = "Dry run" if dry_run else "Run"
     return IssueReport(
@@ -78,6 +88,8 @@ def for_run(  # noqa: PLR0913 — what one run was, each named
 
 def summary_lines(report: IssueReport) -> list[str]:
     """Part 1 in sentences — the same words on both forms."""
+    if not report.selected:
+        return ["No products selected."]
     failed = len(report.failed)
     lines = [f"{failed} of {len(report.selected)} product(s) failed."]
     if report.with_warnings:
@@ -88,6 +100,50 @@ def summary_lines(report: IssueReport) -> list[str]:
     if not report.issues:
         lines.append("No issues: every product can run as it is.")
     return lines
+
+
+def to_markdown(report: IssueReport) -> str:
+    """The same three parts as Markdown, for the Data screen — the report as it would be sent."""
+    lines = [f"**{report.subtitle}**", "", "#### 1. Total"]
+    for line in summary_lines(report):
+        lines += ["", line]
+    by_category = report.by_category()
+    if by_category:
+        lines += ["", "#### 2. Issues by category"]
+        for category, issues in by_category:
+            label = "" if category.failed else " — does not stop the product"
+            lines += [
+                "",
+                f"**{category.title} ({len(issues)})**{label}  ",
+                f"*{category.action}*",
+                "",
+            ]
+            lines += _md_table("Reason", [(i.gtin, i.name, i.reason) for i in issues])
+    if report.failed:
+        lines += ["", "#### 3. Failed products", ""]
+        lines += _md_table(
+            "Why",
+            [
+                (
+                    gtin,
+                    name,
+                    "; ".join(f"{i.category.title}: {i.reason}" for i in report.reasons_of(gtin)),
+                )
+                for gtin, name in report.failed
+            ],
+        )
+    return "\n".join(lines)
+
+
+def _md_table(last: str, rows: list[tuple[str, str, str]]) -> list[str]:
+    def cell(text: str) -> str:
+        for mark in ("\\", "|", "_", "*", "`"):
+            text = text.replace(mark, "\\" + mark)
+        return text or " "
+
+    return [f"| Barcode | Product | {last} |", "|---|---|---|"] + [
+        f"| {cell(a)} | {cell(b)} | {cell(c)} |" for a, b, c in rows
+    ]
 
 
 def write_pdf(report: IssueReport, path: Path) -> None:

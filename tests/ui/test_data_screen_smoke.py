@@ -102,7 +102,7 @@ def test_the_data_screen_builds_with_five_steps_and_no_mapping_editor(
         "Upload the video sign-off sheet",
         "What this batch publishes",
         "Choose the products and save",
-        "Data quality",
+        "Issue report for the client",
     ):
         assert title.replace("'", "\\u0027") in html or title in html, title
     # The row-by-row editor was removed on the operator's word: the mapping is edited in its file.
