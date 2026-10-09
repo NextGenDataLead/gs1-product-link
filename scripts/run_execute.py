@@ -1071,10 +1071,14 @@ def _preview_text(cfg: ClientConfig, row: PlanRow, mode: _Mode) -> str:
         )
     if mode.writes_links:
         target = row.target_url
-        if row.listed_url and not mode.writes_pages:
+        default = cfg.wordpress.default_language
+        if row.listed_url and not mode.writes_pages and row.language == default:
+            target = f"the listed page {row.listed_url}"
+        elif row.listed_url and not mode.writes_pages:
+            # What :func:`_listed_pages` does at execute time — a dry run cannot look it up.
             target = (
-                f"the listed page {row.listed_url} (one {cfg.wordpress.default_language} link "
-                f"for every language)"
+                f"the {row.language} version the listed page {row.listed_url} names (if it names "
+                f"none, no {row.language} link: a {row.language} scan reaches the {default} page)"
             )
         parts.append(
             f"point GS1 {_digital_link_url(cfg, row)} at {target} and render its "

@@ -2099,13 +2099,21 @@ def test_a_dry_run_names_the_listed_page_as_the_target(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _install(monkeypatch, _make_config())
-    plan = _write_json(tmp_path / "plan.json", _plan(_listed(_row(GTIN_A, "nl"))))
+    plan = _write_json(
+        tmp_path / "plan.json", _plan(_listed(_row(GTIN_A, "nl")), _listed(_row(GTIN_A, "fr")))
+    )
 
     with caplog.at_level("INFO"):
         code = run_execute.main(["acme", "--plan", str(plan), "--dry-run", "--only", "links"])
 
     assert code == 0
-    assert f"the listed page {_OLD_NL}" in caplog.text
+    assert f"/nl: would point GS1 https://id.gs1.org/01/{GTIN_A} at the listed page {_OLD_NL}" in (
+        caplog.text
+    )
+    # Operator, 2026-10-09: the French link goes to the French version the page names. The dry
+    # run used to say "one nl link for every language", which is what the real run does not do.
+    assert f"the fr version the listed page {_OLD_NL} names" in caplog.text
+    assert "for every language" not in caplog.text
 
 
 # --- What a run keeps beside its log -----------------------------------------
