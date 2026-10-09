@@ -1197,9 +1197,10 @@ def _pilot_allowlist(cfg: ClientConfig) -> VideoGate | None:
 def _restrict_to_pilot(rows: list[PlanRow], gate: VideoGate | None) -> list[PlanRow]:
     """Drop rows for GTINs the video gate does not admit, so none is ever written (§9.5).
 
-    A hard safety gate applied to every run: even a plan passed with ``--plan`` cannot publish a
-    GTIN the gate holds — no confirmed video in some language (unless the client publishes without
-    one), or two confirmed files in one. ``None`` means unrestricted.
+    A hard safety gate applied to every run that writes pages: even a plan passed with ``--plan``
+    cannot publish a GTIN the gate holds — no confirmed video in some language (unless the client
+    publishes without one), or two confirmed files in one. ``None`` means unrestricted, which is
+    what a links-only run passes: it writes no page, so no video can be missing from one.
     """
     if gate is None:
         return rows
@@ -1340,7 +1341,9 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
             # the resolver link's title comes from the product name, not the tagline.
             generator_configured=cfg.generator is not None and mode.writes_pages,
         ),
-        _pilot_allowlist(cfg),
+        # The video gate is about a page; a links run writes none (operator, 2026-10-09). Its one
+        # precondition is a target that serves, checked by ``_verify_targets`` before every write.
+        _pilot_allowlist(cfg) if mode.writes_pages else None,
     )
     engine = TemplateEngine(cfg.client_id, cfg.template)
     ts = datetime.now(UTC)

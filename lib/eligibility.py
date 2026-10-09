@@ -12,7 +12,13 @@ somewhere. Each already has exactly one producer, and this module only joins the
   same thing about the same product ("no confirmed video in fr", "two videos in nl").
 
 A barcode on the list that the export does not carry is not a question for this module: it has no
-record to ask about. The screen lists those itself, first.
+record to ask about. The screen lists those itself.
+
+**A links-only batch is judged on one thing: its link.** It writes a GS1 record pointing at a page
+that already exists and nothing else — no page, so no copy, no video, no image, and no mandatory
+page field matters (operator, 2026-10-09). What can be wrong is the target: there is none (no
+*Link naar site* and no page of ours), it is not on the client's site, or it does not load
+(:mod:`lib.link_targets`). Those go in :attr:`Eligibility.bad_link`, and are the screen's own table.
 """
 
 from __future__ import annotations
@@ -21,20 +27,37 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
 from lib.errors import VideoMapError
+from lib.gates import Mode
 from lib.holds import held_products
+from lib.link_targets import Problems, host_problem
+from lib.live_inventory import live_products
 from lib.preflight import load_video_status
 from lib.records import SkipReason
 from lib.video_status import CLASHING, ProductVideo, waiting_on
 
 if TYPE_CHECKING:
     from lib.config import ClientConfig
-    from lib.records import ProductRecord
+    from lib.records import ProductRecord, State
 
 #: What a product held for want of a source image is called on screen.
 NO_IMAGE: Final = "no product image in the export"
 
 #: What the screen says when the mapping will not load, so no product can be judged on video.
 VIDEO_UNKNOWN: Final = "the video mapping could not be read"
+
+#: A links-only product with nowhere to point: no address listed, and no page of ours.
+NO_TARGET: Final = "no page to link to — fill in Link naar site, or publish its page first"
+
+#: A links-only product whose address has not been checked yet.
+CHECKING: Final = "checking the link…"
+
+
+@dataclass(frozen=True)
+class LinkIssue:
+    """Why a links-only product cannot run: its target, and what is wrong with it."""
+
+    url: str | None
+    problem: str
 
 
 @dataclass(frozen=True)
@@ -46,16 +69,78 @@ class Eligibility:
             few words. Everything else in the export may publish.
         missing_video: ``{gtin14: what it waits on}`` for the *eligible* products that publish with
             no video in at least one language (``media.publish_without_video``).
+        bad_link: ``{gtin14: issue}`` — links-only batches only: products whose GS1 record would
+            have no target, or one that does not load. Including those still being checked.
         problem: Set when the holds could not be decided at all; then nothing is called eligible.
     """
 
     not_eligible: dict[str, str] = field(default_factory=dict)
     missing_video: dict[str, str] = field(default_factory=dict)
+    bad_link: dict[str, LinkIssue] = field(default_factory=dict)
     problem: str | None = None
 
     def is_eligible(self, gtin14: str) -> bool:
         """Whether a product the export carries may publish."""
-        return self.problem is None and gtin14 not in self.not_eligible
+        return (
+            self.problem is None and gtin14 not in self.not_eligible and gtin14 not in self.bad_link
+        )
+
+
+def link_targets(cfg: ClientConfig, listed: dict[str, str], state: State) -> dict[str, str]:
+    """Where each product's GS1 record would point: ``{gtin14: url}``.
+
+    The address the operator listed wins — it names a page this tool did not make; otherwise the
+    default-language page this tool published. A product with neither is absent.
+    """
+    default = cfg.wordpress.default_language
+    ours = {
+        product.gtin.zfill(14): page.url
+        for product in live_products(state)
+        for page in product.pages
+        if page.language == default and page.url
+    }
+    return {**ours, **listed}
+
+
+def links_eligibility(
+    cfg: ClientConfig,
+    products: list[ProductRecord],
+    targets: dict[str, str],
+    checked: Problems | None,
+) -> Eligibility:
+    """Split a links-only batch: a product may run when its target is on the site and loads.
+
+    ``checked`` is :func:`lib.link_targets.check_targets` over ``targets``' addresses, or ``None``
+    while that is still running — then every product with an address reads :data:`CHECKING`, and
+    none is eligible until it has been looked at.
+    """
+    bad: dict[str, LinkIssue] = {}
+    for product in products:
+        gtin14 = product.gtin14
+        url = targets.get(gtin14)
+        if url is None:
+            bad[gtin14] = LinkIssue(None, NO_TARGET)
+            continue
+        problem = host_problem(url, cfg.wordpress.site_url)
+        if problem is None:
+            problem = CHECKING if checked is None or url not in checked else checked[url]
+        if problem is not None:
+            bad[gtin14] = LinkIssue(url, problem)
+    return Eligibility(bad_link=bad)
+
+
+def eligibility_for(  # noqa: PLR0913 — the mode picks which inputs matter
+    cfg: ClientConfig,
+    products: list[ProductRecord],
+    mode: Mode | None,
+    *,
+    targets: dict[str, str] | None = None,
+    checked: Problems | None = None,
+) -> Eligibility:
+    """:func:`eligibility` for a batch publishing pages, :func:`links_eligibility` for links."""
+    if mode is Mode.LINKS:
+        return links_eligibility(cfg, products, targets or {}, checked)
+    return eligibility(cfg, products)
 
 
 def eligibility(cfg: ClientConfig, products: list[ProductRecord]) -> Eligibility:

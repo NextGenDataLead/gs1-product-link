@@ -21,7 +21,16 @@ from lib.config import (
     MediaConfig,
     WordPressConfig,
 )
-from lib.eligibility import NO_IMAGE, eligibility
+from lib.eligibility import (
+    CHECKING,
+    NO_IMAGE,
+    NO_TARGET,
+    LinkIssue,
+    eligibility,
+    eligibility_for,
+    link_targets,
+)
+from lib.gates import Mode
 from lib.gdsn import GdsnSource
 from lib.holds import held_units
 from lib.records import LocalisedText, ProductRecord
@@ -240,3 +249,99 @@ def test_a_path_outside_the_layout_is_refused_before_anything_moves(tmp_path: Pa
     with pytest.raises(ValueError, match="process/"):
         clear_batch(export=stray, selection=stray, products=stray, stamp="S")
     assert stray.exists()
+
+
+# --- a links-only batch is judged on its link ---------------------------------------
+
+
+def test_a_links_only_batch_ignores_video_and_missing_data(tmp_path: Path) -> None:
+    """Operator, 2026-10-09: a links run writes no page, so only a bad link may stop a product."""
+    cfg = _config(_media(tmp_path, publish_without_video=False))
+    targets = {gtin: f"https://wp.test/product/{gtin}/" for gtin in (_A, _B, _C, _D)}
+    checked = dict.fromkeys(targets.values())
+
+    verdict = eligibility_for(cfg, _products(), Mode.LINKS, targets=targets, checked=checked)
+
+    assert verdict.not_eligible == {}
+    assert verdict.missing_video == {}
+    assert verdict.bad_link == {}
+    assert all(verdict.is_eligible(gtin) for gtin in (_A, _B, _C, _D))
+
+
+def test_a_links_only_product_is_stopped_only_by_its_link(tmp_path: Path) -> None:
+    cfg = _config(_media(tmp_path, publish_without_video=False))
+    targets = {
+        _A: "https://wp.test/product/a/",
+        _B: "https://elsewhere.test/b/",
+        _C: "https://wp.test/product/gone/",
+    }
+    checked = {"https://wp.test/product/a/": None, "https://wp.test/product/gone/": "404"}
+
+    verdict = eligibility_for(cfg, _products(), Mode.LINKS, targets=targets, checked=checked)
+
+    assert verdict.is_eligible(_A)
+    assert verdict.bad_link[_B] == LinkIssue(
+        "https://elsewhere.test/b/", "not on the client's site (wp.test)"
+    )
+    assert verdict.bad_link[_C] == LinkIssue("https://wp.test/product/gone/", "404")
+    assert verdict.bad_link[_D] == LinkIssue(None, NO_TARGET)
+
+
+def test_an_unchecked_link_cannot_run_yet(tmp_path: Path) -> None:
+    cfg = _config(_media(tmp_path, publish_without_video=False))
+
+    verdict = eligibility_for(
+        cfg, [_product(_A)], Mode.LINKS, targets={_A: "https://wp.test/a/"}, checked={}
+    )
+
+    assert verdict.bad_link[_A].problem == CHECKING
+    assert not verdict.is_eligible(_A)
+
+
+@pytest.mark.parametrize("mode", [Mode.PAGES, Mode.BOTH, None])
+def test_a_batch_that_writes_pages_is_judged_as_before(tmp_path: Path, mode: Mode | None) -> None:
+    cfg = _config(_media(tmp_path, publish_without_video=True))
+
+    assert eligibility_for(cfg, _products(), mode, targets={}, checked={}) == eligibility(
+        cfg, _products()
+    )
+
+
+def test_the_listed_address_wins_over_our_own_page() -> None:
+    from lib.records import State  # noqa: PLC0415
+
+    state = State.model_validate(
+        {
+            "client_id": "acme",
+            "entries": {
+                _A: {
+                    lang: {
+                        "content_hash": "h",
+                        "wp_page_id": 1,
+                        "wp_url": f"https://wp.test/{lang}/ours/",
+                        "wp_status": "publish",
+                        "last_run": "2026-10-08T00:00:00Z",
+                        "wp_featured_media_id": None,
+                        "gs1_link_set_hash": "",
+                    }
+                    for lang in _LANGS
+                },
+                _B: {
+                    "nl": {
+                        "content_hash": "h",
+                        "wp_page_id": 2,
+                        "wp_url": "https://wp.test/nl/b/",
+                        "wp_status": "publish",
+                        "last_run": "2026-10-08T00:00:00Z",
+                        "wp_featured_media_id": None,
+                        "gs1_link_set_hash": "",
+                    }
+                },
+            },
+        }
+    )
+    cfg = _config(MediaConfig())
+
+    targets = link_targets(cfg, {_B: "https://wp.test/listed-b/"}, state)
+
+    assert targets == {_A: "https://wp.test/nl/ours/", _B: "https://wp.test/listed-b/"}

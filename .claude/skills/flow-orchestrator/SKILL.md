@@ -216,7 +216,9 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 
    **Skip this step in `links` mode.** No page is written, and step 4 plans with `--links-only`,
    which does not apply the copy rule (E21) — so there is neither copy to review nor any whose
-   absence could empty the plan. In `pages` and `both` the rule stands: with a `generator`
+   absence could empty the plan. Nor does it apply the video, image or mandatory-field holds
+   (E24/E22/E23): only the target can stop a links-only product, and `run_execute` refuses one
+   that does not serve before every GS1 write. In `pages` and `both` the rule stands: with a `generator`
    configured, `run_plan` omits any **NEW or CHANGED** `(GTIN, language)` that has no generated
    tagline, so a missing or stale results file yields an empty plan and the run publishes nothing
    while reporting success. (An UNCHANGED row has no copy by design and keeps its row — it is not

@@ -109,41 +109,47 @@ nothing is deleted, and the client's video sign-offs are not touched.
    products when you press Next, and the Publish screen shows it again and asks you to confirm it
    before anything runs.
 
-<img src="images/data-choose.png" alt="Coverage figures — 13 in product list, 9 eligible, 9 selected, 4 not eligible, 2 missing videos — then step 5: the folded tables Not in the GS1 export, Not eligible and Missing video(s), each with its count, and the eligible products with tick boxes." width="900">
+<img src="images/data-choose.png" alt="An earlier version of step 5 — it now starts with every product of your list, ticked or not, with a Status column; the problem tables sit under it and list only the ticked products." width="900">
 
-**Coverage** counts your batch, in products, from left to right: how many are **in your product
-list**, how many of those are **eligible** (the export has them and nothing stops them being
-published), and how many are **selected** (eligible and ticked — what the next run will publish).
-The two figures on the right say why the others fell out, and how many eligible products will go
-live **without a video**. The figures change as you tick.
+**Coverage** counts **the products you ticked** in step 5 — not your whole list. **Selected** is
+how many you ticked (and, under it, how many are on your list), **can run** is how many of those a
+run will act on — what Next saves — and the figures after it say why the rest cannot: **not in the
+export**, and then for a batch that writes pages **not eligible** and **missing video(s)**, or for
+a links batch **link problems**. Tick or untick, and the figures follow.
 
-5. **Choose the products and save.** Your list, split four ways, in this order:
+5. **Choose the products and save.** First, **your products**: every row of your list, each with
+   a tick box, a **Status** — what a run would do with it — and a **Detail** saying why:
 
-   - **Not in the GS1 export** — barcodes you asked for that the export has no row for. Nothing
-     else in the tool will mention them again. Either the product is missing from the export (fix
-     it in MyGS1) or the barcode is wrong.
-   - **Not eligible** — the export has them, but a run will not publish them. The **Why** column
-     says what is wrong: a mandatory value that is blank (fixed in MyGS1, never here), or two
-     videos confirmed for one language (the client has to keep one).
-   - **Missing video(s)** — eligible, and they *will* be published, but without a video in the
-     language named. Listed so nobody mistakes the live page for finished. When the client confirms
-     a video, the next run adds it to the page.
-   - **Eligible — tick the ones to publish.** The only table with tick boxes, because it is the
-     only one where the choice is yours. Every row arrives ticked; the **Video** column repeats
-     which languages a product goes live without a video in.
+   | Status | Means |
+   |---|---|
+   | **can run** | It is in the export and nothing stops it. |
+   | **can run · no video** | It runs, but goes live without a video in the language named. |
+   | **not in the export** | The GS1 export has no row for this barcode. Fix it in MyGS1, or the barcode is wrong. |
+   | **not eligible** | Pages only. A mandatory value is blank (fixed in MyGS1, never here), or the client confirmed two videos for one language. |
+   | **link problem** | Links only. No page to point the GS1 record at, an address not on the client's site, or a page that does not load. |
+   | **checking link** | Links only. The page is still being looked at — a few seconds. |
 
-   The first three start **folded** — press the title to open one; the count is in the title either
-   way. None of them has tick boxes: nothing can publish the first two, so there is nothing to
-   choose, and the missing-video products are ticked in the eligible table below. Products that
-   are not eligible stay in your list either way.
+   Your saved batch arrives ticked — every row, for a list just uploaded. Untick a product to
+   leave it out. **Under the list, one folded table per problem, listing only the ticked
+   products that have it** — *Not in the GS1 export*, and then *Not eligible* and *Missing
+   video(s)* for a batch that writes pages, or *Link doesn't work* for a links batch. Press a title
+   to open it; the count is in the title either way.
+
+   **A links batch is judged on its link and nothing else.** It writes the GS1 record and no page,
+   so a missing video or a blank page field does not stop it. Its link is the address in the
+   **Link naar site** column of your list, or — when that is empty — the page this tool published
+   for it. If neither exists, or the page does not load, the product cannot run until the address
+   is fixed in your list and the list is uploaded again.
 
    > ⚠️ **A tick means keep.** Untick a product to leave it out. If you used an earlier version of
    > this app, the button under the table said *Remove selected rows* and meant the opposite — it
    > is gone.
 
-   Use the filters to find products; filtering changes only what you can see, never what is
-   ticked. Your ticks also survive the client's sign-off sheet being applied — a video arriving can
-   move a product into the eligible table without undoing anything you chose.
+   **Next saves the ticked products that can run, and only those.** A ticked product that cannot
+   run is left out and named in the line above Next. Use the filters to find products — the
+   **Status** filter shows, say, only the ones with a link problem; filtering changes only what you
+   can see, never what is ticked. Your ticks also survive changing what the batch publishes, and
+   the client's sign-off sheet being applied.
 
 **Data quality** at the bottom is folded away. It rebuilds every time you open this screen, so
 opening the fold always shows a current report — what is missing in the spreadsheet itself, and,
@@ -151,10 +157,11 @@ in its first section, which products are waiting on a video and on what. Those v
 MyGS1 or by the client, not here. The report is written to be forwarded to the client.
 
 When you are done, press **Next** at the foot of the screen. It does two things: it saves your
-choice of products, and it takes you on to step 2. There is no separate save button.
+choice of products and what the batch publishes, and it takes you on to step 2 — or, for a
+links batch, straight to step 3. There is no separate save button.
 
-**The line above the button says what it will do** — *"Next saves 8 of 9 eligible product(s) — 1
-unticked — and goes on to the copy"* — and it updates as you tick. Read that before you press, not
+**The line above the button says what it will do** — *"Next saves 8 of 9 ticked product(s) — 1
+cannot run and is left out, see below — and goes on to the copy"* — and it updates as you tick. Read that before you press, not
 after: it is the one thing that will tell you if you ticked the wrong way round. With nothing ticked
 the button stays off. Pressing it takes you straight to Content.
 

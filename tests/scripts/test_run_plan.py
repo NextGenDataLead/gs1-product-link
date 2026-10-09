@@ -1393,3 +1393,31 @@ def test_an_off_site_listed_page_stops_the_plan(
 
     assert run_plan.main(["acme", "--products", str(products)]) == 2
     assert "not on the site's host" in capsys.readouterr().err
+
+
+def test_a_links_only_plan_is_not_held_for_a_page_s_video_or_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Operator, 2026-10-09: only a bad link may stop a links-only product.
+
+    ``08713195001517`` has a page on the site already and no confirmed video; a links run writes
+    its GS1 record and nothing else, so the video and image rules are not its business.
+    """
+    monkeypatch.chdir(tmp_path)
+    vmap = _write_video_map(tmp_path, both=[GTIN_A])
+    cfg = _bilingual_config(
+        MediaConfig(restrict_to_mapped_gtins=True, video_map_path=vmap, require_hero_image=True)
+    )
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_B, product_name={"nl": "Set", "fr": "Set"})])
+
+    assert run_plan.main(["acme", "--products", str(products), "--links-only"]) == 0
+    linked = _read_plan()
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    paged = _read_plan()
+
+    assert {row.gtin for row in linked.rows} == {GTIN_B}
+    assert linked.skipped == []
+    assert paged.rows == [], "a page run still holds it"
+    assert paged.skipped

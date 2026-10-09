@@ -339,7 +339,10 @@ def _build_plan(
         candidates, excluded = products, {"not_listed": 0}
 
     state = load_state(cfg.client_id)
-    gate = video_gate_for(cfg)
+    # A links-only plan writes no page, so nothing a page needs may hold it — not the video, not
+    # the image, not a blank page field (operator, 2026-10-09). What can stop it is its target,
+    # and ``run_execute`` refuses a target that does not serve immediately before every GS1 write.
+    gate = None if links_only else video_gate_for(cfg)
     candidates, excluded = _pilot_gate(
         candidates, state, excluded, gate, include_published=include_published
     )
@@ -357,8 +360,10 @@ def _build_plan(
         cfg.wordpress.languages,
         cfg.wordpress,
         require_generated_copy=cfg.generator is not None and not links_only,
-        require_hero_image=cfg.media is not None and cfg.media.require_hero_image,
-        mandatory_sources=cfg.export.all_sources,
+        require_hero_image=(
+            cfg.media is not None and cfg.media.require_hero_image and not links_only
+        ),
+        mandatory_sources=None if links_only else cfg.export.all_sources,
         video_gate=gate,
         hash_source=feed_view,
     )

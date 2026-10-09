@@ -25,7 +25,7 @@ from lib.input_layout import archive_path
 from lib.media_video import canon_gtin
 from lib.process_list import load_process_list
 from lib.provenance import history_path, read
-from lib.records import Plan, PlanSummary, ProductRecord, RunOutcome
+from lib.records import Plan, PlanSummary, ProductRecord, RunOutcome, State
 from lib.run_files import iter_logs, newest_log, stamp_of
 from ui import REPO_ROOT, progress
 
@@ -434,6 +434,20 @@ def split_results(entries: dict[str, dict[str, Any]], scope: Scope | None) -> Re
         missing=tuple(sorted(scope.gtins - set(entries))),
         scoped=True,
     )
+
+
+def load_ledger(cid: str) -> State:
+    """What this tool has published for ``cid`` (``state.json``), read without touching it.
+
+    Empty when absent or unreadable: the one caller asks it which products already have a page of
+    ours to point a GS1 record at, and an unreadable ledger then means "none known" — the run's own
+    check still stands between that and a write.
+    """
+    data = _load_json(output_dir(cid) / "state.json")
+    try:
+        return State.model_validate(data)
+    except ValueError:
+        return State(client_id=cid, entries={})
 
 
 def load_products(cid: str) -> list[ProductRecord]:
