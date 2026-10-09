@@ -69,7 +69,7 @@ and whoever helps you knows exactly what happened.
 
 ## Step 1 — Data
 
-<img src="images/data.png" alt="The Data screen as it opens: jump links, then three uploads side by side — the product selection list, the GS1 export and the video sign-off sheet — a Clear all — start fresh button, step 4 with the three choices pages, links and both and a note that Next waits for one, and a band asking for the list and the export." width="900">
+<img src="images/data.png" alt="The Data screen as it opens: jump links, then three uploads side by side — the product selection list, the GS1 export and the video sign-off sheet — a Clear all — start fresh button, step 4 with the three choices both, links and pages and a note that Next waits for one, and a band asking for the list and the export." width="900">
 
 *This is the screen as it opens.* Coverage, the product tables and the issue report appear once
 the list and the export are both there — see below.
@@ -102,7 +102,7 @@ nothing is deleted, and the client's video sign-offs are not touched.
 
    The three sit side by side because none of them waits on another: bring whichever you have.
 
-4. **What this batch publishes** — **pages**, **links** or **both** (the table under *Step 4 —
+4. **What this batch publishes** — **both**, **links** or **pages** (the table under *Step 4 —
    Publish* says what each writes). Choose it here, before you choose products, because it changes
    what a product needs: a **links** batch writes no page, so it needs no text and the **Content**
    step is passed over. **Next stays off until you choose.** Your choice is saved with your

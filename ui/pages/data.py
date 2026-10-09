@@ -42,7 +42,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from nicegui import events, ui
 
@@ -433,6 +433,10 @@ def _check_links(cfg: ClientConfig, targets: dict[str, str], done: Callable[[], 
     ui.timer(0, check, once=True)
 
 
+#: The order step 4 offers them in (operator, 2026-10-09): both, links, pages.
+_MODE_ORDER: Final = (Mode.BOTH, Mode.LINKS, Mode.PAGES)
+
+
 def _mode_section(current: Mode | None, picked: Callable[[Mode], None]) -> None:
     """Step 4: what this batch publishes — pages, GS1 links, or both.
 
@@ -446,14 +450,14 @@ def _mode_section(current: Mode | None, picked: Callable[[Mode], None]) -> None:
         step=4,
         anchor="publishes",
         explain=(
-            "Pages: the product pages on the website, reversible. Links: the GS1 Digital Link "
-            "record and QR code for each product, pointing at its page — permanent. Both: the "
-            "pages, then the links. Saved with your selection when you press Next; the Publish "
-            "screen asks you to confirm it before anything runs."
+            "Both: the product pages, then the GS1 links pointing at them. Links: the GS1 Digital "
+            "Link record and QR code for each product, pointing at its page — permanent. Pages: "
+            "the product pages on the website, reversible. Saved with your selection when you "
+            "press Next; the Publish screen asks you to confirm it before anything runs."
         ),
     ):
         ui.toggle(
-            {mode.value: f"{mode.value} — {mode.summary}" for mode in Mode},
+            {mode.value: f"{mode.value} — {mode.summary}" for mode in _MODE_ORDER},
             value=current.value if current is not None else None,
             on_change=lambda event: picked(Mode(event.value)) if event.value else None,
         ).props("no-caps").classes("mb-3")
