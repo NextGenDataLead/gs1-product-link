@@ -155,8 +155,9 @@ a links batch **link problems**. Tick or untick, and the figures follow.
 they will read it — about the products you ticked, and it follows your ticks: (1) how many of
 them failed, (2) the issues by category, each with its products and the reason, and (3) the failed
 products, each with its reasons. A missing video is listed but does not count as failed — the
-product runs without it. **Download PDF** and **Download Excel** under it give the same report as a
-file to send; each download is also kept, dated, in the client's `reports` folder. **Every run
+product runs without it. **Download PDF** and **Download Excel** under it save the same report in
+your **Downloads** folder and open it in your own PDF reader or spreadsheet program, ready to send.
+A dated copy is also kept in the client's `reports` folder. **Every run
 writes the same report afterwards, about the same ticked products** — the ones that could not run
 keep the reason given here, and the ones that ran are reported on what the run did. Your ticks,
 including on products that could not run, are still there when you come back to this screen.

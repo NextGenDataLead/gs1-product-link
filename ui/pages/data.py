@@ -59,6 +59,7 @@ from ui import (
     REPO_ROOT,
     batch_grid,
     context,
+    handover,
     process_list_edit,
     progress,
     runner,
@@ -775,7 +776,7 @@ def _issue_report(cid: str, built: IssueReport) -> None:
 
         def download(kind: str) -> None:
             # Dated and kept under output/{client}/reports, so the copy that was sent can be found
-            # again; then handed to the browser.
+            # again; then a copy in Downloads, opened in the operator's own PDF reader or Excel.
             now = datetime.now(UTC)
             dated = replace(built, subtitle=f"{built.subtitle} {now:%Y-%m-%d %H:%M} UTC.")
             path = REPO_ROOT / "output" / cid / "reports"
@@ -783,7 +784,7 @@ def _issue_report(cid: str, built: IssueReport) -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
             write = issue_report_files.write_pdf if kind == "pdf" else issue_report_files.write_xlsx
             write(dated, path)
-            ui.download(path)
+            handover.give(path)
 
         with ui.row().classes("gap-3 mt-4"):
             theme.quiet_action("Download PDF", lambda: download("pdf"))
