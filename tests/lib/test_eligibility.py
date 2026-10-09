@@ -25,7 +25,6 @@ from lib.eligibility import (
     CHECKING,
     NO_IMAGE,
     NO_TARGET,
-    OTHER_BRAND,
     LinkIssue,
     eligibility,
     eligibility_for,
@@ -346,26 +345,3 @@ def test_the_listed_address_wins_over_our_own_page() -> None:
     targets = link_targets(cfg, {_B: "https://wp.test/listed-b/"}, state)
 
     assert targets == {_A: "https://wp.test/nl/ours/", _B: "https://wp.test/listed-b/"}
-
-
-def _with_prefix(cfg: ClientConfig, *prefixes: str) -> ClientConfig:
-    return cfg.model_copy(update={"gs1": cfg.gs1.model_copy(update={"company_prefixes": prefixes})})
-
-
-def test_a_barcode_of_another_brand_cannot_run_as_links_or_both(tmp_path: Path) -> None:
-    """GS1 refused six such barcodes on the first real links run (21011): stop them before it."""
-    theirs = "04895069002951"
-    cfg = _with_prefix(_config(_media(tmp_path, publish_without_video=True)), "8713195")
-    products = [_product(_A), _product(theirs)]
-    targets = {_A: "https://wp.test/a/", theirs: "https://wp.test/b/"}
-    checked = dict.fromkeys(targets.values())
-
-    links = eligibility_for(cfg, products, Mode.LINKS, targets=targets, checked=checked)
-    both = eligibility_for(cfg, products, Mode.BOTH, targets={}, checked={})
-    pages = eligibility_for(cfg, products, Mode.PAGES, targets={}, checked={})
-
-    assert links.bad_link == {theirs: LinkIssue("https://wp.test/b/", OTHER_BRAND)}
-    assert links.is_eligible(_A)
-    assert OTHER_BRAND in both.not_eligible[theirs]
-    assert theirs not in both.missing_video
-    assert theirs not in pages.not_eligible, "a page needs no GS1 contract"

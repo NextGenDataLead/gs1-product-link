@@ -55,7 +55,6 @@ Two path quirks are real and preserved deliberately — do not "fix" them:
 gs1:
   account_number_test: "..."
   account_number_production: "..."
-  company_prefixes: ["8713195"]     # the client's GS1 company prefix(es) — see below
   client_id_env_test: CLIENT_GS1_CLIENT_SANDBOX_ID
   client_secret_env_test: CLIENT_GS1_CLIENT_SANDBOX_SECRET
   client_id_env_production: CLIENT_GS1_CLIENT_ID
@@ -69,12 +68,6 @@ gs1:
 ```
 
 These are env var **names**. The values belong in `.env` and nowhere else. `lib/config.py` is the authoritative field list including defaults.
-
-`company_prefixes` is optional but worth setting. GS1 registers a Digital Link only for a barcode
-under the account's own contract and answers any other with `21011 No valid contract found` — a
-retailer's list often carries other brands' products, and six of those were refused on Noviplast's
-first real links run. With the prefixes set, the Data screen stops those barcodes in a links or
-both batch, before the run, and the issue report names them as *Barcode of another brand*.
 
 Link entries are declared separately, one per link type:
 

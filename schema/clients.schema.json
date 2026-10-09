@@ -112,12 +112,7 @@
         "digital_link_url_pattern": { "type": "string" },
         "resolver_settings": { "$ref": "#/$defs/resolverSettings" },
         "default_media_type": { "type": "string" },
-        "batch_size": { "type": "integer", "minimum": 1 },
-        "company_prefixes": {
-          "type": "array",
-          "items": { "type": "string", "pattern": "^[0-9]{3,12}$" },
-          "description": "The client's GS1 company prefixes. A barcode under none of them cannot get a Digital Link (GS1 answers 21011), so the Data screen stops it before a links or both run. Empty or absent: not checked."
-        }
+        "batch_size": { "type": "integer", "minimum": 1 }
       }
     },
     "wordpressDefaults": {

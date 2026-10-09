@@ -27,7 +27,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from lib.eligibility import NO_IMAGE, OTHER_BRAND, Eligibility
+from lib.eligibility import NO_IMAGE, Eligibility
 from lib.records import SkipReason
 from lib.scope_report import HELD, IN_SCOPE, ScopeRow
 from lib.scope_report import NOT_RUN as UNIT_NOT_RUN
@@ -76,12 +76,12 @@ NO_VIDEO: Final = Category(
     True,
     "Confirm a video for the language named.",
 )
-OTHER_BRAND_CATEGORY: Final = Category(
-    "other_brand",
-    "Barcode of another brand",
+NO_CONTRACT: Final = Category(
+    "no_contract",
+    "Refused by GS1: no valid contract",
     True,
-    "Only the brand that owns this barcode can register its GS1 link. Leave it out of links "
-    "batches; its page can still be published.",
+    "GS1 refused the link with 'No valid contract found'. Check with GS1 Nederland that the "
+    "Digital Link contract on the account covers these barcodes, then run them again.",
 )
 LINK: Final = Category(
     "link",
@@ -129,7 +129,7 @@ CATEGORIES: Final = (
     NO_IMAGE_CATEGORY,
     TWO_VIDEOS,
     NO_VIDEO,
-    OTHER_BRAND_CATEGORY,
+    NO_CONTRACT,
     LINK,
     NO_TEXT,
     RUN_ERROR,
@@ -152,7 +152,8 @@ _BY_SKIP: Final = {
     SkipReason.NO_CONFIRMED_VIDEO.value: NO_VIDEO,
 }
 
-#: GS1's answer for a barcode outside the account's contract — another brand's barcode.
+#: GS1's refusal when the account's Digital Link contract does not cover a barcode (21011). Tried
+#: and reported, never predicted: a barcode can be on the client's GS1 account and still get it.
 _NO_CONTRACT: Final = "No valid contract found"
 
 #: Long technical errors are cut here; the full text is in the run log.
@@ -239,9 +240,6 @@ def selection_issues(
             issues.append(Issue(gtin, name, CHECK_FAILED, verdict.problem))
         elif gtin in verdict.bad_link:
             link = verdict.bad_link[gtin]
-            if link.problem == OTHER_BRAND:
-                issues.append(Issue(gtin, name, OTHER_BRAND_CATEGORY, OTHER_BRAND))
-                continue
             reason = f"{link.problem} ({link.url})" if link.url else link.problem
             issues.append(Issue(gtin, name, LINK, reason))
         elif gtin in verdict.not_eligible:
@@ -334,8 +332,6 @@ def _categorise(part: str) -> tuple[Category, str]:
         return MISSING_DATA, part[len(_MISSING_DATA_PREFIX) :]
     if part == NO_IMAGE:
         return NO_IMAGE_CATEGORY, part
-    if part == OTHER_BRAND:
-        return OTHER_BRAND_CATEGORY, part
     if part.startswith(_TWO_VIDEOS_PREFIX):
         return TWO_VIDEOS, part
     return NO_VIDEO, part
@@ -344,10 +340,7 @@ def _categorise(part: str) -> tuple[Category, str]:
 def _unit_issue(status: str, detail: str) -> tuple[Category | None, str]:
     """What one language of a run's product says about it, or ``(None, "")`` when it is fine."""
     if status == "error" and _NO_CONTRACT in detail:
-        return OTHER_BRAND_CATEGORY, (
-            "GS1 refused it: the barcode is not under the client's GS1 contract, so only the "
-            "brand that owns it can register its link"
-        )
+        return NO_CONTRACT, "GS1 refused the link: 'No valid contract found' (code 21011)"
     if status == "error":
         return RUN_ERROR, _plain_error(detail)
     if status == UNIT_NOT_RUN:

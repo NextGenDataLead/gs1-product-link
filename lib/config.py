@@ -20,7 +20,7 @@ from typing import Any, Final, Literal
 
 import jsonschema
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from lib.errors import ConfigError, ExportParseError
 from lib.gdsn import GdsnSource
@@ -41,10 +41,6 @@ _INHERITED_BLOCKS: Final = ("gs1", "wordpress", "qr", "flow")
 _PRODUCT_FIELDS: Final[frozenset[str]] = frozenset(ProductRecord.model_fields) - {"extras"}
 
 Environment = Literal["test", "production"]
-
-#: A GS1 company prefix is 6 to 12 digits; 3 is allowed for restricted-distribution demo ranges.
-_MIN_PREFIX: Final = 3
-_MAX_PREFIX: Final = 12
 
 
 # --- Config models (§2.4) ----------------------------------------------------
@@ -72,26 +68,6 @@ class GS1Config(BaseModel):
     resolver_settings: ResolverSettings = Field(default_factory=ResolverSettings)
     default_media_type: str = "text/html"
     batch_size: int = 50
-    #: The client's GS1 company prefixes. GS1 registers a Digital Link only for a barcode under
-    #: the account's own contract, and refuses any other with ``21011 No valid contract found`` —
-    #: which is what six barcodes of other brands did on the first real links run (2026-10-09).
-    #: Empty means unchecked: nothing is held for it.
-    company_prefixes: tuple[str, ...] = ()
-
-    @field_validator("company_prefixes")
-    @classmethod
-    def _digits_only(cls, prefixes: tuple[str, ...]) -> tuple[str, ...]:
-        for prefix in prefixes:
-            if not (prefix.isdigit() and _MIN_PREFIX <= len(prefix) <= _MAX_PREFIX):
-                raise ValueError(
-                    f"company prefix {prefix!r} must be {_MIN_PREFIX}–{_MAX_PREFIX} digits"
-                )
-        return prefixes
-
-    def owns(self, gtin14: str) -> bool:
-        """Whether ``gtin14`` is under one of the client's company prefixes — always, when none
-        are configured. The prefix follows the GTIN-14's first (indicator or padding) digit."""
-        return not self.company_prefixes or gtin14[1:].startswith(self.company_prefixes)
 
     def resolve(self, environment: Environment | None = None) -> ResolvedGS1Config:
         """Produce the resolved, single-environment config for the GS1 client.

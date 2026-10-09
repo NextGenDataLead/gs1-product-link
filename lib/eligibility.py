@@ -48,12 +48,6 @@ VIDEO_UNKNOWN: Final = "the video mapping could not be read"
 #: A links-only product with nowhere to point: no address listed, and no page of ours.
 NO_TARGET: Final = "no page to link to — fill in Link naar site, or publish its page first"
 
-#: A barcode under none of the client's GS1 company prefixes: GS1 refuses its Digital Link (21011).
-OTHER_BRAND: Final = (
-    "barcode of another brand — not under the client's GS1 company prefix, so GS1 does not "
-    "allow a link for it"
-)
-
 #: A links-only product whose address has not been checked yet.
 CHECKING: Final = "checking the link…"
 
@@ -124,9 +118,6 @@ def links_eligibility(
     for product in products:
         gtin14 = product.gtin14
         url = targets.get(gtin14)
-        if not cfg.gs1.owns(gtin14):
-            bad[gtin14] = LinkIssue(url, OTHER_BRAND)
-            continue
         if url is None:
             bad[gtin14] = LinkIssue(None, NO_TARGET)
             continue
@@ -149,19 +140,7 @@ def eligibility_for(  # noqa: PLR0913 — the mode picks which inputs matter
     """:func:`eligibility` for a batch publishing pages, :func:`links_eligibility` for links."""
     if mode is Mode.LINKS:
         return links_eligibility(cfg, products, targets or {}, checked)
-    verdict = eligibility(cfg, products)
-    if mode is not Mode.BOTH or verdict.problem:
-        return verdict
-    # Both writes the page and then the GS1 link; a barcode GS1 will refuse would leave a page
-    # with no link and an error. Held here, with every other reason it already has.
-    held = dict(verdict.not_eligible)
-    for product in products:
-        if not cfg.gs1.owns(product.gtin14):
-            held[product.gtin14] = "; ".join(
-                reason for reason in (OTHER_BRAND, held.get(product.gtin14, "")) if reason
-            )
-    missing = {gtin: why for gtin, why in verdict.missing_video.items() if gtin not in held}
-    return Eligibility(held, missing)
+    return eligibility(cfg, products)
 
 
 def eligibility(cfg: ClientConfig, products: list[ProductRecord]) -> Eligibility:

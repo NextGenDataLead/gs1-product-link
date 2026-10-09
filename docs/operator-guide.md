@@ -125,8 +125,8 @@ a links batch **link problems**. Tick or untick, and the figures follow.
    | **can run** | It is in the export and nothing stops it. |
    | **can run · no video** | It runs, but goes live without a video in the language named. |
    | **not in the export** | The GS1 export has no row for this barcode. Fix it in MyGS1, or the barcode is wrong. |
-   | **not eligible** | Pages and both. A mandatory value is blank (fixed in MyGS1, never here), or the client confirmed two videos for one language. In a **both** batch also a barcode of another brand — see *link problem*. |
-   | **link problem** | Links only. No page to point the GS1 record at, an address not on the client's site, a page that does not load — or a **barcode of another brand**: GS1 only lets the client register links for barcodes under its own company prefix, and refuses the rest. Only the brand owner can register those. |
+   | **not eligible** | Pages only. A mandatory value is blank (fixed in MyGS1, never here), or the client confirmed two videos for one language. |
+   | **link problem** | Links only. No page to point the GS1 record at, an address not on the client's site, or a page that does not load. |
    | **checking link** | Links only. The page is still being looked at — a few seconds. |
 
    Your saved batch arrives ticked — every row, for a list just uploaded. Untick a product to
