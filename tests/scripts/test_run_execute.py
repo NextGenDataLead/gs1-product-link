@@ -2311,3 +2311,45 @@ def _write_scope_list(path: Path, gtins: list[str]) -> None:
     for gtin in gtins:
         sheet.append([gtin])
     workbook.save(path)
+
+
+def test_a_links_run_is_not_stopped_by_the_video_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The video gate is about a page; a links run writes none (operator, 2026-10-09).
+
+    Its one precondition is a target that serves, which ``_verify_targets`` still checks.
+    """
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config(
+        video_map_path=_pilot_map(tmp_path, [GTIN_A]), restrict_to_mapped_gtins=True
+    )
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_B, "nl")))
+    # The page exists already: a pages run with the gate off put it there.
+    open_cfg = _media_config(
+        video_map_path=_pilot_map(tmp_path, [GTIN_A]), restrict_to_mapped_gtins=False
+    )
+    _install(monkeypatch, open_cfg)
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+    rec = _install(monkeypatch, cfg)
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "links"]) == 0
+
+    assert [call["links"][0]["target_url"] for call in rec.gs1] == [
+        f"https://wp.test/product/p-{GTIN_B}/"
+    ]
+    assert rec.verified, "the target was still checked before the write"
+
+
+def test_a_pages_run_still_is(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = _media_config(
+        video_map_path=_pilot_map(tmp_path, [GTIN_A]), restrict_to_mapped_gtins=True
+    )
+    rec = _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_B, "nl")))
+
+    assert run_execute.main(["acme", "--plan", str(plan), "--only", "pages"]) == 0
+
+    assert rec.wp == []

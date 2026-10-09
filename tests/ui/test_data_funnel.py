@@ -14,14 +14,23 @@ import pytest
 
 pytest.importorskip("nicegui", reason="the ui extra is not installed here")
 
-from lib.eligibility import Eligibility  # noqa: E402
+from lib.eligibility import CHECKING, Eligibility, LinkIssue  # noqa: E402
 from lib.process_list import ProcessListSheet  # noqa: E402
 from ui.batch_grid import (  # noqa: E402
     _GTIN,
     _ROW,
+    CAN_RUN,
+    CAN_RUN_NO_VIDEO,
+    CHECKING_LINK,
+    LINK_PROBLEM,
+    NOT_ELIGIBLE,
+    NOT_IN_EXPORT,
+    RUNNABLE,
     Funnel,
     batch_of,
     funnel,
+    row_status,
+    runnable_keys,
     save_line,
     shared_barcode_notes,
     unticked_by,
@@ -41,19 +50,33 @@ _VERDICT = Eligibility(
 _EXPORTED = {_A, _B, _C, _E}
 
 
-def test_the_funnel_splits_the_list_the_way_a_run_will() -> None:
+def test_coverage_counts_the_ticked_products_not_the_list() -> None:
+    """Operator, 2026-10-09: the figures are about the batch, not the whole list."""
     rows = _rows(_A, _B, _C, _D, _E)
 
-    counts = funnel(rows, ticked=[rows[0], rows[1]], verdict=_VERDICT, exported=_EXPORTED)
+    counts = funnel(rows, ticked=[rows[1], rows[2], rows[3]], verdict=_VERDICT, exported=_EXPORTED)
 
     assert counts == Funnel(
         listed=5,
+        selected=3,
+        can_run=1,
         not_in_export=1,
         not_eligible=1,
-        eligible=3,
-        selected=2,
         missing_video=1,
-        missing_video_selected=1,
+        bad_link=0,
+    )
+
+
+def test_an_unticked_problem_is_not_counted() -> None:
+    rows = _rows(_A, _C, _D)
+
+    counts = funnel(rows, ticked=[rows[0]], verdict=_VERDICT, exported=_EXPORTED)
+
+    assert (counts.selected, counts.can_run, counts.not_in_export, counts.not_eligible) == (
+        1,
+        1,
+        0,
+        0,
     )
 
 
@@ -63,39 +86,78 @@ def test_products_are_counted_once_however_many_rows_name_them() -> None:
 
     counts = funnel(rows, ticked=rows[:2], verdict=Eligibility(), exported={_A})
 
-    assert (counts.listed, counts.eligible, counts.selected) == (1, 1, 1)
+    assert (counts.listed, counts.selected, counts.can_run) == (1, 1, 1)
 
 
-def test_a_ticked_row_that_is_not_eligible_is_never_counted_as_selected() -> None:
+def test_a_ticked_row_that_cannot_run_is_selected_but_never_saved() -> None:
     rows = _rows(_C)
 
-    assert funnel(rows, ticked=rows, verdict=_VERDICT, exported=_EXPORTED).selected == 0
+    counts = funnel(rows, ticked=rows, verdict=_VERDICT, exported=_EXPORTED)
+
+    assert (counts.selected, counts.can_run) == (1, 0)
 
 
-def test_an_undecidable_batch_has_nothing_eligible() -> None:
+def test_an_undecidable_batch_has_nothing_that_can_run() -> None:
     """An unreadable mapping under the video rule holds everything; the funnel must agree."""
     rows = _rows(_A)
 
     counts = funnel(rows, ticked=rows, verdict=Eligibility(problem="x"), exported={_A})
 
-    assert (counts.eligible, counts.not_eligible, counts.selected) == (0, 1, 0)
+    assert (counts.can_run, counts.not_eligible) == (0, 1)
+
+
+def test_a_links_only_batch_counts_its_broken_links_not_its_data() -> None:
+    rows = _rows(_A, _B)
+    verdict = Eligibility(bad_link={_B: LinkIssue("https://x/y", "the page does not exist (404)")})
+
+    counts = funnel(rows, ticked=rows, verdict=verdict, exported={_A, _B})
+
+    assert (counts.can_run, counts.bad_link, counts.not_eligible) == (1, 1, 0)
 
 
 def test_the_caption_says_what_next_will_save_before_it_is_pressed() -> None:
-    assert save_line(3, 3) == "Next saves all 3 eligible product(s) and goes on to the copy."
-    assert save_line(1, 3) == (
-        "Next saves 1 of 3 eligible product(s) — 2 unticked — and goes on to the copy."
+    assert save_line(3, 3) == "Next saves all 3 ticked product(s) and goes on to the copy."
+    assert save_line(4, 3, onward="the preflight") == (
+        "Next saves 3 of 4 ticked product(s) — 1 cannot run and is left out, see below — and "
+        "goes on to the preflight."
     )
-    assert save_line(0, 0) == "Nothing on the list is eligible, so a run would publish nothing."
-    assert save_line(0, 3) == "Tick at least one product — Next stays off until then."
+    assert save_line(5, 3).startswith("Next saves 3 of 5 ticked product(s) — 2 cannot run and are")
+    assert save_line(0, 0) == "Tick at least one product — Next stays off until then."
+    assert save_line(2, 0) == (
+        "None of the ticked products can run — see the tables below. Next stays off."
+    )
 
 
-def test_an_unticked_product_without_a_video_is_not_counted_as_selected_without_one() -> None:
-    rows = _rows(_A, _B)
+# --- a row's status ---------------------------------------------------------------
 
-    counts = funnel(rows, ticked=[rows[0]], verdict=_VERDICT, exported=_EXPORTED)
 
-    assert (counts.missing_video, counts.missing_video_selected) == (1, 0)
+@pytest.mark.parametrize(
+    ("gtin", "status", "detail"),
+    [
+        (_A, CAN_RUN, ""),
+        (_B, CAN_RUN_NO_VIDEO, "no confirmed video in fr"),
+        (_C, NOT_ELIGIBLE, "missing data: x"),
+        (_D, NOT_IN_EXPORT, ""),
+        (None, NOT_IN_EXPORT, ""),
+    ],
+)
+def test_each_row_says_what_a_run_would_do_with_it(
+    gtin: str | None, status: str, detail: str
+) -> None:
+    assert row_status(gtin, _EXPORTED, _VERDICT) == (status, detail)
+
+
+def test_a_link_still_being_checked_reads_as_checking_not_broken() -> None:
+    verdict = Eligibility(
+        bad_link={
+            _A: LinkIssue("https://x/a", CHECKING),
+            _B: LinkIssue("https://x/b", "the page does not exist (404)"),
+        }
+    )
+
+    assert row_status(_A, {_A, _B}, verdict) == (CHECKING_LINK, CHECKING)
+    assert row_status(_B, {_A, _B}, verdict)[0] == LINK_PROBLEM
+    assert {CHECKING_LINK, LINK_PROBLEM}.isdisjoint(RUNNABLE)
 
 
 # --- what a restart ticks, and what Next writes ---------------------------------
@@ -103,9 +165,9 @@ def test_an_unticked_product_without_a_video_is_not_counted_as_selected_without_
 
 def test_a_restart_ticks_the_saved_batch_and_nothing_else() -> None:
     """The grid is the whole upload; only the barcodes the saved batch names arrive ticked."""
-    eligible = _rows(_A, _B, _E)
+    rows = _rows(_A, _B, _D)
 
-    assert unticked_by(eligible, saved=frozenset({_B})) == {0, 2}
+    assert unticked_by(rows, saved=frozenset({_B})) == {0, 2}
 
 
 def test_a_barcode_on_two_rows_is_ticked_on_both() -> None:
@@ -154,7 +216,8 @@ def test_two_different_products_on_one_barcode_are_a_warning_naming_both() -> No
     notes = shared_barcode_notes(sheet, {"08713195008486": "Grillen"})
 
     assert len(notes) == 1
-    kind, sentence = notes[0]
+    gtin, kind, sentence = notes[0]
+    assert gtin == "08713195008486"
     assert kind == "warn"
     assert "4214 7 Days" in sentence and "5003 Fun Grill" in sentence
     assert "The export says it is Grillen." in sentence
@@ -163,10 +226,24 @@ def test_two_different_products_on_one_barcode_are_a_warning_naming_both() -> No
 def test_the_same_product_twice_is_a_quiet_note() -> None:
     sheet = _list(("4156", "Desk lamp", "8713195004488"), ("4156", "Desk lamp", "8713195004488"))
 
-    assert [kind for kind, _ in shared_barcode_notes(sheet, {})] == ["quiet"]
+    assert [kind for _, kind, _ in shared_barcode_notes(sheet, {})] == ["quiet"]
 
 
 def test_a_list_without_shared_barcodes_says_nothing() -> None:
     sheet = _list(("4156", "Desk lamp", "8713195004488"), ("2078", "Multi Wiper", "8713195007151"))
 
     assert shared_barcode_notes(sheet, {}) == []
+
+
+def test_next_writes_only_the_ticked_rows_that_can_run() -> None:
+    """A ticked row the run would drop is named in the caption, never written: the file is the
+    batch, and a row in it the run then drops would read as chosen on every later screen."""
+    ticked = [
+        {_ROW: 0, _GTIN: _A, "_status": CAN_RUN},
+        {_ROW: 1, _GTIN: _B, "_status": CAN_RUN_NO_VIDEO},
+        {_ROW: 2, _GTIN: _C, "_status": NOT_ELIGIBLE},
+        {_ROW: 3, _GTIN: _D, "_status": NOT_IN_EXPORT},
+        {_ROW: 4, _GTIN: _E, "_status": LINK_PROBLEM},
+    ]
+
+    assert runnable_keys(ticked) == {0, 1}

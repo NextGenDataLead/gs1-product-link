@@ -224,6 +224,26 @@ def load_process_list(config: ProcessListConfig) -> frozenset[str]:
     return gtins
 
 
+def listed_urls(sheet: ProcessListSheet, column: str | None) -> dict[str, str]:
+    """``{gtin14: address}`` from the *Link naar site* column of a sheet on screen, unvalidated.
+
+    The Data screen's read, for a list that has just been uploaded and is not saved yet: every
+    filled cell, the first one per GTIN, with nothing refused — the screen says what is wrong with
+    each address itself (:mod:`lib.link_targets`). :func:`load_listed_targets` is the run's read,
+    which refuses the whole file instead.
+    """
+    if column is None or column not in sheet.header:
+        return {}
+    index = sheet.header.index(column)
+    found: dict[str, str] = {}
+    for n, row in enumerate(sheet.rows):
+        gtin = sheet.gtin14_at(n)
+        url = row[index].strip() if index < len(row) else ""
+        if gtin is not None and url:
+            found.setdefault(gtin, url)
+    return found
+
+
 def load_listed_targets(config: ProcessListConfig, site_url: str) -> dict[str, str]:
     """Read the page address the operator listed per GTIN, keyed by GTIN-14.
 

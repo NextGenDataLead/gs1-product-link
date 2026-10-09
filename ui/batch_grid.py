@@ -1,24 +1,27 @@
 """Step 5 of the Data screen, and the coverage funnel above it: which products are in the batch.
 
-The list is joined against the export and split the way a run will treat it, **in the order the
-operator reads it**:
+**The selection comes first, and everything under it is about the selection** (operator,
+2026-10-09). The table at the top is every row of the list, each with a **Status** — what a run
+would do with it — and a tick box. Under it, one folded table per problem, holding only the
+**ticked** products that have it:
 
-1. **not in the GS1 export** — on the list, nothing behind it; a run says nothing about these;
-2. **not eligible** — the export carries it, and the plan will hold it (missing data, or two videos
-   confirmed for one language); each with the reason, from :mod:`lib.eligibility`;
-3. **missing video(s)** — eligible, and published without a video in at least one language
-   (``media.publish_without_video``); listed so nobody mistakes the live page for finished;
-4. **eligible — tick the ones to publish** — the only table with tick boxes, because it is the only
-   one where the answer to "does this run?" is the operator's.
+* **not in the GS1 export** — on the list, nothing behind it;
+* for a batch that writes pages: **not eligible** (missing data, or two videos for one language,
+  from :mod:`lib.eligibility`) and **missing video(s)** (they run, without a video somewhere);
+* for a links-only batch: **link doesn't work** — no page to point at, or one that does not load.
 
-The funnel counts the same split in **products** (distinct barcodes), not spreadsheet rows: the
-pilot's own list carries one barcode on two rows, and a run publishes products.
+Coverage counts the same ticked products. A 117-row list with four ticked is a batch of four, and
+the other 113's problems are not this batch's.
+
+The funnel counts **products** (distinct barcodes), not spreadsheet rows: the pilot's own list
+carries one barcode on two rows, and a run publishes products.
 
 **The rows are the uploaded list; the ticks are the saved batch.** The grid is built from the list
 as it arrived, every row of it, and a row is ticked when the saved selection names its barcode — so
 a restart shows the whole list with the batch the later screens act on ticked, never a different
-one. A new upload replaces both, so everything arrives ticked again. Next saves the ticked rows and
-nothing else: the saved file *is* the batch, and every screen after this one counts it as such.
+one. A new upload replaces both, so everything arrives ticked again. **Next saves the ticked rows
+that can run and nothing else**: the saved file *is* the batch, and every screen after this one
+counts it as such — a ticked row the run would drop is named in the caption, not written.
 
 **A tick survives anything but a new list.** Unticked rows are remembered per client for the life
 of the process, so a mapping edit that rebuilds this step — a video arriving can make a product
@@ -35,9 +38,9 @@ from typing import Any, Final
 from nicegui import ui
 
 from lib.complete_report import listed_rows, shared_barcodes
-from lib.eligibility import Eligibility
+from lib.eligibility import CHECKING, Eligibility
 from lib.errors import ProcessListError
-from lib.process_list import ProcessListSheet, rows_in_export
+from lib.process_list import ProcessListSheet
 from lib.records import ProductRecord
 from ui import process_list_edit, theme
 
@@ -49,11 +52,25 @@ _ROW: Final = "_row"
 #: table shows the operator's own barcode column; this is for counting *products*.
 _GTIN: Final = "_gtin"
 
-#: The Video column on an eligible row: what it waits on; blank when it gets a video everywhere.
-_VIDEO: Final = "_video"
+#: What a run would do with the row — one of the short words below, so it filters with a picker.
+_STATUS: Final = "_status"
 
-#: Why a row is not eligible, on the not-eligible table.
-_WHY: Final = "_why"
+#: The reason behind the status, in a few words: what it waits on, why it is held, what is wrong
+#: with its link.
+_DETAIL: Final = "_detail"
+
+#: Links-only batches: the address the GS1 record would point at, on the link-problem table.
+_URL: Final = "_url"
+
+CAN_RUN: Final = "can run"
+CAN_RUN_NO_VIDEO: Final = "can run · no video"
+NOT_IN_EXPORT: Final = "not in the export"
+NOT_ELIGIBLE: Final = "not eligible"
+LINK_PROBLEM: Final = "link problem"
+CHECKING_LINK: Final = "checking link"
+
+#: The statuses Next saves.
+RUNNABLE: Final = frozenset({CAN_RUN, CAN_RUN_NO_VIDEO})
 
 #: Height of the eligible table. Long enough to work in, short enough that Next stays on screen.
 _TABLE_HEIGHT: Final = "55vh"
@@ -71,25 +88,29 @@ class Ticks:
 
 @dataclass(frozen=True)
 class Funnel:
-    """The batch in products: *in product list → eligible → selected*, and what fell out.
+    """The ticked products, and what each of them still needs. Counted over the **selection**.
+
+    Operator, 2026-10-09: the figures and the issue tables are about the products in the batch, not
+    the whole list — a 117-row list with 4 ticked is a batch of 4, and its 40 missing videos are not
+    this batch's business. Products, not rows: a barcode on two rows is one product.
 
     Attributes:
-        listed: Distinct barcodes on the list (a blank barcode cell counts as no product).
-        not_in_export: Of those, the ones the export carries nothing for.
-        not_eligible: The export carries them and the plan will hold them.
-        eligible: May publish.
-        selected: Eligible and ticked — what Next saves to run.
-        missing_video: Eligible, and published without a video somewhere.
-        missing_video_selected: Of the selected, how many go live without a video somewhere.
+        listed: Distinct barcodes on the whole list — context, the one figure not about the ticks.
+        selected: Distinct ticked barcodes.
+        can_run: Of the selected, those a run will act on — what Next saves.
+        not_in_export: Selected, and the export carries nothing for them.
+        not_eligible: Selected, in the export, and a page run would hold them.
+        missing_video: Selected, can run, and go live without a video somewhere.
+        bad_link: Selected, links-only batch, and the GS1 record's target is missing or broken.
     """
 
     listed: int
+    selected: int
+    can_run: int
     not_in_export: int
     not_eligible: int
-    eligible: int
-    selected: int
     missing_video: int
-    missing_video_selected: int
+    bad_link: int = 0
 
 
 def funnel(
@@ -98,54 +119,61 @@ def funnel(
     verdict: Eligibility,
     exported: set[str],
 ) -> Funnel:
-    """Count the funnel from every row of the list and the ticked eligible rows. Pure."""
+    """Count the selection: every ticked row, by product, split the way a run treats it. Pure."""
     listed = {row[_GTIN] for row in rows if row[_GTIN]}
-    in_export = listed & exported
-    eligible = {gtin for gtin in in_export if verdict.is_eligible(gtin)}
-    selected = {row[_GTIN] for row in ticked if row[_GTIN] in eligible}
-    bare = eligible & set(verdict.missing_video)
+    selected = {row[_GTIN] for row in ticked if row[_GTIN]}
+    in_export = selected & exported
+    runnable = {gtin for gtin in in_export if verdict.is_eligible(gtin)}
+    linked = in_export & set(verdict.bad_link)
     return Funnel(
         listed=len(listed),
-        not_in_export=len(listed - in_export),
-        not_eligible=len(in_export - eligible),
-        eligible=len(eligible),
         selected=len(selected),
-        missing_video=len(bare),
-        missing_video_selected=len(selected & bare),
+        can_run=len(runnable),
+        not_in_export=len(selected - in_export),
+        not_eligible=len(in_export - runnable - linked),
+        missing_video=len(runnable & set(verdict.missing_video)),
+        bad_link=len(linked),
     )
 
 
-def draw_funnel(box: ui.element, counts: Funnel) -> None:
-    """Coverage: the funnel as figures, each saying what it counts."""
+def draw_funnel(box: ui.element, counts: Funnel, *, links_only: bool = False) -> None:
+    """Coverage: the selection as figures, each saying what it counts."""
     box.clear()
     with box:
         theme.subhead(
             "Coverage",
             explain=(
-                "The batch in products — a barcode on two rows of your list is one product. In "
-                "product list → eligible (the export carries it and nothing holds it) → selected "
-                "(eligible and ticked in step 5, which is what Next saves). The two on the right "
-                "are why the others fell out, and how many will go live without a video."
+                "The products you ticked in step 5, counted as products — a barcode on two rows "
+                "of your list is one. Selected → can run (what Next saves), and why the rest "
+                "cannot. Tick or untick and these follow; the tables under the products list the "
+                "same problems, for the same ticked products."
             ),
         )
         with theme.figures():
-            theme.figure(str(counts.listed), "in product list", "barcodes on your list")
-            theme.figure(str(counts.eligible), "eligible", "in the export, not held")
-            theme.figure(str(counts.selected), "selected", "ticked — what runs")
             theme.figure(
-                str(counts.not_in_export + counts.not_eligible),
-                "not eligible",
-                f"{counts.not_in_export} not in the export · {counts.not_eligible} held (step 5)",
+                str(counts.selected), "selected", f"ticked, of {counts.listed} on your list"
             )
+            theme.figure(str(counts.can_run), "can run", "what Next saves")
             theme.figure(
-                str(counts.missing_video),
-                "missing video(s)",
-                f"eligible, go live without one — {counts.missing_video_selected} selected",
+                str(counts.not_in_export), "not in the export", "the GS1 export has no row for them"
             )
+            if links_only:
+                theme.figure(
+                    str(counts.bad_link), "link problems", "no page to link to, or it does not load"
+                )
+            else:
+                theme.figure(
+                    str(counts.not_eligible), "not eligible", "missing data, or two videos"
+                )
+                theme.figure(
+                    str(counts.missing_video), "missing video(s)", "can run, live without one"
+                )
 
 
-def shared_barcode_notes(sheet: ProcessListSheet, names: dict[str, str]) -> list[tuple[str, str]]:
-    """``(band kind, sentence)`` for every barcode on more than one row of the list. Pure.
+def shared_barcode_notes(
+    sheet: ProcessListSheet, names: dict[str, str]
+) -> list[tuple[str, str, str]]:
+    """``(barcode, band kind, sentence)`` for every barcode on more than one row of the list. Pure.
 
     Two different products on one barcode is almost always a typo, and it was invisible here: the
     only trace was the caption counting 97 rows beside a Coverage of 96 products (7 Days and Fun
@@ -159,6 +187,7 @@ def shared_barcode_notes(sheet: ProcessListSheet, names: dict[str, str]) -> list
             says = f" The export says it is {named}." if named else " The export does not carry it."
             notes.append(
                 (
+                    gtin,
                     "warn",
                     f"Barcode {gtin} is on {len(labels)} rows with different products: "
                     f"{', '.join(labels)}.{says} Correct the barcode in your product list "
@@ -168,6 +197,7 @@ def shared_barcode_notes(sheet: ProcessListSheet, names: dict[str, str]) -> list
         else:
             notes.append(
                 (
+                    gtin,
                     "quiet",
                     f"Barcode {gtin} is on {len(labels)} rows of your list for the same product "
                     f"({labels[0]}). It counts once.",
@@ -176,29 +206,47 @@ def shared_barcode_notes(sheet: ProcessListSheet, names: dict[str, str]) -> list
     return notes
 
 
-def save_line(ticked: int, eligible: int) -> str:
+def save_line(ticked: int, can_run: int, *, onward: str = "the copy") -> str:
     """What Next will do, said before it is pressed — in products, as Coverage counts them.
 
-    It counted rows, so a barcode on two rows made it say 97 beside Coverage's 96 with nothing on
-    screen saying why. :func:`shared_barcode_notes` now names such rows; this counts what runs.
-
-    The tick box inverted its meaning one release ago — a tick used to mean *remove this row* — so
-    "2 unticked" has to be legible *while the operator can still change their mind*.
+    A ticked product that cannot run is **not** saved: the saved file is what the next run reads,
+    and a row in it that the run then drops would read as chosen on every later screen. Said here,
+    so the tick that is about to be ignored is not a surprise.
     """
-    if not eligible:
-        return "Nothing on the list is eligible, so a run would publish nothing."
     if not ticked:
         return "Tick at least one product — Next stays off until then."
-    dropped = eligible - ticked
-    if not dropped:
-        return f"Next saves all {eligible} eligible product(s) and goes on to the copy."
+    if not can_run:
+        return "None of the ticked products can run — see the tables below. Next stays off."
+    left_out = ticked - can_run
+    if not left_out:
+        return f"Next saves all {can_run} ticked product(s) and goes on to {onward}."
     return (
-        f"Next saves {ticked} of {eligible} eligible product(s) — {dropped} unticked — and goes "
-        "on to the copy."
+        f"Next saves {can_run} of {ticked} ticked product(s) — {left_out} cannot run and "
+        f"{'is' if left_out == 1 else 'are'} left out, see below — and goes on to {onward}."
     )
 
 
-def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, its ticks, its funnel
+def row_status(gtin: str | None, exported: set[str], verdict: Eligibility) -> tuple[str, str]:
+    """A row's ``(status, detail)``: what a run would do with it, and the reason in a few words.
+
+    The status is one of a handful of short words, so the Status column filters with a picker;
+    the detail is the sentence the issue tables show. Pure.
+    """
+    if gtin is None or gtin not in exported:
+        return NOT_IN_EXPORT, ""
+    if verdict.problem:
+        return NOT_ELIGIBLE, verdict.problem
+    if gtin in verdict.bad_link:
+        problem = verdict.bad_link[gtin].problem
+        return (CHECKING_LINK if problem == CHECKING else LINK_PROBLEM), problem
+    if gtin in verdict.not_eligible:
+        return NOT_ELIGIBLE, verdict.not_eligible[gtin]
+    if gtin in verdict.missing_video:
+        return CAN_RUN_NO_VIDEO, verdict.missing_video[gtin]
+    return CAN_RUN, ""
+
+
+def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, caption, ticks, funnel
     sheet: ProcessListSheet,
     products: list[ProductRecord],
     verdict: Eligibility,
@@ -210,13 +258,14 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
     counted: Callable[[Funnel], None],
     saved: frozenset[str],
     target: Path,
+    links_only: bool = False,
 ) -> None:
-    """Step 4: the list split four ways, the eligible table, and the save behind Next.
+    """Step 5: every row of the list, ticked or not, and under it what the ticked ones still need.
 
     Args:
         sheet: The list as uploaded — every row, whatever was saved since.
         products: The export's products.
-        verdict: :func:`lib.eligibility.eligibility` over the products the list names.
+        verdict: :func:`lib.eligibility.eligibility_for` over the products the list names.
         record: Called with where the save was kept and what it holds, so the page can note which
             export the selection was chosen against.
         commit: Receives ``"save"``, which :func:`ui.theme.onward`'s Next calls.
@@ -225,9 +274,9 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
         counted: Called with the funnel whenever a tick changes.
         saved: The barcodes of the saved batch. Seeds the ticks once per list — see :class:`Ticks`.
         target: Where Next writes the batch: the control file a run reads, not the upload.
+        links_only: The batch publishes GS1 links only — its problems are links, not data.
     """
     exported = {product.gtin14 for product in products}
-    matched, unmatched = rows_in_export(sheet, exported)
     columns = [
         # Positional field names. The operator's headers are their own text: two may be the same
         # word and one may be blank, and either collapses a keyed-by-label row into fewer cells.
@@ -237,94 +286,133 @@ def choose(  # noqa: PLR0913 — the batch, its verdict, its save, its caption, 
 
     def row_of(index: int) -> dict[str, Any]:
         gtin = sheet.gtin14_at(index)
+        status, detail = row_status(gtin, exported, verdict)
+        issue = verdict.bad_link.get(gtin) if gtin else None
         return {
             _ROW: index,
             **{f"c{n}": value for n, value in enumerate(sheet.rows[index])},
             _GTIN: gtin,
-            _VIDEO: verdict.missing_video.get(gtin, "") if gtin else "",
-            _WHY: verdict.not_eligible.get(gtin, "") if gtin else "",
+            _STATUS: status,
+            _DETAIL: detail,
+            _URL: (issue.url or "—") if issue else "",
         }
 
     every = [row_of(n) for n in range(len(sheet.rows))]
-    missing = [every[n] for n in unmatched]
-    held = [every[n] for n in matched if not verdict.is_eligible(str(every[n][_GTIN]))]
-    eligible = [every[n] for n in matched if verdict.is_eligible(str(every[n][_GTIN]))]
-    bare = [row for row in eligible if row[_VIDEO]]
     if not ticks.seeded:
-        ticks.unticked = unticked_by(eligible, saved)
+        ticks.unticked = unticked_by(every, saved)
         ticks.seeded = True
 
     if verdict.problem:
-        theme.band(f"No product can be called eligible: {verdict.problem}.", "danger")
+        theme.band(f"No product can run: {verdict.problem}.", "danger")
 
-    _readonly(
-        f"Not in the GS1 export ({len(missing)})",
-        "The export carries no row for these barcodes, so a run publishes nothing for them and "
-        "says nothing about them. Either the product is missing from the export — fix it in MyGS1 "
-        "and export again — or the barcode is wrong. They stay in your list either way, and have "
-        "no tick box because there is nothing to choose.",
-        columns,
-        missing,
-        collapsed=True,
+    grid = _scope_table(
+        [*columns, _short(_STATUS, "Status"), _wrapping(_DETAIL, "Detail")],
+        every,
+        untick=ticks.unticked,
     )
-    _readonly(
-        f"Not eligible — {_held_title(held)} ({len(held)})",
-        "The export carries these, and a run will hold them: a mandatory value is blank (fix it in "
-        "MyGS1 — it is never filled in here), or the client confirmed two videos for one language "
-        "and has to keep one. The Why column says which. They stay in your list, without a tick "
-        "box, and become eligible on their own once fixed.",
-        [*columns, _wrapping(_WHY, "Why")],
-        held,
-        collapsed=True,
-    )
-    _readonly(
-        f"Missing video(s) ({len(bare)})",
-        "Eligible, and in the table below — but the page goes live with no video in the language "
-        "named here. Every live run lists them again in its data-quality note. When the client "
-        "confirms a video, the next run adds it to the page.",
-        [*columns, _wrapping(_VIDEO, "Waiting on")],
-        bare,
-        collapsed=True,
-    )
+    issues = ui.column().classes("w-full gap-0 mt-6")
     names = {p.gtin14: (p.product_name.values.get("nl") or "") for p in products}
-    for kind, sentence in shared_barcode_notes(sheet, names):
-        theme.band(sentence, kind)
-    grid = _scope_table(columns, eligible, untick=ticks.unticked)
-    keys = {int(row[_ROW]) for row in eligible}
-    eligible_products = len({row[_GTIN] for row in eligible})
+    keys = {int(row[_ROW]) for row in every}
+    onward = "the preflight" if links_only else "the copy"
+
+    def draw_issues(ticked: list[dict[str, Any]]) -> None:
+        issues.clear()
+        with issues:
+            _issue_tables(columns, ticked, links_only=links_only)
+            chosen = {row[_GTIN] for row in ticked}
+            for gtin, kind, sentence in shared_barcode_notes(sheet, names):
+                if gtin in chosen:
+                    theme.band(sentence, kind)
 
     def describe() -> None:
         ticked = grid.selected
         ticks.unticked = keys - {int(row[_ROW]) for row in ticked}
-        caption.text = save_line(len({row[_GTIN] for row in ticked}), eligible_products)
-        counted(funnel(every, ticked, verdict, exported))
+        counts = funnel(every, ticked, verdict, exported)
+        caption.text = save_line(counts.selected, counts.can_run, onward=onward)
+        draw_issues(ticked)
+        counted(counts)
 
     grid.on_select(describe)
 
     def save() -> bool:
-        # The ticked rows and nothing else. Keeping the not-eligible rows too made every later
-        # screen count them as chosen — "24 of 118 ticked" for a batch of 3. The result sheet
-        # names them from the upload instead (``lib.result_sheet``).
-        chosen = batch_of(sheet, {int(row[_ROW]) for row in grid.selected}, target)
+        # The ticked rows that can run, and nothing else: the file a run reads *is* the batch, so a
+        # row in it the run then drops would be counted as chosen by every screen after this one.
+        chosen = batch_of(sheet, runnable_keys(grid.selected), target)
         try:
-            saved = process_list_edit.save_sheet(chosen)
+            saved_at = process_list_edit.save_sheet(chosen)
         except ProcessListError as exc:
             theme.notify_problem(str(exc))
             return False
-        record(saved, chosen)
+        record(saved_at, chosen)
         theme.notify_ok("Saved")
         return True
 
     commit["save"] = save
 
 
-def unticked_by(eligible: list[dict[str, Any]], saved: frozenset[str]) -> set[int]:
-    """The eligible rows the saved batch does not name — what a fresh build starts unticked. Pure.
+def _issue_tables(
+    columns: list[dict[str, Any]], ticked: list[dict[str, Any]], *, links_only: bool
+) -> None:
+    """What the ticked products still need, one folded table per reason. Empty tables are absent."""
+
+    def having(*statuses: str) -> list[dict[str, Any]]:
+        return [row for row in ticked if row[_STATUS] in statuses]
+
+    _readonly(
+        f"Not in the GS1 export ({len(having(NOT_IN_EXPORT))})",
+        "Ticked, but the export carries no row for these barcodes, so a run can do nothing for "
+        "them. Either the product is missing from the export — fix it in MyGS1 and export again — "
+        "or the barcode is wrong. Next leaves them out.",
+        columns,
+        having(NOT_IN_EXPORT),
+        collapsed=True,
+    )
+    if links_only:
+        _readonly(
+            f"Link doesn't work ({len(having(LINK_PROBLEM, CHECKING_LINK))})",
+            "Ticked, but the GS1 record would have nowhere sound to point: no address in Link "
+            "naar site and no page of ours, an address that is not on the client's site, or a "
+            "page that does not load. A GS1 record can never be deleted, so these are left out "
+            "until the address is fixed in your product list and the list is uploaded again.",
+            [*columns, _wrapping(_URL, "Address"), _wrapping(_DETAIL, "Problem")],
+            having(LINK_PROBLEM, CHECKING_LINK),
+            collapsed=True,
+        )
+        return
+    held = having(NOT_ELIGIBLE)
+    _readonly(
+        f"Not eligible — {_held_title(held)} ({len(held)})",
+        "Ticked, but a run will hold these: a mandatory value is blank (fix it in MyGS1 — it is "
+        "never filled in here), or the client confirmed two videos for one language and has to "
+        "keep one. The Why column says which. Next leaves them out; they can run once fixed.",
+        [*columns, _wrapping(_DETAIL, "Why")],
+        held,
+        collapsed=True,
+    )
+    _readonly(
+        f"Missing video(s) ({len(having(CAN_RUN_NO_VIDEO))})",
+        "Ticked and they will run — but the page goes live with no video in the language named "
+        "here. Every live run lists them again in its data-quality note. When the client confirms "
+        "a video, the next run adds it to the page.",
+        [*columns, _wrapping(_DETAIL, "Waiting on")],
+        having(CAN_RUN_NO_VIDEO),
+        collapsed=True,
+    )
+
+
+def runnable_keys(ticked: list[dict[str, Any]]) -> set[int]:
+    """The ticked rows Next writes: those a run will act on. Pure."""
+    return {int(row[_ROW]) for row in ticked if row[_STATUS] in RUNNABLE}
+
+
+def unticked_by(rows: list[dict[str, Any]], saved: frozenset[str]) -> set[int]:
+    """The rows the saved batch does not name — what a fresh build starts unticked. Pure.
 
     By barcode, not by row: the batch file is a subset of the upload and renumbers it. A barcode on
-    two rows of the upload is ticked on both, which is one product either way.
+    two rows of the upload is ticked on both, which is one product either way. A list just uploaded
+    *is* the saved batch, so every row of it arrives ticked and its problems show at once.
     """
-    return {int(row[_ROW]) for row in eligible if row[_GTIN] not in saved}
+    return {int(row[_ROW]) for row in rows if row[_GTIN] not in saved}
 
 
 def batch_of(sheet: ProcessListSheet, ticked: set[int], target: Path) -> ProcessListSheet:
@@ -339,8 +427,13 @@ def batch_of(sheet: ProcessListSheet, ticked: set[int], target: Path) -> Process
 
 def _held_title(held: list[dict[str, Any]]) -> str:
     """Name what the not-eligible table actually holds — a two-video product is not missing data."""
-    clash = any("two videos" in str(row[_WHY]) for row in held)
+    clash = any("two videos" in str(row[_DETAIL]) for row in held)
     return "missing data or two videos" if clash else "missing data"
+
+
+def _short(name: str, label: str) -> dict[str, Any]:
+    """A column of a few short words, sortable."""
+    return {"name": name, "label": label, "field": name, "align": "left", "sortable": True}
 
 
 def _wrapping(name: str, label: str) -> dict[str, Any]:
@@ -432,14 +525,15 @@ def _scope_table(
     the operator actually has, which is "show me the rows where *this* column says *that*".
     """
     theme.subhead(
-        f"Eligible ({len(rows)}) — tick the ones to publish",
+        f"Your products ({len(rows)}) — tick the ones in this batch",
         explain=(
-            "The saved batch arrives ticked — every eligible row, for a list just uploaded. Untick "
-            "a product to leave it out of this batch. "
-            "The Video column names the languages a product goes live without a video in. Filters "
-            "change only what you can see, never what is ticked, and the tick buttons act on the "
-            "rows the filters are showing — so you can filter to twenty rows, untick all twenty, "
-            "clear the filters, and the other eighty are exactly as you left them."
+            "Every row of your list. The saved batch arrives ticked — every row, for a list just "
+            "uploaded. Untick a product to leave it out. Status says what a run would do with it, "
+            "and Detail why; the tables under this one list the problems of the ticked products "
+            "only, and Next saves the ticked products that can run. Filters change only what you "
+            "can see, never what is ticked, and the tick buttons act on the rows the filters are "
+            "showing — so you can filter to twenty rows, untick all twenty, clear the filters, and "
+            "the other eighty are exactly as you left them."
         ),
     )
     selection = _Selection({int(row[_ROW]) for row in rows} - untick)
@@ -447,14 +541,7 @@ def _scope_table(
     # thing they control are read as a footer, and on a table this tall they are off screen.
     filters = ui.row().classes("items-end gap-3 w-full flex-wrap mt-3")
     bulk = ui.row().classes("items-center gap-3 mt-2 mb-1 flex-wrap")
-    held_column = {
-        "name": _VIDEO,
-        "label": "Video",
-        "field": _VIDEO,
-        "align": "left",
-        "sortable": True,
-    }
-    all_columns = [*columns, held_column]
+    all_columns = columns
     table = ui.table(
         columns=all_columns,
         rows=list(rows),

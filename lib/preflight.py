@@ -364,8 +364,13 @@ def load_video_status(cfg: ClientConfig, scoped: list[ProductRecord]) -> VideoSt
     )
 
 
-def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult:
+def check_scope(
+    cfg: ClientConfig, products: list[ProductRecord], *, links_only: bool = False
+) -> CheckResult:
     """State plainly how many products a run would touch, and what removed the rest.
+
+    ``links_only``: the batch writes GS1 links only, which the video rule does not hold — so it
+    is not mentioned, rather than reported as a hold the run will not apply.
 
     The number an operator most needs and is least often given. "38 GTINs on the list" and
     "15 GTINs a run can actually publish" are very different facts, and every gate between
@@ -394,8 +399,8 @@ def check_scope(cfg: ClientConfig, products: list[ProductRecord]) -> CheckResult
         detail += ", after " + " and ".join(reasons)
     # The video rule is reported as what it is — a hold on products that are in scope — rather
     # than as a narrowing that already happened.
-    held = held_for_video(cfg, scoped)
-    bare = without_video(cfg, scoped)
+    held = [] if links_only else held_for_video(cfg, scoped)
+    bare = [] if links_only else without_video(cfg, scoped)
     publishes_bare = (
         cfg.media is not None
         and cfg.media.restrict_to_mapped_gtins
@@ -1251,7 +1256,7 @@ def run_checks(
     products = load_products(cfg.client_id)
     results = [
         config,
-        check_scope(cfg, products),
+        check_scope(cfg, products, links_only=mode is Mode.LINKS),
         check_generator(cfg),
         check_generation_results(cfg, products),
         check_process_list(cfg),

@@ -129,27 +129,43 @@ both directions, and the button added next month is the case it would miss.
 
 ### Data
 
-**The screen is a procedure, so it is numbered.** Four filled numerals: **1** the product selection
+**The screen is a procedure, so it is numbered.** Five filled numerals: **1** the product selection
 list, **2** the export and **3** the video sign-off sheet, **three across** (`steps-3up`) because
 they are three documents from three places and none waits on another — the sheet's review renders
-full width under the row, where its column pickers fit; then the mapping, folded; **Coverage**; and
-**4** choosing and saving. A jump row under the title reaches each. Below 70rem the three stack.
+full width under the row, where its column pickers fit; *Clear all*; **4** what the batch publishes;
+**Coverage**; and **5** choosing and saving. A jump row under the title reaches each. Below 70rem the three stack.
 
-**Coverage is a funnel, in products:** in product list → eligible → selected, with *not eligible*
-(not in the export · held) and *missing video(s)* beside it. It is counted by
-`ui.batch_grid.funnel`, a pure function of the rows, the ticked rows and one
-`lib.eligibility.Eligibility` — which is itself `lib.holds.held_products` (the plan's E23/E24/E22, in
-the plan's order, with the E23 gaps) joined to the video status for words. So a tick box is offered
-on a product exactly when the plan would publish it; `tests/lib/test_eligibility.py` pins that under
-both settings of `media.publish_without_video`.
+**Step 5 is the selection first, and everything under it is about the selection** (operator,
+2026-10-09: "this way we are able to get the issues with the selected dataset and not the whole
+dataset"). The table at the top is **every row of the list**, each with a tick box, a short
+**Status** (`ui.batch_grid.row_status`: can run · can run · no video · not in the export · not
+eligible · link problem · checking link) and a **Detail**. Under it, one folded table per problem,
+holding only the **ticked** rows that have it — not in the GS1 export, then not eligible and missing
+video(s) for a batch that writes pages, or *link doesn't work* for a links batch. **Coverage counts
+the same ticked products** (`ui.batch_grid.funnel`): selected → can run, and why the rest cannot,
+with the list's size as context only.
 
-**Step 4 splits the list four ways, in reading order:** not in the GS1 export · not eligible (with a
-*Why* column) · missing video(s) · eligible. Only the last has tick boxes, and the first three start **folded** with their
-count in the title (operator feedback): they are reference, the eligible table is the work. A save keeps the ticked
-eligible rows **and every row that is not eligible**: nothing can run those, and keeping them is what
-lets the result sheet name them afterwards. Unticks live in a per-client `batch_grid.Ticks` for the
-life of the process, so a mapping write — which can make a product eligible — rebuilds step 4
-without costing a choice. A new list (or Clear all) forgets them, since every row renumbers.
+**Next saves the ticked rows that can run** (`runnable_keys`), never a ticked row the run would
+drop: the saved file is the batch, and such a row would read as chosen on every later screen. The
+caption names how many ticked products are left out before Next is pressed. Ticks are seeded from
+the saved batch by barcode (`unticked_by`), so a list just uploaded arrives fully ticked — its
+problems show at once — and a reload shows the batch that was saved.
+
+**Eligibility depends on what the batch publishes.** For pages and both it is
+`lib.eligibility.eligibility` — `lib.holds.held_products` (the plan's E23/E24/E22, in the plan's
+order) joined to the video status — so *can run* means exactly what the plan would publish;
+`tests/lib/test_eligibility.py` pins that. **A links-only batch is judged on its link alone**
+(`links_eligibility`): no video, image or mandatory page field holds it, because it writes no page,
+and `run_plan --links-only` and `run_execute --only links` drop those holds too. Its target is the
+*Link naar site* address or else this tool's own default-language page (`link_targets`), and it
+must be on the site's host and load: `lib.link_targets` checks each address once per process, off
+the event loop, following redirects and requiring a 2xx at the end — stricter than the run's own
+HEAD, which still refuses a non-serving target before every GS1 write. Until the answer arrives a
+row reads *checking link* and cannot run.
+
+Unticks live in a per-client `batch_grid.Ticks` for the life of the process, so a mapping write or
+a mode change rebuilds step 5 without costing a choice. A new list (or Clear all) forgets them,
+since every row renumbers.
 
 **Clear all — start fresh replaced *Start again from my uploaded file*.** Everything on the screen is
 read from disk, so the operator's question was never "undo my ticks" (re-uploading does that) but
@@ -335,6 +351,11 @@ any run could touch. Unticking one would not have stopped it being processed, si
 going to process it; it would only have deleted the evidence that a barcode on the list has no
 product behind it, which is the entire point of the table. Removing one is a spreadsheet edit and
 a re-upload.
+
+*Superseded 2026-10-09:* those rows now carry a tick box like every other, at the operator's
+request, because the problems listed under the table are the ticked rows' problems. The two
+questions are kept apart by the save, not by the control: a tick means *in this batch*, and Next
+writes only the ticked rows that can run, naming the rest.
 
 **When the export has not been parsed, the tables do not split.** Every row would land in "not in
 the export", which is not a finding but the absence of one — and it would leave the screen with no

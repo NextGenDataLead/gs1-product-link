@@ -509,6 +509,11 @@ class PlanDiff(NamedTuple):
     skipped: list[SkippedUnit]
 
 
+def _title_for(product: ProductRecord, language: str, default_language: str) -> str:
+    """The product's name in ``language``, else in the default language, else its barcode."""
+    return product.product_name.get(language, default_language) or product.gtin
+
+
 def _skip(gtin: str, language: str, reason: SkipReason, detail: str) -> SkippedUnit:
     """Record a dropped unit *and* log it, so the two can never say different things."""
     _log.warning("SKIPPED %s (%s): %s", gtin, language, detail)
@@ -525,6 +530,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
     mandatory_sources: dict[str, GdsnSource] | None = None,
     video_gate: VideoGate | None = None,
     hash_source: Mapping[str, ProductRecord] | None = None,
+    name_required: bool = True,
 ) -> PlanDiff:
     """Classify each ``(GTIN, language)`` against prior state, building plan rows (§4.8, §8.2).
 
@@ -591,6 +597,10 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
             on it beats silently hashing the enriched record for the one GTIN that was forgotten,
             which would reclassify exactly that row and nothing else. Defaults to ``None``, which
             hashes each product itself.
+        name_required: When False (a links-only plan), a language with no ``product_name`` is
+            kept rather than dropped (E18): it writes no page, and its name is only the label of
+            its link in the GS1 record, so it borrows the default language's name, or failing
+            that the barcode. A link needs an address, not a name (operator, 2026-10-09).
 
     Returns:
         A :class:`PlanDiff`: one :class:`~lib.records.PlanRow` per planned
@@ -644,7 +654,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
             continue
         hashed = product if hash_source is None else hash_source[product.gtin]
         for language in languages:
-            if language not in product.product_name.values:  # E18
+            if name_required and language not in product.product_name.values:  # E18
                 skipped.append(
                     _skip(
                         product.gtin,
@@ -654,7 +664,7 @@ def diff_against_state(  # noqa: PLR0913 — planning needs the products, baseli
                     )
                 )
                 continue
-            title = product.product_name.values[language]
+            title = _title_for(product, language, wordpress.default_language)
             prior = state.entries.get(product.gtin, {}).get(language)
             video_file = video_gate.file_for(product.gtin, language) if video_gate else None
             unit = _plan_unit(product, language, wordpress, patterns, hashed, prior, video_file)

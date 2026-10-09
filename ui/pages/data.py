@@ -36,6 +36,8 @@ says what the save will do before it is pressed.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -46,11 +48,12 @@ from nicegui import events, ui
 
 from lib import batch_reset, input_layout, provenance
 from lib.config import ClientConfig, ProcessListConfig
-from lib.eligibility import eligibility
+from lib.eligibility import eligibility_for, link_targets
 from lib.errors import ProcessListError
 from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Mode
 from lib.input_layout import export_archive_path, write_readme
-from lib.process_list import ProcessListSheet
+from lib.link_targets import check_targets, host_problem
+from lib.process_list import ProcessListSheet, listed_urls
 from ui import (
     REPO_ROOT,
     batch_grid,
@@ -108,6 +111,11 @@ class _Mode:
 
 #: One per client, for the life of the process. See :class:`_Mode`.
 _MODES: dict[str, _Mode] = {}
+
+#: What each link target answered, for the life of the process: ``url -> None`` (it loads) or the
+#: problem. Checked once per address and then remembered, so ticking does not re-fetch forty pages.
+#: A fixed page is seen again after a restart — or by the run, which checks every target anyway.
+_LINK_CHECKS: dict[str, str | None] = {}
 
 
 def _resolve(path: str) -> Path:
@@ -204,7 +212,17 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
                 if ready:
                     # Next only once something is ticked: nothing ticked is nothing to save, and a
                     # button that is pressable and then refuses is a button that seems broken.
-                    _choose(cfg, cid, commit, caption, ticks, coverage, mode, chosen=count_ticked)
+                    _choose(
+                        cfg,
+                        cid,
+                        commit,
+                        caption,
+                        ticks,
+                        coverage,
+                        mode,
+                        chosen=count_ticked,
+                        recheck=draw_choose,
+                    )
                 else:
                     caption.text = ""
                     theme.band(
@@ -285,10 +303,12 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
     mode: _Mode,
     *,
     chosen: Callable[[int], None],
+    recheck: Callable[[], None],
 ) -> None:
     """Read the list and the export, decide eligibility once, and build step 5 under it.
 
-    ``chosen`` hears how many products are ticked, every time that changes.
+    ``chosen`` hears how many ticked products can run, every time that changes. ``recheck``
+    rebuilds this step — called once the link checks of a links-only batch come back.
     """
     assert cfg.process_list is not None  # a batch is only ready with a list
     try:
@@ -301,7 +321,16 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
     named = {sheet.gtin14_at(index) for index in range(len(sheet.rows))}
     # Eligibility over the products *this list* names — the same set ``in_scope`` would give once
     # the list is saved, read from the sheet on screen so a fresh upload is judged at once.
-    verdict = eligibility(cfg, [product for product in products if product.gtin14 in named])
+    listed = [product for product in products if product.gtin14 in named]
+    links_only = mode.value is Mode.LINKS
+    targets: dict[str, str] = {}
+    if links_only:
+        targets = link_targets(
+            cfg, listed_urls(sheet, cfg.process_list.target_url_column), context.load_ledger(cid)
+        )
+        targets = {gtin: url for gtin, url in targets.items() if gtin in named}
+        _check_links(cfg, targets, recheck)
+    verdict = eligibility_for(cfg, listed, mode.value, targets=targets, checked=_LINK_CHECKS)
 
     def record(saved: Path, chosen: ProcessListSheet) -> None:
         # Which export these ticks were made against — so a run can say what it was chosen from.
@@ -317,20 +346,20 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
         )
 
     def counted(counts: batch_grid.Funnel) -> None:
-        batch_grid.draw_funnel(coverage, counts)
-        chosen(counts.selected)
+        batch_grid.draw_funnel(coverage, counts, links_only=links_only)
+        chosen(counts.can_run)
 
     with theme.section(
         "Choose the products and save",
         step=5,
         anchor="choose",
         explain=(
-            "Your list, split the way a run will treat it: not in the export, not eligible (and "
-            "why), missing a video, and the eligible products — the only ones you choose between. "
-            "Your saved batch arrives ticked, or every eligible row for a list just uploaded; "
-            "untick a product to leave it out of this batch. Next saves the ticked products — "
-            "exactly those, and nothing else, are what the next screens work on. Every save is "
-            "kept, dated, under process/selection/. Nothing is published here."
+            "Every product on your list, with what a run would do with it. Your saved batch "
+            "arrives ticked, or every row for a list just uploaded; untick a product to leave it "
+            "out. Under the list, the problems of the ticked products — and Coverage above counts "
+            "the ticked products too. Next saves the ticked products that can run — exactly "
+            "those, and nothing else, are what the next screens work on. Every save is kept, "
+            "dated, under process/selection/. Nothing is published here."
         ),
     ):
         batch_grid.choose(
@@ -344,7 +373,34 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             counted=counted,
             saved=batch.listed_gtins(),
             target=batch.path,
+            links_only=links_only,
         )
+
+
+def _check_links(cfg: ClientConfig, targets: dict[str, str], done: Callable[[], None]) -> None:
+    """Check the addresses not yet checked, off the event loop, then rebuild step 5 once.
+
+    Only the ones on the client's own host: an address elsewhere is refused for that alone and
+    is not fetched. Until the answers arrive those products read *checking link* and cannot run.
+    """
+    pending = sorted(
+        {
+            url
+            for url in targets.values()
+            if url not in _LINK_CHECKS and host_problem(url, cfg.wordpress.site_url) is None
+        }
+    )
+    if not pending:
+        return
+
+    async def check() -> None:
+        found = await asyncio.to_thread(check_targets, pending)
+        _LINK_CHECKS.update(found)
+        # The screen may have been left while the pages were fetched; the answers are kept.
+        with contextlib.suppress(RuntimeError):
+            done()
+
+    ui.timer(0, check, once=True)
 
 
 def _mode_section(current: Mode | None, picked: Callable[[Mode], None]) -> None:
