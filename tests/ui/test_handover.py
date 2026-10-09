@@ -10,7 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from ui import handover, runner, theme
+pytest.importorskip("nicegui", reason="the ui extra is not installed here")
+
+from ui import handover, runner, theme  # noqa: E402 — after the skip, which needs nicegui
 
 
 def test_a_report_is_copied_to_downloads_without_overwriting_and_opened(
