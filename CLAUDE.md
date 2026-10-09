@@ -107,6 +107,10 @@ drift silently. Read `docs/ui-operator-shell.md` before changing either.
   **never from anywhere under `ui/`**, which would put production secrets in a long-lived desktop
   process and arm the staging guards inside it. `tests/lib/test_env.py` enforces both with an AST
   check; it is not boilerplate.
+- **`GS1_DATA_DIR` separates data from code** (`lib/data_dir.py`). Unset, the repo is the data folder,
+  as it always was. Set, `.env`, `clients.yml`, `input/` and `output/` are read there, and every
+  entry point `enter_data_dir()`s into it from its `__main__` block — same rule, same AST test as
+  `load_env()`. Never build a data path from the code root; `tests/lib/test_data_dir.py` checks.
 - `clients.yml` (gitignored) holds config and the **names** of env vars, never values. `client_id` is
   optional on every script when exactly one client is defined.
 - CI: `ruff check`, `ruff format --check`, `mypy --strict lib`, `pytest`.

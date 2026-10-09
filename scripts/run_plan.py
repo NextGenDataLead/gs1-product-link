@@ -57,6 +57,7 @@ from pydantic import ValidationError
 
 from lib.categories import assign_categories
 from lib.config import ClientConfig, get_client
+from lib.data_dir import enter_data_dir
 from lib.env import load_env
 from lib.errors import ConfigError, GeneratorError, ProcessListError, StateError, VideoMapError
 from lib.generator import generation_context, load_results, merge_generated
@@ -570,5 +571,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    enter_data_dir()
     load_env()
     raise SystemExit(main())

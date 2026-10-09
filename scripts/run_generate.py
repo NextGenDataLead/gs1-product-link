@@ -67,6 +67,7 @@ from typing import Final, NamedTuple
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from lib.config import ClientConfig, get_client
+from lib.data_dir import enter_data_dir
 from lib.env import load_env
 from lib.errors import ConfigError, GeneratorError, LLMAPIError, MissingCredentialError
 from lib.generator import (
@@ -641,5 +642,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    enter_data_dir()
     load_env()
     raise SystemExit(main())

@@ -139,9 +139,25 @@ python -c "from lib.config import load_clients; print(sorted(load_clients('clien
 
 **Delete or replace the `democlient:` block before you configure your own client** — and do it properly, because the single-client default makes a leftover example load-bearing. With exactly one client defined, commands infer it and act on it without you naming it. So a `clients.yml` containing only the stale example means a bare `python -m scripts.run_plan` acts on **that** example; and a `clients.yml` containing the example *plus* yours makes the id mandatory again, so every command fails until you name one. Neither is dangerous — the example points at a site you have no credentials for — but both waste time.
 
+### Where the data lives — `GS1_DATA_DIR`
+
+By default the repository folder is also the data folder: `.env`, `clients.yml`, `input/` and
+`output/` (and in it `state.json`, the ledger of permanent GS1 writes) sit beside the code. Set
+**`GS1_DATA_DIR`** to an existing folder to keep them there instead, so that replacing or updating
+the code can never replace the ledger:
+
+```bash
+export GS1_DATA_DIR=~/gs1-data   # must exist; a missing folder is an error, not a fallback
+python -m scripts.doctor --offline   # reads ~/gs1-data/clients.yml, runs inside ~/gs1-data
+```
+
+Every script and the shell then work *inside* that folder, so relative paths — in `clients.yml`
+and on the command line — resolve against it. What ships with the code stays with the code:
+`schema/`, `reference/`, `templates/` and `clients.example.yml`. Unset, nothing changes.
+
 ### Secrets
 
-`clients.yml` holds only the **names** of environment variables — never a value. The values live in **`.env` at the repository root, which is the single source of truth** . `.env.example` documents every variable; copy it, fill it in, and keep it `chmod 600`. It is gitignored.
+`clients.yml` holds only the **names** of environment variables — never a value. The values live in **`.env` in the data folder — the repository root unless `GS1_DATA_DIR` says otherwise — which is the single source of truth**. `.env.example` documents every variable; copy it, fill it in, and keep it `chmod 600`. It is gitignored.
 
 Each script loads it for you. `python -m scripts.<name>` calls `load_env()` (`lib/env.py`) at process start, which reads `.env` with `override=False` — so a variable already exported in your shell still wins, and CI, which has no `.env`, is unaffected:
 

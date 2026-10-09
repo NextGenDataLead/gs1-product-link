@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from lib.config import get_client
+from lib.data_dir import enter_data_dir
 from lib.env import load_env
 from lib.errors import ConfigError, ProcessListError
 from lib.result_sheet import Sheets, build
@@ -174,5 +175,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    enter_data_dir()
     load_env()
     raise SystemExit(main())

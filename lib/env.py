@@ -1,9 +1,9 @@
 """Load ``.env`` into the process environment for command-line entry points.
 
-``.env`` at the repository root is the single source of truth for credentials (OD-1,
-``docs/OPEN_DECISIONS.md``). Nothing used to load it: the secrets reached the code only
-because Claude Code injected an ``env`` block from ``~/.claude/settings.json`` into every
-command it ran, which meant a script run from a plain terminal could not reach GS1 at all.
+``.env`` in the data folder (the repository root by default) is the single source of truth for
+credentials (OD-1, ``docs/OPEN_DECISIONS.md``). Nothing used to load it: the secrets reached the
+code only because Claude Code injected an ``env`` block from ``~/.claude/settings.json`` into
+every command it ran, which meant a script run from a plain terminal could not reach GS1 at all.
 
 ``override=False`` keeps real environment variables winning over the file, so CI and any
 deliberate one-off override still work.
@@ -29,15 +29,17 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from lib.data_dir import data_root
+
 _log = logging.getLogger(__name__)
 
-#: Repository-root ``.env``, resolved from this file rather than the working directory so a
-#: script behaves the same however it was invoked.
-ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+#: ``.env`` in the data folder (:mod:`lib.data_dir` — the repository root unless ``GS1_DATA_DIR``
+#: says otherwise), resolved absolutely so a script behaves the same however it was invoked.
+ENV_PATH: Path = data_root() / ".env"
 
 
 def load_env() -> bool:
-    """Load repository-root ``.env`` without overriding existing environment variables.
+    """Load the data folder's ``.env`` without overriding existing environment variables.
 
     Returns ``True`` if the file was found and read. A missing ``.env`` is not an error —
     the environment may legitimately be populated another way (CI, an exported shell) — so

@@ -33,10 +33,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from ui import REPO_ROOT
+from ui import DATA_ROOT
 
 #: Spelled out rather than imported from ``lib.env`` — see the module docstring.
-ENV_PATH: Final = REPO_ROOT / ".env"
+ENV_PATH: Final = DATA_ROOT / ".env"
 
 #: A WordPress application password is issued as six space-separated groups.
 APP_PASSWORD_GROUPS: Final = 6

@@ -37,7 +37,7 @@ from nicegui import ui
 
 from lib.config import DEFAULT_CLIENTS_PATH, ClientConfig
 from lib.errors import ConfigError
-from ui import REPO_ROOT, config_edit, context, env_edit, runner, theme
+from ui import DATA_ROOT, config_edit, context, env_edit, runner, theme
 from ui.form import FieldSet, Parsed, split_list
 
 #: WordPress multilingual plugins the pipeline has an adapter for. ``none`` is not "unknown": it
@@ -345,7 +345,7 @@ def _file_row(label: str, path: str) -> None:
     ):
         ui.label(label).classes("note")
         try:
-            shown = str(fact.path.relative_to(REPO_ROOT))
+            shown = str(fact.path.relative_to(DATA_ROOT))
         except ValueError:
             shown = str(fact.path)
         ui.label(shown).classes("mono scroll-x")

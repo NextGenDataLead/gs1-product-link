@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`GS1_DATA_DIR` — keep an installation's data apart from its code** (`lib/data_dir.py`). Unset,
+  nothing changes. Set, `.env`, `clients.yml`, `input/` and `output/` (with `state.json`) are read
+  from that folder, every script and the shell run inside it, and a folder that does not exist is
+  refused rather than quietly replaced by the repository. Groundwork for a container image and for
+  release-based installs whose updates cannot touch the ledger.
 - **The Data screen is a funnel: in product list → eligible → selected** (operator feedback,
   2026-10-06). The three uploads — selection list, GS1 export, video sign-off sheet — sit side by
   side, with the sheet's review full width under them. **Coverage** counts the batch in products,

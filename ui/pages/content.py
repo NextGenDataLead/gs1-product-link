@@ -38,7 +38,7 @@ from nicegui import ui
 
 from lib.config import ClientConfig, GeneratorConfig
 from lib.gates import Mode
-from ui import REPO_ROOT, content_session, context, env_edit, progress, runner, theme
+from ui import DATA_ROOT, content_session, context, env_edit, progress, runner, theme
 
 
 def render() -> None:
@@ -80,7 +80,7 @@ def render() -> None:
                 "and there is nothing to import."
             ).classes("note")
         else:
-            results_path = REPO_ROOT / "output" / cid / "data" / "generation_results.json"
+            results_path = DATA_ROOT / "output" / cid / "data" / "generation_results.json"
             resume = _live_screen(
                 cid, cfg, cfg.generator, results_path, list(cfg.wordpress.languages), unlock
             )

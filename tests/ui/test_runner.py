@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from ui import REPO_ROOT, runner
+from ui import DATA_ROOT, REPO_ROOT, runner
 
 
 def _inline(code: str) -> list[str]:
@@ -24,14 +24,14 @@ def _inline(code: str) -> list[str]:
     return ["-c", code]
 
 
-def test_the_child_runs_in_the_repo_root() -> None:
+def test_the_child_runs_in_the_data_folder() -> None:
     """Every output path in this project is built as ``Path("output") / …``, relative to cwd.
 
     A child launched from anywhere else writes the run log, the plan and the QR files into a
     directory nobody will look in — and reports success doing it.
     """
     result = runner.run(_inline("import os; print(os.getcwd())"))
-    assert Path(result.stdout.strip()) == REPO_ROOT
+    assert Path(result.stdout.strip()) == DATA_ROOT
 
 
 def test_stderr_is_kept_because_that_is_where_the_summary_is() -> None:

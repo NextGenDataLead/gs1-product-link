@@ -26,6 +26,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 
 from lib import gdsn
 from lib.config import ExportConfig, get_client
+from lib.data_dir import enter_data_dir
 from lib.env import load_env
 from lib.errors import ConfigError, ExportParseError
 from lib.records import ProductRecord, SourceIssue, _coerce_cell, parse_excel_row
@@ -213,5 +214,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    enter_data_dir()
     load_env()
     raise SystemExit(main())

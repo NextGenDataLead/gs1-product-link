@@ -56,7 +56,7 @@ from lib.issue_report import Issue, IssueReport
 from lib.link_targets import check_targets, host_problem
 from lib.process_list import ProcessListSheet, listed_urls
 from ui import (
-    REPO_ROOT,
+    DATA_ROOT,
     batch_grid,
     context,
     handover,
@@ -121,9 +121,9 @@ _LINK_CHECKS: dict[str, str | None] = {}
 
 
 def _resolve(path: str) -> Path:
-    """A configured path, against the repository root — every path in clients.yml is relative."""
+    """A configured path, against the data folder — every path in clients.yml is relative."""
     resolved = Path(path)
-    return resolved if resolved.is_absolute() else REPO_ROOT / resolved
+    return resolved if resolved.is_absolute() else DATA_ROOT / resolved
 
 
 def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one set of containers
@@ -537,7 +537,7 @@ def _clear_all(
             moved = batch_reset.clear_batch(
                 export=_resolve(cfg.export.path),
                 selection=_resolve(process_list.path),
-                products=REPO_ROOT / "output" / cid / "data" / "products.json",
+                products=DATA_ROOT / "output" / cid / "data" / "products.json",
                 stamp=datetime.now(UTC).strftime("%Y%m%dT%H%M%S"),
             )
         except (OSError, ValueError) as exc:
@@ -550,7 +550,7 @@ def _clear_all(
             return
         theme.announce(
             "Cleared — start fresh",
-            f"{len(moved)} file(s) set aside in {moved[0].parent.relative_to(REPO_ROOT)}. Upload "
+            f"{len(moved)} file(s) set aside in {moved[0].parent.relative_to(DATA_ROOT)}. Upload "
             "the selection list and the export to begin a new batch. The video mapping is as it "
             "was.",
         )
@@ -779,7 +779,7 @@ def _issue_report(cid: str, built: IssueReport) -> None:
             # again; then a copy in Downloads, opened in the operator's own PDF reader or Excel.
             now = datetime.now(UTC)
             dated = replace(built, subtitle=f"{built.subtitle} {now:%Y-%m-%d %H:%M} UTC.")
-            path = REPO_ROOT / "output" / cid / "reports"
+            path = DATA_ROOT / "output" / cid / "reports"
             path = path / f"issues-selection-{now:%Y%m%dT%H%M%S}.{kind}"
             path.parent.mkdir(parents=True, exist_ok=True)
             write = issue_report_files.write_pdf if kind == "pdf" else issue_report_files.write_xlsx

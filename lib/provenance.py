@@ -167,7 +167,7 @@ def history_path(export: Path) -> Path | None:
     Takes a **path and not a config**, like everything else here. Configured paths are relative and
     nothing in this module knows what they are relative *to*: ``scripts/`` runs with the repository
     as its working directory, while the shell is a long-lived process started from wherever the
-    operator double-clicked and resolves every configured path against ``ui.REPO_ROOT`` itself.
+    operator double-clicked and resolves every configured path against ``ui.DATA_ROOT`` itself.
     Resolving here would have picked the wrong one of those two, silently, and written a second
     ledger next to nothing.
     """

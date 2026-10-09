@@ -48,7 +48,7 @@ def test_does_not_override_an_existing_variable(
 
 
 def test_env_path_resolves_to_the_repository_root() -> None:
-    """Resolved from the module's own location, so the working directory is irrelevant."""
+    """With ``GS1_DATA_DIR`` unset (``conftest.py`` drops it), ``.env`` is the repository's."""
     assert env_module.ENV_PATH == _REPO_ROOT / ".env"
 
 
@@ -143,9 +143,12 @@ def _imported_modules(tree: ast.AST) -> set[str]:
     return modules
 
 
-def test_scripts_call_load_env_from_main_block_not_from_main() -> None:
-    """Tests call ``main()`` directly, so a call sited there would load ``.env`` under pytest.
+@pytest.mark.parametrize("entry_call", ["load_env", "enter_data_dir"])
+def test_scripts_call_entry_setup_from_main_block_not_from_main(entry_call: str) -> None:
+    """Tests call ``main()`` directly, so a call sited there would run under pytest.
 
+    For ``load_env`` that loads production credentials into the pytest process; for
+    ``enter_data_dir`` it moves the test run's working directory into a real installation's data.
     Asserts the call is a direct statement of the module-level ``if __name__ == "__main__":``
     block, and that no function body anywhere in the module calls it.
     """
@@ -160,25 +163,25 @@ def test_scripts_call_load_env_from_main_block_not_from_main() -> None:
                 isinstance(stmt, ast.Expr)
                 and isinstance(stmt.value, ast.Call)
                 and isinstance(stmt.value.func, ast.Name)
-                and stmt.value.func.id == "load_env"
+                and stmt.value.func.id == entry_call
                 for stmt in node.body
             )
             for node in tree.body
         )
-        assert in_main_block, f"{path.name}: load_env() is not called in the __main__ block"
+        assert in_main_block, f"{path.name}: {entry_call}() is not called in the __main__ block"
 
         for func in ast.walk(tree):
             if not isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
-            calls_load_env = any(
+            calls_it = any(
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id == "load_env"
+                and node.func.id == entry_call
                 for node in ast.walk(func)
             )
-            assert not calls_load_env, (
-                f"{path.name}: load_env() is called inside {func.name}() — tests call main() "
-                "directly, so this would load production credentials into the pytest process"
+            assert not calls_it, (
+                f"{path.name}: {entry_call}() is called inside {func.name}() — tests call main() "
+                "directly, so it would run inside the pytest process"
             )
 
 
