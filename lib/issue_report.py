@@ -76,6 +76,13 @@ NO_VIDEO: Final = Category(
     True,
     "Confirm a video for the language named.",
 )
+NO_CONTRACT: Final = Category(
+    "no_contract",
+    "Refused by GS1: no valid contract",
+    True,
+    "GS1 refused the link with 'No valid contract found'. Check with GS1 Nederland that the "
+    "Digital Link contract on the account covers these barcodes, then run them again.",
+)
 LINK: Final = Category(
     "link",
     "Page link does not work",
@@ -122,6 +129,7 @@ CATEGORIES: Final = (
     NO_IMAGE_CATEGORY,
     TWO_VIDEOS,
     NO_VIDEO,
+    NO_CONTRACT,
     LINK,
     NO_TEXT,
     RUN_ERROR,
@@ -143,6 +151,10 @@ _BY_SKIP: Final = {
     SkipReason.MISSING_MANDATORY_FIELD.value: MISSING_DATA,
     SkipReason.NO_CONFIRMED_VIDEO.value: NO_VIDEO,
 }
+
+#: GS1's refusal when the account's Digital Link contract does not cover a barcode (21011). Tried
+#: and reported, never predicted: a barcode can be on the client's GS1 account and still get it.
+_NO_CONTRACT: Final = "No valid contract found"
 
 #: Long technical errors are cut here; the full text is in the run log.
 _MAX_ERROR: Final = 120
@@ -292,17 +304,22 @@ def with_ticked(
     ticked_issues: Sequence[Issue],
     ran: Sequence[str],
     issues: Sequence[Issue],
+    not_in_run: Collection[str] = (),
 ) -> tuple[list[str], list[Issue]]:
     """A run's report widened to every product the operator **ticked** — the Data screen's report.
 
     The ticked products the run never received (Next saves only those that can run) keep the reason
     the screen gave them; the ones it ran are reported on what the run did. Returns the products by
     barcode — ticked order, then any the run had that were not ticked — and their issues.
+
+    ``not_in_run`` are ticked products the operator left out of *this* run when confirming the plan
+    — say the 25 already live when only 6 were re-tried. They are not this run's, and not failures.
     """
     ran_set = set(ran)
-    order = [gtin for gtin, _ in ticked_products]
+    skip = set(not_in_run)
+    order = [gtin for gtin, _ in ticked_products if gtin not in skip]
     order += [gtin for gtin in ran if gtin not in set(order)]
-    left_out = [issue for issue in ticked_issues if issue.gtin not in ran_set]
+    left_out = [i for i in ticked_issues if i.gtin not in ran_set and i.gtin not in skip]
     return order, _ordered([*left_out, *issues])
 
 
@@ -327,6 +344,8 @@ def _categorise(part: str) -> tuple[Category, str]:
 
 def _unit_issue(status: str, detail: str) -> tuple[Category | None, str]:
     """What one language of a run's product says about it, or ``(None, "")`` when it is fine."""
+    if status == "error" and _NO_CONTRACT in detail:
+        return NO_CONTRACT, "GS1 refused the link: 'No valid contract found' (code 21011)"
     if status == "error":
         return RUN_ERROR, _plain_error(detail)
     if status == UNIT_NOT_RUN:

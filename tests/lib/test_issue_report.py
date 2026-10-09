@@ -12,6 +12,7 @@ from lib.issue_report import (
     LINK,
     MISSING_DATA,
     MISSING_VIDEO,
+    NO_CONTRACT,
     NO_IMAGE_CATEGORY,
     NO_NAME,
     NO_VIDEO,
@@ -256,4 +257,34 @@ def test_the_run_report_covers_every_ticked_product_as_the_screen_did() -> None:
     assert report.selected == (A, C, B)
     assert [gtin for gtin, _ in report.failed] == [C, B]
     assert [(i.gtin, i.category) for i in report.issues] == [(C, NOT_IN_EXPORT), (B, RUN_ERROR)]
-    assert "3 product(s) ticked, 2 of them in this run." in report.subtitle
+    assert "2 product(s) in this run, 1 more ticked that could not run." in report.subtitle
+
+
+def test_products_left_out_of_this_run_are_not_reported_as_failed() -> None:
+    """Operator, 2026-10-10: a re-try of 6 of 31 reported the other 25 — live — as failed."""
+    refused = UnitResult("error", "", "GS1 21011 No valid contract found.")
+    rows = [
+        _scope(A, IN_SCOPE, nl=refused, fr=refused),
+        _scope(B, IN_SCOPE, nl=UnitResult("not run", "", ""), fr=UnitResult("not run", "", "")),
+        _scope(C, IN_SCOPE, nl=UnitResult("not run", "", ""), fr=UnitResult("not run", "", "")),
+    ]
+
+    report = issue_report_files.for_run(
+        "t",
+        "20261010T000000Z",
+        rows,
+        [],
+        [],
+        mode="links",
+        dry_run=False,
+        default_language="nl",
+        ticked=ticked_snapshot.Ticked(((A, "a"), (B, "b"), (C, "c")), ()),
+        confirmed={A, C},
+    )
+
+    assert report.selected == (A, C), "B was not confirmed for this run, so it is not in it"
+    assert [(gtin, i.category) for gtin, _ in report.failed for i in report.reasons_of(gtin)] == [
+        (A, NO_CONTRACT),
+        (C, NOT_RUN),
+    ], "C was confirmed and never reached — that one is a failure"
+    assert "1 other(s) in the batch were not part of this run" in report.subtitle

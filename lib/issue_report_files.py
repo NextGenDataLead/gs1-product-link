@@ -20,9 +20,11 @@ from fpdf.fonts import FontFace
 from lib.issue_report import IssueReport, run_issues, with_ticked
 from lib.media_video import canon_gtin
 from lib.result_sheet import write_workbook
+from lib.scope_report import IN_SCOPE
+from lib.scope_report import NOT_RUN as UNIT_NOT_RUN
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from lib.records import ProductRecord, RunOutcome
     from lib.scope_report import ScopeRow
@@ -62,6 +64,7 @@ def for_run(  # noqa: PLR0913 — what one run was, each named
     default_language: str,
     expected_without_video: Mapping[str, str] | None = None,
     ticked: Ticked | None = None,
+    confirmed: Collection[str] | None = None,
 ) -> IssueReport:
     """The report for one run: the products it was given, and what stopped or marked them.
 
@@ -71,7 +74,24 @@ def for_run(  # noqa: PLR0913 — what one run was, each named
 
     With ``ticked`` — what the Data screen saved at Next — the report covers every ticked product,
     as the screen's did: those the run never received keep the screen's reason.
+
+    ``confirmed`` — the barcodes the operator confirmed for this run. A product in the batch the
+    plan neither confirmed nor held was left out on purpose, so it is left out of the report too
+    (operator, 2026-10-10: a re-try of 6 of 31 must not report the other 25 as failed). Only a
+    confirmed product with nothing in the log is *not reached*.
     """
+    not_in_run: set[str] = set()
+    if confirmed is not None:
+        wanted = set(confirmed)
+        not_in_run = {
+            row.gtin
+            for row in rows
+            if row.in_scope == IN_SCOPE
+            and row.gtin is not None
+            and row.gtin not in wanted
+            and all(unit.status == UNIT_NOT_RUN for unit in row.units.values())
+        }
+        rows = [row for row in rows if row.gtin not in not_in_run]
     names = {p.gtin14: p.product_name.get(default_language) or "" for p in products}
     if dry_run:
         bare = dict(expected_without_video or {})
@@ -83,11 +103,17 @@ def for_run(  # noqa: PLR0913 — what one run was, each named
         bare = {gtin: f"no video in {', '.join(found)}" for gtin, found in languages.items()}
     selected, issues = run_issues(rows, names, writes_pages=mode != "links", without_video=bare)
     kind = "Dry run" if dry_run else "Run"
-    scope = f"{len(selected)} product(s) in this run."
+    ran = len(selected)
+    scope = f"{ran} product(s) in this run"
     if ticked is not None:
-        ran = len(selected)
-        selected, issues = with_ticked(ticked.products, ticked.issues, selected, issues)
-        scope = f"{len(selected)} product(s) ticked, {ran} of them in this run."
+        selected, issues = with_ticked(
+            ticked.products, ticked.issues, selected, issues, not_in_run=not_in_run
+        )
+        if len(selected) > ran:
+            scope += f", {len(selected) - ran} more ticked that could not run"
+    if not_in_run:
+        scope += f"; {len(not_in_run)} other(s) in the batch were not part of this run"
+    scope += "."
     return IssueReport(
         title=title,
         subtitle=f"{kind} {stamp} - {mode} - {scope}",
