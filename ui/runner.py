@@ -26,6 +26,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
+from lib.gates import Mode
 from ui import REPO_ROOT
 
 #: Exit codes are uniform across all the scripts (docs/troubleshooting.md).
@@ -210,13 +211,17 @@ async def run_off_the_loop(
 # rather than a convenience.
 
 
-def doctor_argv(client_id: str | None, *, offline: bool = False) -> list[str]:
-    """The preflight, as JSON."""
+def doctor_argv(
+    client_id: str | None, *, offline: bool = False, mode: Mode | None = None
+) -> list[str]:
+    """The preflight, as JSON — for what the batch publishes, when that is known."""
     argv = ["-m", "scripts.doctor", "--json"]
     if client_id:
         argv.append(client_id)
     if offline:
         argv.append("--offline")
+    if mode is not None:
+        argv += ["--mode", mode.value]
     return argv
 
 

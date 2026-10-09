@@ -1,4 +1,4 @@
-"""Step 4 of the Data screen, and the coverage funnel above it: which products are in the batch.
+"""Step 5 of the Data screen, and the coverage funnel above it: which products are in the batch.
 
 The list is joined against the export and split the way a run will treat it, **in the order the
 operator reads it**:
@@ -124,7 +124,7 @@ def draw_funnel(box: ui.element, counts: Funnel) -> None:
             explain=(
                 "The batch in products — a barcode on two rows of your list is one product. In "
                 "product list → eligible (the export carries it and nothing holds it) → selected "
-                "(eligible and ticked in step 4, which is what Next saves). The two on the right "
+                "(eligible and ticked in step 5, which is what Next saves). The two on the right "
                 "are why the others fell out, and how many will go live without a video."
             ),
         )
@@ -135,7 +135,7 @@ def draw_funnel(box: ui.element, counts: Funnel) -> None:
             theme.figure(
                 str(counts.not_in_export + counts.not_eligible),
                 "not eligible",
-                f"{counts.not_in_export} not in the export · {counts.not_eligible} held (step 4)",
+                f"{counts.not_in_export} not in the export · {counts.not_eligible} held (step 5)",
             )
             theme.figure(
                 str(counts.missing_video),

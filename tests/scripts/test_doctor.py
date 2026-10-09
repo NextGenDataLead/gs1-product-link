@@ -118,3 +118,21 @@ def test_config_path_is_passed_through(monkeypatch: pytest.MonkeyPatch, tmp_path
     doctor.main(["acme", "--config", str(tmp_path / "candidate.yml")])
 
     assert seen["config_path"] == str(tmp_path / "candidate.yml")
+
+
+def test_the_batch_mode_is_passed_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lib.gates import Mode  # noqa: PLC0415
+
+    seen = _patch_checks(monkeypatch, _results(Status.OK))
+
+    doctor.main(["acme", "--mode", "links"])
+
+    assert seen["mode"] is Mode.LINKS
+
+
+def test_no_mode_checks_everything(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _patch_checks(monkeypatch, _results(Status.OK))
+
+    doctor.main(["acme"])
+
+    assert "mode" not in seen

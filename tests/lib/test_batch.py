@@ -14,6 +14,7 @@ import openpyxl
 import pytest
 
 from lib.batch import Chosen, in_force
+from lib.gates import Mode
 from lib.input_layout import PROCESS_DIR, archive_path
 from lib.provenance import (
     History,
@@ -257,3 +258,56 @@ def test_a_client_outside_the_layout_still_describes_its_files(tmp_path: Path) -
 
     assert batch.ready
     assert batch.chosen_against is Chosen.NOT_RECORDED
+
+
+# --- What the batch publishes ------------------------------------------------
+
+
+def _save_with_mode(client: Path, export: Path, mode: str | None, stamp: str) -> None:
+    selection = client / PROCESS_DIR / "selection" / "selections.xlsx"
+    saved = client / PROCESS_DIR / "selection" / f"selection-{stamp}.xlsx"
+    saved.write_bytes(selection.read_bytes())
+    record_selection(
+        history_path(export),
+        saved,
+        product_list=archive_path(selection),
+        export=export,
+        mode=mode,  # type: ignore[arg-type]
+    )
+
+
+def test_the_mode_saved_with_this_selection_is_the_batchs_mode(client: Path) -> None:
+    export = _export(client)
+    _list(client / PROCESS_DIR / "selection" / "selections.xlsx", [GTIN_A])
+    _save_with_mode(client, export, "links", "20261009T100000")
+
+    assert _describe(client).mode is Mode.LINKS
+
+
+def test_saving_the_same_ticks_again_with_another_mode_changes_it(client: Path) -> None:
+    """The operator changes only the run type and presses Next: the newest save wins."""
+    export = _export(client)
+    _list(client / PROCESS_DIR / "selection" / "selections.xlsx", [GTIN_A])
+    _save_with_mode(client, export, "links", "20261009T100000")
+    _save_with_mode(client, export, "both", "20261009T100500")
+
+    assert _describe(client).mode is Mode.BOTH
+
+
+def test_a_selection_saved_without_a_mode_has_none_never_a_default(client: Path) -> None:
+    export = _export(client)
+    _list(client / PROCESS_DIR / "selection" / "selections.xlsx", [GTIN_A])
+    _save_with_mode(client, export, None, "20261009T100000")
+
+    assert _describe(client).mode is None
+
+
+def test_a_selection_replaced_outside_the_shell_does_not_inherit_a_mode(client: Path) -> None:
+    """Matched on the live file's bytes, like the export agreement: a later file is another."""
+    export = _export(client)
+    selection = client / PROCESS_DIR / "selection" / "selections.xlsx"
+    _list(selection, [GTIN_A])
+    _save_with_mode(client, export, "links", "20261009T100000")
+    _list(selection, [GTIN_A, GTIN_B])
+
+    assert _describe(client).mode is None

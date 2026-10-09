@@ -56,7 +56,15 @@ HISTORY_NAME: Final = "history.jsonl"
 #: version is counted as unreadable rather than half-understood: pydantic would otherwise drop the
 #: keys it did not expect and hand back a record that looks complete. That is the failure
 #: ``one-field-two-questions`` is about, and the reason this field exists at all.
-VERSION: Final = 1
+#:
+#: 2 added a selection's ``mode``. Older lines are still read — the new field is optional and a
+#: version-1 line simply has none — so :data:`_READABLE` names every version this code understands.
+VERSION: Final = 2
+_READABLE: Final = frozenset({1, VERSION})
+
+#: What a batch publishes — ``lib.gates.Mode``'s values, spelled out because ``lib.gates`` is a
+#: consumer of this module's records and must not become a dependency of it.
+RunMode = Literal["pages", "links", "both"]
 
 #: What a recorded document is. Not a second field beside a ``kind`` saying the same thing — one
 #: value, because two fields answering one question is how they come to disagree.
@@ -94,6 +102,9 @@ class Recorded(BaseModel):
     of: SourceRef
     #: Keyed by :data:`What`. Empty for an upload, which came from outside the tool.
     sources: dict[str, SourceRef] = {}
+    #: A selection's only: what the operator chose to publish with it, on the Data screen. ``None``
+    #: on every upload and on a selection saved before the choice moved there — never a default.
+    mode: RunMode | None = None
 
 
 class RunInputs(BaseModel):
@@ -217,7 +228,7 @@ def read(path: Path | None) -> History:
         except json.JSONDecodeError:
             unreadable += 1
             continue
-        if not isinstance(data, dict) or data.get("v") != VERSION:
+        if not isinstance(data, dict) or data.get("v") not in _READABLE:
             unreadable += 1
             continue
         try:
@@ -307,15 +318,16 @@ def record_upload(
     return append(history, Recorded(what=what, at=datetime.now(UTC), of=ref))
 
 
-def record_selection(
+def record_selection(  # noqa: PLR0913 — the save, its two sources, and what it says about them
     history: Path | None,
     saved: Path,
     *,
     product_list: Path,
     export: Path,
     rows: int | None = None,
+    mode: RunMode | None = None,
 ) -> bool:
-    """Record a save: the dated selection, and the two documents it was chosen from.
+    """Record a save: the dated selection, the two documents it was chosen from, and its mode.
 
     Both sources are resolved by hashing the file **on disk now**, rather than by trusting the last
     upload record. That is deliberate — an export replaced outside the shell, or a client set up
@@ -338,7 +350,7 @@ def record_selection(
             sources[what] = found
     return append(
         history,
-        Recorded(what="selection", at=datetime.now(UTC), of=ref, sources=sources),
+        Recorded(what="selection", at=datetime.now(UTC), of=ref, sources=sources, mode=mode),
     )
 
 
@@ -387,7 +399,7 @@ def read_run(path: Path) -> RunInputs | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(data, dict) or data.get("v") != VERSION:
+    if not isinstance(data, dict) or data.get("v") not in _READABLE:
         return None
     try:
         return RunInputs.model_validate(data)

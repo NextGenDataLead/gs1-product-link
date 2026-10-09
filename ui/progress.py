@@ -12,6 +12,10 @@ pressed there again. Pressing Next without changing anything costs one save of t
 The screens under *This machine* — Setup, Runs, the video mapping — are not steps and are always
 open: they describe the machine and past runs, not the batch in progress.
 
+**A step the batch does not need is passed over, not hidden.** A links-only batch writes no page,
+so it has no copy to write: Next on Data opens Preflight directly, and Content stays reachable
+behind it (it says there is nothing to do). Visiting it still re-locks what follows, like any step.
+
 **Per process, per client, never persisted.** A restart is a new session and starts at Data; that
 is the point, since the restart is where the screens most easily disagree. Pure apart from the one
 module-level dict, so the rule is tested without a browser.
@@ -22,8 +26,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from lib.gates import Mode
+
 #: The batch's steps, in order. A route not in here is not a step and is never locked.
 STEPS: Final = ("/data", "/content", "/preflight", "/publish")
+
+
+def not_needed(mode: Mode | None) -> frozenset[str]:
+    """The steps a batch publishing in ``mode`` has nothing to do in.
+
+    Content writes page copy, so a links-only batch — which writes no page — skips it. An unknown
+    mode skips nothing: passing a step over is a claim about the batch, and there is none to make.
+    """
+    return frozenset({"/content"}) if mode is Mode.LINKS else frozenset()
 
 
 @dataclass
@@ -46,13 +61,24 @@ class Progress:
         self.reached = index
         return None
 
-    def advance(self, route: str) -> None:
-        """Next was pressed on ``route``: open the step after it — and nothing further."""
+    def advance(self, route: str, *, skip: frozenset[str] = frozenset()) -> str | None:
+        """Next was pressed on ``route``: open the step after it — and nothing further.
+
+        ``skip`` names steps this batch does not need; they are passed over, so the step after
+        them opens instead. Returns the route that opened, or ``None`` when nothing did.
+        """
         if route not in STEPS:
-            return
+            return None
         index = STEPS.index(route)
-        if index == self.reached and index + 1 < len(STEPS):
-            self.reached = index + 1
+        if index != self.reached:
+            return None
+        following = index + 1
+        while following < len(STEPS) - 1 and STEPS[following] in skip:
+            following += 1
+        if following >= len(STEPS):
+            return None
+        self.reached = following
+        return STEPS[following]
 
     def locked(self) -> set[str]:
         """The steps this session may not open yet."""

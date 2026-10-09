@@ -86,6 +86,16 @@ def render() -> None:
                 route="/setup",
             )
             return
+        if cfg.process_list is not None and context.batch_mode(cfg) is None:
+            # The mode is chosen with the batch now, on Data. Defaulting it here would be the one
+            # guess this screen must never make: half the modes are permanent.
+            theme.blocked(
+                "This batch does not say what it publishes yet. Choose pages, links or both on the "
+                "Data screen (step 4) and press Next there.",
+                link_label="Open Data →",
+                route="/data",
+            )
+            return
         _Flow(cid, cfg).build()
 
 
@@ -115,9 +125,12 @@ class _Flow:
         self.cid = cid
         self.cfg = cfg
         self.production = context.is_production(cfg)
+        #: Whether the batch carries its mode (chosen on Data). Only a client with no selection
+        #: list — nothing to save a mode with — still picks it here.
+        self.mode_from_batch = cfg.process_list is not None
         self.session = PublishSession(
             client_id=cid,
-            mode=Mode.PAGES,
+            mode=context.batch_mode(cfg) or Mode.PAGES,
             has_generator=cfg.generator is not None,
             is_production=self.production,
             languages=list(cfg.wordpress.languages),
@@ -170,7 +183,9 @@ class _Flow:
             for unit in (plan.skipped if plan else ())
             if unit.reason is SkipReason.MISSING_PRODUCT_NAME
         )
-        self.doctor, _ = runner.run_json(runner.doctor_argv(self.cid, offline=True))
+        self.doctor, _ = runner.run_json(
+            runner.doctor_argv(self.cid, offline=True, mode=self.session.mode)
+        )
         self.body.clear()
         with self.body:
             if self.session.mode.is_permanent:
@@ -291,7 +306,13 @@ class _Flow:
         self._options(gate)
 
     def _gate_intent(self, gate: Gate) -> None:
-        """Gate 0 is the mode and Confirm / Change mode / Cancel — nothing else.
+        """Gate 0 is the mode and Confirm / Change / Cancel — nothing else.
+
+        **The mode is chosen on the Data screen now** (operator, 2026-10-09), because it decides
+        what a batch needs before anything is counted — a links-only batch skips Content and most
+        of the preflight. So this gate *shows* the batch's mode and asks for it to be confirmed;
+        changing it means going back to Data, where the selection is judged for the new mode. The
+        confirmation stays: a mode remembered with a batch is not a run approved.
 
         Operator, 2026-10-07: "remove all info but the buttons from step 0". It carried the scope
         figures, the export path and age, the environment and three notes, and the one decision it
@@ -301,6 +322,28 @@ class _Flow:
         environment, Preflight checked the scope and the export, gate 5 shows the rows, and gate 8
         asks about production on its own.
         """
+
+        if self.mode_from_batch:
+            mode = self.session.mode
+            ui.label(f"This batch publishes {mode.value} — {mode.summary}").classes(
+                "gate-title mb-3"
+            )
+            with ui.row().classes("gap-3 flex-wrap"):
+                for option in gate.shell_options:
+                    if option.value == "change-mode":
+                        theme.quiet_action(
+                            "Change on the Data screen", lambda: ui.navigate.to("/data")
+                        ).tooltip("The mode is saved with the batch; choose again on Data")
+                        continue
+                    place = theme.action if option.proceeds else theme.quiet_action
+                    place(
+                        option.label,
+                        lambda o=option: self._answer(gate.id, o.value),  # type: ignore[misc]
+                    ).tooltip(option.consequence)
+            chosen = self.session.chosen(gate.id)
+            if chosen is not None:
+                ui.label(f"Answered: {chosen.label}").classes("note mt-2")
+            return
 
         def pick(value: str) -> None:
             self.session.mode = Mode(value)

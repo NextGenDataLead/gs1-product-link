@@ -38,6 +38,7 @@ import json
 import sys
 
 from lib.env import load_env
+from lib.gates import Mode
 from lib.preflight import CheckResult, Status, run_checks, worst_status
 
 _EXIT_OK = 0
@@ -74,6 +75,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--json", action="store_true", help="Emit the results as JSON instead of prose"
     )
     parser.add_argument("--config", help="Path to clients.yml (default: the repo's own)")
+    parser.add_argument(
+        "--mode",
+        choices=[mode.value for mode in Mode],
+        help="What the batch publishes; 'links' skips the checks only a page needs",
+    )
     return parser.parse_args(argv)
 
 
@@ -116,9 +122,11 @@ def _verdict(results: list[CheckResult]) -> str:
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns the process exit code."""
     args = _parse_args(argv)
-    kwargs = {"offline": args.offline}
+    kwargs: dict[str, object] = {"offline": args.offline}
     if args.config:
         kwargs["config_path"] = args.config
+    if args.mode:
+        kwargs["mode"] = Mode(args.mode)
     results = run_checks(args.client_id, **kwargs)  # type: ignore[arg-type]
 
     if args.json:

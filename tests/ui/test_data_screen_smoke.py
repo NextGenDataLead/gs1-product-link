@@ -80,7 +80,7 @@ async def _get(route: str) -> httpx.Response:
             return await client.get(route)
 
 
-def test_the_data_screen_builds_with_four_steps_and_no_mapping_editor(
+def test_the_data_screen_builds_with_five_steps_and_no_mapping_editor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import ui.app  # noqa: F401, PLC0415 — importing registers the routes
@@ -95,11 +95,12 @@ def test_the_data_screen_builds_with_four_steps_and_no_mapping_editor(
     assert response.status_code == 200
     html = response.text
     # The numerals live in NiceGUI's serialised element tree, not in tags — count the class.
-    assert html.count("step-num") == 4
+    assert html.count("step-num") == 5
     for title in (
         "Upload the product selection list",
         "Upload the GS1 export",
         "Upload the video sign-off sheet",
+        "What this batch publishes",
         "Choose the products and save",
         "Data quality",
     ):
