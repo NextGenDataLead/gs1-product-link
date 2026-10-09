@@ -798,6 +798,29 @@ def test_diff_missing_product_name_for_language_is_omitted(
     assert skipped[0].detail in caplog.text  # the record and the warning say the same thing
 
 
+def test_a_links_plan_keeps_a_language_with_no_product_name() -> None:
+    """Operator, 2026-10-09: a link needs an address, not a name.
+
+    The name is only the link's label in the record, so a missing one borrows the default
+    language's name instead of dropping the language — and, with no name at all, the barcode.
+    """
+    product = _product(product_name=LocalisedText(values={"nl": "Rugsteun"}))  # no fr
+    nameless = _product(gtin="08713195000010", product_name=LocalisedText(values={}))
+
+    rows, skipped = diff_against_state(
+        [product, nameless],
+        State(client_id="noviplast", entries={}),
+        ["nl", "fr"],
+        _wp(),
+        name_required=False,
+    )
+
+    assert skipped == []
+    titles = {(r.gtin, r.language): r.title for r in rows}
+    assert titles[(product.gtin, "fr")] == "Rugsteun"
+    assert titles[(nameless.gtin, "nl")] == nameless.gtin
+
+
 def test_diff_skips_row_without_generated_copy_when_required(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

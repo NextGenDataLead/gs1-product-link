@@ -1421,3 +1421,23 @@ def test_a_links_only_plan_is_not_held_for_a_page_s_video_or_image(
     assert linked.skipped == []
     assert paged.rows == [], "a page run still holds it"
     assert paged.skipped
+
+
+def test_a_links_only_plan_keeps_a_language_with_no_product_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Operator, 2026-10-09: "We need at least the Dutch URL" — not a name in every language."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _bilingual_config(None)
+    _patch_client(monkeypatch, cfg)
+    products = tmp_path / "products.json"
+    _write_products(products, [_product(GTIN_B, product_name={"nl": "Set"})])
+
+    assert run_plan.main(["acme", "--products", str(products), "--links-only"]) == 0
+    linked = _read_plan()
+    assert run_plan.main(["acme", "--products", str(products)]) == 0
+    paged = _read_plan()
+
+    assert {(row.language, row.title) for row in linked.rows} == {("nl", "Set"), ("fr", "Set")}
+    assert linked.skipped == []
+    assert [s.reason for s in paged.skipped] == [SkipReason.MISSING_PRODUCT_NAME]

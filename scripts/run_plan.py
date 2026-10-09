@@ -340,8 +340,9 @@ def _build_plan(
 
     state = load_state(cfg.client_id)
     # A links-only plan writes no page, so nothing a page needs may hold it — not the video, not
-    # the image, not a blank page field (operator, 2026-10-09). What can stop it is its target,
-    # and ``run_execute`` refuses a target that does not serve immediately before every GS1 write.
+    # the image, not a blank page field, not a missing name (operator, 2026-10-09). What can stop
+    # it is its target, and ``run_execute`` refuses a target that does not serve immediately
+    # before every GS1 write.
     gate = None if links_only else video_gate_for(cfg)
     candidates, excluded = _pilot_gate(
         candidates, state, excluded, gate, include_published=include_published
@@ -366,6 +367,7 @@ def _build_plan(
         mandatory_sources=None if links_only else cfg.export.all_sources,
         video_gate=gate,
         hash_source=feed_view,
+        name_required=not links_only,
     )
     counts = {c: sum(1 for row in rows if row.classification is c) for c in PlanClassification}
     plan = Plan(
