@@ -107,3 +107,12 @@ def test_the_data_screen_builds_with_five_steps_and_no_mapping_editor(
         assert title.replace("'", "\\u0027") in html or title in html, title
     # The row-by-row editor was removed on the operator's word: the mapping is edited in its file.
     assert "The mapping, file by file" not in html
+
+
+def test_step_4_offers_both_then_links_then_pages() -> None:
+    """Operator, 2026-10-09: the run types in the order both, links, pages."""
+    from lib.gates import Mode  # noqa: PLC0415
+    from ui.pages import data  # noqa: PLC0415
+
+    assert data._MODE_ORDER == (Mode.BOTH, Mode.LINKS, Mode.PAGES)
+    assert set(data._MODE_ORDER) == set(Mode), "every run type is offered"
