@@ -69,7 +69,7 @@ and whoever helps you knows exactly what happened.
 
 ## Step 1 — Data
 
-<img src="images/data.png" alt="The Data screen as it opens: jump links, then three uploads side by side — the product selection list, the GS1 export and the video sign-off sheet — a Clear all — start fresh button, and a band asking for the list and the export." width="900">
+<img src="images/data.png" alt="The Data screen as it opens: jump links, then three uploads side by side — the product selection list, the GS1 export and the video sign-off sheet — a Clear all — start fresh button, step 4 with the three choices pages, links and both and a note that Next waits for one, and a band asking for the list and the export." width="900">
 
 *This is the screen as it opens.* Coverage, the product tables and the quality report appear once
 the list and the export are both there — see below.
@@ -109,7 +109,7 @@ nothing is deleted, and the client's video sign-offs are not touched.
    products when you press Next, and the Publish screen shows it again and asks you to confirm it
    before anything runs.
 
-<img src="images/data-choose.png" alt="An earlier version of step 5 — it now starts with every product of your list, ticked or not, with a Status column; the problem tables sit under it and list only the ticked products." width="900">
+<img src="images/data-choose.png" alt="Steps 4 and 5 for a pages batch: pages chosen; Coverage reading 13 selected, 9 can run, 1 not in the export, 3 not eligible, 2 missing videos; then every product of the list with a tick box, a Status and a Detail column; and under it three folded tables — Not in the GS1 export, Not eligible, Missing video(s) — listing only the ticked products." width="900">
 
 **Coverage** counts **the products you ticked** in step 5 — not your whole list. **Selected** is
 how many you ticked (and, under it, how many are on your list), **can run** is how many of those a
@@ -302,7 +302,7 @@ in the rail to run the checks again.
 
 ## Step 4 — Publish
 
-<img src="images/publish.png" alt="The Publish screen (an earlier version — the first gate now shows the mode chosen on the Data screen, with Confirm, Change on the Data screen and Cancel)." width="900">
+<img src="images/publish.png" alt="The Publish screen: a band saying this pages run is reversible, then the first gate — This batch publishes pages — with Confirm, Change on the Data screen and Cancel." width="900">
 
 **What this screen is for:** doing it. Nothing is written until you have answered every required
 question, and the screen will not let you skip one.
