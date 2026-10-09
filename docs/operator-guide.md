@@ -156,8 +156,10 @@ they will read it — about the products you ticked, and it follows your ticks: 
 them failed, (2) the issues by category, each with its products and the reason, and (3) the failed
 products, each with its reasons. A missing video is listed but does not count as failed — the
 product runs without it. **Download PDF** and **Download Excel** under it give the same report as a
-file to send; each download is also kept, dated, in the client's `reports` folder. Every run writes
-the same report afterwards, about the products it ran.
+file to send; each download is also kept, dated, in the client's `reports` folder. **Every run
+writes the same report afterwards, about the same ticked products** — the ones that could not run
+keep the reason given here, and the ones that ran are reported on what the run did. Your ticks,
+including on products that could not run, are still there when you come back to this screen.
 
 When you are done, press **Next** at the foot of the screen. It does two things: it saves your
 choice of products and what the batch publishes, and it takes you on to step 2 — or, for a
@@ -397,8 +399,9 @@ the product list itself, then the usual sections. It takes a while, writes nothi
 is saved as `complete-data-quality-report.md`, ready to forward to the client.
 
 **Every run also writes the client's issue report** — the same one-to-two pager as on the Data
-screen, now about the products that run was given: which failed and why, including any that failed
-while publishing. **Download PDF** and **Download Excel** are on the run's card.
+screen, about the same ticked products, with what happened in the run added: anything that failed
+while publishing, or was held, counts as failed too. **Download PDF** and **Download Excel** are on
+the run's card.
 
 **To send the result back to whoever asked for the batch:** press **Build the result sheet** on
 the run's card. It writes your scope list again, beside the run log, with what happened to each

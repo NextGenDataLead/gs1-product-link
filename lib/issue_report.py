@@ -287,6 +287,25 @@ def run_issues(
     return selected, _ordered(_merged(issues))
 
 
+def with_ticked(
+    ticked_products: Sequence[tuple[str, str]],
+    ticked_issues: Sequence[Issue],
+    ran: Sequence[str],
+    issues: Sequence[Issue],
+) -> tuple[list[str], list[Issue]]:
+    """A run's report widened to every product the operator **ticked** — the Data screen's report.
+
+    The ticked products the run never received (Next saves only those that can run) keep the reason
+    the screen gave them; the ones it ran are reported on what the run did. Returns the products by
+    barcode — ticked order, then any the run had that were not ticked — and their issues.
+    """
+    ran_set = set(ran)
+    order = [gtin for gtin, _ in ticked_products]
+    order += [gtin for gtin in ran if gtin not in set(order)]
+    left_out = [issue for issue in ticked_issues if issue.gtin not in ran_set]
+    return order, _ordered([*left_out, *issues])
+
+
 def _languages(found: Mapping[str, str], languages: int) -> str:
     """One reason when every language has the same one — a product-wide hold says it once."""
     reasons = set(found.values())

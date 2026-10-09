@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Final
 from fpdf import FPDF
 from fpdf.fonts import FontFace
 
-from lib.issue_report import IssueReport, run_issues
+from lib.issue_report import IssueReport, run_issues, with_ticked
 from lib.media_video import canon_gtin
 from lib.result_sheet import write_workbook
 
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from lib.records import ProductRecord, RunOutcome
     from lib.scope_report import ScopeRow
+    from lib.ticked_snapshot import Ticked
 
 #: What a run's report is called, beside its log: ``runs/{stamp}/issues.pdf`` and ``.xlsx``.
 RUN_STEM: Final = "issues"
@@ -60,12 +61,16 @@ def for_run(  # noqa: PLR0913 — what one run was, each named
     dry_run: bool,
     default_language: str,
     expected_without_video: Mapping[str, str] | None = None,
+    ticked: Ticked | None = None,
 ) -> IssueReport:
     """The report for one run: the products it was given, and what stopped or marked them.
 
     A real run knows which pages went live without a video — its log says so. A dry run wrote no
     page, so it is told instead: ``expected_without_video`` is the Data screen's own verdict
     (:attr:`lib.eligibility.Eligibility.missing_video`), which is what the real run would do.
+
+    With ``ticked`` — what the Data screen saved at Next — the report covers every ticked product,
+    as the screen's did: those the run never received keep the screen's reason.
     """
     names = {p.gtin14: p.product_name.get(default_language) or "" for p in products}
     if dry_run:
@@ -78,9 +83,14 @@ def for_run(  # noqa: PLR0913 — what one run was, each named
         bare = {gtin: f"no video in {', '.join(found)}" for gtin, found in languages.items()}
     selected, issues = run_issues(rows, names, writes_pages=mode != "links", without_video=bare)
     kind = "Dry run" if dry_run else "Run"
+    scope = f"{len(selected)} product(s) in this run."
+    if ticked is not None:
+        ran = len(selected)
+        selected, issues = with_ticked(ticked.products, ticked.issues, selected, issues)
+        scope = f"{len(selected)} product(s) ticked, {ran} of them in this run."
     return IssueReport(
         title=title,
-        subtitle=f"{kind} {stamp} - {mode} - {len(selected)} product(s) in this run.",
+        subtitle=f"{kind} {stamp} - {mode} - {scope}",
         selected=tuple(selected),
         issues=tuple(issues),
     )

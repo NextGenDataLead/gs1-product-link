@@ -37,6 +37,7 @@ from typing import Any, Final
 
 from nicegui import ui
 
+from lib import ticked_snapshot
 from lib.complete_report import listed_rows, shared_barcodes
 from lib.eligibility import CHECKING, Eligibility
 from lib.errors import ProcessListError
@@ -354,6 +355,15 @@ def choose(  # noqa: PLR0913, PLR0915 — the batch, its verdict, its save, capt
         except ProcessListError as exc:
             theme.notify_problem(str(exc))
             return False
+        # What was ticked and why each could or could not run, beside the saved selection — so
+        # the run's issue report is about the same products as the one on this screen.
+        products = ticked_products(grid.selected, report_names)
+        try:
+            ticked_snapshot.write(
+                chosen.path, products, selection_issues(products, exported, verdict)
+            )
+        except OSError as exc:
+            theme.notify_warning(f"Saved, but the ticked products could not be kept: {exc}")
         record(saved_at, chosen)
         theme.notify_ok("Saved")
         return True

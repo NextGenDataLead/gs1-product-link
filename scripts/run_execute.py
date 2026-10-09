@@ -85,7 +85,7 @@ from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
-from lib import issue_report_files, run_quality
+from lib import issue_report_files, run_quality, ticked_snapshot
 from lib.acf import build_acf_payload
 from lib.config import ClientConfig, GS1LinkConfig, MediaConfig, get_client
 from lib.eligibility import eligibility
@@ -129,6 +129,7 @@ from lib.run_files import (
     QUALITY_NAME,
     SELECTION_NAME,
     SOURCES_NAME,
+    TICKED_NAME,
     UPLOAD_NAME,
     log_path,
     sibling,
@@ -1314,6 +1315,13 @@ def _keep_selection(cfg: ClientConfig, log: Path, *, mode: str, dry_run: bool) -
             shutil.copyfile(source, sibling(log, name))
         except OSError as exc:  # noqa: BLE001 — a report file is not worth stopping a live run
             print(f"warning: could not keep a copy of {source}: {exc}", file=sys.stderr)
+    # What was ticked on the Data screen, so the run's issue report covers the same products the
+    # screen's did — only when it was saved with this very selection.
+    if ticked_snapshot.read(ticked_snapshot.path_for(control), control) is not None:
+        try:
+            shutil.copyfile(ticked_snapshot.path_for(control), sibling(log, TICKED_NAME))
+        except OSError as exc:  # noqa: BLE001 — as above
+            print(f"warning: could not keep the ticked products: {exc}", file=sys.stderr)
 
     # And what those documents *are*, by name and hash, so "which export did this run use?" has an
     # answer that survives the next upload. The copies above answer "which rows"; they cannot say
@@ -1427,6 +1435,7 @@ def _write_result_sheet(
             dry_run=dry_run,
             default_language=cfg.wordpress.default_language,
             expected_without_video=expected,
+            ticked=ticked_snapshot.read(sibling(log, TICKED_NAME)),
         )
         pdf, _ = issue_report_files.write(report, log.parent)
     except Exception as exc:  # noqa: BLE001 — as above: a report must not fail a publish

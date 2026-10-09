@@ -3,7 +3,7 @@
 The shell remembers everything between sittings — it reads the batch from disk — so "start over"
 used to mean finding three files by hand. This moves them, and only them:
 
-* the **selection** a run reads (``process/selection/selections.xlsx``),
+* the **selection** a run reads (``process/selection/selections.xlsx``) and its ticked snapshot,
 * the **uploaded list** it was chosen from (``process/uploads/product-list.xlsx``),
 * the **GS1 export** a run reads (``process/uploads/GS1 export/export.xlsx``),
 * the **parsed products** the export was read into (``output/{client}/data/products.json``) — left
@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Final
 
 from lib.input_layout import archive_path, client_root, unique
+from lib.ticked_snapshot import path_for
 
 #: Where cleared batches go, under the client's input folder. The layout already reserves it for
 #: inputs set aside (see :mod:`lib.input_layout`).
@@ -67,7 +68,8 @@ def clear_batch(*, export: Path, selection: Path, products: Path, stamp: str) ->
     root = client_root(export)
     if root is None:
         raise ValueError(f"{export} is not under a client's process/ folder — nowhere to move to")
-    present = [p for p in (selection, archive_path(selection), export, products) if p.is_file()]
+    candidates = (selection, archive_path(selection), path_for(selection), export, products)
+    present = [p for p in candidates if p.is_file()]
     if not present:
         return []
     folder = unique(root / SUPERSEDED_DIR / f"cleared-{stamp}")

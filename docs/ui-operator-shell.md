@@ -186,8 +186,11 @@ picker and its label.
 2026-10-09: the long report "has gotten a bit out of hand"). It is the one-to-two pager the client
 receives — failed products, issues by category, each failed product's reasons — built in-process
 from the same verdict step 5 shows (`lib.issue_report.selection_issues`), so it follows the ticks
-and needs no subprocess. Every run writes the same report about the products it ran
-(`runs/{stamp}/issues.pdf` and `.xlsx`). The long data-quality report is archived from this screen,
+and needs no subprocess. Every run writes the same report (`runs/{stamp}/issues.pdf` and `.xlsx`)
+about the **same ticked products**: Next saves only the runnable ones, so it also writes
+`selections.ticked.json` beside the selection — the ticked products and their issues, with the
+selection's sha256 — which the run copies in only while that hash still matches. The same snapshot
+re-ticks the products on reopening, so the screen and the run report never cover different sets. The long data-quality report is archived from this screen,
 not deleted: `report_quality` still writes it, every run still writes its `data-quality.md`, and
 the Runs screen still builds the complete one.
 

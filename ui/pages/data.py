@@ -46,7 +46,7 @@ from typing import Any
 
 from nicegui import events, ui
 
-from lib import batch_reset, input_layout, issue_report_files, provenance
+from lib import batch_reset, input_layout, issue_report_files, provenance, ticked_snapshot
 from lib.config import ClientConfig, ProcessListConfig
 from lib.eligibility import eligibility_for, link_targets
 from lib.errors import ProcessListError
@@ -389,11 +389,22 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             caption=caption,
             ticks=ticks,
             counted=counted,
-            saved=batch.listed_gtins(),
+            saved=_ticked_last_time(batch),
             target=batch.path,
             links_only=links_only,
             report=report,
         )
+
+
+def _ticked_last_time(batch: ProcessListSheet) -> frozenset[str]:
+    """The barcodes ticked when this selection was saved — the saved selection itself when no
+    snapshot was kept with it. Next saves only the products that can run, so without this a ticked
+    product that could not run would come back unticked, and this screen's report would no longer
+    be the run's (operator, 2026-10-09: the two are the same report)."""
+    ticked = ticked_snapshot.read(ticked_snapshot.path_for(batch.path), batch.path)
+    if ticked is None:
+        return batch.listed_gtins()
+    return frozenset(gtin for gtin, _ in ticked.products)
 
 
 def _check_links(cfg: ClientConfig, targets: dict[str, str], done: Callable[[], None]) -> None:

@@ -18,9 +18,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import openpyxl
 import pytest
 import yaml
 
+from lib import ticked_snapshot
 from lib.config import (
     CategoryConfig,
     ClientConfig,
@@ -35,14 +37,17 @@ from lib.config import (
     TemplateConfig,
     WordPressConfig,
 )
+from lib.eligibility import Eligibility
 from lib.errors import MediaIntegrityError, WordPressAPIError
 from lib.input_layout import archive_path
+from lib.issue_report import selection_issues
 from lib.provenance import history_path, read_run, record_upload
 from lib.records import LocalisedText, Plan, PlanClassification, PlanRow, ProductRecord, State
 from lib.run_files import (
     RESULT_NAME,
     SELECTION_NAME,
     SOURCES_NAME,
+    TICKED_NAME,
     UPLOAD_NAME,
     iter_logs,
     sibling,
@@ -2283,6 +2288,53 @@ def test_a_real_run_writes_its_own_result_sheet_and_its_record(
     assert (run_dir / RESULT_NAME).is_file(), "the per-SKU outcome, without anyone asking"
     assert (run_dir / "issues.pdf").is_file(), "the client's short report"
     assert (run_dir / "issues.xlsx").is_file()
+
+
+@pytest.mark.parametrize("saved_again", [False, True])
+def test_the_issue_report_covers_what_was_ticked_when_the_ticks_match_the_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, saved_again: bool
+) -> None:
+    """Operator, 2026-10-09: the report after a run is about the ticked products, as on Data.
+
+    Next saves only the products that can run, so the ticked one that could not is known only from
+    the snapshot saved beside the selection — and only while that selection is unchanged.
+    """
+    # Arrange
+    monkeypatch.chdir(tmp_path)
+    control = tmp_path / "input" / "acme" / "process" / "selection" / "selections.xlsx"
+    _write_scope_list(control, [GTIN_A])
+    missing = "00290000000999"
+    ticked_snapshot.write(
+        control,
+        [(GTIN_A, "Rugsteun"), (missing, "Onbekend")],
+        selection_issues([(missing, "Onbekend")], set(), Eligibility()),
+    )
+    if saved_again:
+        _write_scope_list(control, [GTIN_A, GTIN_B])
+    products = tmp_path / "output" / "acme" / "data" / "products.json"
+    products.parent.mkdir(parents=True)
+    products.write_text(json.dumps([_product().model_dump(mode="json")]), encoding="utf-8")
+    cfg = _make_config(process_list=ProcessListConfig(path=str(control)))
+    _install(monkeypatch, cfg)
+    plan = _write_json(tmp_path / "plan.json", _plan(_row(GTIN_A, "nl")))
+
+    # Act
+    assert run_execute.main(["acme", "--plan", str(plan)]) == 0
+
+    # Assert
+    run_dir = next((tmp_path / "output" / "acme" / "runs").glob("*/"))
+    failed = [
+        row[0]
+        for row in openpyxl.load_workbook(run_dir / "issues.xlsx")["Failed products"].iter_rows(
+            min_row=2, values_only=True
+        )
+    ]
+    if saved_again:
+        assert not (run_dir / TICKED_NAME).exists(), "another batch's ticks are not borrowed"
+        assert missing not in failed
+    else:
+        assert (run_dir / TICKED_NAME).is_file()
+        assert missing in failed, "the ticked product that could not run is in the report"
 
 
 def test_a_result_sheet_that_cannot_be_built_does_not_change_the_exit_code(

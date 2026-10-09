@@ -6,7 +6,7 @@ from pathlib import Path
 
 import openpyxl
 
-from lib import issue_report_files
+from lib import issue_report_files, ticked_snapshot
 from lib.eligibility import NO_IMAGE, NO_TARGET, Eligibility, LinkIssue
 from lib.issue_report import (
     LINK,
@@ -217,3 +217,43 @@ def test_a_product_held_in_every_language_is_not_also_live_without_a_video() -> 
 
 def test_nothing_ticked_says_so() -> None:
     assert issue_report_files.summary_lines(_report([], [])) == ["No products selected."]
+
+
+def test_a_snapshot_is_read_back_only_for_the_selection_it_was_saved_with(tmp_path: Path) -> None:
+    selection = tmp_path / "selections.xlsx"
+    selection.write_bytes(b"the saved batch")
+    issues = selection_issues([(A, "Vergiet")], set(), Eligibility())
+
+    ticked_snapshot.write(selection, [(A, "Vergiet"), (B, "Deurmat")], issues)
+    back = ticked_snapshot.read(ticked_snapshot.path_for(selection), selection)
+
+    assert back is not None
+    assert back.products == ((A, "Vergiet"), (B, "Deurmat"))
+    assert back.issues == tuple(issues)
+    selection.write_bytes(b"saved again, by hand")
+    assert ticked_snapshot.read(ticked_snapshot.path_for(selection), selection) is None
+
+
+def test_the_run_report_covers_every_ticked_product_as_the_screen_did() -> None:
+    """Operator, 2026-10-09: the report after a run is the Data screen's — the ticked products."""
+    left_out = selection_issues([(C, "Zaklamp")], set(), Eligibility())
+    ran = [
+        _scope(A, IN_SCOPE, nl=UnitResult("ok", "", "")),
+        _scope(B, IN_SCOPE, nl=UnitResult("error", "", "boom")),
+    ]
+    report = issue_report_files.for_run(
+        "t",
+        "20261009T000000Z",
+        ran,
+        [],
+        [],
+        mode="pages",
+        dry_run=False,
+        default_language="nl",
+        ticked=ticked_snapshot.Ticked(((A, "a"), (C, "Zaklamp"), (B, "b")), tuple(left_out)),
+    )
+
+    assert report.selected == (A, C, B)
+    assert [gtin for gtin, _ in report.failed] == [C, B]
+    assert [(i.gtin, i.category) for i in report.issues] == [(C, NOT_IN_EXPORT), (B, RUN_ERROR)]
+    assert "3 product(s) ticked, 2 of them in this run." in report.subtitle
