@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Final, NamedTuple
 
 from lib.errors import ProcessListError
+from lib.gates import Mode
 from lib.process_list import ProcessListSheet, read_process_list
 from lib.provenance import History, SourceRef, resolve, sha256_of
 
@@ -86,6 +87,11 @@ class Batch:
     #: Ledger lines that could not be read. Surfaced rather than swallowed: a truncated tail means
     #: a record is missing, and a screen claiming "not recorded" should be able to say why.
     unreadable_records: int
+    #: What the operator chose to publish with *this* selection, from the record of its save.
+    #: ``None`` when no save of these exact bytes recorded one — a selection saved before the
+    #: choice moved to the Data screen, or replaced outside the shell. Never defaulted: guessing
+    #: "pages" for a batch somebody meant as links is a guess with a permanent other half.
+    mode: Mode | None = None
 
     @property
     def ready(self) -> bool:
@@ -143,12 +149,14 @@ def in_force(  # noqa: PLR0913 — six named paths and counts read better than a
         chosen_against=agreement.verdict,
         chosen_export=agreement.export_name,
         unreadable_records=history.unreadable,
+        mode=agreement.mode,
     )
 
 
 class _Agreement(NamedTuple):
     verdict: Chosen
     export_name: str | None
+    mode: Mode | None = None
 
 
 _UNRECORDED: Final = _Agreement(Chosen.NOT_RECORDED, None)
@@ -171,12 +179,13 @@ def _agreement(export: Path, selection: Path, history: History) -> _Agreement:
     )
     if saved is None:
         return _UNRECORDED
+    mode = Mode(saved.mode) if saved.mode is not None else None
     against: SourceRef | None = saved.sources.get("export")
     if against is None:
-        return _UNRECORDED
+        return _Agreement(Chosen.NOT_RECORDED, None, mode)
     if against.sha256 == sha256_of(export):
-        return _Agreement(Chosen.THIS_EXPORT, against.name)
-    return _Agreement(Chosen.EARLIER_EXPORT, against.name)
+        return _Agreement(Chosen.THIS_EXPORT, against.name, mode)
+    return _Agreement(Chosen.EARLIER_EXPORT, against.name, mode)
 
 
 def _modified(path: Path) -> datetime | None:

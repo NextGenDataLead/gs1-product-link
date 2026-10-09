@@ -18,9 +18,10 @@ adding a gate here without documenting it there, or the reverse, fails CI rather
 quietly.
 
 This module also owns :func:`run_execute_argv`. The command is part of the contract: ``--only``
-comes from the intent gate and ``--i-understand-production`` from the production gate, and getting
-either wrong turns a reviewed decision into an unreviewed write. A UI that builds its own argv is a
-second chance to get it wrong.
+comes from the intent gate (in the shell, the mode the batch was saved with on the Data screen,
+which gate 0 shows and confirms) and ``--i-understand-production`` from the production gate, and
+getting either wrong turns a reviewed decision into an unreviewed write. A UI that builds its own
+argv is a second chance to get it wrong.
 
 Nothing here executes anything, prompts anything, or reads a file.
 """

@@ -37,6 +37,7 @@ from typing import Any
 from nicegui import ui
 
 from lib.config import ClientConfig, GeneratorConfig
+from lib.gates import Mode
 from ui import REPO_ROOT, content_session, context, env_edit, progress, runner, theme
 
 
@@ -66,7 +67,14 @@ def render() -> None:
         # Filled in once Next exists, below the steps it waits on.
         unlock: list[Callable[[bool], None]] = []
         resume: Callable[[], None] = lambda: None  # noqa: E731 — nothing to resume without a generator
-        if cfg.generator is None:
+        links_only = context.batch_mode(cfg) is Mode.LINKS
+        if links_only:
+            # Passed over by Next on Data; reachable from the rail, so it says why it is empty.
+            theme.band(
+                "This batch publishes GS1 links only. No page is written, so there is no tagline "
+                "or Eigenschappen text to write for it — go on to the preflight."
+            )
+        elif cfg.generator is None:
             ui.label(
                 "This client has no `generator` block, so pages are published from feed copy only "
                 "and there is nothing to import."
@@ -77,7 +85,7 @@ def render() -> None:
                 cid, cfg, cfg.generator, results_path, list(cfg.wordpress.languages), unlock
             )
 
-        unlock.append(_onward(cid, waits=cfg.generator is not None))
+        unlock.append(_onward(cid, waits=cfg.generator is not None and not links_only))
         resume()
 
 

@@ -630,6 +630,15 @@ def batch_in_force(cfg: ClientConfig) -> Batch | None:
     return batch
 
 
+def batch_mode(cfg: ClientConfig | None) -> Mode | None:
+    """What the saved batch publishes, as chosen on the Data screen — or ``None`` when no save of
+    the selection in force recorded it. Read from disk, like the rest of the batch."""
+    if cfg is None:
+        return None
+    batch = batch_in_force(cfg)
+    return batch.mode if batch is not None else None
+
+
 def _stamp_of(path: Path | None) -> tuple[float, int] | None:
     """A file's identity for cache purposes: when it changed and how big it is."""
     if path is None:

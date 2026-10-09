@@ -102,7 +102,14 @@ nothing is deleted, and the client's video sign-offs are not touched.
 
    The three sit side by side because none of them waits on another: bring whichever you have.
 
-<img src="images/data-choose.png" alt="Coverage figures — 13 in product list, 9 eligible, 9 selected, 4 not eligible, 2 missing videos — then step 4: the folded tables Not in the GS1 export, Not eligible and Missing video(s), each with its count, and the eligible products with tick boxes." width="900">
+4. **What this batch publishes** — **pages**, **links** or **both** (the table under *Step 4 —
+   Publish* says what each writes). Choose it here, before you choose products, because it changes
+   what a product needs: a **links** batch writes no page, so it needs no text and the **Content**
+   step is passed over. **Next stays off until you choose.** Your choice is saved with your
+   products when you press Next, and the Publish screen shows it again and asks you to confirm it
+   before anything runs.
+
+<img src="images/data-choose.png" alt="Coverage figures — 13 in product list, 9 eligible, 9 selected, 4 not eligible, 2 missing videos — then step 5: the folded tables Not in the GS1 export, Not eligible and Missing video(s), each with its count, and the eligible products with tick boxes." width="900">
 
 **Coverage** counts your batch, in products, from left to right: how many are **in your product
 list**, how many of those are **eligible** (the export has them and nothing stops them being
@@ -110,7 +117,7 @@ published), and how many are **selected** (eligible and ticked — what the next
 The two figures on the right say why the others fell out, and how many eligible products will go
 live **without a video**. The figures change as you tick.
 
-4. **Choose the products and save.** Your list, split four ways, in this order:
+5. **Choose the products and save.** Your list, split four ways, in this order:
 
    - **Not in the GS1 export** — barcodes you asked for that the export has no row for. Nothing
      else in the tool will mention them again. Either the product is missing from the export (fix
@@ -248,6 +255,9 @@ step 3 is showing.
    site. Text from an earlier batch is never shown here. If you come back to this screen after
    generating, step 3 opens straight after the check — you do not have to generate again.
 
+**A links batch skips this screen.** Next on Data takes it straight to Preflight; if you open
+Content from the rail anyway, it says there is nothing to write and lets you go on.
+
 **Done looks like:** every product in step 3 has text in every language, and no product is named
 as "no text yet". Then press **Next**.
 
@@ -270,6 +280,8 @@ and — when it failed — what to do about it. The verdict at the top is the on
 - **ok** — nothing to do.
 - **warn** — read it. The run can proceed; something is less than ideal.
 - **FAIL** — fix it before publishing. The remedy is printed under the check.
+- **—** (not applicable) — the check does not concern this batch. For a **links** batch that is
+  the text, the categories, the videos and ffmpeg: no page is written, so none of them matters.
 
 **Next stays off until the checks pass with no FAIL**, because a wrong password found here costs you
 nothing, and found at step 4 costs you a half-finished batch. Fixed something? Click **Preflight**
@@ -283,7 +295,7 @@ in the rail to run the checks again.
 
 ## Step 4 — Publish
 
-<img src="images/publish.png" alt="The Publish screen (an earlier version — the first gate now shows only the mode chooser and its buttons)." width="900">
+<img src="images/publish.png" alt="The Publish screen (an earlier version — the first gate now shows the mode chosen on the Data screen, with Confirm, Change on the Data screen and Cancel)." width="900">
 
 **What this screen is for:** doing it. Nothing is written until you have answered every required
 question, and the screen will not let you skip one.
@@ -292,8 +304,9 @@ It works as a series of **gates** — one card each, in order, each stating what
 why. Answer one and the next slides into view. If you are unsure at any gate, **Cancel** is always
 there and always safe: it stops the run without having written anything.
 
-**The first gate asks what kind of run this is.** Three choices, and they are not equally
-reversible:
+**The first gate shows what kind of run this is** — the choice you made on the Data screen — and
+asks you to confirm it. To change it, press **Change on the Data screen**, choose again there and
+press Next. The three are not equally reversible:
 
 | Mode | What it writes | Undoable? |
 |---|---|---|
@@ -317,14 +330,13 @@ tool refuses a product, and says why, rather than guess, when:
 - you run **pages** or **both** for a product whose cell is filled — that would make a second page.
   Clear the cell if the new page should replace the old one.
 
-A **links** run needs no generated copy, so the Content step can be skipped for it. Leave the cell
+A **links** run needs no generated copy, so it skips the Content step. Leave the cell
 empty for every product whose page this tool publishes.
 
 **The gates you will meet, in order:**
 
-1. **Intent confirmation** — the mode, and nothing else: **pages**, **links** or **both**. Check the
-   one that is selected before you press Confirm — it decides whether anything permanent is
-   written.
+1. **Intent confirmation** — the mode chosen on the Data screen, and nothing else. Read it before
+   you press Confirm — it decides whether anything permanent is written.
 2. **Language selection** — which languages this run covers.
 3. **Generated copy review** — confirms you have read the text from step 2.
 4. **Plan review** — the tool builds the plan and tells you how many rows it holds and what kind:

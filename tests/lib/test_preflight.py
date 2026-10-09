@@ -1299,3 +1299,41 @@ _MINIMAL_CONFIG = json.dumps(
         }
     }
 )
+
+
+def test_a_links_only_batch_marks_the_page_only_checks_not_applicable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A links run writes no page: its copy, categories, videos and ffmpeg are not its business."""
+    from lib.gates import Mode  # noqa: PLC0415
+    from lib.preflight import PAGE_ONLY_CHECKS  # noqa: PLC0415
+
+    monkeypatch.chdir(tmp_path)
+    config = tmp_path / "clients.yml"
+    config.write_text(_MINIMAL_CONFIG, encoding="utf-8")
+
+    every = run_checks("acme", config_path=config, offline=True)
+    links = run_checks("acme", config_path=config, offline=True, mode=Mode.LINKS)
+
+    assert [r.name for r in links] == [r.name for r in every], "same checks, same order"
+    for before, after in zip(every, links, strict=True):
+        if after.name in PAGE_ONLY_CHECKS:
+            assert after.status is Status.NA, after.name
+            assert "links only" in after.detail
+        else:
+            assert after == before, after.name
+
+
+@pytest.mark.parametrize("mode", ["pages", "both"])
+def test_a_batch_that_writes_pages_is_checked_in_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from lib.gates import Mode  # noqa: PLC0415
+
+    monkeypatch.chdir(tmp_path)
+    config = tmp_path / "clients.yml"
+    config.write_text(_MINIMAL_CONFIG, encoding="utf-8")
+
+    assert run_checks("acme", config_path=config, offline=True, mode=Mode(mode)) == run_checks(
+        "acme", config_path=config, offline=True
+    )

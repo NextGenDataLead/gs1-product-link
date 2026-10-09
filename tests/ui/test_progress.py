@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from ui.progress import Progress
+from lib.gates import Mode
+from ui.progress import Progress, not_needed
 
 
 def test_a_new_session_starts_at_data_with_every_later_step_locked() -> None:
@@ -73,3 +74,30 @@ def test_a_screen_that_is_not_a_step_is_always_open() -> None:
     assert progress.arrive("/runs") is None
     assert progress.arrive("/") is None
     assert progress.locked() == {"/content", "/preflight", "/publish"}
+
+
+def test_a_links_only_batch_goes_from_data_straight_to_preflight() -> None:
+    """Content writes page copy; a batch that writes no page has nothing to do there."""
+    progress = Progress()
+
+    opened = progress.advance("/data", skip=not_needed(Mode.LINKS))
+
+    assert opened == "/preflight"
+    assert progress.locked() == {"/publish"}
+    assert progress.arrive("/content") is None, "passed over, not hidden"
+
+
+def test_visiting_a_passed_over_step_relocks_what_follows_it() -> None:
+    progress = Progress()
+    progress.advance("/data", skip=not_needed(Mode.LINKS))
+
+    progress.arrive("/content")
+
+    assert progress.locked() == {"/preflight", "/publish"}
+
+
+@pytest.mark.parametrize("mode", [Mode.PAGES, Mode.BOTH, None])
+def test_any_other_batch_still_goes_through_content(mode: Mode | None) -> None:
+    progress = Progress()
+
+    assert progress.advance("/data", skip=not_needed(mode)) == "/content"

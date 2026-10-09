@@ -350,3 +350,42 @@ def test_a_count_the_caller_supplies_wins_over_the_recorded_one(client: Path) ->
     record_upload(_ledger(client), "export", kept=dated, given_name="GDSN.xlsx", rows=12)
 
     assert resolve(live, read(_ledger(client)), "export", rows=99).rows == 99  # type: ignore[union-attr]
+
+
+def test_a_selection_records_the_mode_it_was_saved_with(client: Path) -> None:
+    export = _export(client)
+    saved = client / PROCESS_DIR / "selection" / "selection-20261009T101600.xlsx"
+    saved.write_bytes(b"the ticked list")
+
+    record_selection(
+        _ledger(client),
+        saved,
+        product_list=export.with_name("absent.xlsx"),
+        export=export,
+        mode="links",
+    )
+
+    entry = read(_ledger(client)).newest("selection")
+    assert entry is not None
+    assert entry.mode == "links"
+
+
+def test_a_version_1_line_still_reads_and_has_no_mode(client: Path) -> None:
+    """Every ledger written before the mode moved to the Data screen is version 1."""
+    _ledger(client).write_text(
+        json.dumps(
+            {
+                "v": 1,
+                "what": "selection",
+                "at": "2026-09-27T10:16:00Z",
+                "of": {"sha256": "abc", "bytes": 1},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    history = read(_ledger(client))
+
+    assert history.unreadable == 0
+    assert history.entries[0].mode is None

@@ -391,3 +391,24 @@ def test_the_copy_gate_names_the_two_fields_it_is_about() -> None:
     assert "Eigenschappen" in source
     assert "tagline" in source
     assert "Eigenschappen" in BY_ID["content_review"].summary
+
+
+def test_gate_zero_confirms_the_mode_the_batch_was_saved_with() -> None:
+    """Operator, 2026-10-09: the mode is chosen on Data. Gate 0 shows it, and changing it goes
+    back there — a second chooser here would be a second place the same answer can differ."""
+
+    def text(name: str) -> str:
+        return ast.unparse(_named_function(name))
+
+    flow = ast.unparse(
+        next(
+            n
+            for n in ast.walk(ast.parse(_PUBLISH.read_text("utf-8")))
+            if isinstance(n, ast.ClassDef) and n.name == "_Flow"
+        )
+    )
+    assert "context.batch_mode(cfg)" in flow, "Publish no longer takes the mode from the batch"
+    assert "Change on the Data screen" in text("_gate_intent")
+    assert "context.batch_mode(cfg) is None" in text("render"), (
+        "a batch with no mode must stop Publish, not default it"
+    )

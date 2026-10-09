@@ -120,7 +120,9 @@ other eleven keep their numbers so every cross-reference to "step 8" — here, i
 0. **Intent confirmation (gate 0).** Before running anything, present what is about to happen and
    require a choice. Five things, in this order:
 
-   - **Mode** — `pages`, `links`, or `both`, and what each does *not* touch.
+   - **Mode** — `pages`, `links`, or `both`, and what each does *not* touch. (The operator shell
+     asks this on its Data screen and saves it with the batch; its gate 0 shows that mode for
+     confirmation. In chat, classify it here as always.)
    - **Export file cross-check.** `parse_export` has **no input-path override**: the path comes from
      `clients.yml` → `export.path`. So when the operator names a file (*"/gs1-publish for
      @products-2026-q3.xlsx"*) that filename **verifies the config** rather than driving the run.

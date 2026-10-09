@@ -298,7 +298,23 @@ agreement and never as staleness. Every batch saved before this existed is in th
 Data reads it to decide whether there is a batch. No screen shows it as a card any more: Data
 dropped it on 2026-10-06 (the uploads above it already say which files these are), and Content,
 Preflight and Publish on 2026-10-07 — with the steps opening only through Next (`ui/progress`),
-the batch on those screens is always the one just saved on Data, and gate 0 names the export. It replaced three booleans held
+the batch on those screens is always the one just saved on Data, and gate 0 names the export.
+
+**What the batch publishes is part of it** (2026-10-09). The mode — pages, links or both — is
+chosen on Data, step 4, before anything is counted, because it changes what a product needs: a
+links-only batch writes no page, so `ui/progress` passes over Content (`not_needed`), and the
+doctor's `--mode links` marks the page-only checks (`lib.preflight.PAGE_ONLY_CHECKS`) not
+applicable. It is saved by Next as `mode` on the selection's ledger line (`lib.provenance`, ledger
+version 2; version-1 lines still read, with no mode) and read back by `lib.batch.in_force`, matched
+on the live selection's hash like the export agreement — so a selection replaced outside the shell
+does not inherit one. **There is no default.** A batch with no recorded mode has Next off on Data
+and Publish blocked, because guessing `pages` for a batch meant as `links` is a guess with a
+permanent other half. Gate 0 still exists and still must be confirmed: it shows the batch's mode
+with Confirm / *Change on the Data screen* / Cancel. A mode remembered with a batch is not a run
+approved, so `PublishSession` stays unpersisted. A client with no `process_list` has nowhere to save
+a mode, and keeps the chooser on gate 0.
+
+It replaced three booleans held
 for the life of the process, which gated whether the Data screen showed the selection at all: before
 this, restarting the shell hid the grid while a run went on consuming the file, as the band that
 replaced it said in so many words. A batch that is invisible and live at once is worse than either.
@@ -514,7 +530,7 @@ add a hand-off without removing one.
 
 ### Preflight
 
-Runs the doctor in a subprocess and renders each check with its remedy. Two buttons: offline (no
+Runs the doctor in a subprocess, with the batch's `--mode`, and renders each check with its remedy. Two buttons: offline (no
 credentials, no sockets) and everything. The full run authenticates against WordPress and mints a
 GS1 token; both are read-only.
 

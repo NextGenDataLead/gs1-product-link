@@ -48,6 +48,7 @@ from lib import batch_reset, input_layout, provenance
 from lib.config import ClientConfig, ProcessListConfig
 from lib.eligibility import eligibility
 from lib.errors import ProcessListError
+from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Mode
 from lib.input_layout import export_archive_path, write_readme
 from lib.process_list import ProcessListSheet
 from ui import (
@@ -88,14 +89,25 @@ class _Session:
 #: One per client, for the life of the process. See :class:`_Session`.
 _BATCHES: dict[str, _Session] = {}
 
-#: The rows unticked in step 4, per client, for the life of the process — see :mod:`ui.batch_grid`.
+#: The rows unticked in step 5, per client, for the life of the process — see :mod:`ui.batch_grid`.
 _TICKS: dict[str, batch_grid.Ticks] = {}
 
 
-def _resolve(path: str) -> Path:
-    """A configured path, against the repository root — every path in clients.yml is relative."""
-    resolved = Path(path)
-    return resolved if resolved.is_absolute() else REPO_ROOT / resolved
+@dataclass
+class _Mode:
+    """What this batch publishes, as picked in step 4 — saved only by Next, with the selection.
+
+    Seeded from the saved batch the first time the screen draws, so a restart shows the choice the
+    batch was saved with. ``None`` until one is picked: a batch saved before the choice moved here
+    has none, and the screen asks rather than assuming ``pages``.
+    """
+
+    value: Mode | None = None
+    seeded: bool = False
+
+
+#: One per client, for the life of the process. See :class:`_Mode`.
+_MODES: dict[str, _Mode] = {}
 
 
 def _resolve(path: str) -> Path:
@@ -130,6 +142,12 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
 
         session = _BATCHES.setdefault(cid, _Session())
         ticks = _TICKS.setdefault(cid, batch_grid.Ticks())
+        mode = _MODES.setdefault(cid, _Mode())
+        if not mode.seeded:
+            mode.value = context.batch_mode(cfg)
+            mode.seeded = True
+        #: How many products step 5 has ticked — Next needs that *and* a mode.
+        ticked = [0]
         mapping = video_map_panel.session_for(cid, cfg)
         #: The grid's save, hoisted so the Next button can call it. Empty until there is a grid.
         commit: dict[str, Callable[[], bool]] = {}
@@ -138,6 +156,7 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
         theme.jumps(
             [
                 ("Uploads", "uploads"),
+                ("Publishes", "publishes"),
                 ("Coverage", "coverage"),
                 ("Choose", "choose"),
                 ("Data quality", "data-quality"),
@@ -153,6 +172,10 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             if which in {"list", "cleared"}:
                 ticks.unticked.clear()
                 ticks.seeded = False
+            if which == "cleared":
+                # The selection it was saved with is set aside, so its choice goes too.
+                mode.value = None
+                draw_mode()
             in_force = context.batch_in_force(cfg)
             ready = in_force is not None and in_force.ready
             # Disabled here; the grid turns it on once a product is ticked — see ``draw_choose``.
@@ -181,15 +204,7 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
                 if ready:
                     # Next only once something is ticked: nothing ticked is nothing to save, and a
                     # button that is pressable and then refuses is a button that seems broken.
-                    _choose(
-                        cfg,
-                        cid,
-                        commit,
-                        caption,
-                        ticks,
-                        coverage,
-                        chosen=lambda count: onward.set_enabled(count > 0),
-                    )
+                    _choose(cfg, cid, commit, caption, ticks, coverage, mode, chosen=count_ticked)
                 else:
                     caption.text = ""
                     theme.band(
@@ -197,6 +212,29 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
                         "products for this run.",
                         "quiet",
                     )
+
+        def count_ticked(count: int) -> None:
+            ticked[0] = count
+            unlock()
+
+        def unlock() -> None:
+            # Next only once something is ticked *and* the batch says what it publishes: nothing
+            # ticked is nothing to save, and a batch with no mode is a run nobody has described.
+            onward.set_enabled(ticked[0] > 0 and mode.value is not None)
+
+        def mode_picked(value: Mode) -> None:
+            mode.value = value
+            draw_mode()
+            # Ticks survive; what each product needs depends on the mode, so step 5 redraws.
+            draw_choose()
+            unlock()
+
+        def draw_mode() -> None:
+            publishes.clear()
+            if cfg.process_list is None:
+                return  # no selection to save it with — Publish asks, as it always did
+            with publishes:
+                _mode_section(mode.value, mode_picked)
 
         signoff_area: list[ui.column] = []
         with ui.element("div").classes("steps-3up").props("id=uploads"):
@@ -206,6 +244,9 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
         _clear_all(cfg, cid, session, batch_changed)
         signoff_area.append(ui.column().classes("w-full mt-8"))
 
+        publishes = ui.column().classes("w-full gap-0")
+        draw_mode()
+
         coverage = ui.element("section").classes("section").props("id=coverage")
         selection = ui.column().classes("w-full gap-0")
         quality = ui.column().classes("w-full gap-0")
@@ -213,6 +254,9 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
         def save_and_go() -> None:
             # One intention, one button. On a screen with unsaved work, "go on" and "commit what
             # I chose" are the same act, and two buttons is how the second gets missed.
+            if cfg.process_list is not None and mode.value is None:
+                theme.notify_warning("Choose what this batch publishes first — step 4.")
+                return
             save = commit.get("save")
             if save is not None and not save():
                 return  # refused, and it said why — stay put rather than carry the refusal away
@@ -220,27 +264,29 @@ def render() -> None:  # noqa: PLR0915 — the wiring: four redraws share one se
             # read before the page changed, and it read as a click that did nothing — the
             # operator clicked again and took the second click for the one that worked. Content
             # opening is the receipt.
-            progress.of(cid).advance("/data")
-            ui.navigate.to("/content")
+            # A links-only batch writes no page, so it has no copy to write: straight to Preflight.
+            opened = progress.of(cid).advance("/data", skip=progress.not_needed(mode.value))
+            ui.navigate.to(opened or "/content")
 
         onward, caption = theme.onward("Next", save_and_go)
         batch_changed("")
 
 
-# --- Step 4 and the funnel ---------------------------------------------------------
+# --- Step 5 and the funnel ---------------------------------------------------------
 
 
-def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, the funnel's box
+def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, the funnel, the mode
     cfg: ClientConfig,
     cid: str,
     commit: dict[str, Callable[[], bool]],
     caption: ui.label,
     ticks: batch_grid.Ticks,
     coverage: ui.element,
+    mode: _Mode,
     *,
     chosen: Callable[[int], None],
 ) -> None:
-    """Read the list and the export, decide eligibility once, and build step 4 under it.
+    """Read the list and the export, decide eligibility once, and build step 5 under it.
 
     ``chosen`` hears how many products are ticked, every time that changes.
     """
@@ -267,6 +313,7 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             product_list=input_layout.archive_path(_resolve(cfg.process_list.path)),
             export=export,
             rows=len(chosen.rows),
+            mode=mode.value.value if mode.value is not None else None,
         )
 
     def counted(counts: batch_grid.Funnel) -> None:
@@ -275,7 +322,7 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
 
     with theme.section(
         "Choose the products and save",
-        step=4,
+        step=5,
         anchor="choose",
         explain=(
             "Your list, split the way a run will treat it: not in the export, not eligible (and "
@@ -298,6 +345,42 @@ def _choose(  # noqa: PLR0913 — the client, the save, its caption, the ticks, 
             saved=batch.listed_gtins(),
             target=batch.path,
         )
+
+
+def _mode_section(current: Mode | None, picked: Callable[[Mode], None]) -> None:
+    """Step 4: what this batch publishes — pages, GS1 links, or both.
+
+    Asked here, before anything is counted, because it decides what a product needs: a links-only
+    batch writes no page, so it needs no copy and no video, and skips the Content step. Saved with
+    the selection by Next; the Publish screen shows it again and asks for a confirmation before
+    anything runs — a choice remembered is not a run approved.
+    """
+    with theme.section(
+        "What this batch publishes",
+        step=4,
+        anchor="publishes",
+        explain=(
+            "Pages: the product pages on the website, reversible. Links: the GS1 Digital Link "
+            "record and QR code for each product, pointing at its page — permanent. Both: the "
+            "pages, then the links. Saved with your selection when you press Next; the Publish "
+            "screen asks you to confirm it before anything runs."
+        ),
+    ):
+        ui.toggle(
+            {mode.value: f"{mode.value} — {mode.summary}" for mode in Mode},
+            value=current.value if current is not None else None,
+            on_change=lambda event: picked(Mode(event.value)) if event.value else None,
+        ).props("no-caps").classes("mb-3")
+        if current is None:
+            theme.band("Choose one — Next waits for it.", "warn")
+        elif current.is_permanent:
+            theme.band(PERMANENCE_WARNING, "danger")
+        else:
+            theme.band(REVERSIBLE_NOTE)
+        if current is Mode.LINKS:
+            ui.label(
+                "A links-only batch writes no page, so the Content step is passed over."
+            ).classes("note")
 
 
 def _uploaded(config: ProcessListConfig, batch: ProcessListSheet) -> ProcessListSheet:
@@ -542,7 +625,7 @@ def _scope_list(cfg: Any, session: _Session, arrived: Callable[[str], None]) -> 
             "rows you dropped as dropped rather than leaving them out. "
             "That path is fixed in clients.yml and has no command-line override, so a list saved "
             "anywhere else is invisible to the tool. Until the export (step 2) arrives, nothing "
-            "can be matched, so step 4 waits for both."
+            "can be matched, so step 5 waits for both."
         ),
     ):
         # Async because NiceGUI 3 reads an upload through awaitable methods on ``event.file`` —

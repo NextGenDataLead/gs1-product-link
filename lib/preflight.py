@@ -55,6 +55,7 @@ from lib.errors import (
     VideoMapError,
     WordPressAPIError,
 )
+from lib.gates import Mode
 from lib.generator import generation_context, load_results, missing_copy
 from lib.gs1_dl_client import GS1DigitalLinkClient
 from lib.holds import held_units, video_gate_for
@@ -1213,8 +1214,14 @@ def run_checks(
     *,
     config_path: str | Path = DEFAULT_CLIENTS_PATH,
     offline: bool = False,
+    mode: Mode | None = None,
 ) -> list[CheckResult]:
     """Run every applicable check, in the order an operator should read them.
+
+    ``mode`` is what the batch publishes. A links-only batch writes no page, so the checks that
+    only a page needs — copy, categories, videos, ffmpeg — report ``NA`` for it rather than a
+    verdict on something the run will never touch. ``None`` (the doctor run without ``--mode``)
+    checks everything, as it always did.
 
     Config first, because nothing after it means anything if it fails — and when it does, that
     single result is the whole report rather than a page of cascading noise.
@@ -1253,6 +1260,8 @@ def run_checks(
         check_video_coverage(cfg),
         check_ffmpeg(cfg),
     ]
+    if mode is Mode.LINKS:
+        results = [_not_for_links(result) for result in results]
     if offline:
         return results
 
@@ -1260,6 +1269,23 @@ def run_checks(
     results.append(check_wordpress(cfg))
     results.append(check_gs1(cfg, products))
     return results
+
+
+#: The checks that are only about a page: a links-only batch writes none. See :func:`run_checks`.
+PAGE_ONLY_CHECKS: Final = frozenset(
+    {"generator_block", "generation_results", "categories", "video_map", "ffmpeg"}
+)
+
+
+def _not_for_links(result: CheckResult) -> CheckResult:
+    if result.name not in PAGE_ONLY_CHECKS:
+        return result
+    return CheckResult(
+        result.name,
+        result.title,
+        Status.NA,
+        "not needed — this batch publishes GS1 links only, and writes no page",
+    )
 
 
 def worst_status(results: list[CheckResult]) -> Status:

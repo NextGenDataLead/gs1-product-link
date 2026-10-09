@@ -22,6 +22,7 @@ from typing import Any, Final
 
 from nicegui import ui
 
+from lib.gates import Mode
 from ui import context, progress, runner, theme
 
 #: The four statuses, only for tallying here — the rendering of a check lives in the theme, so
@@ -85,13 +86,19 @@ def render() -> None:
             clock = ui.timer(1.0, tick)
             try:
                 payload, result = await runner.run_json_off_the_loop(
-                    runner.doctor_argv(cid, offline=False)
+                    runner.doctor_argv(cid, offline=False, mode=mode)
                 )
             finally:
                 clock.cancel()
                 busy.set_visibility(False)
             show(payload, result)
 
+        mode = context.batch_mode(cfg)
+        if mode is Mode.LINKS:
+            theme.band(
+                "This batch publishes GS1 links only, so the checks that only a page needs — its "
+                "text, categories, videos — are marked not applicable."
+            )
         ui.label(
             "Checks the settings, this batch and its text, then logs in to WordPress and asks GS1 "
             "for a token. All of it is read-only — nothing is written, and the GS1 request is a "

@@ -18,7 +18,8 @@ reversible), `/gs1-links` (Digital Links only, aimed at pages that already exist
 and `/gs1-publish` (both). Those three skills are thin: each pins the mode and delegates to
 `flow-orchestrator`, which supplies `run_execute --only`. A request phrased in plain English for one
 leg goes to `flow-orchestrator` too — it classifies the mode at gate 0 and confirms it. Never guess
-toward the more destructive mode.
+toward the more destructive mode. (In the operator shell the mode is chosen with the batch, on the
+Data screen, and gate 0 shows it for confirmation — it is never defaulted.)
 
 The other five skills in `.claude/skills/` cover the individual steps (parse, generate copy, pages,
 Digital Link, QR) and have their own trigger phrases.
