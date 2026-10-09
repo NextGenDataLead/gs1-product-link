@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from pytest_httpx import HTTPXMock
 
+from lib import llm
 from lib.config import GeneratorConfig
 from lib.errors import GeneratorError, LLMAPIError, MissingCredentialError
 from lib.generator import MODE_TIGHTEN, GenerationInputs, GenerationRequest, TranslationGap
@@ -357,7 +358,7 @@ def test_retries_on_429_then_succeeds(
 
 
 def test_load_voice_template_reads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(llm, "CODE_ROOT", tmp_path)
     path = tmp_path / "prompts" / "acme" / "generation.v3.md"
     path.parent.mkdir(parents=True)
     path.write_text("voice text", encoding="utf-8")
@@ -365,9 +366,20 @@ def test_load_voice_template_reads(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert load_voice_template("acme", "v3") == "voice text"
 
 
+def test_voice_template_ships_with_the_code_not_the_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``prompts/`` is committed; the working directory is the data folder under GS1_DATA_DIR."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "prompts" / "acme").mkdir(parents=True)
+    (tmp_path / "prompts" / "acme" / "generation.v3.md").write_text("wrong", encoding="utf-8")
+    with pytest.raises(GeneratorError, match="no voice template"):
+        load_voice_template("acme", "v3")
+
+
 def test_load_voice_template_missing_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(llm, "CODE_ROOT", tmp_path)
     with pytest.raises(GeneratorError, match="no voice template"):
         load_voice_template("acme", "v9")
