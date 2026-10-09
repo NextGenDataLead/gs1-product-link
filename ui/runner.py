@@ -20,10 +20,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final
 
 from lib.gates import Mode
@@ -343,3 +345,40 @@ def reconcile_argv(client_id: str | None) -> list[str]:
     issues GETs, and reads state without quarantining a corrupt one.
     """
     return ["-m", "scripts.reconcile", *([client_id] if client_id else []), "--json"]
+
+
+def hand_over(path: Path, *, downloads: Path | None = None) -> Path:
+    """Copy a report into the operator's Downloads folder and open it in their default app.
+
+    Operator, 2026-10-09: a downloaded PDF opened in the Python application. The shell runs in a
+    native window, where a browser download has no browser to land in — so the file is put where
+    people look for downloads and handed to the operating system, which opens a PDF in the PDF
+    reader and a workbook in the spreadsheet program, as a double-click would.
+
+    Returns where the copy is. Raises ``OSError`` when it cannot be copied; opening is best-effort
+    — the file is there either way, and the caller says where.
+    """
+    folder = downloads or Path.home() / "Downloads"
+    if not folder.is_dir():
+        folder = Path.home()
+    target = folder / path.name
+    counter = 1
+    while target.exists():
+        target = folder / f"{path.stem}-{counter}{path.suffix}"
+        counter += 1
+    shutil.copyfile(path, target)
+    open_in_default_app(target)
+    return target
+
+
+def open_in_default_app(path: Path) -> None:
+    """Ask the operating system to open ``path`` with whatever it opens that kind of file with."""
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606 — a file we just wrote
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])  # noqa: S603, S607 — fixed argv, our own file
+        else:
+            subprocess.Popen(["xdg-open", str(path)])  # noqa: S603, S607 — as above
+    except OSError:
+        return

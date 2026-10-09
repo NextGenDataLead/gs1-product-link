@@ -18,7 +18,7 @@ from lib import issue_report_files
 from lib.provenance import read_run
 from lib.records import RunOutcome
 from lib.run_files import SOURCES_NAME, sibling
-from ui import REPO_ROOT, context, runner, theme
+from ui import REPO_ROOT, context, handover, runner, theme
 
 
 def render() -> None:
@@ -297,9 +297,9 @@ def _issue_report(run: context.RunLog) -> None:
         return
     with ui.row().classes("items-center gap-3 mt-3"):
         ui.label("Issue report for the client:").classes("note")
-        theme.quiet_action("Download PDF", lambda: ui.download(pdf))
+        theme.quiet_action("Download PDF", lambda: handover.give(pdf))
         if xlsx.is_file():
-            theme.quiet_action("Download Excel", lambda: ui.download(xlsx))
+            theme.quiet_action("Download Excel", lambda: handover.give(xlsx))
 
 
 def _error_line(outcome: RunOutcome) -> str:
