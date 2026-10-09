@@ -46,6 +46,10 @@ clients:
       # minted token's accountNumber claim; verify production against MyGS1.
       account_number_test: "8720796420906"
       account_number_production: "8712345000003"
+      # The client's GS1 company prefix(es). GS1 only registers a Digital Link for a barcode
+      # under the account's own contract (else 21011 "No valid contract found"), so the Data
+      # screen stops any other barcode before a links or both run. Leave out to not check.
+      company_prefixes: ["029"]
       # OAuth2 client credentials per environment (issued via MyGS1 / dev portal)
       client_id_env_test: DEMOCLIENT_GS1_CLIENT_SANDBOX_ID
       client_secret_env_test: DEMOCLIENT_GS1_CLIENT_SANDBOX_SECRET

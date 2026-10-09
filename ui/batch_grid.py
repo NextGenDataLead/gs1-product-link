@@ -404,7 +404,9 @@ def _issue_tables(
             "Ticked, but the GS1 record would have nowhere sound to point: no address in Link "
             "naar site and no page of ours, an address that is not on the client's site, or a "
             "page that does not load. A GS1 record can never be deleted, so these are left out "
-            "until the address is fixed in your product list and the list is uploaded again.",
+            "until the address is fixed in your product list and the list is uploaded again. "
+            "A barcode of another brand is here too: GS1 only lets the client register links for "
+            "its own barcodes.",
             [*columns, _wrapping(_URL, "Address"), _wrapping(_DETAIL, "Problem")],
             having(LINK_PROBLEM, CHECKING_LINK),
             collapsed=True,
