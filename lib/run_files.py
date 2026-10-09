@@ -41,6 +41,9 @@ UPLOAD_NAME: Final = "selection-uploaded.xlsx"
 
 #: The per-row outcome workbook, written when the run finishes.
 RESULT_NAME: Final = "result.xlsx"
+#: What the operator ticked on the Data screen and why each could or could not run — copied from
+#: beside the selection when it was saved with this selection (``lib.ticked_snapshot``).
+TICKED_NAME: Final = "selection-ticked.json"
 
 #: The data-quality note a live run leaves — the pages it published incomplete. See
 #: :mod:`lib.run_quality`.

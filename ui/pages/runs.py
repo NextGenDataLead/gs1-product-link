@@ -14,6 +14,7 @@ from pathlib import Path
 
 from nicegui import ui
 
+from lib import issue_report_files
 from lib.provenance import read_run
 from lib.records import RunOutcome
 from lib.run_files import SOURCES_NAME, sibling
@@ -190,6 +191,7 @@ def _run(run: context.RunLog) -> None:
         # on this card rather than on the Data screen where the list is edited. A report generated
         # from a screen that shows no run has to guess which run it is about.
         _scope_report(run)
+        _issue_report(run)
 
         with ui.expansion("Every row").classes("mt-2"):
             rows = [
@@ -285,6 +287,19 @@ def _scope_report(run: context.RunLog) -> None:
 
     with ui.row().classes("gap-3 mt-3"):
         theme.quiet_action("Build the result sheet", build)
+
+
+def _issue_report(run: context.RunLog) -> None:
+    """The client's short report for this run — failed products and why — written by the run."""
+    pdf = sibling(run.path, f"{issue_report_files.RUN_STEM}.pdf")
+    xlsx = pdf.with_suffix(".xlsx")
+    if not pdf.is_file():
+        return
+    with ui.row().classes("items-center gap-3 mt-3"):
+        ui.label("Issue report for the client:").classes("note")
+        theme.quiet_action("Download PDF", lambda: ui.download(pdf))
+        if xlsx.is_file():
+            theme.quiet_action("Download Excel", lambda: ui.download(xlsx))
 
 
 def _error_line(outcome: RunOutcome) -> str:

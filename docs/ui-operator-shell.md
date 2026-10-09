@@ -63,7 +63,7 @@ operator repeats per batch, and everything else is deliberately not numbered.
 
 | # | Screen | What it is for |
 |---|---|---|
-| 1 | **Data** | Upload the selection list, the export and the client's video sign-off sheet; edit the video mapping; choose the batch; read the data-quality report. |
+| 1 | **Data** | Upload the selection list, the export and the client's video sign-off sheet; edit the video mapping; choose the batch; read the client's issue report. |
 | 2 | **Content** | Generate or import `generation_results.json`, check its coverage, read the copy. |
 | 3 | **Preflight** | `python -m scripts.doctor`, rendered as a list to work down. Offline by default. |
 | 4 | **Publish** | The nine gates, one at a time. |
@@ -182,12 +182,17 @@ step 2. The previous order never showed that state, and it is the honest one. Th
 than in a paragraph under it. Below 60rem the two stack, where a column would be narrower than a
 picker and its label.
 
-**The data-quality report builds itself, folded.** It was a button, which made a fresh worklist
-something the operator had to think of asking for — and therefore the thing most likely to be
-skipped on the visit where it mattered. It now rebuilds on every load, from the files a run has
-just written, and stays collapsed. The command takes about half a second, so it runs on a
-`ui.timer(once=True)` just after the first paint rather than during the render: half a second of
-blank screen is a poor trade on a screen nobody opened to read a report.
+**The foot of the screen is the client's issue report, not the data-quality report** (operator,
+2026-10-09: the long report "has gotten a bit out of hand"). It is the one-to-two pager the client
+receives — failed products, issues by category, each failed product's reasons — built in-process
+from the same verdict step 5 shows (`lib.issue_report.selection_issues`), so it follows the ticks
+and needs no subprocess. Every run writes the same report (`runs/{stamp}/issues.pdf` and `.xlsx`)
+about the **same ticked products**: Next saves only the runnable ones, so it also writes
+`selections.ticked.json` beside the selection — the ticked products and their issues, with the
+selection's sha256 — which the run copies in only while that hash still matches. The same snapshot
+re-ticks the products on reopening, so the screen and the run report never cover different sets. The long data-quality report is archived from this screen,
+not deleted: `report_quality` still writes it, every run still writes its `data-quality.md`, and
+the Runs screen still builds the complete one.
 
 **A batch requires both files, every visit.** Until an export and a list have each arrived *and
 been accepted* in this render, there is no selection, no quality report and no way onward — the
