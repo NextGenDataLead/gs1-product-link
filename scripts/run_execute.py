@@ -1382,7 +1382,14 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
             save_state(state)
 
     errors = sum(1 for o in outcomes if o.status == "error")
-    _write_result_sheet(cfg, log.path, outcomes, mode=str(mode), dry_run=dry_run)
+    _write_result_sheet(
+        cfg,
+        log.path,
+        outcomes,
+        mode=str(mode),
+        dry_run=dry_run,
+        confirmed={row.product.gtin14 for row in rows},
+    )
     if not dry_run and resolved_gs1 is not None:
         _write_quality_note(log.path, outcomes)
     _log.info("run complete: %d ok, %d error(s)", len(outcomes) - errors, errors)
@@ -1393,8 +1400,14 @@ def _run(  # noqa: PLR0913 — the plan, its credentials, and one flag per polic
     return _EXIT_ERRORS if errors else _EXIT_OK
 
 
-def _write_result_sheet(
-    cfg: ClientConfig, log: Path, outcomes: list[RunOutcome], *, mode: str, dry_run: bool
+def _write_result_sheet(  # noqa: PLR0913 — the run, as the report needs it
+    cfg: ClientConfig,
+    log: Path,
+    outcomes: list[RunOutcome],
+    *,
+    mode: str,
+    dry_run: bool,
+    confirmed: set[str],
 ) -> None:
     """The per-row result sheet, without being asked for. On failure too.
 
@@ -1436,6 +1449,7 @@ def _write_result_sheet(
             default_language=cfg.wordpress.default_language,
             expected_without_video=expected,
             ticked=ticked_snapshot.read(sibling(log, TICKED_NAME)),
+            confirmed=confirmed,
         )
         pdf, _ = issue_report_files.write(report, log.parent)
     except Exception as exc:  # noqa: BLE001 — as above: a report must not fail a publish
