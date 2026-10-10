@@ -45,6 +45,7 @@ from lib.complete_report import (
 )
 from lib.complete_scope import Complete, gather
 from lib.config import ClientConfig, get_client, resolve_client_id
+from lib.data_dir import enter_data_dir
 from lib.env import load_env
 from lib.errors import (
     ConfigError,
@@ -661,5 +662,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    enter_data_dir()
     load_env()
     raise SystemExit(main())

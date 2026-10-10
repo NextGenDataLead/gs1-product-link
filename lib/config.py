@@ -22,6 +22,7 @@ import jsonschema
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from lib.data_dir import CODE_ROOT, data_root
 from lib.errors import ConfigError, ExportParseError
 from lib.gdsn import GdsnSource
 from lib.generator import DEFAULT_PROMPT_VERSION
@@ -29,10 +30,10 @@ from lib.gs1_dl_client import GS1Config as ResolvedGS1Config
 from lib.gs1_dl_client import ResolverSettings
 from lib.records import ProductRecord, is_valid_target_path
 
-#: Repo-root-relative default locations.
-_ROOT: Final = Path(__file__).resolve().parent.parent
-DEFAULT_CLIENTS_PATH: Final = _ROOT / "clients.yml"
-_SCHEMA_PATH: Final = _ROOT / "schema" / "clients.schema.json"
+#: Default locations. ``clients.yml`` belongs to the installation, so it lives in the data folder;
+#: the schema ships with the code.
+DEFAULT_CLIENTS_PATH: Final = data_root() / "clients.yml"
+_SCHEMA_PATH: Final = CODE_ROOT / "schema" / "clients.schema.json"
 
 #: Config sub-blocks that inherit from the top-level ``defaults`` block.
 _INHERITED_BLOCKS: Final = ("gs1", "wordpress", "qr", "flow")

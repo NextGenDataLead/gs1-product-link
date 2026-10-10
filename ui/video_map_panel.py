@@ -22,7 +22,7 @@ from pathlib import Path
 
 from lib.config import ClientConfig
 from lib.errors import VideoMapError
-from ui import REPO_ROOT, theme, video_map_edit
+from ui import DATA_ROOT, theme, video_map_edit
 
 
 @dataclass
@@ -98,7 +98,7 @@ def session_for(cid: str, cfg: ClientConfig) -> MappingSession | None:
     if cfg.media is None or not cfg.media.video_map_path:
         return None
     configured = Path(cfg.media.video_map_path)
-    path = configured if configured.is_absolute() else REPO_ROOT / configured
+    path = configured if configured.is_absolute() else DATA_ROOT / configured
     session = _SESSIONS.get(cid)
     if session is None or session.path != path:
         session = _SESSIONS[cid] = MappingSession(path)

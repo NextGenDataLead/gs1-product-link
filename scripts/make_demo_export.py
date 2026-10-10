@@ -44,6 +44,7 @@ import openpyxl
 
 from lib import demo_export, demo_videos
 from lib.config import ClientConfig, get_client
+from lib.data_dir import CODE_ROOT, enter_data_dir
 from lib.env import load_env
 from lib.errors import ConfigError
 from lib.input_layout import client_root
@@ -51,7 +52,9 @@ from lib.input_layout import client_root
 _log = logging.getLogger("scripts.make_demo_export")
 
 #: Where ``democlient`` is defined. The operator's ``clients.yml`` is gitignored and holds theirs.
-_DEFAULT_CONFIG = "clients.example.yml"
+#: It ships with the code, so it is found there even when the data folder is elsewhere; the paths
+#: it names are relative, so the files still land in the data folder.
+_DEFAULT_CONFIG = str(CODE_ROOT / "clients.example.yml")
 
 _EXIT_OK = 0
 _EXIT_REFUSED = 1
@@ -134,7 +137,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--config",
         default=_DEFAULT_CONFIG,
-        help=f"config file to read the output paths from (default {_DEFAULT_CONFIG})",
+        help="config file to read the output paths from (default: the shipped clients.example.yml)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Report only; write no file")
     parser.add_argument(
@@ -195,5 +198,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    enter_data_dir()
     load_env()
     raise SystemExit(main())

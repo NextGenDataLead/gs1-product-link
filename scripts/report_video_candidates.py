@@ -41,6 +41,7 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from lib.config import ClientConfig, get_client
+from lib.data_dir import enter_data_dir
 from lib.env import load_env
 from lib.errors import ConfigError, VideoMapError
 from lib.media_video import VideoMap, files_by_language, load_video_map, summarize_video_map
@@ -236,5 +237,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    enter_data_dir()
     load_env()
     raise SystemExit(main())

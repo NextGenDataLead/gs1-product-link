@@ -36,6 +36,7 @@ import sys
 from typing import Any
 
 from lib.config import ClientConfig, get_client
+from lib.data_dir import enter_data_dir
 from lib.env import load_env
 from lib.errors import ConfigError, MissingCredentialError, StateError, WordPressAPIError
 from lib.reconcile import LivePage, Report, reconcile
@@ -142,5 +143,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    enter_data_dir()
     load_env()
     raise SystemExit(main())

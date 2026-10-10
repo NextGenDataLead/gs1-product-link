@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from lib.gates import Mode
-from ui import REPO_ROOT
+from ui import DATA_ROOT
 
 #: Exit codes are uniform across all the scripts (docs/troubleshooting.md).
 EXIT_OK: Final = 0
@@ -96,7 +96,7 @@ def run(argv: Sequence[str], *, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> Com
     """
     completed = subprocess.run(  # noqa: S603 — argv is built in code, never from operator text
         [sys.executable, *argv],
-        cwd=REPO_ROOT,
+        cwd=DATA_ROOT,
         env=_child_env(),
         capture_output=True,
         text=True,
@@ -129,7 +129,7 @@ async def stream(
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         *argv,
-        cwd=REPO_ROOT,
+        cwd=DATA_ROOT,
         env=_child_env(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,

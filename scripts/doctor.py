@@ -37,6 +37,7 @@ import dataclasses
 import json
 import sys
 
+from lib.data_dir import enter_data_dir
 from lib.env import load_env
 from lib.gates import Mode
 from lib.preflight import CheckResult, Status, run_checks, worst_status
@@ -74,7 +75,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--json", action="store_true", help="Emit the results as JSON instead of prose"
     )
-    parser.add_argument("--config", help="Path to clients.yml (default: the repo's own)")
+    parser.add_argument("--config", help="Path to clients.yml (default: the data folder's own)")
     parser.add_argument(
         "--mode",
         choices=[mode.value for mode in Mode],
@@ -144,5 +145,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    enter_data_dir()
     load_env()
     raise SystemExit(main())

@@ -27,7 +27,7 @@ from lib.process_list import load_process_list
 from lib.provenance import history_path, read
 from lib.records import Plan, PlanSummary, ProductRecord, RunOutcome, State
 from lib.run_files import iter_logs, newest_log, stamp_of
-from ui import REPO_ROOT, progress
+from ui import DATA_ROOT, progress
 
 
 @dataclass(frozen=True)
@@ -71,7 +71,7 @@ def file_fact(path: str | Path) -> FileFact:
     """Describe a path without reading it."""
     resolved = Path(path)
     if not resolved.is_absolute():
-        resolved = REPO_ROOT / resolved
+        resolved = DATA_ROOT / resolved
     try:
         stat = resolved.stat()
     except OSError:
@@ -106,7 +106,7 @@ def is_production(cfg: ClientConfig) -> bool:
 
 
 def output_dir(cid: str) -> Path:
-    return REPO_ROOT / "output" / cid
+    return DATA_ROOT / "output" / cid
 
 
 def _load_json(path: Path) -> Any:
@@ -591,9 +591,9 @@ def mode_from(value: str | None) -> Mode:
 
 
 def _resolved(path: str) -> Path:
-    """A configured path against the repository root. Every path in ``clients.yml`` is relative."""
+    """A configured path against the data folder. Every path in ``clients.yml`` is relative."""
     candidate = Path(path)
-    return candidate if candidate.is_absolute() else REPO_ROOT / candidate
+    return candidate if candidate.is_absolute() else DATA_ROOT / candidate
 
 
 def locked_steps(cid: str | None, cfg: ClientConfig | None) -> set[str]:

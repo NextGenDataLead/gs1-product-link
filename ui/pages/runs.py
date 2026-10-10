@@ -18,7 +18,7 @@ from lib import issue_report_files
 from lib.provenance import read_run
 from lib.records import RunOutcome
 from lib.run_files import SOURCES_NAME, sibling
-from ui import REPO_ROOT, context, handover, runner, theme
+from ui import DATA_ROOT, context, handover, runner, theme
 
 
 def render() -> None:
@@ -108,7 +108,7 @@ def _complete_report(cid: str) -> None:
     A button rather than on every visit: it asks the site, which takes a while and needs the
     credentials the subprocess loads itself.
     """
-    report = REPO_ROOT / "output" / cid / "complete-data-quality-report.md"
+    report = DATA_ROOT / "output" / cid / "complete-data-quality-report.md"
     with theme.section("Complete data-quality report"):
         ui.label(
             "Every product on your product list and everything live, with what is still to do "
@@ -126,7 +126,7 @@ def _complete_report(cid: str) -> None:
                     theme.band(result.stderr or "The report could not be built.", "warn")
                     return
                 ui.label(
-                    f"{report.relative_to(REPO_ROOT)} — built {context.file_fact(report).age}"
+                    f"{report.relative_to(DATA_ROOT)} — built {context.file_fact(report).age}"
                 ).classes("mono")
                 ui.markdown(report.read_text(encoding="utf-8")).classes("prose max-w-none")
 
@@ -247,9 +247,9 @@ def _what_it_read(run: context.RunLog) -> None:
 
 
 def _relative(path: Path) -> Path:
-    """``path`` against the repository root, or unchanged when it lies outside it."""
+    """``path`` against the data folder, or unchanged when it lies outside it."""
     try:
-        return path.relative_to(REPO_ROOT)
+        return path.relative_to(DATA_ROOT)
     except ValueError:
         return path
 
@@ -273,7 +273,7 @@ def _scope_report(run: context.RunLog) -> None:
     # Async, and the subprocess runs off the event loop — see ui/pages/data.py for why both.
     async def build() -> None:
         # Relative where it can be, so the command on screen is one the operator can paste into a
-        # terminal from the repository root — which is the whole reason `theme.command` exists.
+        # terminal from the data folder — which is the whole reason `theme.command` exists.
         argv = runner.report_scope_argv(cid, run=str(_relative(run.path)))
         output.style("display:block")
         output.clear()

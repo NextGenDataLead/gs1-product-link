@@ -25,7 +25,7 @@ from lib.gates import PERMANENCE_WARNING, REVERSIBLE_NOTE, Gate, GateOption, Mod
 from lib.records import PlanClassification, PlanRow, SkipReason
 from lib.result_sheet import load_outcomes
 from lib.run_files import newest_log
-from ui import REPO_ROOT, context, publish_outcome, runner, theme
+from ui import DATA_ROOT, context, publish_outcome, runner, theme
 from ui.session import GateNotAnsweredError, PublishSession
 
 #: Scroll to an element once the page has stopped moving under it.
@@ -941,7 +941,7 @@ class _Flow:
             )
             return None
 
-        path = REPO_ROOT / "output" / self.cid / "plan.confirmed.json"
+        path = DATA_ROOT / "output" / self.cid / "plan.confirmed.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(

@@ -37,6 +37,7 @@ import httpx
 from pydantic import ValidationError
 
 from lib.config import GeneratorConfig
+from lib.data_dir import CODE_ROOT
 from lib.errors import GeneratorError, LLMAPIError, MissingCredentialError
 from lib.generator import MODE_TIGHTEN, GenerationRequest, GenerationResult
 
@@ -105,8 +106,12 @@ _PRODUCE_COPY_TOOL: Final[dict[str, Any]] = {
 
 
 def voice_template_path(client_id: str, prompt_version: str) -> Path:
-    """Return the versioned voice template path for a client."""
-    return Path("prompts") / client_id / f"generation.{prompt_version}.md"
+    """Return the versioned voice template path for a client.
+
+    Committed beside the code, so resolved from the code folder — not the working directory,
+    which is the data folder once ``GS1_DATA_DIR`` is set.
+    """
+    return CODE_ROOT / "prompts" / client_id / f"generation.{prompt_version}.md"
 
 
 def load_voice_template(client_id: str, prompt_version: str) -> str:

@@ -38,8 +38,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-#: The repository root. Every output path in this project is built as ``Path("output") / …``,
-#: relative to the working directory, so every subprocess is launched from here.
-REPO_ROOT: Final = Path(__file__).resolve().parent.parent
+from lib.data_dir import CODE_ROOT, data_root
 
-__all__ = ["REPO_ROOT"]
+#: The repository root — where the code is. Nothing the operator owns is resolved against it.
+REPO_ROOT: Final[Path] = CODE_ROOT
+
+#: The data folder (:mod:`lib.data_dir`): ``.env``, ``clients.yml``, ``input/``, ``output/``.
+#: Every output path in this project is built as ``Path("output") / …``, relative to the working
+#: directory, so every subprocess is launched from here and every configured path resolves here.
+#: The repository root unless ``GS1_DATA_DIR`` names another folder.
+DATA_ROOT: Final[Path] = data_root()
+
+__all__ = ["DATA_ROOT", "REPO_ROOT"]
