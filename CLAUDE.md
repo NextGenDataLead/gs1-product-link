@@ -111,6 +111,11 @@ drift silently. Read `docs/ui-operator-shell.md` before changing either.
   as it always was. Set, `.env`, `clients.yml`, `input/` and `output/` are read there, and every
   entry point `enter_data_dir()`s into it from its `__main__` block — same rule, same AST test as
   `load_env()`. Never build a data path from the code root; `tests/lib/test_data_dir.py` checks.
+- **The installers record a data folder** (`lib/install_location.py`, run as `scripts.data_folder`):
+  remembered → the program folder if it already holds data → a new one in home. `start` passes it
+  as `GS1_DATA_DIR`. It never writes into a folder that already holds data, and refuses rather
+  than guess when the record is stale or two folders hold data — each guess is a second ledger.
+  In a dev clone `start` resolves to the clone itself and writes nothing.
 - **Two install routes.** The double-click `uv` installers are the default; the container image
   (`Dockerfile`, `compose.yml`, published to GHCR on a `v*` tag) is for machines where IT runs
   containers. The image holds code only — data is the `/data` volume — and `tests/test_container.py`

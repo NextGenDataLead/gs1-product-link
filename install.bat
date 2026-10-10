@@ -7,7 +7,10 @@ rem CPython, so this works on a machine with no Python and no developer tools.  
 rem come from the committed uv.lock, so this machine gets the versions that were tested
 rem rather than whatever resolves today.
 rem
-rem Safe to run again at any time.  It writes only inside this folder and inside %USERPROFILE%.
+rem Safe to run again at any time.  To update, download the new release, unzip it anywhere and
+rem run its installer: it finds this machine's data folder and leaves it as it is.  It writes
+rem inside this folder, inside %USERPROFILE% and - on a first install only - a data folder in your
+rem home folder plus a one-line note of where it is (lib/install_location.py has the rules).
 rem
 rem The pinned versions below must match install.command and .github/workflows/ci.yml;
 rem tests/test_packaging.py fails if they drift apart.
@@ -60,12 +63,20 @@ echo Checking the operator shell can start ...
 if errorlevel 1 goto :failed
 
 echo.
+echo Finding this machine's data folder ...
+rem Settings, credentials and the record of what was published live there, not in this folder,
+rem so a newer release can replace this one without touching them.  It refuses - and stops the
+rem install - rather than start a second, empty one beside data it cannot account for.
+"%UV%" run --frozen --extra ui --python %PYTHON_VERSION% python -m scripts.data_folder --install >nul
+if errorlevel 1 goto :failed
+
+echo.
 echo -- Done. --------------------------------------------------------------------
 echo Double-click start.bat to open the operator shell.
 echo.
-echo Before the first run this folder also needs clients.yml and .env, which hold the
-echo site settings and the credentials.  They are never part of the download - ask
-echo whoever set this up for them.
+echo On a new installation, fill in the site settings and credentials on the Setup
+echo screen - or ask whoever set this up for the clients.yml and .env that go in the
+echo data folder named above.  They are never part of the download.
 echo.
 pause
 exit /b 0

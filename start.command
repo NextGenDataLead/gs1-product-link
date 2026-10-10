@@ -13,8 +13,7 @@ set -euo pipefail
 # Must match install.command; tests/test_packaging.py checks that it does.
 PYTHON_VERSION="3.11"
 
-# Every output path in this project is built relative to the working directory
-# (`output/{client}/…`), so the shell has to start from the folder this script lives in.
+# uv finds the project from here.  The data is elsewhere: see GS1_DATA_DIR below.
 cd -- "$(dirname -- "$0")"
 
 pause() {
@@ -43,6 +42,16 @@ if ! UV="$(find_uv)"; then
     pause
     exit 1
 fi
+
+# The data folder the installer recorded (or one IT already pinned in GS1_DATA_DIR).  Without
+# it the shell would fall back to this folder, which on a release install holds no data.
+if ! GS1_DATA_DIR="$("$UV" run --frozen --extra ui --python "$PYTHON_VERSION" python -m scripts.data_folder)"; then
+    echo "Double-click install.command first — it sets up the data folder."
+    pause
+    exit 1
+fi
+export GS1_DATA_DIR
+echo "Data folder: $GS1_DATA_DIR"
 
 # --frozen: use uv.lock exactly as committed and never update it.  Starting the app is not the
 # moment to resolve new versions of anything that talks to a live site.

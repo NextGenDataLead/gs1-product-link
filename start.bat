@@ -10,8 +10,7 @@ rem
 rem Run install.bat first, once.
 
 setlocal
-rem Every output path in this project is built relative to the working directory
-rem (output\{client}\...), so the shell has to start from the folder this script lives in.
+rem uv finds the project from here.  The data is elsewhere: see GS1_DATA_DIR below.
 cd /d "%~dp0"
 
 rem Must match install.bat; tests/test_packaging.py checks that it does.
@@ -27,6 +26,20 @@ if not defined UV (
     pause
     exit /b 1
 )
+
+rem The data folder the installer recorded (or one IT already pinned in GS1_DATA_DIR).  Without
+rem it the shell would fall back to this folder, which on a release install holds no data.
+rem "call" keeps cmd from stripping the quotes around the uv path inside for /f.
+set "FOUND_DATA_DIR="
+for /f "usebackq delims=" %%I in (`call "%UV%" run --frozen --extra ui --python %PYTHON_VERSION% python -m scripts.data_folder`) do set "FOUND_DATA_DIR=%%I"
+if not defined FOUND_DATA_DIR (
+    echo Double-click install.bat first - it sets up the data folder.
+    echo.
+    pause
+    exit /b 1
+)
+set "GS1_DATA_DIR=%FOUND_DATA_DIR%"
+echo Data folder: %GS1_DATA_DIR%
 
 rem --frozen: use uv.lock exactly as committed and never update it.  Starting the app is not
 rem the moment to resolve new versions of anything that talks to a live site.

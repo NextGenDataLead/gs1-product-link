@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Installs from a GitHub release keep their data in a data folder of their own.** The installer
+  decides it once per machine user and records it: the folder from an earlier install; else the
+  program folder itself if it already holds data (an installation from before data folders, left
+  exactly where it is); else a new `GS1 Digital Link data` in the home folder, seeded from the
+  examples. `start` hands it to the shell as `GS1_DATA_DIR`. A recorded folder that has gone, or
+  two folders that both hold data, stop the install instead of starting a second ledger. A folder
+  that already holds data is never written to. Updating is: unzip the new release, run its
+  installer. A new `Installers` workflow runs the real scripts on macOS and Windows.
 - **A container image, for machines where IT runs containers instead of allowing the installer.**
   `Dockerfile`, `compose.yml` and `.github/workflows/container.yml`: code in the image, the
   installation's data in a `/data` volume (`GS1_DATA_DIR`), seeded from the examples on first
