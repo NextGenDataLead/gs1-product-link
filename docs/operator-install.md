@@ -19,13 +19,17 @@ what IT is being asked to allow.
 
 ## 1. Get the folder
 
-The maintainer sends it — a zip, a shared drive, or a `git clone`. It goes anywhere the operator
-can write: Desktop, Documents, wherever. Not inside a synced folder that rewrites files underneath
-it, though; `output/` is written during a run.
+Download the latest release from
+**[github.com/NextGenDataLead/gs1-product-link/releases](https://github.com/NextGenDataLead/gs1-product-link/releases)**:
+under *Assets*, **Source code (zip)**. Unzip it anywhere the operator can write — Desktop,
+Documents, wherever. (A `git clone` of a release tag works too.)
 
-**The folder must stay together.** Every path this tool uses is relative to it, so
-`install.command` on its own, moved to the Desktop, installs nothing — it says so rather than
-guessing.
+This folder is the **program** only. The operator's settings, credentials and the record of what
+was published live in a separate **data folder**, which the installer sets up — so a newer release
+can replace this folder without touching any of it. See [Updating](#updating-to-a-new-release).
+
+**The folder must stay together.** `install.command` on its own, moved to the Desktop, installs
+nothing — it says so rather than guessing.
 
 ## 2. Run the installer
 
@@ -38,25 +42,36 @@ It:
    machine, in which case that one is used;
 2. has `uv` fetch its own **CPython 3.11**, into `~/.local/share/uv/python` (macOS/Linux) or
    `%LOCALAPPDATA%\uv\data\python` (Windows);
-3. builds **`.venv`** inside the folder from the committed `uv.lock`.
+3. builds **`.venv`** inside the folder from the committed `uv.lock`;
+4. finds this machine's **data folder**, and prints where it is:
+   - on a machine that has been set up before, the same folder as last time;
+   - on a machine whose program folder already holds settings and a publishing record — set up
+     before data folders existed — that folder, exactly where it is, with nothing in it changed;
+   - otherwise a new folder, **`GS1 Digital Link data`** in the user's home folder, with a blank
+     settings file and a blank, owner-only credentials file in it.
+
+   It notes the choice in the user's application-settings folder, so the next release finds it.
+   If the noted folder has gone, or two folders both hold data, **it stops and says so** rather
+   than guess: either guess could hide the record of what was already published.
 
 No administrator rights, nothing installed system-wide, and nothing written outside the folder and
 the user's own home directory. The versions come from `uv.lock` rather than from a fresh
 resolution, so this machine gets what was tested — the installer passes `--locked`, which means it
 would rather stop than quietly install a different set.
 
-Re-run it any time. It is idempotent, and re-running it is how you pick up an updated folder.
+Re-run it any time. It is idempotent.
 
 ## 3. The five files that are not in the download
 
-Everything in this list is gitignored, so none of it is in a zip or a clone. The maintainer sends
-each one separately, and **a missing one does not always announce itself** — the first two stop the
+None of these is in the download. They belong in the **data folder** the installer named — on a
+machine set up before data folders existed, that is the program folder itself. The maintainer
+sends each one separately, and **a missing one does not always announce itself** — the first two stop the
 shell dead, the last three fail in three different and much quieter ways.
 
 | File | Goes | What it is | Missing it |
 |---|---|---|---|
-| `clients.yml` | top level, beside `install.command` | the site settings | Setup says the config did not load; nothing runs |
-| `.env` | top level, `chmod 600` | the credentials | every live check fails; nothing runs |
+| `clients.yml` | top level of the data folder | the site settings | Setup says the config did not load; nothing runs |
+| `.env` | top level of the data folder, `chmod 600` | the credentials | every live check fails; nothing runs |
 | `input/{client}/process/selection/selections.xlsx` | the path in `process_list.path` | the barcodes this run may touch | Data shows a red band. It has an upload — see below |
 | `output/{client}/state.json` | exactly there — the path is not configurable | **the ledger of what is already published** | **see the warning below. This is the expensive one.** |
 | `input/{client}/videos/mapping.yml` | the path in `media.video_map_path` | which video belongs to which product — edited on the Data screen afterwards | the preflight **fails** (`cannot read …`); the machine cannot reach a runnable state |
@@ -112,16 +127,30 @@ which copy is newer, the safe move is to check the live site before running anyt
 The human-readable live log (`docs/clients/{client}-live-log.md`) is a convenience, not the source
 of truth. Where the two disagree, `state.json` wins: it is what the pipeline actually wrote.
 
+A new data folder already has a blank `clients.yml` and `.env`; the maintainer's copies replace
+them, or they can be filled in on the **Setup** screen.
+
 ## 4. Start it
 
-Double-click `start.command` / `start.bat`. A desktop window opens on `127.0.0.1:8477` — no
-browser tab, no URL anyone else can reach.
+Double-click `start.command` / `start.bat`. It prints the data folder it is using, then a desktop
+window opens on `127.0.0.1:8477` — no browser tab, no URL anyone else can reach.
 
 **[`operator-guide.md`](operator-guide.md) takes it from here** — the walkthrough of a batch,
 screen by screen, with screenshots. Read that next.
 
 `./start.command --browser` serves the same pages in a browser instead, for a machine where the
 webview will not open.
+
+## Updating to a new release
+
+1. Download and unzip the new release, as in step 1 — into a **new** folder.
+2. Double-click its installer. It finds the same data folder and says so; nothing in it changes.
+3. Start the new version with its own `start.command` / `start.bat`.
+
+The old program folder can then be deleted — **unless the installer said the data is in it.**
+On a machine set up before data folders existed, the data stays in that first folder until it is
+deliberately moved, and the installer says *KEEP IT* in capitals. Believe it: deleting that
+folder deletes the record of what was published.
 
 ---
 
@@ -204,7 +233,10 @@ auto-update, and no Anthropic egress or LLM credential unless the variable named
   package comes from `uv.lock`, which is committed — 86 packages with hashes, in the repository,
   vettable before anything is installed.
 - **User-scope only.** No administrator rights, no service, no scheduled task, no PATH change
-  beyond `uv`'s own line in the user's shell profile.
+  beyond `uv`'s own line in the user's shell profile. Besides the program folder, a first install
+  creates one data folder in the user's home folder and a one-line text file naming it, in the
+  user's application-settings folder (`~/Library/Application Support/GS1 Digital Link` on macOS,
+  `%APPDATA%\GS1 Digital Link` on Windows). Setting `GS1_DATA_DIR` before starting overrides it.
 - **The credentials predate this.** `.env` holds a WordPress application password with editor
   rights and GS1 production OAuth credentials, plaintext at mode 600. That is how the tool has
   always worked from a terminal; the installer neither improves nor worsens it, and a secret
@@ -231,3 +263,9 @@ pinned version installed.
 `.github/workflows/container.yml` builds it for amd64 and arm64 and pushes it to
 `ghcr.io/nextgendatalead/gs1-product-link` as the version and as `latest`. On every pull request
 that touches the code or the image it is built and started for real, without publishing.
+
+**A release is a tag plus a GitHub release.** `gh release create vX.Y.Z --generate-notes` makes
+the *Source code (zip)* operators download, and the tag publishes the container image. Before
+tagging, the `Installers` workflow must be green: it runs `install.command` / `install.bat` and
+`start --help` for real on macOS and Windows, which is the only place those scripts execute
+outside an operator's machine.

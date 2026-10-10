@@ -105,14 +105,15 @@ def test_the_ui_shell_never_loads_env_either() -> None:
     assert offenders == []
 
 
-#: Scripts that are not operational entry points: they take no credential and reach no network,
-#: existing only to generate or check files already in the tree.
+#: Scripts that are not operational entry points: they take no credential and reach no network.
+#: ``export_gates`` generates or checks files already in the tree; ``data_folder`` decides where the
+#: data folder is, so it cannot start inside one.
 #:
-#: Exempt from the ``load_env`` rule because loading production credentials into a code generator is
-#: the thing this file exists to prevent, not an instance of it. Kept as an explicit set — and held
-#: to :func:`test_codegen_scripts_stay_credential_free` below — so the exemption cannot quietly
-#: become the place a real entry point hides.
-_CODEGEN_SCRIPTS = {"export_gates.py"}
+#: Exempt from the ``load_env`` and ``enter_data_dir`` rule because loading production credentials
+#: into either is the thing this file exists to prevent, not an instance of it. Kept as an explicit
+#: set — and held to :func:`test_codegen_scripts_stay_credential_free` below — so the exemption
+#: cannot quietly become the place a real entry point hides.
+_CODEGEN_SCRIPTS = {"export_gates.py", "data_folder.py"}
 
 #: Importing any of these means a script can reach a credential or the network, so it is not
 #: codegen and belongs back under the rule.

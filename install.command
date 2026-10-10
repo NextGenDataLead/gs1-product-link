@@ -7,8 +7,10 @@
 # The packages come from the committed uv.lock, so this machine gets the versions that were
 # tested rather than whatever resolves today.
 #
-# Safe to run again at any time — it is idempotent, and re-running it is how you pick up an
-# updated copy of the folder.  It writes only inside this folder and inside ~/.local.
+# Safe to run again at any time — it is idempotent.  To update, download the new release, unzip it
+# anywhere, and run its installer: it finds this machine's data folder and leaves it as it is.
+# It writes inside this folder, inside ~/.local, and — on a first install only — a data folder in
+# your home folder plus a one-line note of where it is (lib/install_location.py has the rules).
 #
 # Maintainers: running this in a development clone REPLACES .venv with a Python 3.11
 # environment holding the `ui` extra but not `dev`.  Use `pip install -e ".[dev,ui]"` there.
@@ -97,10 +99,17 @@ echo "Checking the operator shell can start …"
 "$UV" run --frozen --extra ui --python "$PYTHON_VERSION" python -c "import ui.app"
 
 echo
+echo "Finding this machine's data folder …"
+# Settings, credentials and the record of what was published live there, not in this folder,
+# so a newer release can replace this one without touching them.  It refuses — and stops the
+# install — rather than start a second, empty one beside data it cannot account for.
+"$UV" run --frozen --extra ui --python "$PYTHON_VERSION" python -m scripts.data_folder --install >/dev/null
+
+echo
 echo "── Done. ────────────────────────────────────────────────────────────────────"
 echo "Double-click start.command to open the operator shell."
 echo
-echo "Before the first run this folder also needs clients.yml and .env, which hold the"
-echo "site settings and the credentials.  They are never part of the download — ask"
-echo "whoever set this up for them."
+echo "On a new installation, fill in the site settings and credentials on the Setup"
+echo "screen — or ask whoever set this up for the clients.yml and .env that go in the"
+echo "data folder named above.  They are never part of the download."
 pause
