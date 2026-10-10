@@ -25,7 +25,12 @@ python -m ui
 
 It binds to `127.0.0.1` only and opens in a native window rather than a browser tab. `python -m ui
 --browser` serves the same pages in a browser on the same loopback address, for a machine with no
-webview available.
+webview available. `--container` is the container image's mode: it listens on the container's
+interfaces, because the container's loopback is unreachable from the machine, and leaves
+loopback-only to `compose.yml`'s `127.0.0.1:8477` mapping. It refuses to start outside a container
+(`ui/serving.py`), where nothing would map the port and the shell would face the network. In both
+browser modes reports download through the browser (`ui/handover.py`): the native window's copy
+to Downloads would land on the serving side.
 
 ---
 

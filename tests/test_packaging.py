@@ -41,6 +41,7 @@ _INSTALL_SH: Final = _ROOT / "install.command"
 _START_SH: Final = _ROOT / "start.command"
 _INSTALL_BAT: Final = _ROOT / "install.bat"
 _START_BAT: Final = _ROOT / "start.bat"
+_DOCKERFILE: Final = _ROOT / "Dockerfile"
 
 #: The distribution's own entry in the lockfile.
 _PROJECT_NAME: Final = "gs1-digital-link-orchestrator"
@@ -193,6 +194,7 @@ def test_the_uv_version_is_pinned_to_one_value() -> None:
         _INSTALL_SH.name: _pinned(_INSTALL_SH, r'UV_VERSION="([\d.]+)"'),
         _INSTALL_BAT.name: _pinned(_INSTALL_BAT, r'set "UV_VERSION=([\d.]+)"'),
         _CI.name: _pinned(_CI, r"astral\.sh/uv/([\d.]+)/install\.sh"),
+        _DOCKERFILE.name: _pinned(_DOCKERFILE, r"FROM ghcr\.io/astral-sh/uv:([\d.]+)"),
     }
     assert len(set(pins.values())) == 1, f"the pinned uv version has drifted apart: {pins}"
 
@@ -205,6 +207,7 @@ def test_the_python_version_is_pinned_to_one_value() -> None:
         _INSTALL_BAT.name: _pinned(_INSTALL_BAT, r'set "PYTHON_VERSION=([\d.]+)"'),
         _START_BAT.name: _pinned(_START_BAT, r'set "PYTHON_VERSION=([\d.]+)"'),
         _CI.name: _pinned(_CI, r'python-version: "([\d.]+)"'),
+        _DOCKERFILE.name: _pinned(_DOCKERFILE, r"FROM python:([\d.]+)-slim"),
     }
     assert len(set(pins.values())) == 1, f"the pinned Python version has drifted apart: {pins}"
 

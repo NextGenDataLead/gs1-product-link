@@ -16,6 +16,7 @@ import argparse
 
 from lib.data_dir import enter_data_dir
 from ui.app import main
+from ui.serving import inside_container
 
 
 def _parse_args() -> argparse.Namespace:
@@ -25,9 +26,20 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Serve in a browser tab instead of a native window (still loopback-only)",
     )
+    parser.add_argument(
+        "--container",
+        action="store_true",
+        help="Run inside the container image: browser mode, listening for the port mapping",
+    )
     return parser.parse_args()
 
 
 if __name__ in {"__main__", "__mp_main__"}:  # NiceGUI re-imports under this name on some platforms
+    _args = _parse_args()
+    if _args.container and not inside_container():
+        raise SystemExit(
+            "--container is for the container image only: it listens on every network interface "
+            "and relies on the image's port mapping to stay on this machine. Use --browser here."
+        )
     enter_data_dir()
-    main(native=not _parse_args().browser)
+    main(native=not _args.browser, container=_args.container)

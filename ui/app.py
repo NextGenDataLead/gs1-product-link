@@ -16,12 +16,17 @@ from typing import Final
 from fastapi.responses import RedirectResponse
 from nicegui import ui
 
-from ui import context, progress, theme
+from ui import context, handover, progress, theme
 from ui.pages import content, data, preflight, publish, runs, setup
 
 #: Loopback only, and a port unlikely to collide with a dev server the operator also runs.
 HOST: Final = "127.0.0.1"
 PORT: Final = 8477
+
+#: Inside a container, loopback is the container's own and unreachable from the machine, so the
+#: shell listens on the container's interfaces. Loopback-only moves to the port mapping instead:
+#: ``compose.yml`` publishes ``127.0.0.1:8477``, and ``tests/test_container.py`` holds it there.
+CONTAINER_HOST: Final = "0.0.0.0"  # noqa: S104 — reachable only through the loopback port mapping
 
 TITLE: Final = "GS1 Digital Link — operator shell"
 
@@ -89,20 +94,26 @@ def _runs() -> None:
     runs.render()
 
 
-def main(*, native: bool = True) -> None:
+def main(*, native: bool = True, container: bool = False) -> None:
     """Start the shell.
 
     ``native=False`` serves it in a browser instead, for a machine with no webview available —
     still on loopback, and still the same pages.
+
+    ``container=True`` is browser mode inside the container image: it listens on
+    :data:`CONTAINER_HOST` and opens no browser, because there is none in there — the operator
+    opens ``http://127.0.0.1:8477`` on their own machine.
     """
+    native = native and not container
+    handover.deliver_through_browser(not native)
     theme.install()
     ui.run(
-        host=HOST,
+        host=CONTAINER_HOST if container else HOST,
         port=PORT,
         title=TITLE,
         native=native,
         reload=False,
-        show=not native,
+        show=not native and not container,
         favicon="🔗",
         dark=None,  # follow the operating system rather than impose a mood
     )

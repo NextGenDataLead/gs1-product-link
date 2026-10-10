@@ -158,6 +158,39 @@ prepared on a machine that can reach them and copied over whole — `.venv` incl
 
 ---
 
+## Where IT runs containers instead
+
+Some company machines refuse the installer outright but already run containers — Docker
+Desktop, Podman Desktop or Rancher Desktop, put there by IT. On those, the same application comes
+as a ready-made image instead, and nothing above applies.
+
+1. Make a folder for this tool's data, for example `gs1-data` in Documents. **This folder is the
+   installation.** It will hold the passwords, the client settings, the uploaded files and the
+   record of everything published to GS1. Back it up; it is the only copy.
+2. Put `compose.yml` (from the repository) next to it, and start it from that folder:
+
+   ```bash
+   docker compose up -d
+   ```
+
+   With Podman, `podman compose up -d`. If the data folder is somewhere other than `./gs1-data`,
+   say where first: `GS1_DATA=~/Documents/gs1-data docker compose up -d`.
+3. Open **http://127.0.0.1:8477** in the browser. On the very first start the data folder is
+   filled with a blank settings file and a blank passwords file; fill them in on the **Setup**
+   screen, exactly as on an installed machine.
+
+Reports download through the browser, like any web page. To update, `docker compose pull` and
+then `docker compose up -d` — the data folder is untouched, because the image never contains
+any of it.
+
+**On Linux** the folder must be writable by the container's user (number 1000). If it belongs to
+someone else, the container stops at once and says so; `sudo chown 1000:1000 gs1-data` fixes it.
+
+**Only this machine can reach it.** The shell answers on `127.0.0.1` only, exactly like the
+installed version.
+
+---
+
 ## For IT
 
 The security posture of the running application is in
@@ -189,7 +222,12 @@ silently getting different versions from everyone else. `tests/test_packaging.py
 offline and CI's `uv lock --check` catches it properly.
 
 The uv version and the Python version are written out in `install.command`, `install.bat`,
-`start.command`, `start.bat` and `.github/workflows/ci.yml`. To bump either, change every copy —
+`start.command`, `start.bat`, `.github/workflows/ci.yml` and the `Dockerfile`. To bump either, change every copy —
 the same test fails if one moves alone. There is no `.python-version` file on purpose: pyenv reads
 that file too, and it would break `python` in this directory for anyone who has pyenv without the
 pinned version installed.
+
+**The container image is published by tagging a release** (`v*`):
+`.github/workflows/container.yml` builds it for amd64 and arm64 and pushes it to
+`ghcr.io/nextgendatalead/gs1-product-link` as the version and as `latest`. On every pull request
+that touches the code or the image it is built and started for real, without publishing.
